@@ -33,7 +33,4 @@ func init() {
 		Log.Fatal("failed to create logger", zap.Error(err))
 	}
 	log.Default().SetOutput(logger.Writer())
-	defer func(Log *zap.Logger) {
-		_ = Log.Sync()
-	}(Log) // Flushes buffer, if any
 }
