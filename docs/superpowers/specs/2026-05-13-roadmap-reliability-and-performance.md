@@ -19,9 +19,11 @@ This is a roadmap, not an implementation plan. Each phase below is scoped tightl
 
 This roadmap deliberately does not target "production-ready" in the strict sense. It targets **functional reliability, observable behavior, good internet performance, and the headline client-cache feature** — with security hardening tracked separately.
 
+**The desktop UI is deferred to last.** Phases 1–7 target the CLI (`gMountie mount`, `gMountie serve`), the shared library (`pkg/client/`, `pkg/server/`, `pkg/common/`), and the protocol (`api/proto/`). The Wails desktop app under `ui/` and `pkg/ui/` is Phase 8 — once the library underneath it is correct, the UI is mostly re-binding work. Until Phase 8, the UI is "don't actively break, don't actively improve."
+
 ## What we mean by "works perfectly end-to-end"
 
-A successful endpoint of Phases 1–6 looks like:
+A successful endpoint of Phases 1–6 looks like (CLI and library only; the desktop UI is excluded until Phase 8):
 
 - The CLI client mounts a volume from a server on the public internet (real DNS, real NAT, real ISP-grade RTT in the tens of milliseconds) with one command.
 - That mount survives a 30-second network drop, an ISP IP renumber, and a server restart — without manual `umount` or re-mount.
@@ -55,7 +57,7 @@ Performance comes before the cache because the cache layer reuses the streaming 
 
 The client cache is its own phase, not a perf sub-task, because it touches the protocol (invalidation signals), the client architecture (unifying the two-layer seam between `pathfs.FileSystem` and `GrpcFile`), persistence (on-disk format reusable across process restarts), and configuration. It's the headline feature for the internet-NFS goal.
 
-Quality / deps / docs and Ops & packaging follow. Security is last, but capped (see Phase 7).
+Quality / deps / docs and Ops & packaging follow. Security is next-to-last, but capped (see Phase 7). The desktop UI is intentionally last (Phase 8) — see the note above.
 
 ---
 
@@ -156,7 +158,7 @@ Quality / deps / docs and Ops & packaging follow. Security is last, but capped (
 
 5. **Client-side readahead and write coalescing.** For sequential read patterns (detected by offset progression), pre-fetch the next streaming chunk. For sequential writes from a single fd, coalesce small writes into the streaming frame size.
 
-6. **gRPC connection management.** The desktop UI creates a fresh client per mount. Share one `grpc.ClientConn` across mounts on the same client process; configure `KeepaliveParams` + `KeepaliveEnforcementPolicy` to detect dead connections, surface those as the Phase 1 retries.
+6. **gRPC connection management.** Configure `KeepaliveParams` + `KeepaliveEnforcementPolicy` on the client so dead connections are detected, surfacing as the Phase 1 retries. (Sharing a single `grpc.ClientConn` across multiple mounts in one process is a UI-only optimisation today and is deferred to Phase 8.)
 
 **Out of scope for this phase:**
 
@@ -193,7 +195,7 @@ This phase has the largest design surface of the roadmap because it touches the 
 
 - Unify the two-layer seam. Today `pkg/client/io/fs.go` is a `pathfs.FileSystem` and `pkg/client/io/file.go` is a `nodefs.File`, each independently talking gRPC. Define a single `FileSystemBackend` (or equivalent) interface that both surfaces use, so cache and retry middleware sit once and intercept everything.
 - The cache itself is a middleware-layer implementation of that interface. It wraps a `BackendClient` (the gRPC-backed implementation) with attribute, directory, and data caching.
-- Per-`AppContext` cache instance, shared across mounts to the same server. (Different servers → different cache instances → different cache directories or sub-directories within the configured path.)
+- One cache instance per `gMountie mount` process, scoped to the target server. (The "shared across mounts in one process" sharing model — which only matters for the UI — is deferred to Phase 8.)
 
 **Cache content & eviction:**
 
@@ -261,14 +263,14 @@ This phase has the largest design surface of the roadmap because it touches the 
    - Large files (≥ 4 GiB).
    - Many concurrent clients on the same volume.
    - Cache hit/miss/eviction paths (Phase 4 coverage).
-   - The `VFSVolumeMounter` multi-volume path (currently only `SingleVolumeMounter` is e2e-tested).
+   - (`VFSVolumeMounter` multi-volume e2e coverage is deferred to Phase 8 alongside the UI work that drives it.)
 
 3. **Drop the 1-second sleep readiness gate** in `test/e2e/utils/app.go:156` — wait on the gRPC health probe instead (introduced in Phase 2).
 
-4. **Dependency refresh.**
+4. **Dependency refresh (server + CLI only).**
    - `cobra v0.0.3` → current. Pre-1.0 is missing seven years of fixes.
    - Replace `github.com/pkg/errors` with stdlib `errors` + `fmt.Errorf("%w", err)` incrementally.
-   - Reassess `wailsapp/wails/v3 v3.0.0-alpha.7` — pin to a newer alpha if stable, or document the pin rationale.
+   - (Wails v3 alpha pin: leave alone; reassessed in Phase 8.)
 
 5. **Proto versioning.** Move `api/proto/*.proto` to `package gmountie.v1;` and `pkg/proto/v1/`. Document the breaking-change policy (additive only; renumber/remove → v2). Add `reserved` declarations where fields have already churned. This phase is where it lands because Phase 1 + 3 + 4 have all added fields; do the rename once at the end of the protocol work.
 
@@ -280,7 +282,8 @@ This phase has the largest design surface of the roadmap because it touches the 
 
 **Out of scope:**
 
-- Frontend (SvelteKit) test scaffolding — listed in Phase 6.
+- Frontend (SvelteKit) test scaffolding — Phase 8.
+- Anything under `ui/` or `pkg/ui/`.
 
 **Definition of done:**
 
@@ -303,21 +306,20 @@ This phase has the largest design surface of the roadmap because it touches the 
 
 3. **docker-compose example hygiene.** `deployments/compose/docker-compose.yaml:17-20` runs a `fix-permissions` sidecar that `chmod 777`'s the data dir. Replace with explicit uid/gid mapping. Move `admin/admin` to a `.env` example file with a clear "change me".
 
-4. **Goreleaser.** SBOM generation, cosign signing for binaries and the Docker image, `-trimpath` / `-buildvcs=true` builds.
-
-5. **Frontend test scaffolding.** Vitest + a smoke test in `ui/frontend/`. Add `task ui:test`.
+4. **Goreleaser.** SBOM generation, cosign signing for the server binary and the Docker image, `-trimpath` / `-buildvcs=true` builds. The desktop binary (`gMountie-desktop`, AppImage) continues to build to keep the pipeline alive but is not actively maintained — release artifacts for desktop are deferred to Phase 8.
 
 **Out of scope:**
 
-- macOS / Windows server builds (Linux-only; desktop UI is the only Wails target).
+- macOS / Windows server builds (Linux-only; desktop UI is the only Wails target, and that's Phase 8).
+- Anything under `ui/` or `pkg/ui/`.
+- Frontend test scaffolding — Phase 8.
 - Kubernetes operator.
 
 **Definition of done:**
 
 - `docker run` of the released image as a non-root user serves a volume.
 - `helm install` with default values produces a pod that passes its readiness probe.
-- `cosign verify` succeeds on a released artifact.
-- `task ui:test` runs at least one Svelte test green.
+- `cosign verify` succeeds on a released server artifact.
 
 ---
 
@@ -342,6 +344,47 @@ When this phase opens, it gets its own design doc and decomposition.
 
 ---
 
+## Phase 8 — Desktop UI (Wails)
+
+**Goal:** bring the desktop app up to parity with the now-mature CLI/library. This phase exists last because the UI is a thin layer over `AppContext` — fixing it before the library is solid would be premature, and most fixes here are mechanical once the library is right.
+
+**In scope:**
+
+1. **Adopt the matured library.** Re-validate `pkg/ui/service/AppService` and `pkg/ui/controller/*` against the post-Phase-6 `AppContext`. Add unit tests for `pkg/ui/controller/login.go`, `pkg/ui/controller/volume.go`, `pkg/ui/service/app.go`, `pkg/ui/service/config.go`.
+
+2. **Remove the Wails type leak.** `VolumeControllerImpl.OnStartup` currently takes `application.ServiceOptions` (a Wails v3 type). Move the lifecycle hook behind a UI-local `Lifecycle` interface so `AppContext` stays framework-agnostic. (Architecture review finding; see Appendix B item 4.)
+
+3. **Introduce a `VolumeRegistry` abstraction.** Move the `vfsMounted` boolean and lazy MemFS initialisation logic out of `VolumeControllerImpl` into a domain object that owns volume lifecycle and routing. Replace or wrap `VFSVolumeMounterImpl` (currently UI-only) with this registry. (Architecture review finding; see Appendix B item 2.)
+
+4. **Wails v3 alpha reassessment.** Pin to the newest stable alpha (or beta/release if available by this point), document the chosen version rationale, and add an upgrade-tracking note. If Wails v3 stable has landed, schedule a single dedicated upgrade pass.
+
+5. **Cache sharing across mounts in one UI process.** The Phase 4 cache is per-process / per-server in the CLI. The UI mounts multiple volumes on the same server in one process; the cache should be a single instance shared across those mounts (which the cache design already accommodates), and the cache config should surface in the UI settings.
+
+6. **Connection sharing across mounts in one UI process.** Share one `grpc.ClientConn` across mounts to the same server in the UI process. (Deferred from Phase 3.)
+
+7. **Frontend test scaffolding.** Vitest + a smoke test in `ui/frontend/`. Add `task ui:test`. Add at least one component test for the login flow and one for the volume list.
+
+8. **E2E coverage of `VFSVolumeMounter` / `VolumeRegistry`.** The multi-volume path is not currently e2e-tested. (Deferred from Phase 5.)
+
+9. **Desktop release artifacts.** Resume active maintenance of the goreleaser `gMountie-desktop` build, the AppImage, and any signing the server pipeline already does in Phase 6.
+
+10. **UI surface for the security hardening from Phase 7.** TLS settings, credential storage (use the OS keyring rather than the YAML config), ACL UI if applicable.
+
+**Out of scope:**
+
+- macOS / Windows desktop builds (Linux-only project; revisit only if there's user demand).
+- Native menus, system tray, autoupdate.
+- Mobile clients.
+
+**Definition of done:**
+
+- `pkg/ui/` package has meaningful test coverage (target the same threshold as the rest of the codebase).
+- `task ui:test` runs Svelte tests green.
+- A user can install the AppImage, point it at a server, mount three volumes simultaneously, see them all in the UI, and observe shared cache hits across them.
+- TLS toggle in the UI actually negotiates TLS (depends on Phase 7).
+
+---
+
 ## Appendix A — Known security gaps with file:line refs
 
 - `pkg/client/grpc/client.go:120` — `insecure.NewCredentials()` hardcoded; TLS line commented out.
@@ -363,11 +406,11 @@ These are design-level observations from the architecture review. They are not s
 
 1. **Two-layer client seam.** `pkg/client/io/fs.go` (a `pathfs.FileSystem`) and `pkg/client/io/file.go` (a `nodefs.File`) independently talk gRPC. A cache or retry middleware that wraps only one is silently incomplete. **Addressed in Phase 4** as part of the cache backend interface unification.
 
-2. **`VolumeRegistry` abstraction missing.** `pkg/ui/controller/volume.go` carries a `vfsMounted` boolean and lazy-init logic that belongs in a domain object, not a UI controller. The two mount modes (`SingleVolumeMounter`, `VFSVolumeMounterImpl`) would also benefit from a registry that owns lifecycle and routing decisions. **Addressed opportunistically** when the cache work in Phase 4 touches `AppContext`.
+2. **`VolumeRegistry` abstraction missing.** `pkg/ui/controller/volume.go` carries a `vfsMounted` boolean and lazy-init logic that belongs in a domain object, not a UI controller. The two mount modes (`SingleVolumeMounter`, `VFSVolumeMounterImpl`) would also benefit from a registry that owns lifecycle and routing decisions. **Addressed in Phase 8** (UI phase) since `VFSVolumeMounter` is currently UI-only.
 
 3. **Config schema duplication.** `pkg/common/config/load.go` is a shell, not a schema. `pkg/server/config` and `pkg/client/config` each re-implement Viper sub-key parsing by hand; client config imports `pkg/server/config.AuthConfig` (asymmetric cross-package dependency); the documented `GMOUNTIE_` env-var prefix is wired on the server but not the client. **Addressed in Phase 5** alongside the doc cleanup.
 
-4. **Wails v3 type leak.** `VolumeControllerImpl.OnStartup` takes `application.ServiceOptions`, a Wails-specific type. The `AppContext` is otherwise framework-agnostic. **Addressed opportunistically** when Phase 4 or 6 touches the UI controller.
+4. **Wails v3 type leak.** `VolumeControllerImpl.OnStartup` takes `application.ServiceOptions`, a Wails-specific type. The `AppContext` is otherwise framework-agnostic. **Addressed in Phase 8.**
 
 5. **`pathfs` vs `fs` go-fuse API.** The codebase uses the older path-based `pathfs` API. The newer `fs` package is better suited to caching and inode stability (the comment at `pkg/client/io/fs.go:57` about ignoring `Ino` is a symptom). Full migration is non-trivial; **carry as known debt** and reassess if cache work in Phase 4 hits inode-instability problems.
 
