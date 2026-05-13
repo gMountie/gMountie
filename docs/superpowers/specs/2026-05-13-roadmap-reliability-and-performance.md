@@ -1,216 +1,315 @@
-# gMountie roadmap: reliability and performance
+# gMountie roadmap: reliability, performance, and client-side caching
 
-**Status:** Draft
+**Status:** Draft v2
 **Date:** 2026-05-13
 **Author:** John Buluba (with Claude Code)
 **Branch where work happens:** `develop`
 
+## Project north star
+
+gMountie exists to be an **NFS-over-the-internet replacement** — the user wants to mount their server's storage from anywhere on the public internet, with no VPN, and UX as simple as mounting a local NFS share. Every design decision below is evaluated against that goal first. In practice:
+
+- **Latency tolerance is core, not an afterthought.** Anything that adds RTTs per syscall (chatty metadata, no caching, no readahead, no batching) is a bug, not a polish item.
+- **Reconnect/resume must be invisible.** Network blips are expected; mounts and open file handles must survive them.
+- **Single-user-ish trust model, for now.** Multi-tenant security is not the priority, but TLS becomes much more pressing because the wire is the public internet. The security hardening phase is deferred but capped — it cannot stay deferred indefinitely once internet exposure is real.
+
 ## What this is, and what it is not
 
-This is a roadmap, not an implementation plan. Each phase below is scoped tightly enough to spawn its own design + implementation plan when it's time to do the work. The intent is to have one shared document that captures the priorities, the explicit non-goals, and the gaps we are knowingly deferring — so a future session (mine, yours, a contributor's) can pick up the right thread without re-doing the analysis.
+This is a roadmap, not an implementation plan. Each phase below is scoped tightly enough to spawn its own design + implementation plan when it's time to do the work. The intent is one shared document that captures priorities, explicit non-goals, and the gaps we are knowingly deferring — so a future session (mine, yours, a contributor's) can pick up the right thread without re-doing the analysis.
 
-This roadmap deliberately does **not** target "production-ready" in the strict sense. It targets **functional reliability, observable behavior, and good performance** — with the security hardening tracked separately and deferred. Calling the result "production-ready" would be misleading until Phase 6 lands; everything before that improves the project for a trusting / single-tenant / LAN deployment.
+This roadmap deliberately does not target "production-ready" in the strict sense. It targets **functional reliability, observable behavior, good internet performance, and the headline client-cache feature** — with security hardening tracked separately.
 
 ## What we mean by "works perfectly end-to-end"
 
-A successful endpoint of Phases 1–5 looks like:
+A successful endpoint of Phases 1–6 looks like:
 
+- The CLI client mounts a volume from a server on the public internet (real DNS, real NAT, real ISP-grade RTT in the tens of milliseconds) with one command.
+- That mount survives a 30-second network drop, an ISP IP renumber, and a server restart — without manual `umount` or re-mount.
+- File handles open before a network blip remain valid after reconnect.
+- Reading a file that's already in the local cache hits the network only to validate freshness, not to fetch bytes. A cold-cache read of a multi-GB file streams without hitting the 4 MiB unary ceiling.
 - `gMountie serve` runs for days under typical workloads without crashing, leaking file descriptors, or accumulating zombie state.
-- A client mount survives a server restart, a brief network blip, and arbitrarily large files (multi-GB) without hanging the FUSE kernel thread.
 - SIGTERM to the server completes in-flight RPCs and shuts down cleanly.
-- The existing `test/e2e/fs/io_bench_test.go` fio suite reports throughput within a small constant factor of the loopback FUSE baseline (target: ≥ 70% of loopback throughput for sequential read on a 1 GiB file over localhost; ≥ 50% over a typical LAN). Latency-sensitive ops (stat, readdir on cold cache) finish in single-digit milliseconds on localhost.
+- Performance targets (measured against `test/e2e/fs/io_bench_test.go`):
+  - **localhost:** sequential read of 1 GiB ≥ 70% of raw loopback FUSE throughput; metadata ops in single-digit milliseconds.
+  - **internet (≥ 20 ms RTT):** sequential read of a cached 1 GiB file ≥ 80% of local disk throughput (cache hit path); cold-cache read ≥ 70% of the available network throughput; `ls` on a 1000-entry directory completes in well under a second on warm metadata cache.
 - The two skipped tests in `pkg/server/config/config_test.go` are passing.
 - Operators can answer "what version is running?", "is the server healthy?", "how many open files are there per volume right now?", and "what's the per-volume error rate?" without reading source code.
 - Every new feature path has a unit test, and every previously-broken failure mode is covered by an e2e or integration test.
 
-What is **explicitly not** part of the success criteria, even by the end of Phase 5:
+What is **explicitly not** part of the success criteria, even by the end of Phase 6:
 
 - TLS transport.
 - Authenticated/authorized access beyond the existing basic-auth-or-none knob (any authenticated user still has access to every volume).
 - Resistance to a hostile client (a client can still claim uid 0).
 - Multi-tenant safety.
 
-These are Phase 6 work; they are listed in the appendix so they don't get forgotten.
+These are Phase 7 work; they are listed in the appendix so they don't get forgotten.
 
 ## Why this ordering
 
-Reliability comes before everything because a crashing or hanging server makes every other improvement invisible. Observability comes before performance because you cannot tune what you cannot measure, and the same instrumentation that diagnoses a perf regression is what diagnoses a reliability regression — so the cost is amortised. Quality / deps / docs ride alongside as the cross-cutting prerequisite for everything to be testable and contributable. Ops & packaging land after the code is good enough to deploy meaningfully. Security is last because we have decided, knowingly, that the current trust model (LAN, trusted clients, ops-controlled credentials) is acceptable for now — and we'd rather build a system that works correctly first than build a hardened version of a buggy one.
+Reliability comes before everything because a crashing or hanging server makes every other improvement invisible. Inside Phase 1 we also add the *session* concept and *idempotency tokens* — they're reliability prerequisites (no fd reclamation across reconnect = no reliable mount over the internet) but they're also protocol changes that everything downstream depends on, so they happen early and once.
+
+Observability comes before performance because you cannot tune what you cannot measure, and the same instrumentation that diagnoses a perf regression diagnoses a reliability regression.
+
+Performance comes before the cache because the cache layer reuses the streaming RPCs, and because measuring cache effectiveness needs a stable perf baseline.
+
+The client cache is its own phase, not a perf sub-task, because it touches the protocol (invalidation signals), the client architecture (unifying the two-layer seam between `pathfs.FileSystem` and `GrpcFile`), persistence (on-disk format reusable across process restarts), and configuration. It's the headline feature for the internet-NFS goal.
+
+Quality / deps / docs and Ops & packaging follow. Security is last, but capped (see Phase 7).
 
 ---
 
-## Phase 1 — Functional reliability
+## Phase 1 — Functional reliability + session and idempotency foundations
 
-**Goal:** the server doesn't crash on adversarial-but-non-malicious input, doesn't hang the client when something goes wrong, and doesn't leak resources over time.
+**Goal:** the server doesn't crash on adversarial-but-non-malicious input, the client doesn't hang or lose state when something goes wrong, and the protocol gets the minimal changes needed to make safe retry and reconnect possible.
 
 **In scope:**
 
-1. **Remove every `log.Fatal` from the request path.** Today, a metrics port collision (`pkg/server/grpc/server.go:186`), a `setfsuid`/`setfsgid` failure (`pkg/server/io/middleware/asume_user.go:31,35,40,44`), an `init()`-time mistake in the logger (`pkg/utils/log/log.go:36-38`), or a FUSE mount error in `gMountie mount` (`pkg/client/mount/single.go:48`) all terminate the process. These should return errors that bubble up to the caller, with the metrics endpoint specifically becoming a non-fatal best-effort goroutine that logs and exits if it fails. The middleware case is subtle: if `setfsuid` fails on a per-request basis, the request — not the server — should fail.
+1. **Remove every `log.Fatal` from the request path.** Today a metrics port collision (`pkg/server/grpc/server.go:186`), a `setfsuid`/`setfsgid` failure (`pkg/server/io/middleware/asume_user.go:31,35,40,44`), an `init()`-time mistake in the logger (`pkg/utils/log/log.go:36-38`), or a FUSE mount error (`pkg/client/mount/single.go:48`) all terminate the process. These should return errors that bubble up to the caller, with the metrics endpoint specifically becoming a non-fatal best-effort goroutine. A per-request `setfsuid` failure should fail the *request*, not the server.
 
-2. **Fix nil-deref panics in controllers.** `createContext` in `pkg/server/controller/utils.go:12-19` dereferences `caller.Owner.Uid/Gid` with no nil check; `StatFs` in `pkg/server/controller/fs.go:121-131` dereferences a possibly-nil reply from the underlying filesystem. Add nil guards that translate to a clean gRPC error.
+2. **Fix nil-deref panics in controllers.** `pkg/server/controller/utils.go:12-19` dereferences `caller.Owner.Uid/Gid` with no nil check; `pkg/server/controller/fs.go:121-131` dereferences a possibly-nil `StatFs` reply. Add nil guards that translate to clean gRPC errors.
 
-3. **Wire `GracefulStop` to SIGTERM / SIGINT** in `cmd/commands/serve.go`. The server already calls `grpc.Server.GracefulStop()` in `pkg/server/grpc/server.go:101` — it's never invoked. Drain in-flight RPCs within a bounded shutdown deadline (e.g. 30s) before falling back to `Stop()`.
+3. **Wire `GracefulStop` to SIGTERM / SIGINT** in `cmd/commands/serve.go`. `pkg/server/grpc/server.go:101` already has `GracefulStop()` — it's never invoked. Drain in-flight RPCs within a bounded shutdown deadline (e.g. 30s) before falling back to `Stop()`.
 
-4. **Propagate the FUSE-thread context with a deadline through every client RPC.** Today every call in `pkg/client/io/file.go:34,50,66,76,88,101,118,133,149` and `pkg/client/io/fs.go:270` uses `context.Background()`. Replace with a context derived from the FUSE op (or a fresh one with a per-RPC timeout, configurable, default e.g. 30s for I/O / 5s for metadata). A stalled server should fail the RPC, not hang the FUSE kernel thread.
+4. **Propagate the FUSE-thread context with a deadline through every client RPC.** Every call in `pkg/client/io/file.go:34,50,66,76,88,101,118,133,149` and `pkg/client/io/fs.go:270` uses `context.Background()` today. Replace with a context derived from the FUSE op (or a fresh one with a per-RPC timeout, configurable; default e.g. 30s for I/O, 5s for metadata). A stalled server should fail the RPC, not hang the FUSE kernel thread.
 
-5. **Server-side fd lifecycle correctness.** `pkg/server/controller/file.go:51-58,61-73` registers an entry in `r.files` after `Open`/`Create` *regardless of return status*; on a non-OK return the client never calls `Release` and the entry leaks. Plus there is no per-connection cleanup — a client that crashes leaves its open files in `r.files` forever. Tie the fd table to the gRPC peer / a server-side session ID, and reap on disconnect (gRPC has `ServerStream`-level cancellation hooks for this).
+5. **Introduce a session concept (architectural).** Today `pkg/server/controller/file.go` holds an `xsync.MapOf` of file descriptors keyed by a process-global atomic counter — fd IDs are shared across all peers and survive client crashes forever. Introduce a `SessionID` established on connect (negotiated via an opening RPC, or extracted from an auth-bound token), scope the fd table to `(session, fd)`, and reap on gRPC peer disconnect using server-stream cancellation hooks. A reconnecting client passes the same `SessionID` and reclaims its file handles. The proto change is additive (new `Session` message; existing RPCs gain a `session_id` field).
 
-6. **Make `retry-go` actually retry I/O.** Today retry is only used on unmount (`pkg/client/mount/common.go:71`, `vfs.go:139`). Wrap transient gRPC errors (`Unavailable`, `DeadlineExceeded` for idempotent ops) in retries with bounded backoff on read/write/stat paths in `pkg/client/io/`. Be careful: writes are not safely retryable unless we also de-duplicate; start with idempotent ops only.
+6. **Add idempotency tokens to mutating proto messages.** `Write`, `Create`, `Mkdir`, `Rmdir`, `Rename`, `Unlink`, `Symlink`, `Link`, `Setattr` all gain a `request_id` field. The server keeps a small LRU of recently-seen `(session_id, request_id)` → reply and returns the cached reply for duplicates. This is what makes the retry work in (7) safe.
 
-7. **Un-skip the two config tests.** `pkg/server/config/config_test.go:105,144` — `TestParse_EmptyConfig` and `TestParse_EnvVarOverride`. The env-var case in particular is a documented feature.
+7. **Make `retry-go` actually retry I/O.** Today retry is only used on unmount (`pkg/client/mount/common.go:71`, `vfs.go:139`). Wrap transient gRPC errors (`Unavailable`, `DeadlineExceeded`) in retries with bounded backoff on the client I/O paths in `pkg/client/io/`. Idempotent ops first; mutating ops use the tokens from (6).
+
+8. **Server-side fd lifecycle correctness.** `pkg/server/controller/file.go:51-58,61-73` registers an entry in `r.files` after `Open`/`Create` regardless of return status; on a non-OK return the client never calls `Release` and the entry leaks. Fix in tandem with the session scoping from (5).
+
+9. **Un-skip the two config tests.** `pkg/server/config/config_test.go:105,144` — `TestParse_EmptyConfig` and `TestParse_EnvVarOverride`.
 
 **Out of scope for this phase:**
 
-- TLS, password hashing, ACLs (Phase 6).
-- Streaming I/O — the 4 MiB unary ceiling is a real functional bug for large files, but the fix belongs with the rest of the perf work because it shares the streaming RPC design (Phase 3).
-- Restructuring the controller / service / io layering. Tactical fixes only here.
+- TLS, password hashing, ACLs (Phase 7).
+- Streaming I/O — the 4 MiB unary ceiling is a real functional bug for large files, but the fix belongs with the rest of the perf work (Phase 3).
+- Cache invalidation protocol bits (Phase 4).
+- Restructuring the controller / service / io layering. Tactical fixes only here, except for the session concept which is unavoidable.
 
 **Definition of done:**
 
-- No `log.Fatal` reachable from a serving server's request path (grep + review).
-- New unit tests cover: a request with a nil `Caller`, a request that triggers a non-OK `Open`, a request whose context is cancelled mid-flight.
-- New e2e test: SIGTERM the server while a 500 MiB write is in flight — the write either completes or fails cleanly, the server exits within the shutdown deadline, and the mount survives.
-- New e2e test: kill the server, restart it, the mount recovers and a subsequent read succeeds.
-- Run the existing fio suite for a sustained hour — fd count on the server is steady-state, not monotonically growing.
+- No `log.Fatal` reachable from a serving server's request path.
+- New unit tests cover: a request with a nil `Caller`, a request that triggers a non-OK `Open`, a request whose context is cancelled mid-flight, a duplicate `request_id` returning the cached reply.
+- New e2e test: kill `gMountie serve`, restart it within 10s; the existing client mount recovers and a previously-open file handle continues to work.
+- New e2e test: SIGTERM the server while a 500 MiB write is in flight — the write either completes or fails cleanly, and the server exits within the shutdown deadline.
+- Run the existing fio suite for a sustained hour — fd count on the server is steady-state under reconnect churn, not monotonically growing.
 
 ---
 
 ## Phase 2 — Observability for debugging reliability and performance
 
-**Goal:** enough instrumentation that the next time something is slow, broken, or weird, the answer is in a log line or a metric — not in a `pprof` session a developer has to set up by hand.
+**Goal:** enough instrumentation that the next time something is slow, broken, or weird, the answer is in a log line or a metric.
 
 **In scope:**
 
 1. **Switch the logger to JSON in non-TTY mode.** `pkg/utils/log/log.go:22` is hardcoded to `console`. Keep console as the default when stderr is a terminal, JSON otherwise. Make it configurable.
 
-2. **Per-RPC request ID + user + volume + op as log fields.** Add a server interceptor that generates (or extracts from metadata) a request ID, stores it in the context, and attaches it to every log line via a context-aware zap helper. Mirror on the client side so a client log line and a server log line for the same op can be joined.
+2. **Per-RPC request ID + session ID + user + volume + op as log fields.** Server interceptor generates (or extracts from metadata) a request ID, stores it in the context, attaches it to every log line via a context-aware zap helper. Mirror on the client. A client log line and a server log line for the same op can be joined.
 
-3. **Per-volume / per-op business metrics.** The current Prometheus integration (`pkg/server/grpc/server.go:198-204`) exports only the generic `go-grpc-middleware` histograms. Add:
-   - `gmountie_server_open_files{volume="…"}` gauge.
+3. **Per-volume / per-op business metrics.** Add to `pkg/server/grpc/server.go:198-204`:
+   - `gmountie_server_open_files{volume,session}` gauge.
    - `gmountie_server_bytes_total{volume,direction}` counter.
    - `gmountie_server_rpc_errors_total{volume,op,code}` counter.
    - `gmountie_server_request_duration_seconds{volume,op}` histogram.
-   - On the client: `gmountie_client_retry_total{op,code}`, `gmountie_client_in_flight{op}` gauge.
+   - `gmountie_server_sessions_active` gauge.
+   - On the client: `gmountie_client_retry_total{op,code}`, `gmountie_client_in_flight{op}`, and (when Phase 4 lands) `gmountie_client_cache_{hits,misses,evictions,bytes}`.
 
-4. **gRPC health protocol + `/healthz`/`/readyz`.** Register `grpc/health/v1` so Kubernetes / external probes can use it. Add an HTTP `/healthz` (process alive) and `/readyz` (filesystem accessible, listener bound) for non-gRPC probers.
+4. **gRPC health protocol + `/healthz`/`/readyz`.** Register `grpc/health/v1`. Add HTTP `/healthz` (process alive) and `/readyz` (filesystem accessible, listener bound).
 
-5. **Version + build info reported at runtime.** `pkg.GetBuildInfo()` exists (`pkg/version.go`) and is printed by `gMountie version` but never surfaces over gRPC or HTTP. Add a `Version` RPC (or include it as gRPC server reflection metadata) and a `/version` HTTP endpoint.
+5. **Version + build info at runtime.** `pkg.GetBuildInfo()` exists (`pkg/version.go`) but only `gMountie version` uses it. Add a `Version` gRPC and `/version` HTTP endpoint.
 
-6. **Make the metrics port configurable**, not hardcoded `:9090` (`pkg/server/grpc/server.go:183`). Move it under `server.metrics_addr` in the config.
+6. **Make the metrics port configurable.** Move it under `server.metrics_addr` in the config; today it's hardcoded `:9090` (`pkg/server/grpc/server.go:183`).
 
 **Explicitly deferred from this phase:**
 
-- OpenTelemetry tracing. The log-correlation IDs cover most of the value at a fraction of the build complexity; OTel can be added later without changing the log/metric API.
-- Authentication on the metrics endpoint. Caught in the security appendix.
+- OpenTelemetry tracing — log-correlation IDs cover most of the value at a fraction of the build complexity.
+- Authentication on the metrics endpoint — captured in the security appendix.
 
 **Definition of done:**
 
 - A grep for a request ID returns every log line for that RPC, on both client and server.
-- A Prometheus scrape returns the five metrics above with realistic values during the fio test.
+- A Prometheus scrape returns the metrics above with realistic values during the fio test.
 - `grpc_health_probe -addr localhost:9449` returns SERVING.
 - `curl localhost:<metrics_port>/version` returns the build version.
 
 ---
 
-## Phase 3 — Performance
+## Phase 3 — Performance: streaming, batching, tuning
 
-**Goal:** measured wins on the existing fio benchmark suite, no regressions on the latency-sensitive metadata ops.
+**Goal:** measured wins on the existing fio suite over localhost; preparation of the streaming + batched RPCs that Phase 4's cache depends on.
 
-**Baseline first.** Before any change, capture a `task test:coverage`-free run of `test/e2e/fs/io_bench_test.go` and `simple_test.go` on the developer machine and CI runner. Record numbers (and the surrounding hardware) in a `docs/perf/baseline-YYYY-MM-DD.md`. Every change in this phase reports its delta against that file.
+**Baseline first.** Before any change, capture a run of `test/e2e/fs/io_bench_test.go` and `simple_test.go` on the developer machine and CI runner. Record numbers (and surrounding hardware) in `docs/perf/baseline-YYYY-MM-DD.md`. Every change reports its delta against that file. Repeat with a `tc netem` 30 ms loopback delay (the existing `scripts/start-slow-loopback.sh` already does this) — the internet number is the one that matters for the project goal.
 
 **In scope:**
 
-1. **Streaming reads and writes.** Today `ReadRequest`/`ReadReply` and `WriteRequest` (`api/proto/file.proto`) are unary, so the gRPC default 4 MiB cap is a hard ceiling on `MaxRead`/`MaxWrite` mount options, and large files require many round-trips. Move to server-streaming reads and client-streaming writes, with the per-frame size tunable. This is also the natural place to fix the leak/lifetime issues from Phase 1 because it changes the RPC shape.
+1. **Streaming reads and writes.** `ReadRequest`/`ReadReply` and `WriteRequest` (`api/proto/file.proto`) are unary, so the gRPC 4 MiB default cap is a hard ceiling on `MaxRead`/`MaxWrite`. Move to server-streaming reads and client-streaming writes, with the per-frame size tunable. Carry `(session_id, request_id)` from Phase 1 so retry semantics survive the move.
 
-2. **Tune Snappy.** The Snappy codec is applied to *all* RPCs (`pkg/server/grpc/snappy/`). Metadata RPCs (`Lookup`, `GetAttr`, `Readdir`) don't benefit and pay the CPU cost. Restrict compression to read/write payloads, or switch to per-call codec selection.
+2. **Batched / compound metadata RPCs.** Add a `Compound` RPC (NFSv4-style) that takes a list of metadata ops and returns a list of replies, so a directory walk with stats is one round-trip rather than `1 + N`. Used by `Readdir`-with-stat patterns and (in Phase 4) cache validation.
 
-3. **FUSE mount-option tuning.** `pkg/client/mount/single.go` and `vfs.go` currently use defaults. Set `MaxRead`, `MaxWrite`, `MaxBackground`, `CongestionThreshold`, and the writeback cache (`WritebackCache`) where data integrity allows. Negotiate the values with the server (e.g. server caps `MaxRead` based on its frame size).
+3. **Tune Snappy.** The Snappy codec is applied to all RPCs (`pkg/server/grpc/snappy/`). Metadata RPCs (`Lookup`, `GetAttr`, `Readdir`) don't benefit and pay the CPU cost. Restrict compression to read/write payloads, or switch to per-call codec selection.
 
-4. **Client-side readahead and write coalescing.** For sequential read patterns (detected by offset progression), pre-fetch the next streaming chunk. For sequential writes from a single fd, coalesce small writes into the streaming frame size. Both are bounded by the streaming-RPC design from item 1.
+4. **FUSE mount-option tuning.** `pkg/client/mount/single.go` and `vfs.go` currently use defaults. Set `MaxRead`, `MaxWrite`, `MaxBackground`, `CongestionThreshold`, and the writeback cache (`WritebackCache`) where integrity allows. Negotiate values with the server (the server caps `MaxRead` based on its frame size).
 
-5. **gRPC connection management.** The desktop UI creates a fresh client per mount today. Share one `grpc.ClientConn` across mounts on the same client process, configure keepalive (`KeepaliveParams` + `KeepaliveEnforcementPolicy`) to detect dead connections, and surface those as Phase 1 retries.
+5. **Client-side readahead and write coalescing.** For sequential read patterns (detected by offset progression), pre-fetch the next streaming chunk. For sequential writes from a single fd, coalesce small writes into the streaming frame size.
+
+6. **gRPC connection management.** The desktop UI creates a fresh client per mount. Share one `grpc.ClientConn` across mounts on the same client process; configure `KeepaliveParams` + `KeepaliveEnforcementPolicy` to detect dead connections, surface those as the Phase 1 retries.
 
 **Out of scope for this phase:**
 
+- The on-disk cache itself (Phase 4).
 - Server-side caching of file content (correctness risk; revisit later).
 - Multi-server / replication.
 
 **Definition of done:**
 
-- Sequential read of a 1 GiB file from a tmpfs-backed volume reaches ≥ 70% of raw loopback FUSE throughput on localhost (measured by `io_bench_test.go`).
+- Sequential read of a 1 GiB file from a tmpfs-backed volume reaches ≥ 70% of raw loopback FUSE throughput on localhost.
 - Write of a 1 GiB file completes without OOM and without hitting the unary cap.
-- Metadata ops (`stat`, `readdir`) latency does not regress more than 10% vs the Phase 2 baseline.
-- New e2e test mounts a volume, copies a 4 GiB file in both directions, verifies bit-exact content.
+- Metadata ops latency does not regress more than 10% vs the Phase 2 baseline.
+- New e2e test: mount a volume, copy a 4 GiB file in both directions, verify bit-exact content.
+- A `Compound` of 100 `GetAttr`s completes in one RTT.
 
 ---
 
-## Phase 4 — Quality, dependencies, and docs
+## Phase 4 — Persistent client-side cache
 
-**Goal:** the test suite is trustworthy, the doc copy-paste examples actually work, and we are not pinned to a 2017-era Cobra.
+**Goal:** the headline user-facing feature. After the first read, the same bytes don't cross the network. The cache survives client restarts. The user can point it at a path and cap its size.
+
+This phase has the largest design surface of the roadmap because it touches the protocol (invalidation signals), the client architecture (unifying the `pathfs.FileSystem` + `GrpcFile` seam), persistence (on-disk format), and configuration. It gets its own design doc when work starts; the bullets below are the scope, not the design.
+
+### Scope
+
+**Protocol additions (server side):**
+
+- `Attr.version` (monotonic counter or content hash) — set by the server. Caches use this to validate freshness.
+- A `GetAttrIfChanged(path, known_version)` shortcut RPC that returns either the new attrs or a `NotModified` status. Cheaper than a full `GetAttr`.
+- A server-streaming `Subscribe(volume)` RPC that pushes `(path, new_version)` change events for paths the client has cached. Optional: cache works without it (falls back to validation), works *much* better with it.
+- A `Read` request gains an optional `version` field; on mismatch the server returns the new version + bytes; on match (read for revalidation), it can short-circuit.
+
+**Client architecture:**
+
+- Unify the two-layer seam. Today `pkg/client/io/fs.go` is a `pathfs.FileSystem` and `pkg/client/io/file.go` is a `nodefs.File`, each independently talking gRPC. Define a single `FileSystemBackend` (or equivalent) interface that both surfaces use, so cache and retry middleware sit once and intercept everything.
+- The cache itself is a middleware-layer implementation of that interface. It wraps a `BackendClient` (the gRPC-backed implementation) with attribute, directory, and data caching.
+- Per-`AppContext` cache instance, shared across mounts to the same server. (Different servers → different cache instances → different cache directories or sub-directories within the configured path.)
+
+**Cache content & eviction:**
+
+- **Read-through, write-through to start.** Writes go to the server immediately *and* update the cache. Write-back is deferred (consistency hazards on shared volumes); document the limitation.
+- **Three caches in one store:**
+  - **Attribute cache** — `GetAttr` results, keyed by `(volume, path)`, validated against `Attr.version` or by elapsed TTL fallback.
+  - **Directory cache** — `Readdir` results, same validation strategy.
+  - **Data cache** — file contents stored in fixed-size chunks (e.g. 1 MiB), keyed by `(volume, path, version, chunk_index)`. Content-addressable layout means a file rename with no content change costs nothing.
+- **Eviction: LRU under a configurable `max_size_bytes` cap.** Sized accounting includes all three caches. Eviction is opportunistic (on cache write that would exceed the cap, evict until under).
+- **Negative caching.** A `Lookup` that returned `ENOENT` is cached briefly (short TTL) to avoid hammering the server on tab-completion patterns; invalidated immediately on `Subscribe` events for the same path.
+
+**Persistence:**
+
+- On-disk layout under the user-configured `cache_path`:
+  - `index.db` — a small embedded KV store (BoltDB or sqlite) for the LRU index, version tags, and quota accounting.
+  - `chunks/` — content-addressable chunk files (sharded by hash prefix to avoid millions of files in one directory).
+- The format is documented (cheap inspection / external eviction tooling possible) and versioned (a `format_version` key so future upgrades can migrate).
+- A lock file prevents two client processes from using the same cache dir simultaneously (out of scope: shared multi-process cache).
+- On startup, the cache loads the index lazily and validates against the configured quota — over-quota state from a previous run triggers eviction before serving requests.
+
+**Configuration (client side):**
+
+- `cache.enabled: bool` (default `true` once stable).
+- `cache.path: string` (default an XDG cache subdirectory).
+- `cache.max_size_bytes: int` (default e.g. 1 GiB).
+- `cache.chunk_size_bytes: int` (default 1 MiB).
+- `cache.attr_ttl_seconds: int` (fallback for when `Subscribe` is unavailable; default short, e.g. 5s).
+- `cache.negative_ttl_seconds: int` (default a few seconds).
+
+### Out of scope for this phase
+
+- **Write-back caching.** Risk-heavy; revisit once we have telemetry on real-world write patterns.
+- **Shared cache across multiple client processes.** Single-process exclusivity is simpler and matches the typical mount-on-laptop use case.
+- **Encrypted cache at rest.** Trust the local disk for now; document the assumption.
+- **Cache pre-warming / explicit prefetch APIs.** Future work.
+
+### Definition of done
+
+- A read of a file already in the cache hits the network only for an `Attr.version` validation (or zero RPCs when `Subscribe` is active).
+- The cache survives a `gMountie mount` process restart — the same file read after restart still hits the cache.
+- Pointing two `gMountie mount` invocations at the same cache path fails fast with a clear error.
+- An e2e test sets `cache.max_size_bytes` to 100 MiB and reads 1 GiB of distinct files; the cache stays under the cap and serves the most-recent files from disk.
+- A `Subscribe`-driven invalidation: client A writes a file, client B (with cache active) sees the new version on its next read.
+- Cache hit rate, eviction rate, and bytes in cache visible in Prometheus metrics.
+
+---
+
+## Phase 5 — Quality, dependencies, and docs
+
+**Goal:** the test suite is trustworthy, the doc copy-paste examples actually work, and dependencies are current.
 
 **In scope:**
 
 1. **CI hardening.**
-   - Add `-race` to `task test` (and a separate `task test:race` if `-race` makes coverage too slow).
+   - Add `-race` to `task test` (separate `task test:race` if it makes coverage too slow).
    - Add `govulncheck` and `Trivy` (on the released Docker image) to CI.
    - Configure Dependabot for `go.mod`, `npm` (`ui/frontend/`), and GitHub Actions.
-   - Set a real coverage threshold in `vladopajic/go-test-coverage` — start at the current measured value, ratchet up over time. The current CI uploads a badge but does not gate merges.
-   - Update the pinned `golangci-lint@v1.60` in `.github/workflows/ci.yml:28` to match what `.golang-ci.yaml` declares (v1.62+).
+   - Set a real coverage threshold in `vladopajic/go-test-coverage` — start at the current measured value, ratchet up.
+   - Update pinned `golangci-lint@v1.60` in `.github/workflows/ci.yml:28` to match what `.golang-ci.yaml` declares (v1.62+).
 
-2. **E2E coverage for failure modes.** `test/e2e/` covers a happy path; expand to:
+2. **E2E coverage for failure modes.**
    - Auth failure (basic-auth wrong password).
-   - Server killed mid-read and mid-write (relates to Phase 1 graceful shutdown).
-   - Network drop / re-connect.
-   - Large files (≥ 4 GiB) — directly exercises the streaming work in Phase 3.
+   - Server killed mid-read and mid-write.
+   - Network drop / reconnect with open file handle (validates session reclamation from Phase 1).
+   - Large files (≥ 4 GiB).
    - Many concurrent clients on the same volume.
-   - The multi-volume `VFSVolumeMounter` path (currently only `SingleVolumeMounter` is e2e-tested).
+   - Cache hit/miss/eviction paths (Phase 4 coverage).
+   - The `VFSVolumeMounter` multi-volume path (currently only `SingleVolumeMounter` is e2e-tested).
 
-3. **Drop the 1-second sleep readiness gate.** `test/e2e/utils/app.go:156`. Wait on the gRPC health probe instead (introduced in Phase 2).
+3. **Drop the 1-second sleep readiness gate** in `test/e2e/utils/app.go:156` — wait on the gRPC health probe instead (introduced in Phase 2).
 
 4. **Dependency refresh.**
-   - `cobra v0.0.3` → current. The pre-1.0 version is missing seven years of fixes.
-   - Replace `github.com/pkg/errors` with stdlib `errors` + `fmt.Errorf("%w", err)` incrementally; the wrapping API is equivalent.
-   - Reassess `wailsapp/wails/v3 v3.0.0-alpha.7` — pin to a specific newer alpha if one is stable, or document the pin rationale. Alpha software is acceptable for a side-project desktop app but it should be a conscious choice.
+   - `cobra v0.0.3` → current. Pre-1.0 is missing seven years of fixes.
+   - Replace `github.com/pkg/errors` with stdlib `errors` + `fmt.Errorf("%w", err)` incrementally.
+   - Reassess `wailsapp/wails/v3 v3.0.0-alpha.7` — pin to a newer alpha if stable, or document the pin rationale.
 
-5. **Proto versioning.** Move `api/proto/*.proto` to `package gmountie.v1;` and the Go package to `pkg/proto/v1/`. Document the breaking-change policy (new fields are additive; field renumbering / removal requires a v2). Add `reserved` declarations in places that have already churned.
+5. **Proto versioning.** Move `api/proto/*.proto` to `package gmountie.v1;` and `pkg/proto/v1/`. Document the breaking-change policy (additive only; renumber/remove → v2). Add `reserved` declarations where fields have already churned. This phase is where it lands because Phase 1 + 3 + 4 have all added fields; do the rename once at the end of the protocol work.
 
 6. **Doc fixes.**
-   - `docs/server/config.md:20,109` and `docs/quickstart.md:14` use `authentication:` — the parser expects `auth:`. Replace.
+   - `docs/server/config.md:20,109` and `docs/quickstart.md:14` use `authentication:` — parser expects `auth:`. Replace.
    - Add `CONTRIBUTING.md` (linked from `README.md:58`, currently 404).
-   - Replace the placeholder `https://gmountie.docs.com` (`README.md:28`) with the actual docs URL or remove it.
-   - Add a "running gMountie" guide that covers config layout, expected XDG paths, log/metric inspection.
+   - Replace the placeholder `https://gmountie.docs.com` (`README.md:28`).
+   - Add an "internet deployment" guide (TLS setup, NAT / firewall, expected latencies, cache sizing recommendations).
 
 **Out of scope:**
 
-- Frontend (SvelteKit) test scaffolding — listed as a follow-up in Phase 5 ops work, because it's intertwined with the UI build pipeline.
+- Frontend (SvelteKit) test scaffolding — listed in Phase 6.
 
 **Definition of done:**
 
 - CI red on `-race` failures or coverage drop.
-- Every e2e failure-mode test passes deterministically (no sleep-based waits).
+- Every e2e failure-mode test passes deterministically.
 - `go.mod` no longer references pre-1.0 cobra or `pkg/errors`.
 - `docs/server/config.md` examples can be pasted into a YAML file and the server starts.
 
 ---
 
-## Phase 5 — Operations and packaging
+## Phase 6 — Operations and packaging
 
-**Goal:** the artifacts we ship are something a careful operator would deploy, even if they're not multi-tenant-safe.
+**Goal:** the artifacts we ship are deployable by a careful operator.
 
 **In scope:**
 
-1. **Dockerfile.** `Dockerfile` is a single-stage Alpine copy that runs as root. Make it multi-stage (build then runtime), run as a non-root user, add a `HEALTHCHECK` against the Phase 2 health endpoint, attach OCI labels, drop unnecessary tools from the runtime image.
+1. **Dockerfile.** `Dockerfile` is single-stage, root-running. Make it multi-stage, non-root, `HEALTHCHECK` against the Phase 2 endpoint, OCI labels, minimal runtime image.
 
-2. **Helm chart.** `deployments/charts/gmountie-server` has the right skeleton but probes are commented out (`templates/deployment.yaml:45-48`), `resources`, `podSecurityContext`, and `securityContext` are empty, and `image.tag: master` (`values.yaml:14,44,62`) is mutable. Wire the probes to the Phase 2 health endpoints, add sensible defaults for resource requests/limits, set `runAsNonRoot: true` and a `readOnlyRootFilesystem`-compatible layout, parameterise the image tag and pin it via the chart `appVersion`.
+2. **Helm chart.** `deployments/charts/gmountie-server` has probes commented out (`templates/deployment.yaml:45-48`), empty `resources` / `podSecurityContext` / `securityContext`, mutable `image.tag: master`. Wire probes to the Phase 2 endpoints, sensible defaults, `runAsNonRoot: true`, parameterised image tag pinned via `appVersion`.
 
-3. **docker-compose example hygiene.** `deployments/compose/docker-compose.yaml:17-20` runs a `fix-permissions` sidecar that `chmod 777`'s the data dir. Replace with explicit uid/gid mapping and document the required host-side setup. Move the `admin/admin` password to a `.env` example file with a clear "change me" comment.
+3. **docker-compose example hygiene.** `deployments/compose/docker-compose.yaml:17-20` runs a `fix-permissions` sidecar that `chmod 777`'s the data dir. Replace with explicit uid/gid mapping. Move `admin/admin` to a `.env` example file with a clear "change me".
 
-4. **Goreleaser.** Add SBOM generation, cosign signing for binaries and the Docker image, and `-trimpath`/`-buildvcs=true` builds. Track Linux arm64 release artifacts (the `goreleaser` config already builds them but they're not in the release archive in some places — verify).
+4. **Goreleaser.** SBOM generation, cosign signing for binaries and the Docker image, `-trimpath` / `-buildvcs=true` builds.
 
-5. **Frontend test scaffolding.** Add Vitest + a smoke test in `ui/frontend/` so adding tests stops being a setup task. Add a `task ui:test` target.
+5. **Frontend test scaffolding.** Vitest + a smoke test in `ui/frontend/`. Add `task ui:test`.
 
 **Out of scope:**
 
-- macOS / Windows server builds (project is Linux-only; the desktop UI is the only Wails target).
+- macOS / Windows server builds (Linux-only; desktop UI is the only Wails target).
 - Kubernetes operator.
 
 **Definition of done:**
@@ -222,28 +321,61 @@ Reliability comes before everything because a crashing or hanging server makes e
 
 ---
 
-## Phase 6 — Security hardening (deferred, not implemented)
+## Phase 7 — Security hardening (deferred, but capped)
 
-**This phase is documented so it isn't forgotten. It is explicitly out of scope until Phases 1–5 are done.** Some items here are critical and may be reordered up if the project's deployment context changes (e.g. anything outside a trusted LAN).
+**This phase is deferred but not unbounded.** The internet-deployment goal makes TLS in particular hard to defer indefinitely; treat the start of Phase 7 as "the moment we open the server to a non-trusted network for real."
 
-The known gaps:
+The known gaps (all with file:line citations in Appendix A):
 
-- **TLS is advertised but not implemented.** `pkg/client/grpc/client.go:120` hardcodes `insecure.NewCredentials()` and the docs (`docs/client/config.md:39`) suggest a `tls: bool` field that no code path honours. Every connection today is plaintext.
-- **Basic-auth credentials travel in plaintext** because the gRPC client sets `RequireTransportSecurity() = false` (`pkg/client/grpc/auth.go:31`). With #1, every request leaks the password.
-- **Passwords are stored and compared in plaintext.** `pkg/server/service/auth.go:87` does string equality; `pkg/server/config/auth.go:75-77` stores them as plain `string`; `deployments/compose/config.yaml:9` ships `admin/admin`. Needs bcrypt or argon2 + constant-time compare.
-- **Privilege escalation via client-supplied uid.** `pkg/server/controller/utils.go:12-19` populates `fuse.Context.Owner.{Uid,Gid}` from the proto request, and `pkg/server/io/middleware/asume_user.go:29` feeds that to `setfsuid`. A client can claim uid 0. The uid should come from the authenticated user, not from the wire.
-- **No per-user volume ACL.** Any authenticated user can access any volume by setting the `volume` field. `pkg/server/controller/{fs,file,volume}.go`.
-- **gRPC reflection registered before any auth check** (`pkg/server/grpc/server.go:83`). Schema is enumerable by any unauthenticated peer.
-- **`/metrics` is world-readable.** `pkg/server/grpc/server.go:183` binds the default HTTP mux with no auth.
-- **No request size or concurrency limits.** No `grpc.MaxRecvMsgSize`, no `KeepaliveEnforcementPolicy`, no rate-limiting interceptor. A WriteRequest decompresses Snappy into memory without bounds.
-- **Path inputs are not normalised** at the controller layer. The loopback FS is the only defence against `../` (`pkg/server/controller/fs.go:36`, `pkg/server/controller/file.go:51`).
-- **"none" auth is silently allowed** at config parse time (`pkg/server/config/auth.go:35-36`).
+- **TLS is advertised but not implemented.** Every connection today is plaintext.
+- **Basic-auth credentials travel in plaintext** because the gRPC client sets `RequireTransportSecurity() = false`.
+- **Passwords are stored and compared in plaintext.** Needs bcrypt or argon2 + constant-time compare.
+- **Privilege escalation via client-supplied uid.** `Caller.Owner.{Uid,Gid}` is read from the wire. Identity should come from the authenticated user.
+- **No per-user volume ACL.** Any authenticated user can access any volume.
+- **gRPC reflection registered before any auth check.**
+- **`/metrics` is world-readable.**
+- **No request size or concurrency limits.**
+- **Path inputs are not normalised** at the controller layer.
+- **"none" auth is silently allowed** at config parse time.
 
 When this phase opens, it gets its own design doc and decomposition.
 
-## Appendix: working agreements
+---
+
+## Appendix A — Known security gaps with file:line refs
+
+- `pkg/client/grpc/client.go:120` — `insecure.NewCredentials()` hardcoded; TLS line commented out.
+- `pkg/client/grpc/auth.go:31` — `RequireTransportSecurity() = false`.
+- `pkg/server/service/auth.go:87` — plaintext string equality on password compare.
+- `pkg/server/config/auth.go:75-77` — `BasicAuthConfigUser.Password` plain string.
+- `deployments/compose/config.yaml:9` — `admin/admin` shipped.
+- `pkg/server/controller/utils.go:12-19` and `pkg/server/io/middleware/asume_user.go:29` — client-supplied uid fed to `setfsuid`.
+- `pkg/server/controller/{fs,file,volume}.go` — no per-user volume ACL.
+- `pkg/server/grpc/server.go:83` — gRPC reflection registered before auth interceptors.
+- `pkg/server/grpc/server.go:183` — `/metrics` on default mux, no auth.
+- `pkg/server/grpc/server.go:147-151` — no `MaxRecvMsgSize`, no `KeepaliveEnforcementPolicy`.
+- `pkg/server/controller/fs.go:36`, `pkg/server/controller/file.go:51` — no path cleaning.
+- `pkg/server/config/auth.go:35-36` — `type: none` accepted with only a runtime log warning.
+
+## Appendix B — Architectural findings to address opportunistically
+
+These are design-level observations from the architecture review. They are not separate phases; they are addressed when the relevant phase touches the code, or carried as known debt.
+
+1. **Two-layer client seam.** `pkg/client/io/fs.go` (a `pathfs.FileSystem`) and `pkg/client/io/file.go` (a `nodefs.File`) independently talk gRPC. A cache or retry middleware that wraps only one is silently incomplete. **Addressed in Phase 4** as part of the cache backend interface unification.
+
+2. **`VolumeRegistry` abstraction missing.** `pkg/ui/controller/volume.go` carries a `vfsMounted` boolean and lazy-init logic that belongs in a domain object, not a UI controller. The two mount modes (`SingleVolumeMounter`, `VFSVolumeMounterImpl`) would also benefit from a registry that owns lifecycle and routing decisions. **Addressed opportunistically** when the cache work in Phase 4 touches `AppContext`.
+
+3. **Config schema duplication.** `pkg/common/config/load.go` is a shell, not a schema. `pkg/server/config` and `pkg/client/config` each re-implement Viper sub-key parsing by hand; client config imports `pkg/server/config.AuthConfig` (asymmetric cross-package dependency); the documented `GMOUNTIE_` env-var prefix is wired on the server but not the client. **Addressed in Phase 5** alongside the doc cleanup.
+
+4. **Wails v3 type leak.** `VolumeControllerImpl.OnStartup` takes `application.ServiceOptions`, a Wails-specific type. The `AppContext` is otherwise framework-agnostic. **Addressed opportunistically** when Phase 4 or 6 touches the UI controller.
+
+5. **`pathfs` vs `fs` go-fuse API.** The codebase uses the older path-based `pathfs` API. The newer `fs` package is better suited to caching and inode stability (the comment at `pkg/client/io/fs.go:57` about ignoring `Ino` is a symptom). Full migration is non-trivial; **carry as known debt** and reassess if cache work in Phase 4 hits inode-instability problems.
+
+6. **Three-service gRPC split is a strength.** Metadata (`RpcFs`), data (`RpcFile`), and volume listing (`VolumeService`) are split along the right axis for internet deployment — they can be routed, compressed, and scaled independently. **Document this intent** in the proto files in Phase 5 so a future "for simplicity" merge doesn't happen.
+
+## Appendix C — Working agreements
 
 - Each phase opens with its own brainstorm → design doc in `docs/superpowers/specs/`, then an implementation plan, then code.
 - All work happens on `develop` (or branches off `develop`). `master` only receives merged phase milestones.
 - Commit messages: plain `type: subject`; no `Co-Authored-By:` / `Signed-off-by:` trailers for this repo.
-- "Reliable" is measured by the criteria in [What we mean by "works perfectly end-to-end"](#what-we-mean-by-works-perfectly-end-to-end). Add to that section if we discover new criteria; don't redefine it silently.
+- "Reliable" and "works perfectly end-to-end" are measured by the criteria above. Add to that section if we discover new criteria; don't redefine it silently.
