@@ -181,10 +181,9 @@ func (s *Server) startMetricsServer() {
 	go func() {
 		http.Handle("/metrics", promhttp.Handler())
 		log.Log.Info("starting metrics server", zap.String("port", "9090"), zap.String("path", "/metrics"))
-		err := http.ListenAndServe(":9090", nil)
-		if err != nil {
-			log.Log.Fatal("failed to start metrics server", zap.Error(err))
-			return
+		if err := http.ListenAndServe(":9090", nil); err != nil {
+			// Best-effort: a metrics-listener failure must not kill the server.
+			log.Log.Error("metrics server stopped", zap.Error(err))
 		}
 	}()
 }
