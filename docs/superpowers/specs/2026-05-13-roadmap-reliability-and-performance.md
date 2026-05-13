@@ -152,7 +152,7 @@ Quality / deps / docs and Ops & packaging follow. Security is next-to-last, but 
 
 2. **Batched / compound metadata RPCs.** Add a `Compound` RPC (NFSv4-style) that takes a list of metadata ops and returns a list of replies, so a directory walk with stats is one round-trip rather than `1 + N`. Used by `Readdir`-with-stat patterns and (in Phase 4) cache validation.
 
-3. **Tune Snappy.** The Snappy codec is applied to all RPCs (`pkg/server/grpc/snappy/`). Metadata RPCs (`Lookup`, `GetAttr`, `Readdir`) don't benefit and pay the CPU cost. Restrict compression to read/write payloads, or switch to per-call codec selection.
+3. **Tune compression.** The Snappy codec is applied to all RPCs (`pkg/server/grpc/snappy/`). Metadata RPCs (`Lookup`, `GetAttr`, `Readdir`) don't benefit and pay the CPU cost. Restrict compression to read/write payloads, or switch to per-call codec selection. Also evaluate **zstd** as a Snappy replacement — comparable speed at low levels with materially better compression ratios; gRPC supports it via a custom codec. Measure and choose; flag as a follow-up if it's not a clear win at first pass.
 
 4. **FUSE mount-option tuning.** `pkg/client/mount/single.go` and `vfs.go` currently use defaults. Set `MaxRead`, `MaxWrite`, `MaxBackground`, `CongestionThreshold`, and the writeback cache (`WritebackCache`) where integrity allows. Negotiate values with the server (the server caps `MaxRead` based on its frame size).
 
@@ -193,7 +193,8 @@ This phase has the largest design surface of the roadmap because it touches the 
 
 **Client architecture:**
 
-- Unify the two-layer seam. Today `pkg/client/io/fs.go` is a `pathfs.FileSystem` and `pkg/client/io/file.go` is a `nodefs.File`, each independently talking gRPC. Define a single `FileSystemBackend` (or equivalent) interface that both surfaces use, so cache and retry middleware sit once and intercept everything.
+- **Migrate the client FUSE layer from `pathfs` to `go-fuse/v2/fs`.** Previously listed as "opportunistic debt" in Appendix B — promoted into Phase 4 because the cache work needs it. The new `fs` package is inode-based, which gives stable inode numbers and inode-based file handles — the cache key strategy depends on this (path-based keys break on rename; the existing `pkg/client/io/fs.go:57` comment about "ignoring `Ino` to force the client to generate its own ino numbers" is the symptom we're fixing). Migrating once now is cheaper than building the cache on `pathfs` and re-doing it.
+- Unify the two-layer seam. Today `pkg/client/io/fs.go` is a `pathfs.FileSystem` and `pkg/client/io/file.go` is a `nodefs.File`, each independently talking gRPC. After the `fs` migration, define a single `FileSystemBackend` (or equivalent) interface that the new inode-based handlers use, so cache and retry middleware sit once and intercept everything.
 - The cache itself is a middleware-layer implementation of that interface. It wraps a `BackendClient` (the gRPC-backed implementation) with attribute, directory, and data caching.
 - One cache instance per `gMountie mount` process, scoped to the target server. (The "shared across mounts in one process" sharing model — which only matters for the UI — is deferred to Phase 8.)
 
@@ -210,7 +211,7 @@ This phase has the largest design surface of the roadmap because it touches the 
 **Persistence:**
 
 - On-disk layout under the user-configured `cache_path`:
-  - `index.db` — a small embedded KV store (BoltDB or sqlite) for the LRU index, version tags, and quota accounting.
+  - `index.db` — an embedded **bbolt** (the maintained fork of BoltDB) KV store for the LRU index, version tags, and quota accounting. Chosen over sqlite (overkill for our access patterns) and Badger (heavier; LSM-tree write amplification doesn't earn its keep here).
   - `chunks/` — content-addressable chunk files (sharded by hash prefix to avoid millions of files in one directory).
 - The format is documented (cheap inspection / external eviction tooling possible) and versioned (a `format_version` key so future upgrades can migrate).
 - A lock file prevents two client processes from using the same cache dir simultaneously (out of scope: shared multi-process cache).
@@ -224,6 +225,11 @@ This phase has the largest design surface of the roadmap because it touches the 
 - `cache.chunk_size_bytes: int` (default 1 MiB).
 - `cache.attr_ttl_seconds: int` (fallback for when `Subscribe` is unavailable; default short, e.g. 5s).
 - `cache.negative_ttl_seconds: int` (default a few seconds).
+
+### Prior art to read before designing
+
+- **rclone's `vfs/vfscache`** — closest reference for a chunked persistent VFS cache in Go. Read it before finalising our chunk layout, eviction strategy, and write coalescing. We aren't reusing the code (different upstream backend abstraction, different consistency model with our `Subscribe` push), but their design tradeoffs are documented in the source and worth absorbing.
+- **NFSv4 delegations and FUSE writeback cache semantics** — both have decades of "what breaks when you cache" experience. Note our chosen invariants in the design doc with reference to which classes of bug we are accepting and which we are preventing.
 
 ### Out of scope for this phase
 
@@ -279,6 +285,9 @@ This phase has the largest design surface of the roadmap because it touches the 
    - Add `CONTRIBUTING.md` (linked from `README.md:58`, currently 404).
    - Replace the placeholder `https://gmountie.docs.com` (`README.md:28`).
    - Add an "internet deployment" guide (TLS setup, NAT / firewall, expected latencies, cache sizing recommendations).
+   - Add an **"alternatives — when not to use gMountie"** page comparing honestly against Tailscale + NFS, rclone mount, SSHFS, and Cloudflare Tunnel + WebDAV. Calling this out is a strength signal: it forces us to be specific about gMountie's distinguishing value (purpose-built persistent client cache, no third-party dependency, self-contained UX), and saves users from adopting gMountie when an off-the-shelf alternative already fits.
+
+7. **CLI client config profiles.** Today `gMountie mount` takes every parameter on the command line (server address, volume, auth type, username, password). Add a `~/.config/gMountie/profiles.yaml` that lets the user save named profiles and mount with `gMountie mount <mountpoint> --profile myserver`. Plays nicely with the Phase 4 cache config (each profile gets its own cache path / size). Profiles are pure UX; no protocol changes.
 
 **Out of scope:**
 
@@ -412,9 +421,11 @@ These are design-level observations from the architecture review. They are not s
 
 4. **Wails v3 type leak.** `VolumeControllerImpl.OnStartup` takes `application.ServiceOptions`, a Wails-specific type. The `AppContext` is otherwise framework-agnostic. **Addressed in Phase 8.**
 
-5. **`pathfs` vs `fs` go-fuse API.** The codebase uses the older path-based `pathfs` API. The newer `fs` package is better suited to caching and inode stability (the comment at `pkg/client/io/fs.go:57` about ignoring `Ino` is a symptom). Full migration is non-trivial; **carry as known debt** and reassess if cache work in Phase 4 hits inode-instability problems.
+5. **`pathfs` vs `fs` go-fuse API.** **Promoted into Phase 4 scope** — see Phase 4 → Client architecture. The cache layer depends on inode stability and the migration is cheaper to do once, in the same change that introduces the cache, than to layer a cache on `pathfs` and rip it out later.
 
 6. **Three-service gRPC split is a strength.** Metadata (`RpcFs`), data (`RpcFile`), and volume listing (`VolumeService`) are split along the right axis for internet deployment — they can be routed, compressed, and scaled independently. **Document this intent** in the proto files in Phase 5 so a future "for simplicity" merge doesn't happen.
+
+7. **Future transport: gRPC over QUIC / HTTP/3.** TCP head-of-line blocking and the lack of connection migration are gRPC-over-TCP's two real weaknesses for an internet-deployed workload. `grpc-go` doesn't have stable HTTP/3 support as of late 2025, so a swap isn't viable today — but the Phase 1 session ID + idempotency tokens are deliberately the prep work that makes a future swap cheap (session semantics already decoupled from TCP connection identity). **Reassess in 12 months**: if `grpc-go` ships QUIC support, evaluate the swap as a perf experiment.
 
 ## Appendix C — Working agreements
 
