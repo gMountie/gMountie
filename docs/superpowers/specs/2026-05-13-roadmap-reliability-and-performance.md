@@ -272,7 +272,7 @@ This phase has the largest design surface of the roadmap because it touches the 
    - Replace `github.com/pkg/errors` with stdlib `errors` + `fmt.Errorf("%w", err)` incrementally.
    - (Wails v3 alpha pin: leave alone; reassessed in Phase 8.)
 
-5. **Proto versioning.** Move `api/proto/*.proto` to `package gmountie.v1;` and `pkg/proto/v1/`. Document the breaking-change policy (additive only; renumber/remove → v2). Add `reserved` declarations where fields have already churned. This phase is where it lands because Phase 1 + 3 + 4 have all added fields; do the rename once at the end of the protocol work.
+5. **Proto package rename (organisational only).** Move `api/proto/*.proto` to `package gmountie.v1;` and `pkg/proto/v1/` for naming clarity. We don't promise wire compatibility across releases (see Appendix C) — this is purely about file organisation. Do it once at the end of the protocol work (after Phase 1 + 3 + 4 have stopped churning fields) so there's only one rename diff to review.
 
 6. **Doc fixes.**
    - `docs/server/config.md:20,109` and `docs/quickstart.md:14` use `authentication:` — parser expects `auth:`. Replace.
@@ -422,3 +422,4 @@ These are design-level observations from the architecture review. They are not s
 - All work happens on `develop` (or branches off `develop`). `master` only receives merged phase milestones.
 - Commit messages: plain `type: subject`; no `Co-Authored-By:` / `Signed-off-by:` trailers for this repo.
 - "Reliable" and "works perfectly end-to-end" are measured by the criteria above. Add to that section if we discover new criteria; don't redefine it silently.
+- **Backwards compatibility is not a concern.** Wire protocol, config file shape, on-disk cache format, library API — we control both ends and have no external consumers. If a change is the right design, make it; release notes document the break; users re-install, re-edit the config, or wipe the cache. No additive-only proto rules, no deprecation cycles, no migration tooling, no shim code. (External contracts we don't own — the FUSE syscall surface, the gRPC framing protocol — still hold.)
