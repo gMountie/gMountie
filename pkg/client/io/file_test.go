@@ -22,17 +22,18 @@ type GrpcFileTestSuite struct {
 
 func (s *GrpcFileTestSuite) SetupTest() {
 	s.fileClient = mockProto.NewMockRpcFileClient(s.T())
-	s.file = NewGrpcFile(s.fileClient, "testVolume", "/test/path", 1, 30*time.Second)
+	s.file = NewGrpcFile(s.fileClient, "testVolume", "/test/path", 1, 30*time.Second, "test-session")
 }
 
 func (s *GrpcFileTestSuite) TestRead() {
 	// Setup
 	testData := []byte("test data")
 	s.fileClient.EXPECT().Read(mock.Anything, &proto.ReadRequest{
-		Volume: "testVolume",
-		Fd:     1,
-		Offset: 0,
-		Size:   1024,
+		Volume:    "testVolume",
+		Fd:        1,
+		Offset:    0,
+		Size:      1024,
+		SessionId: "test-session",
 	}, mock.Anything).Return(&proto.ReadReply{
 		Bytes:  testData,
 		Size:   int64(len(testData)),
@@ -54,10 +55,11 @@ func (s *GrpcFileTestSuite) TestWrite() {
 	// Setup
 	testData := []byte("test data")
 	s.fileClient.EXPECT().Write(mock.Anything, &proto.WriteRequest{
-		Volume: "testVolume",
-		Fd:     1,
-		Bytes:  testData,
-		Offset: 0,
+		Volume:    "testVolume",
+		Fd:        1,
+		Bytes:     testData,
+		Offset:    0,
+		SessionId: "test-session",
 	}, mock.Anything).Return(&proto.WriteReply{
 		Written: uint32(len(testData)),
 		Status:  int32(fuse.OK),
@@ -74,8 +76,9 @@ func (s *GrpcFileTestSuite) TestWrite() {
 func (s *GrpcFileTestSuite) TestRelease() {
 	// Setup
 	s.fileClient.EXPECT().Release(mock.Anything, &proto.ReleaseRequest{
-		Volume: "testVolume",
-		Fd:     1,
+		Volume:    "testVolume",
+		Fd:        1,
+		SessionId: "test-session",
 	}, mock.Anything).Return(&proto.ReleaseReply{}, nil)
 
 	// Test
@@ -87,8 +90,9 @@ func (s *GrpcFileTestSuite) TestRelease() {
 func (s *GrpcFileTestSuite) TestFlush() {
 	// Setup
 	s.fileClient.EXPECT().Flush(mock.Anything, &proto.FlushRequest{
-		Volume: "testVolume",
-		Fd:     1,
+		Volume:    "testVolume",
+		Fd:        1,
+		SessionId: "test-session",
 	}, mock.Anything).Return(&proto.FlushReply{
 		Status: int32(fuse.OK),
 	}, nil)
@@ -103,9 +107,10 @@ func (s *GrpcFileTestSuite) TestFlush() {
 func (s *GrpcFileTestSuite) TestFsync() {
 	// Setup
 	s.fileClient.EXPECT().Fsync(mock.Anything, &proto.FsyncRequest{
-		Volume: "testVolume",
-		Fd:     1,
-		Flags:  0,
+		Volume:    "testVolume",
+		Fd:        1,
+		Flags:     0,
+		SessionId: "test-session",
 	}, mock.Anything).Return(&proto.FsyncReply{
 		Status: int32(fuse.OK),
 	}, nil)
@@ -136,6 +141,7 @@ func (s *GrpcFileTestSuite) TestGetLk() {
 			Typ:   testLock.Typ,
 			Pid:   testLock.Pid,
 		},
+		SessionId: "test-session",
 	}, mock.Anything).Return(&proto.GetLkReply{
 		Status: int32(fuse.OK),
 		Lk: &proto.FileLock{
@@ -177,6 +183,7 @@ func (s *GrpcFileTestSuite) TestSetLk() {
 			Typ:   testLock.Typ,
 			Pid:   testLock.Pid,
 		},
+		SessionId: "test-session",
 	}, mock.Anything).Return(&proto.SetLkReply{
 		Status: int32(fuse.OK),
 	}, nil)
@@ -207,6 +214,7 @@ func (s *GrpcFileTestSuite) TestSetLkw() {
 			Typ:   testLock.Typ,
 			Pid:   testLock.Pid,
 		},
+		SessionId: "test-session",
 	}, mock.Anything).Return(&proto.SetLkwReply{
 		Status: int32(fuse.OK),
 	}, nil)
@@ -221,11 +229,12 @@ func (s *GrpcFileTestSuite) TestSetLkw() {
 func (s *GrpcFileTestSuite) TestAllocate() {
 	// Setup
 	s.fileClient.EXPECT().Allocate(mock.Anything, &proto.AllocateRequest{
-		Volume: "testVolume",
-		Fd:     1,
-		Off:    0,
-		Size:   1024,
-		Mode:   0,
+		Volume:    "testVolume",
+		Fd:        1,
+		Off:       0,
+		Size:      1024,
+		Mode:      0,
+		SessionId: "test-session",
 	}, mock.Anything).Return(&proto.AllocateReply{
 		Status: int32(fuse.OK),
 	}, nil)
@@ -283,6 +292,17 @@ func (s *GrpcFileTestSuite) TestRead_RetriesOnUnavailable() {
 	s.Require().Equal(fuse.OK, st)
 	s.NotNil(result)
 	s.fileClient.AssertNumberOfCalls(s.T(), "Read", 2)
+}
+
+func (s *GrpcFileTestSuite) TestReadStampsSessionID() {
+	s.fileClient.EXPECT().Read(mock.Anything, mock.MatchedBy(func(req *proto.ReadRequest) bool {
+		return req.SessionId == "test-session"
+	}), mock.Anything).Return(&proto.ReadReply{Status: 0}, nil).Once()
+
+	f := NewGrpcFile(s.fileClient, "vol", "/p", 1, time.Second, "test-session")
+	buf := make([]byte, 4)
+	_, st := f.Read(buf, 0)
+	s.Assert().Equal(fuse.OK, st)
 }
 
 func TestGrpcFileTestSuite(t *testing.T) {

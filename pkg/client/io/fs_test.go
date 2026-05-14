@@ -31,6 +31,7 @@ func (s *LocalFileSystemTestSuite) SetupTest() {
 	s.client.EXPECT().File().Return(s.fileClient).Maybe()
 	s.client.EXPECT().MetaTimeout().Return(2 * time.Second).Maybe()
 	s.client.EXPECT().IOTimeout().Return(30 * time.Second).Maybe()
+	s.client.EXPECT().SessionID().Return("test-session").Maybe()
 	s.fs = NewLocalFileSystem(s.client, "testVolume").(*LocalFileSystem)
 }
 
@@ -172,10 +173,11 @@ func (s *LocalFileSystemTestSuite) TestOpenDir() {
 func (s *LocalFileSystemTestSuite) TestOpen() {
 	// Setup
 	s.fileClient.EXPECT().Open(mock.Anything, &proto.OpenRequest{
-		Volume: "testVolume",
-		Path:   "/test",
-		Flags:  0,
-		Caller: &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		Volume:    "testVolume",
+		Path:      "/test",
+		Flags:     0,
+		Caller:    &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		SessionId: "test-session",
 	}).Return(&proto.OpenReply{
 		Status: int32(fuse.OK),
 		Fd:     1,
@@ -196,14 +198,28 @@ func (s *LocalFileSystemTestSuite) TestOpen() {
 	s.Assert().IsType(&GrpcFile{}, file)
 }
 
+func (s *LocalFileSystemTestSuite) TestOpenStampsSessionID() {
+	s.fileClient.EXPECT().Open(mock.Anything, mock.MatchedBy(func(req *proto.OpenRequest) bool {
+		return req.SessionId == "test-session"
+	})).Return(&proto.OpenReply{Status: int32(fuse.OK), Fd: 1}, nil).Once()
+
+	file, st := s.fs.Open("/test", 0, &fuse.Context{
+		Caller: fuse.Caller{Owner: fuse.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		Cancel: nil,
+	})
+	s.Require().Equal(fuse.OK, st)
+	s.Require().NotNil(file)
+}
+
 func (s *LocalFileSystemTestSuite) TestCreate() {
 	// Setup
 	s.fileClient.EXPECT().Create(mock.Anything, &proto.CreateRequest{
-		Volume: "testVolume",
-		Path:   "/test",
-		Flags:  0,
-		Mode:   0644,
-		Caller: &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		Volume:    "testVolume",
+		Path:      "/test",
+		Flags:     0,
+		Mode:      0644,
+		Caller:    &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		SessionId: "test-session",
 	}).Return(&proto.CreateReply{
 		Status: int32(fuse.OK),
 		Fd:     1,

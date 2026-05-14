@@ -19,16 +19,18 @@ type GrpcFile struct {
 	volume     string
 	fd         uint64
 	ioTimeout  time.Duration
+	sessionID  string
 	nodefs.File
 }
 
-func NewGrpcFile(fileClient proto.RpcFileClient, volume, path string, fd uint64, ioTimeout time.Duration) *GrpcFile {
+func NewGrpcFile(fileClient proto.RpcFileClient, volume, path string, fd uint64, ioTimeout time.Duration, sessionID string) *GrpcFile {
 	return &GrpcFile{
 		fileClient: fileClient,
 		path:       path,
 		volume:     volume,
 		fd:         fd,
 		ioTimeout:  ioTimeout,
+		sessionID:  sessionID,
 		File:       nodefs.NewDefaultFile(),
 	}
 }
@@ -38,10 +40,11 @@ func (f *GrpcFile) Read(dest []byte, off int64) (fuse.ReadResult, fuse.Status) {
 	defer cancel()
 	res, err := retryableCall(ctx, "Read", func(ctx context.Context) (*proto.ReadReply, error) {
 		return f.fileClient.Read(ctx, &proto.ReadRequest{
-			Volume: f.volume,
-			Fd:     f.fd,
-			Offset: off,
-			Size:   uint32(len(dest)),
+			Volume:    f.volume,
+			Fd:        f.fd,
+			Offset:    off,
+			Size:      uint32(len(dest)),
+			SessionId: f.sessionID,
 		},
 			grpc.UseCompressor(snappy.Name),
 		)
@@ -57,10 +60,11 @@ func (f *GrpcFile) Write(data []byte, off int64) (written uint32, code fuse.Stat
 	ctx, cancel := withIOTimeout(context.Background(), f.ioTimeout)
 	defer cancel()
 	res, err := f.fileClient.Write(ctx, &proto.WriteRequest{
-		Volume: f.volume,
-		Fd:     f.fd,
-		Offset: off,
-		Bytes:  data,
+		Volume:    f.volume,
+		Fd:        f.fd,
+		Offset:    off,
+		Bytes:     data,
+		SessionId: f.sessionID,
 	},
 		grpc.UseCompressor(snappy.Name),
 	)
@@ -75,8 +79,9 @@ func (f *GrpcFile) Release() {
 	ctx, cancel := withIOTimeout(context.Background(), f.ioTimeout)
 	defer cancel()
 	_, err := f.fileClient.Release(ctx, &proto.ReleaseRequest{
-		Volume: f.volume,
-		Fd:     f.fd,
+		Volume:    f.volume,
+		Fd:        f.fd,
+		SessionId: f.sessionID,
 	})
 	if err != nil {
 		log.Log.Error("error in call: Release", zap.String("path", f.path), zap.Error(err))
@@ -87,8 +92,9 @@ func (f *GrpcFile) Flush() fuse.Status {
 	ctx, cancel := withIOTimeout(context.Background(), f.ioTimeout)
 	defer cancel()
 	res, err := f.fileClient.Flush(ctx, &proto.FlushRequest{
-		Volume: f.volume,
-		Fd:     f.fd,
+		Volume:    f.volume,
+		Fd:        f.fd,
+		SessionId: f.sessionID,
 	})
 	if err != nil {
 		log.Log.Error("error in call: Flush", zap.String("path", f.path), zap.Error(err))
@@ -101,9 +107,10 @@ func (f *GrpcFile) Fsync(flags int) fuse.Status {
 	ctx, cancel := withIOTimeout(context.Background(), f.ioTimeout)
 	defer cancel()
 	res, err := f.fileClient.Fsync(ctx, &proto.FsyncRequest{
-		Volume: f.volume,
-		Fd:     f.fd,
-		Flags:  int64(flags),
+		Volume:    f.volume,
+		Fd:        f.fd,
+		Flags:     int64(flags),
+		SessionId: f.sessionID,
 	})
 	if err != nil {
 		log.Log.Error("error in call: Fsync", zap.String("path", f.path), zap.Error(err))
@@ -116,11 +123,12 @@ func (f *GrpcFile) GetLk(owner uint64, lk *fuse.FileLock, flags uint32, out *fus
 	ctx, cancel := withIOTimeout(context.Background(), f.ioTimeout)
 	defer cancel()
 	res, err := f.fileClient.GetLk(ctx, &proto.GetLkRequest{
-		Volume: f.volume,
-		Fd:     f.fd,
-		Owner:  owner,
-		Flags:  flags,
-		Lk:     &proto.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid},
+		Volume:    f.volume,
+		Fd:        f.fd,
+		Owner:     owner,
+		Flags:     flags,
+		Lk:        &proto.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid},
+		SessionId: f.sessionID,
 	})
 	if err != nil {
 		log.Log.Error("error in call: GetLk", zap.String("path", f.path), zap.Error(err))
@@ -135,11 +143,12 @@ func (f *GrpcFile) SetLk(owner uint64, lk *fuse.FileLock, flags uint32) fuse.Sta
 	ctx, cancel := withIOTimeout(context.Background(), f.ioTimeout)
 	defer cancel()
 	res, err := f.fileClient.SetLk(ctx, &proto.SetLkRequest{
-		Volume: f.volume,
-		Fd:     f.fd,
-		Owner:  owner,
-		Flags:  flags,
-		Lk:     &proto.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid},
+		Volume:    f.volume,
+		Fd:        f.fd,
+		Owner:     owner,
+		Flags:     flags,
+		Lk:        &proto.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid},
+		SessionId: f.sessionID,
 	})
 	if err != nil {
 		log.Log.Error("error in call: SetLk", zap.String("path", f.path), zap.Error(err))
@@ -152,11 +161,12 @@ func (f *GrpcFile) SetLkw(owner uint64, lk *fuse.FileLock, flags uint32) fuse.St
 	ctx, cancel := withIOTimeout(context.Background(), f.ioTimeout)
 	defer cancel()
 	res, err := f.fileClient.SetLkw(ctx, &proto.SetLkwRequest{
-		Volume: f.volume,
-		Fd:     f.fd,
-		Owner:  owner,
-		Flags:  flags,
-		Lk:     &proto.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid},
+		Volume:    f.volume,
+		Fd:        f.fd,
+		Owner:     owner,
+		Flags:     flags,
+		Lk:        &proto.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid},
+		SessionId: f.sessionID,
 	})
 	if err != nil {
 		log.Log.Error("error in call: SetLkw", zap.String("path", f.path), zap.Error(err))
@@ -170,11 +180,12 @@ func (f *GrpcFile) Allocate(off uint64, size uint64, mode uint32) fuse.Status {
 	ctx, cancel := withIOTimeout(context.Background(), f.ioTimeout)
 	defer cancel()
 	res, err := f.fileClient.Allocate(ctx, &proto.AllocateRequest{
-		Volume: f.volume,
-		Fd:     f.fd,
-		Off:    off,
-		Size:   size,
-		Mode:   mode,
+		Volume:    f.volume,
+		Fd:        f.fd,
+		Off:       off,
+		Size:      size,
+		Mode:      mode,
+		SessionId: f.sessionID,
 	})
 	if err != nil {
 		log.Log.Error("error in call: Allocate", zap.String("path", f.path), zap.Error(err))

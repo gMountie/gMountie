@@ -54,6 +54,7 @@ func (s *VFSVolumeMounterTestSuite) SetupTest() {
 	// number including zero (Maybe) at well-defined fast values.
 	s.client.EXPECT().MetaTimeout().Return(2 * time.Second).Maybe()
 	s.client.EXPECT().IOTimeout().Return(30 * time.Second).Maybe()
+	s.client.EXPECT().SessionID().Return("test-session").Maybe()
 }
 
 func (s *VFSVolumeMounterTestSuite) TearDownTest() {

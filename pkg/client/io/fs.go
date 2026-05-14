@@ -220,10 +220,11 @@ func (fs *LocalFileSystem) Open(name string, flags uint32, fctx *fuse.Context) (
 	ctx, cancel := withMetaTimeout(fctx, fs.client.MetaTimeout())
 	defer cancel()
 	res, err := fs.client.File().Open(ctx, &proto.OpenRequest{
-		Volume: fs.volume,
-		Caller: createCaller(fctx),
-		Path:   name,
-		Flags:  flags,
+		Volume:    fs.volume,
+		Caller:    createCaller(fctx),
+		Path:      name,
+		Flags:     flags,
+		SessionId: fs.client.SessionID(),
 	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Open", zap.String("path", name), zap.Error(err))
@@ -232,18 +233,19 @@ func (fs *LocalFileSystem) Open(name string, flags uint32, fctx *fuse.Context) (
 	if fuse.Status(res.Status) != fuse.OK {
 		return nil, fuse.Status(res.Status)
 	}
-	return NewGrpcFile(fs.client.File(), fs.volume, name, res.Fd, fs.client.IOTimeout()), fuse.Status(res.Status)
+	return NewGrpcFile(fs.client.File(), fs.volume, name, res.Fd, fs.client.IOTimeout(), fs.client.SessionID()), fuse.Status(res.Status)
 }
 
 func (fs *LocalFileSystem) Create(name string, flags uint32, mode uint32, fctx *fuse.Context) (file nodefs.File, code fuse.Status) {
 	ctx, cancel := withMetaTimeout(fctx, fs.client.MetaTimeout())
 	defer cancel()
 	res, err := fs.client.File().Create(ctx, &proto.CreateRequest{
-		Volume: fs.volume,
-		Caller: createCaller(fctx),
-		Path:   name,
-		Flags:  flags,
-		Mode:   mode,
+		Volume:    fs.volume,
+		Caller:    createCaller(fctx),
+		Path:      name,
+		Flags:     flags,
+		Mode:      mode,
+		SessionId: fs.client.SessionID(),
 	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Create", zap.String("path", name), zap.Error(err))
@@ -252,7 +254,7 @@ func (fs *LocalFileSystem) Create(name string, flags uint32, mode uint32, fctx *
 	if fuse.Status(res.Status) != fuse.OK {
 		return nil, fuse.Status(res.Status)
 	}
-	return NewGrpcFile(fs.client.File(), fs.volume, name, res.Fd, fs.client.IOTimeout()), fuse.Status(res.Status)
+	return NewGrpcFile(fs.client.File(), fs.volume, name, res.Fd, fs.client.IOTimeout(), fs.client.SessionID()), fuse.Status(res.Status)
 }
 
 func (fs *LocalFileSystem) Unlink(name string, fctx *fuse.Context) (code fuse.Status) {
