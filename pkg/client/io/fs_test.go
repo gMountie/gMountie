@@ -30,6 +30,7 @@ func (s *LocalFileSystemTestSuite) SetupTest() {
 	s.client.EXPECT().Fs().Return(s.fsClient).Maybe()
 	s.client.EXPECT().File().Return(s.fileClient).Maybe()
 	s.client.EXPECT().MetaTimeout().Return(2 * time.Second).Maybe()
+	s.client.EXPECT().IOTimeout().Return(30 * time.Second).Maybe()
 	s.fs = NewLocalFileSystem(s.client, "testVolume").(*LocalFileSystem)
 }
 

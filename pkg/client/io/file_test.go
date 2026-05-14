@@ -5,10 +5,13 @@ import (
 	mockProto "gmountie/internal/mocks/pkg/proto"
 	"gmountie/pkg/proto"
 	"testing"
+	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type GrpcFileTestSuite struct {
@@ -19,7 +22,7 @@ type GrpcFileTestSuite struct {
 
 func (s *GrpcFileTestSuite) SetupTest() {
 	s.fileClient = mockProto.NewMockRpcFileClient(s.T())
-	s.file = NewGrpcFile(s.fileClient, "testVolume", "/test/path", 1)
+	s.file = NewGrpcFile(s.fileClient, "testVolume", "/test/path", 1, 30*time.Second)
 }
 
 func (s *GrpcFileTestSuite) TestRead() {
@@ -260,6 +263,26 @@ func (s *GrpcFileTestSuite) TestWrite_Error() {
 	// Verify
 	s.Assert().Equal(fuse.EIO, status)
 	s.Assert().Equal(uint32(0), written)
+}
+
+// TestRead_RetriesOnUnavailable verifies that Read survives a single
+// transient Unavailable.
+func (s *GrpcFileTestSuite) TestRead_RetriesOnUnavailable() {
+	dest := make([]byte, 10)
+
+	s.fileClient.EXPECT().Read(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, status.Error(codes.Unavailable, "down")).Once()
+	s.fileClient.EXPECT().Read(mock.Anything, mock.Anything, mock.Anything).
+		Return(&proto.ReadReply{
+			Bytes:  []byte("0123456789"),
+			Status: int32(fuse.OK),
+		}, nil).Once()
+
+	result, st := s.file.Read(dest, 0)
+
+	s.Require().Equal(fuse.OK, st)
+	s.NotNil(result)
+	s.fileClient.AssertNumberOfCalls(s.T(), "Read", 2)
 }
 
 func TestGrpcFileTestSuite(t *testing.T) {
