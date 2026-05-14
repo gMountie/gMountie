@@ -45,7 +45,7 @@ func (m *SingleVolumeMounterImpl) Mount(volume, path string) error {
 	connector := nodefs.NewFileSystemConnector(nodeFS.Root(), createConnectorOptions())
 	server, err := fuse.NewServer(connector.RawFS(), path, createMountOptions(m.client.GetEndpoint(), volume))
 	if err != nil {
-		log.Log.Sugar().Fatalf("mount fail: %v\n", err)
+		return errors.Wrap(err, "mount fail")
 	}
 
 	// Create the mount
