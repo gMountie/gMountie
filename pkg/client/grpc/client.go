@@ -8,6 +8,7 @@ import (
 	"gmountie/pkg/proto"
 	"gmountie/pkg/utils/log"
 
+	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -161,8 +162,12 @@ func (c *ClientImpl) IOTimeout() time.Duration {
 
 // GetInterceptors returns the ClientImpl interceptors
 func getInterceptors() []grpc.UnaryClientInterceptor {
+	opts := []logging.Option{
+		logging.WithLogOnEvents(logging.FinishCall),
+	}
 	return []grpc.UnaryClientInterceptor{
 		commongrpc.ClientUnaryRequestID(),
+		logging.UnaryClientInterceptor(commongrpc.InterceptorLogger(log.Log), opts...),
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
@@ -22,7 +23,9 @@ func ServerUnaryRequestID() grpc.UnaryServerInterceptor {
 		if id == "" {
 			id = uuid.NewString()
 		}
-		return handler(NewContextWithRequestID(ctx, id), req)
+		ctx = NewContextWithRequestID(ctx, id)
+		ctx = logging.InjectLogField(ctx, "request_id", id)
+		return handler(ctx, req)
 	}
 }
 
@@ -36,6 +39,7 @@ func ClientUnaryRequestID() grpc.UnaryClientInterceptor {
 			id = uuid.NewString()
 			ctx = NewContextWithRequestID(ctx, id)
 		}
+		ctx = logging.InjectLogField(ctx, "request_id", id)
 		ctx = metadata.AppendToOutgoingContext(ctx, RequestIDMetadataKey, id)
 		return invoker(ctx, method, req, reply, cc, opts...)
 	}
