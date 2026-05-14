@@ -76,13 +76,10 @@ func (s *LocalFileSystemTestSuite) TestGetAttr() {
 
 func (s *LocalFileSystemTestSuite) TestMkdir() {
 	// Setup
-	s.fsClient.EXPECT().Mkdir(mock.Anything, &proto.MkdirRequest{
-		Volume:    "testVolume",
-		Path:      "/test",
-		Mode:      0755,
-		Caller:    &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
-		SessionId: "test-session",
-	}).Return(&proto.MkdirReply{Status: int32(fuse.OK)}, nil)
+	s.fsClient.EXPECT().Mkdir(mock.Anything, mock.MatchedBy(func(req *proto.MkdirRequest) bool {
+		return req.Volume == "testVolume" && req.Path == "/test" && req.Mode == 0755 &&
+			req.SessionId == "test-session" && req.RequestId != ""
+	})).Return(&proto.MkdirReply{Status: int32(fuse.OK)}, nil)
 
 	// Test
 	status := s.fs.Mkdir("/test", 0755, &fuse.Context{
@@ -99,12 +96,10 @@ func (s *LocalFileSystemTestSuite) TestMkdir() {
 
 func (s *LocalFileSystemTestSuite) TestRmdir() {
 	// Setup
-	s.fsClient.EXPECT().Rmdir(mock.Anything, &proto.RmdirRequest{
-		Volume:    "testVolume",
-		Path:      "/test",
-		Caller:    &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
-		SessionId: "test-session",
-	}).Return(&proto.RmdirReply{Status: int32(fuse.OK)}, nil)
+	s.fsClient.EXPECT().Rmdir(mock.Anything, mock.MatchedBy(func(req *proto.RmdirRequest) bool {
+		return req.Volume == "testVolume" && req.Path == "/test" &&
+			req.SessionId == "test-session" && req.RequestId != ""
+	})).Return(&proto.RmdirReply{Status: int32(fuse.OK)}, nil)
 
 	// Test
 	status := s.fs.Rmdir("/test", &fuse.Context{
@@ -121,13 +116,10 @@ func (s *LocalFileSystemTestSuite) TestRmdir() {
 
 func (s *LocalFileSystemTestSuite) TestRename() {
 	// Setup
-	s.fsClient.EXPECT().Rename(mock.Anything, &proto.RenameRequest{
-		Volume:    "testVolume",
-		OldName:   "/old",
-		NewName:   "/new",
-		Caller:    &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
-		SessionId: "test-session",
-	}).Return(&proto.RenameReply{Status: int32(fuse.OK)}, nil)
+	s.fsClient.EXPECT().Rename(mock.Anything, mock.MatchedBy(func(req *proto.RenameRequest) bool {
+		return req.Volume == "testVolume" && req.OldName == "/old" && req.NewName == "/new" &&
+			req.SessionId == "test-session" && req.RequestId != ""
+	})).Return(&proto.RenameReply{Status: int32(fuse.OK)}, nil)
 
 	// Test
 	status := s.fs.Rename("/old", "/new", &fuse.Context{
@@ -175,13 +167,10 @@ func (s *LocalFileSystemTestSuite) TestOpenDir() {
 
 func (s *LocalFileSystemTestSuite) TestOpen() {
 	// Setup
-	s.fileClient.EXPECT().Open(mock.Anything, &proto.OpenRequest{
-		Volume:    "testVolume",
-		Path:      "/test",
-		Flags:     0,
-		Caller:    &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
-		SessionId: "test-session",
-	}).Return(&proto.OpenReply{
+	s.fileClient.EXPECT().Open(mock.Anything, mock.MatchedBy(func(req *proto.OpenRequest) bool {
+		return req.Volume == "testVolume" && req.Path == "/test" && req.Flags == 0 &&
+			req.SessionId == "test-session" && req.RequestId != ""
+	})).Return(&proto.OpenReply{
 		Status: int32(fuse.OK),
 		Fd:     1,
 	}, nil)
@@ -216,14 +205,10 @@ func (s *LocalFileSystemTestSuite) TestOpenStampsSessionID() {
 
 func (s *LocalFileSystemTestSuite) TestCreate() {
 	// Setup
-	s.fileClient.EXPECT().Create(mock.Anything, &proto.CreateRequest{
-		Volume:    "testVolume",
-		Path:      "/test",
-		Flags:     0,
-		Mode:      0644,
-		Caller:    &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
-		SessionId: "test-session",
-	}).Return(&proto.CreateReply{
+	s.fileClient.EXPECT().Create(mock.Anything, mock.MatchedBy(func(req *proto.CreateRequest) bool {
+		return req.Volume == "testVolume" && req.Path == "/test" && req.Flags == 0 && req.Mode == 0644 &&
+			req.SessionId == "test-session" && req.RequestId != ""
+	})).Return(&proto.CreateReply{
 		Status: int32(fuse.OK),
 		Fd:     1,
 	}, nil)
@@ -245,12 +230,10 @@ func (s *LocalFileSystemTestSuite) TestCreate() {
 
 func (s *LocalFileSystemTestSuite) TestUnlink() {
 	// Setup
-	s.fsClient.EXPECT().Unlink(mock.Anything, &proto.UnlinkRequest{
-		Volume:    "testVolume",
-		Path:      "/test",
-		Caller:    &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
-		SessionId: "test-session",
-	}).Return(&proto.UnlinkReply{Status: int32(fuse.OK)}, nil)
+	s.fsClient.EXPECT().Unlink(mock.Anything, mock.MatchedBy(func(req *proto.UnlinkRequest) bool {
+		return req.Volume == "testVolume" && req.Path == "/test" &&
+			req.SessionId == "test-session" && req.RequestId != ""
+	})).Return(&proto.UnlinkReply{Status: int32(fuse.OK)}, nil)
 
 	// Test
 	status := s.fs.Unlink("/test", &fuse.Context{
@@ -292,13 +275,10 @@ func (s *LocalFileSystemTestSuite) TestStatFs() {
 
 func (s *LocalFileSystemTestSuite) TestChmod() {
 	// Setup
-	s.fsClient.EXPECT().Chmod(mock.Anything, &proto.ChmodRequest{
-		Volume:    "testVolume",
-		Path:      "/test",
-		Mode:      0644,
-		Caller:    &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
-		SessionId: "test-session",
-	}).Return(&proto.ChmodReply{Status: int32(fuse.OK)}, nil)
+	s.fsClient.EXPECT().Chmod(mock.Anything, mock.MatchedBy(func(req *proto.ChmodRequest) bool {
+		return req.Volume == "testVolume" && req.Path == "/test" && req.Mode == 0644 &&
+			req.SessionId == "test-session" && req.RequestId != ""
+	})).Return(&proto.ChmodReply{Status: int32(fuse.OK)}, nil)
 
 	// Test
 	status := s.fs.Chmod("/test", 0644, &fuse.Context{
@@ -315,14 +295,10 @@ func (s *LocalFileSystemTestSuite) TestChmod() {
 
 func (s *LocalFileSystemTestSuite) TestChown() {
 	// Setup
-	s.fsClient.EXPECT().Chown(mock.Anything, &proto.ChownRequest{
-		Volume:    "testVolume",
-		Path:      "/test",
-		Uid:       1001,
-		Gid:       1001,
-		Caller:    &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
-		SessionId: "test-session",
-	}).Return(&proto.ChownReply{Status: int32(fuse.OK)}, nil)
+	s.fsClient.EXPECT().Chown(mock.Anything, mock.MatchedBy(func(req *proto.ChownRequest) bool {
+		return req.Volume == "testVolume" && req.Path == "/test" && req.Uid == 1001 && req.Gid == 1001 &&
+			req.SessionId == "test-session" && req.RequestId != ""
+	})).Return(&proto.ChownReply{Status: int32(fuse.OK)}, nil)
 
 	// Test
 	status := s.fs.Chown("/test", 1001, 1001, &fuse.Context{
@@ -361,13 +337,10 @@ func (s *LocalFileSystemTestSuite) TestAccess() {
 
 func (s *LocalFileSystemTestSuite) TestTruncate() {
 	// Setup
-	s.fsClient.EXPECT().Truncate(mock.Anything, &proto.TruncateRequest{
-		Volume:    "testVolume",
-		Path:      "/test",
-		Size:      1024,
-		Caller:    &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
-		SessionId: "test-session",
-	}).Return(&proto.TruncateReply{Status: int32(fuse.OK)}, nil)
+	s.fsClient.EXPECT().Truncate(mock.Anything, mock.MatchedBy(func(req *proto.TruncateRequest) bool {
+		return req.Volume == "testVolume" && req.Path == "/test" && req.Size == 1024 &&
+			req.SessionId == "test-session" && req.RequestId != ""
+	})).Return(&proto.TruncateReply{Status: int32(fuse.OK)}, nil)
 
 	// Test
 	status := s.fs.Truncate("/test", 1024, &fuse.Context{
@@ -480,6 +453,44 @@ func (s *LocalFileSystemTestSuite) TestGetAttr_RetriesOnUnavailable() {
 	s.Require().Equal(fuse.OK, st)
 	s.NotNil(attr)
 	s.fsClient.AssertNumberOfCalls(s.T(), "GetAttr", 2)
+}
+
+// TestMkdirRetriesOnUnavailable verifies that a transient Unavailable on a
+// mutating op is retried by retryableCall, ultimately succeeding.
+func (s *LocalFileSystemTestSuite) TestMkdirRetriesOnUnavailable() {
+	s.fsClient.EXPECT().Mkdir(mock.Anything, mock.Anything).
+		Return(nil, status.Error(codes.Unavailable, "transient")).Once()
+	s.fsClient.EXPECT().Mkdir(mock.Anything, mock.MatchedBy(func(req *proto.MkdirRequest) bool {
+		return req.RequestId != ""
+	})).Return(&proto.MkdirReply{Status: int32(fuse.OK)}, nil).Once()
+
+	st := s.fs.Mkdir("/d", 0755, &fuse.Context{
+		Caller: fuse.Caller{Owner: fuse.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		Cancel: make(chan struct{}),
+	})
+	s.Assert().Equal(fuse.OK, st)
+}
+
+// TestMkdirRetryReusesRequestID is the load-bearing assertion: the same
+// request_id must be reused across retries so the server's dedup cache can
+// short-circuit the duplicate attempt.
+func (s *LocalFileSystemTestSuite) TestMkdirRetryReusesRequestID() {
+	var firstID string
+	s.fsClient.EXPECT().Mkdir(mock.Anything, mock.MatchedBy(func(req *proto.MkdirRequest) bool {
+		firstID = req.RequestId
+		return req.RequestId != ""
+	})).Return(nil, status.Error(codes.Unavailable, "transient")).Once()
+
+	s.fsClient.EXPECT().Mkdir(mock.Anything, mock.MatchedBy(func(req *proto.MkdirRequest) bool {
+		return req.RequestId == firstID
+	})).Return(&proto.MkdirReply{Status: int32(fuse.OK)}, nil).Once()
+
+	st := s.fs.Mkdir("/d", 0755, &fuse.Context{
+		Caller: fuse.Caller{Owner: fuse.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		Cancel: make(chan struct{}),
+	})
+	s.Assert().Equal(fuse.OK, st)
+	s.Assert().NotEmpty(firstID)
 }
 
 func TestLocalFileSystemTestSuite(t *testing.T) {

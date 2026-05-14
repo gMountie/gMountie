@@ -6,6 +6,7 @@ import (
 	"gmountie/pkg/proto"
 	"gmountie/pkg/utils/log"
 
+	"github.com/google/uuid"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hanwen/go-fuse/v2/fuse/nodefs"
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
@@ -170,12 +171,16 @@ func (fs *LocalFileSystem) StatFs(name string) *fuse.StatfsOut {
 func (fs *LocalFileSystem) Mkdir(name string, mode uint32, fctx *fuse.Context) fuse.Status {
 	ctx, cancel := withMetaTimeout(fctx, fs.client.MetaTimeout())
 	defer cancel()
-	res, err := fs.client.Fs().Mkdir(ctx, &proto.MkdirRequest{
-		Volume:    fs.volume,
-		Caller:    createCaller(fctx),
-		Path:      name,
-		Mode:      mode,
-		SessionId: fs.client.SessionID(),
+	requestID := uuid.NewString()
+	res, err := retryableCall(ctx, "Mkdir", func(ctx context.Context) (*proto.MkdirReply, error) {
+		return fs.client.Fs().Mkdir(ctx, &proto.MkdirRequest{
+			Volume:    fs.volume,
+			Caller:    createCaller(fctx),
+			Path:      name,
+			Mode:      mode,
+			SessionId: fs.client.SessionID(),
+			RequestId: requestID,
+		})
 	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: MkDir", zap.String("path", name), zap.Error(err))
@@ -188,11 +193,15 @@ func (fs *LocalFileSystem) Mkdir(name string, mode uint32, fctx *fuse.Context) f
 func (fs *LocalFileSystem) Rmdir(name string, fctx *fuse.Context) (code fuse.Status) {
 	ctx, cancel := withMetaTimeout(fctx, fs.client.MetaTimeout())
 	defer cancel()
-	res, err := fs.client.Fs().Rmdir(ctx, &proto.RmdirRequest{
-		Volume:    fs.volume,
-		Caller:    createCaller(fctx),
-		Path:      name,
-		SessionId: fs.client.SessionID(),
+	requestID := uuid.NewString()
+	res, err := retryableCall(ctx, "Rmdir", func(ctx context.Context) (*proto.RmdirReply, error) {
+		return fs.client.Fs().Rmdir(ctx, &proto.RmdirRequest{
+			Volume:    fs.volume,
+			Caller:    createCaller(fctx),
+			Path:      name,
+			SessionId: fs.client.SessionID(),
+			RequestId: requestID,
+		})
 	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: RmDir", zap.String("path", name), zap.Error(err))
@@ -205,12 +214,16 @@ func (fs *LocalFileSystem) Rmdir(name string, fctx *fuse.Context) (code fuse.Sta
 func (fs *LocalFileSystem) Rename(oldName string, newName string, fctx *fuse.Context) (code fuse.Status) {
 	ctx, cancel := withMetaTimeout(fctx, fs.client.MetaTimeout())
 	defer cancel()
-	res, err := fs.client.Fs().Rename(ctx, &proto.RenameRequest{
-		Volume:    fs.volume,
-		Caller:    createCaller(fctx),
-		OldName:   oldName,
-		NewName:   newName,
-		SessionId: fs.client.SessionID(),
+	requestID := uuid.NewString()
+	res, err := retryableCall(ctx, "Rename", func(ctx context.Context) (*proto.RenameReply, error) {
+		return fs.client.Fs().Rename(ctx, &proto.RenameRequest{
+			Volume:    fs.volume,
+			Caller:    createCaller(fctx),
+			OldName:   oldName,
+			NewName:   newName,
+			SessionId: fs.client.SessionID(),
+			RequestId: requestID,
+		})
 	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Rename", zap.String("oldName", oldName), zap.String("newName", newName), zap.Error(err))
@@ -222,12 +235,16 @@ func (fs *LocalFileSystem) Rename(oldName string, newName string, fctx *fuse.Con
 func (fs *LocalFileSystem) Open(name string, flags uint32, fctx *fuse.Context) (file nodefs.File, code fuse.Status) {
 	ctx, cancel := withMetaTimeout(fctx, fs.client.MetaTimeout())
 	defer cancel()
-	res, err := fs.client.File().Open(ctx, &proto.OpenRequest{
-		Volume:    fs.volume,
-		Caller:    createCaller(fctx),
-		Path:      name,
-		Flags:     flags,
-		SessionId: fs.client.SessionID(),
+	requestID := uuid.NewString()
+	res, err := retryableCall(ctx, "Open", func(ctx context.Context) (*proto.OpenReply, error) {
+		return fs.client.File().Open(ctx, &proto.OpenRequest{
+			Volume:    fs.volume,
+			Caller:    createCaller(fctx),
+			Path:      name,
+			Flags:     flags,
+			SessionId: fs.client.SessionID(),
+			RequestId: requestID,
+		})
 	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Open", zap.String("path", name), zap.Error(err))
@@ -242,13 +259,17 @@ func (fs *LocalFileSystem) Open(name string, flags uint32, fctx *fuse.Context) (
 func (fs *LocalFileSystem) Create(name string, flags uint32, mode uint32, fctx *fuse.Context) (file nodefs.File, code fuse.Status) {
 	ctx, cancel := withMetaTimeout(fctx, fs.client.MetaTimeout())
 	defer cancel()
-	res, err := fs.client.File().Create(ctx, &proto.CreateRequest{
-		Volume:    fs.volume,
-		Caller:    createCaller(fctx),
-		Path:      name,
-		Flags:     flags,
-		Mode:      mode,
-		SessionId: fs.client.SessionID(),
+	requestID := uuid.NewString()
+	res, err := retryableCall(ctx, "Create", func(ctx context.Context) (*proto.CreateReply, error) {
+		return fs.client.File().Create(ctx, &proto.CreateRequest{
+			Volume:    fs.volume,
+			Caller:    createCaller(fctx),
+			Path:      name,
+			Flags:     flags,
+			Mode:      mode,
+			SessionId: fs.client.SessionID(),
+			RequestId: requestID,
+		})
 	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Create", zap.String("path", name), zap.Error(err))
@@ -263,11 +284,15 @@ func (fs *LocalFileSystem) Create(name string, flags uint32, mode uint32, fctx *
 func (fs *LocalFileSystem) Unlink(name string, fctx *fuse.Context) (code fuse.Status) {
 	ctx, cancel := withMetaTimeout(fctx, fs.client.MetaTimeout())
 	defer cancel()
-	res, err := fs.client.Fs().Unlink(ctx, &proto.UnlinkRequest{
-		Volume:    fs.volume,
-		Caller:    createCaller(fctx),
-		Path:      name,
-		SessionId: fs.client.SessionID(),
+	requestID := uuid.NewString()
+	res, err := retryableCall(ctx, "Unlink", func(ctx context.Context) (*proto.UnlinkReply, error) {
+		return fs.client.Fs().Unlink(ctx, &proto.UnlinkRequest{
+			Volume:    fs.volume,
+			Caller:    createCaller(fctx),
+			Path:      name,
+			SessionId: fs.client.SessionID(),
+			RequestId: requestID,
+		})
 	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Unlink", zap.String("path", name), zap.Error(err))
@@ -280,12 +305,16 @@ func (fs *LocalFileSystem) Unlink(name string, fctx *fuse.Context) (code fuse.St
 func (fs *LocalFileSystem) Truncate(name string, size uint64, fctx *fuse.Context) (code fuse.Status) {
 	ctx, cancel := withMetaTimeout(fctx, fs.client.MetaTimeout())
 	defer cancel()
-	res, err := fs.client.Fs().Truncate(ctx, &proto.TruncateRequest{
-		Volume:    fs.volume,
-		Caller:    createCaller(fctx),
-		Path:      name,
-		Size:      size,
-		SessionId: fs.client.SessionID(),
+	requestID := uuid.NewString()
+	res, err := retryableCall(ctx, "Truncate", func(ctx context.Context) (*proto.TruncateReply, error) {
+		return fs.client.Fs().Truncate(ctx, &proto.TruncateRequest{
+			Volume:    fs.volume,
+			Caller:    createCaller(fctx),
+			Path:      name,
+			Size:      size,
+			SessionId: fs.client.SessionID(),
+			RequestId: requestID,
+		})
 	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Truncate", zap.String("path", name), zap.Error(err))
@@ -298,12 +327,16 @@ func (fs *LocalFileSystem) Truncate(name string, size uint64, fctx *fuse.Context
 func (fs *LocalFileSystem) Chmod(name string, mode uint32, fctx *fuse.Context) (code fuse.Status) {
 	ctx, cancel := withMetaTimeout(fctx, fs.client.MetaTimeout())
 	defer cancel()
-	res, err := fs.client.Fs().Chmod(ctx, &proto.ChmodRequest{
-		Volume:    fs.volume,
-		Caller:    createCaller(fctx),
-		Path:      name,
-		Mode:      mode,
-		SessionId: fs.client.SessionID(),
+	requestID := uuid.NewString()
+	res, err := retryableCall(ctx, "Chmod", func(ctx context.Context) (*proto.ChmodReply, error) {
+		return fs.client.Fs().Chmod(ctx, &proto.ChmodRequest{
+			Volume:    fs.volume,
+			Caller:    createCaller(fctx),
+			Path:      name,
+			Mode:      mode,
+			SessionId: fs.client.SessionID(),
+			RequestId: requestID,
+		})
 	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Chmod", zap.String("path", name), zap.Error(err))
@@ -316,13 +349,17 @@ func (fs *LocalFileSystem) Chmod(name string, mode uint32, fctx *fuse.Context) (
 func (fs *LocalFileSystem) Chown(name string, uid uint32, gid uint32, fctx *fuse.Context) (code fuse.Status) {
 	ctx, cancel := withMetaTimeout(fctx, fs.client.MetaTimeout())
 	defer cancel()
-	res, err := fs.client.Fs().Chown(ctx, &proto.ChownRequest{
-		Volume:    fs.volume,
-		Caller:    createCaller(fctx),
-		Path:      name,
-		Uid:       uid,
-		Gid:       gid,
-		SessionId: fs.client.SessionID(),
+	requestID := uuid.NewString()
+	res, err := retryableCall(ctx, "Chown", func(ctx context.Context) (*proto.ChownReply, error) {
+		return fs.client.Fs().Chown(ctx, &proto.ChownRequest{
+			Volume:    fs.volume,
+			Caller:    createCaller(fctx),
+			Path:      name,
+			Uid:       uid,
+			Gid:       gid,
+			SessionId: fs.client.SessionID(),
+			RequestId: requestID,
+		})
 	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Chown", zap.String("path", name), zap.Error(err))
