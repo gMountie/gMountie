@@ -1,0 +1,47 @@
+syntax = "proto3";
+package gmountie;
+option go_package = "pkg/proto";
+
+// SessionCreateRequest opens a new session on the server. The server allocates
+// a session_id (UUID v4) and returns it; the client must pass this id on every
+// subsequent file RPC and hold open a Keepalive stream for the session's
+// lifetime.
+message SessionCreateRequest {
+}
+
+message SessionCreateReply {
+  string session_id = 1;
+}
+
+// SessionResumeRequest re-attaches to a session that the server is still
+// tracking. The server returns OK only if the session exists and has not yet
+// been reaped past its grace period. On OK, any pending grace-period timer for
+// that session is cancelled and the client's previously-opened fds remain
+// valid.
+message SessionResumeRequest {
+  string session_id = 1;
+}
+
+message SessionResumeReply {
+  bool resumed = 1;
+}
+
+// KeepaliveRequest is the single message a client sends to open the
+// liveness stream. The server holds the stream open and never writes; when
+// the stream context cancels, the server starts the grace timer for that
+// session.
+message KeepaliveRequest {
+  string session_id = 1;
+}
+
+// KeepalivePing is the server's heartbeat. It carries no payload — its
+// presence on the wire is the heartbeat. Server emits one every ~10s so a
+// silently-broken connection surfaces faster than gRPC keepalive alone.
+message KeepalivePing {
+}
+
+service SessionService {
+  rpc Create (SessionCreateRequest) returns (SessionCreateReply);
+  rpc Resume (SessionResumeRequest) returns (SessionResumeReply);
+  rpc Keepalive (KeepaliveRequest) returns (stream KeepalivePing);
+}
