@@ -7,6 +7,7 @@ import (
 	"gmountie/pkg/utils/log"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hanwen/go-fuse/v2/fuse/nodefs"
 	"go.uber.org/zap"
@@ -59,15 +60,19 @@ func (f *GrpcFile) Read(dest []byte, off int64) (fuse.ReadResult, fuse.Status) {
 func (f *GrpcFile) Write(data []byte, off int64) (written uint32, code fuse.Status) {
 	ctx, cancel := withIOTimeout(context.Background(), f.ioTimeout)
 	defer cancel()
-	res, err := f.fileClient.Write(ctx, &proto.WriteRequest{
-		Volume:    f.volume,
-		Fd:        f.fd,
-		Offset:    off,
-		Bytes:     data,
-		SessionId: f.sessionID,
-	},
-		grpc.UseCompressor(snappy.Name),
-	)
+	requestID := uuid.NewString()
+	res, err := retryableCall(ctx, "Write", func(ctx context.Context) (*proto.WriteReply, error) {
+		return f.fileClient.Write(ctx, &proto.WriteRequest{
+			Volume:    f.volume,
+			Fd:        f.fd,
+			Offset:    off,
+			Bytes:     data,
+			SessionId: f.sessionID,
+			RequestId: requestID,
+		},
+			grpc.UseCompressor(snappy.Name),
+		)
+	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Write", zap.String("path", f.path), zap.Error(err))
 		return 0, fuse.EIO

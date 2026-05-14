@@ -54,13 +54,14 @@ func (s *GrpcFileTestSuite) TestRead() {
 func (s *GrpcFileTestSuite) TestWrite() {
 	// Setup
 	testData := []byte("test data")
-	s.fileClient.EXPECT().Write(mock.Anything, &proto.WriteRequest{
-		Volume:    "testVolume",
-		Fd:        1,
-		Bytes:     testData,
-		Offset:    0,
-		SessionId: "test-session",
-	}, mock.Anything).Return(&proto.WriteReply{
+	s.fileClient.EXPECT().Write(mock.Anything, mock.MatchedBy(func(req *proto.WriteRequest) bool {
+		return req.Volume == "testVolume" &&
+			req.Fd == 1 &&
+			req.Offset == 0 &&
+			string(req.Bytes) == string(testData) &&
+			req.SessionId == "test-session" &&
+			req.RequestId != ""
+	}), mock.Anything).Return(&proto.WriteReply{
 		Written: uint32(len(testData)),
 		Status:  int32(fuse.OK),
 	}, nil)
@@ -71,6 +72,34 @@ func (s *GrpcFileTestSuite) TestWrite() {
 	// Verify
 	s.Require().Equal(fuse.OK, status)
 	s.Assert().Equal(uint32(len(testData)), written)
+}
+
+func (s *GrpcFileTestSuite) TestWriteRetriesOnUnavailable() {
+	s.fileClient.EXPECT().Write(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, status.Error(codes.Unavailable, "transient")).Once()
+	s.fileClient.EXPECT().Write(mock.Anything, mock.MatchedBy(func(req *proto.WriteRequest) bool {
+		return req.RequestId != "" && req.SessionId == "test-session"
+	}), mock.Anything).Return(&proto.WriteReply{Written: 5, Status: 0}, nil).Once()
+
+	f := NewGrpcFile(s.fileClient, "vol", "/p", 1, time.Second, "test-session")
+	n, st := f.Write([]byte("hello"), 0)
+	s.Require().Equal(fuse.OK, st)
+	s.Assert().Equal(uint32(5), n)
+}
+
+func (s *GrpcFileTestSuite) TestWriteRetryReusesRequestID() {
+	var firstID string
+	s.fileClient.EXPECT().Write(mock.Anything, mock.MatchedBy(func(req *proto.WriteRequest) bool {
+		firstID = req.RequestId
+		return req.RequestId != ""
+	}), mock.Anything).Return(nil, status.Error(codes.Unavailable, "transient")).Once()
+	s.fileClient.EXPECT().Write(mock.Anything, mock.MatchedBy(func(req *proto.WriteRequest) bool {
+		return req.RequestId == firstID
+	}), mock.Anything).Return(&proto.WriteReply{Written: 5, Status: 0}, nil).Once()
+
+	f := NewGrpcFile(s.fileClient, "vol", "/p", 1, time.Second, "test-session")
+	_, _ = f.Write([]byte("hello"), 0)
+	s.Assert().NotEmpty(firstID)
 }
 
 func (s *GrpcFileTestSuite) TestRelease() {
