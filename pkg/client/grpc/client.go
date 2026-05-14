@@ -1,26 +1,32 @@
 package grpc
 
 import (
+	"time"
+
 	"gmountie/pkg/proto"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// Client is the interface for the gRPC Client
+// Client is the interface for the gRPC Client.
 type Client interface {
-	// GetEndpoint returns the gRPC Client endpoint
+	// GetEndpoint returns the gRPC Client endpoint.
 	GetEndpoint() string
-	// Connect connects to the gRPC server
+	// Connect connects to the gRPC server.
 	Connect()
-	// Close closes the gRPC Client connection
+	// Close closes the gRPC Client connection.
 	Close() error
-	// File returns the gRPC File client
+	// File returns the gRPC File client.
 	File() proto.RpcFileClient
-	// Fs returns the gRPC Fs client
+	// Fs returns the gRPC Fs client.
 	Fs() proto.RpcFsClient
-	// Volume returns the gRPC Volume client
+	// Volume returns the gRPC Volume client.
 	Volume() proto.VolumeServiceClient
+	// MetaTimeout returns the per-RPC timeout for metadata operations.
+	MetaTimeout() time.Duration
+	// IOTimeout returns the per-RPC timeout for data operations.
+	IOTimeout() time.Duration
 }
 
 // ClientImpl is a struct that holds the gRPC ClientImpl
@@ -31,6 +37,8 @@ type ClientImpl struct {
 	fs          proto.RpcFsClient
 	file        proto.RpcFileClient
 	volume      proto.VolumeServiceClient
+	metaTimeout time.Duration
+	ioTimeout   time.Duration
 }
 
 // -------------------- ClientImpl Options --------------------
@@ -53,11 +61,23 @@ func WithBasicAuth(username, password string) ClientOption {
 	}
 }
 
+// WithTimeouts sets the per-RPC timeouts on the gRPC Client.
+func WithTimeouts(meta, io time.Duration) ClientOption {
+	return func(c *ClientImpl) {
+		c.metaTimeout = meta
+		c.ioTimeout = io
+	}
+}
+
 // ---------------------- Constructor ----------------------
 
 // NewClient creates a new gRPC ClientImpl
 func NewClient(endpoint string, options ...ClientOption) (Client, error) {
-	c := ClientImpl{endpoint: endpoint}
+	c := ClientImpl{
+		endpoint:    endpoint,
+		metaTimeout: 5 * time.Second,
+		ioTimeout:   30 * time.Second,
+	}
 	for _, opt := range options {
 		opt(&c)
 	}
@@ -105,6 +125,16 @@ func (c *ClientImpl) Connect() {
 // Close closes the gRPC ClientImpl connection
 func (c *ClientImpl) Close() error {
 	return c.conn.Close()
+}
+
+// MetaTimeout returns the per-RPC timeout for metadata operations.
+func (c *ClientImpl) MetaTimeout() time.Duration {
+	return c.metaTimeout
+}
+
+// IOTimeout returns the per-RPC timeout for data operations.
+func (c *ClientImpl) IOTimeout() time.Duration {
+	return c.ioTimeout
 }
 
 // GetInterceptors returns the ClientImpl interceptors

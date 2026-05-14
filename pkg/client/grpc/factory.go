@@ -17,6 +17,10 @@ func NewClientFromConfig(cfg *config.Config) (Client, error) {
 
 	opts := make([]ClientOption, 0)
 
+	if cfg.Rpc != nil {
+		opts = append(opts, WithTimeouts(cfg.Rpc.TimeoutMeta, cfg.Rpc.TimeoutIO))
+	}
+
 	switch c := authConfig.(type) {
 	case *serverConfig.NoneAuthConfig:
 		// Do nothing

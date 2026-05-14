@@ -3,6 +3,8 @@
 package grpc
 
 import (
+	"time"
+
 	proto "gmountie/pkg/proto"
 
 	mock "github.com/stretchr/testify/mock"
@@ -233,6 +235,96 @@ func (_c *MockClient_GetEndpoint_Call) Return(_a0 string) *MockClient_GetEndpoin
 }
 
 func (_c *MockClient_GetEndpoint_Call) RunAndReturn(run func() string) *MockClient_GetEndpoint_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// IOTimeout provides a mock function with given fields:
+func (_m *MockClient) IOTimeout() time.Duration {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for IOTimeout")
+	}
+
+	var r0 time.Duration
+	if rf, ok := ret.Get(0).(func() time.Duration); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(time.Duration)
+	}
+
+	return r0
+}
+
+// MockClient_IOTimeout_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'IOTimeout'
+type MockClient_IOTimeout_Call struct {
+	*mock.Call
+}
+
+// IOTimeout is a helper method to define mock.On call
+func (_e *MockClient_Expecter) IOTimeout() *MockClient_IOTimeout_Call {
+	return &MockClient_IOTimeout_Call{Call: _e.mock.On("IOTimeout")}
+}
+
+func (_c *MockClient_IOTimeout_Call) Run(run func()) *MockClient_IOTimeout_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockClient_IOTimeout_Call) Return(_a0 time.Duration) *MockClient_IOTimeout_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockClient_IOTimeout_Call) RunAndReturn(run func() time.Duration) *MockClient_IOTimeout_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// MetaTimeout provides a mock function with given fields:
+func (_m *MockClient) MetaTimeout() time.Duration {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for MetaTimeout")
+	}
+
+	var r0 time.Duration
+	if rf, ok := ret.Get(0).(func() time.Duration); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(time.Duration)
+	}
+
+	return r0
+}
+
+// MockClient_MetaTimeout_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'MetaTimeout'
+type MockClient_MetaTimeout_Call struct {
+	*mock.Call
+}
+
+// MetaTimeout is a helper method to define mock.On call
+func (_e *MockClient_Expecter) MetaTimeout() *MockClient_MetaTimeout_Call {
+	return &MockClient_MetaTimeout_Call{Call: _e.mock.On("MetaTimeout")}
+}
+
+func (_c *MockClient_MetaTimeout_Call) Run(run func()) *MockClient_MetaTimeout_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockClient_MetaTimeout_Call) Return(_a0 time.Duration) *MockClient_MetaTimeout_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockClient_MetaTimeout_Call) RunAndReturn(run func() time.Duration) *MockClient_MetaTimeout_Call {
 	_c.Call.Return(run)
 	return _c
 }

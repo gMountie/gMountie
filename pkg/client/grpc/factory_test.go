@@ -4,6 +4,7 @@ import (
 	"gmountie/pkg/client/config"
 	serverConfig "gmountie/pkg/server/config"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 )
@@ -67,6 +68,23 @@ func (s *FactoryTestSuite) TestCreateEndpoint() {
 
 	endpoint := createEndpoint(cfg)
 	s.Equal("localhost:9449", endpoint)
+}
+
+// TestNewClientFromConfig_TimeoutsApplied verifies the configured RPC
+// timeouts are propagated onto the constructed client.
+func (s *FactoryTestSuite) TestNewClientFromConfig_TimeoutsApplied() {
+	cfg := &config.Config{
+		Server: &config.ServerConfig{Address: "127.0.0.1", Port: 9449},
+		Auth:   &serverConfig.NoneAuthConfig{},
+		Rpc:    &config.RpcConfig{TimeoutMeta: 2 * time.Second, TimeoutIO: 90 * time.Second},
+	}
+
+	c, err := NewClientFromConfig(cfg)
+	s.Require().NoError(err)
+	defer c.Close()
+
+	s.Assert().Equal(2*time.Second, c.MetaTimeout())
+	s.Assert().Equal(90*time.Second, c.IOTimeout())
 }
 
 func TestFactoryTestSuite(t *testing.T) {
