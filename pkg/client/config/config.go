@@ -23,6 +23,9 @@ type Config struct {
 	Mount MountConfig `yaml:"mount,omitempty"`
 	// Rpc is the RPC configuration
 	Rpc *RpcConfig `validate:"required" yaml:"rpc,omitempty"`
+	// Log is the optional logger configuration. Nil keeps the
+	// init-time auto-detected defaults.
+	Log *log.LogConfig `yaml:"log,omitempty"`
 }
 
 // String returns the string representation of the Config
@@ -106,6 +109,14 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		result.Rpc = cfg
 	} else {
 		return nil, err
+	}
+
+	// Parse log config (optional; absent block keeps zero-value defaults).
+	v.SetDefault("log.format", "")
+	v.SetDefault("log.level", "")
+	result.Log = &log.LogConfig{
+		Format: v.GetString("log.format"),
+		Level:  v.GetString("log.level"),
 	}
 
 	if err := result.Validate(); err != nil {

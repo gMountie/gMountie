@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"gmountie/pkg/client/config"
 	serverConfig "gmountie/pkg/server/config"
+	"gmountie/pkg/utils/log"
+	"os"
 
 	"github.com/pkg/errors"
 )
@@ -14,6 +16,11 @@ import (
 func NewClientFromConfig(cfg *config.Config) (Client, error) {
 	if cfg == nil || cfg.Server == nil || cfg.Auth == nil {
 		return nil, errors.New("config is empty or auth config is empty")
+	}
+	if cfg.Log != nil {
+		if err := log.Reconfigure(*cfg.Log, os.Stderr); err != nil {
+			return nil, errors.Wrap(err, "configure logger")
+		}
 	}
 	authConfig := cfg.Auth
 

@@ -9,6 +9,7 @@ import (
 	"gmountie/pkg/server/io/middleware"
 	"gmountie/pkg/server/service"
 	"gmountie/pkg/utils/log"
+	"os"
 	"runtime"
 	"syscall"
 	"time"
@@ -54,6 +55,12 @@ func (c *AppContext) GetGrpcServices() []grpc.ServiceRegistrar {
 // and shutdown errors.
 func Start(ctx context.Context, cfg *config.Config) error {
 	const shutdownDeadline = 30 * time.Second
+
+	if cfg.Log != nil {
+		if err := log.Reconfigure(*cfg.Log, os.Stderr); err != nil {
+			return errors.Wrap(err, "configure logger")
+		}
+	}
 
 	appCtx := NewServerAppContext(cfg)
 	s := grpc.NewServer(

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"gmountie/pkg/common/config"
+	"gmountie/pkg/utils/log"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/spf13/viper"
@@ -24,6 +25,10 @@ type Config struct {
 
 	// Volumes is the volume configuration
 	Volumes []*VolumeConfig `validate:"required,dive"`
+
+	// Log is the optional logger configuration. Nil keeps the
+	// init-time auto-detected defaults.
+	Log *log.LogConfig
 }
 
 func LoadConfigFromString(cfg string) (*Config, error) {
@@ -76,6 +81,16 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		i++
 	}
 	result.Volumes = volumes
+
+	// Parse the log configuration (env + defaults).
+	v.SetDefault("log.format", "")
+	v.SetDefault("log.level", "")
+	_ = v.BindEnv("log.format")
+	_ = v.BindEnv("log.level")
+	result.Log = &log.LogConfig{
+		Format: v.GetString("log.format"),
+		Level:  v.GetString("log.level"),
+	}
 
 	// Validate.
 	validate := validator.New()
