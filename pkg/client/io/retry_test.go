@@ -6,12 +6,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-func TestIsRetryableGrpcError_Codes(t *testing.T) {
+type RetryTestSuite struct {
+	suite.Suite
+}
+
+func (s *RetryTestSuite) TestIsRetryableGrpcError_Codes() {
 	tests := []struct {
 		name string
 		err  error
@@ -25,24 +29,24 @@ func TestIsRetryableGrpcError_Codes(t *testing.T) {
 		{"InvalidArgument", status.Error(codes.InvalidArgument, "bad"), false},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, isRetryableGrpcError(tt.err))
+		s.Run(tt.name, func() {
+			s.Equal(tt.want, isRetryableGrpcError(tt.err))
 		})
 	}
 }
 
-func TestRetryableCall_SucceedsFirstTry(t *testing.T) {
+func (s *RetryTestSuite) TestRetryableCall_SucceedsFirstTry() {
 	calls := 0
 	res, err := retryableCall(context.Background(), "test", func(ctx context.Context) (int, error) {
 		calls++
 		return 42, nil
 	})
-	assert.NoError(t, err)
-	assert.Equal(t, 42, res)
-	assert.Equal(t, 1, calls)
+	s.NoError(err)
+	s.Equal(42, res)
+	s.Equal(1, calls)
 }
 
-func TestRetryableCall_RetriesOnRetryableError(t *testing.T) {
+func (s *RetryTestSuite) TestRetryableCall_RetriesOnRetryableError() {
 	calls := 0
 	res, err := retryableCall(context.Background(), "test", func(ctx context.Context) (int, error) {
 		calls++
@@ -51,32 +55,32 @@ func TestRetryableCall_RetriesOnRetryableError(t *testing.T) {
 		}
 		return 7, nil
 	})
-	assert.NoError(t, err)
-	assert.Equal(t, 7, res)
-	assert.Equal(t, 3, calls)
+	s.NoError(err)
+	s.Equal(7, res)
+	s.Equal(3, calls)
 }
 
-func TestRetryableCall_GivesUpAfterMaxAttempts(t *testing.T) {
+func (s *RetryTestSuite) TestRetryableCall_GivesUpAfterMaxAttempts() {
 	calls := 0
 	_, err := retryableCall(context.Background(), "test", func(ctx context.Context) (int, error) {
 		calls++
 		return 0, status.Error(codes.Unavailable, "still down")
 	})
-	assert.Error(t, err)
-	assert.Equal(t, 3, calls, "should attempt 3 times then stop")
+	s.Error(err)
+	s.Equal(3, calls, "should attempt 3 times then stop")
 }
 
-func TestRetryableCall_DoesNotRetryNonRetryableError(t *testing.T) {
+func (s *RetryTestSuite) TestRetryableCall_DoesNotRetryNonRetryableError() {
 	calls := 0
 	_, err := retryableCall(context.Background(), "test", func(ctx context.Context) (int, error) {
 		calls++
 		return 0, status.Error(codes.NotFound, "missing")
 	})
-	assert.Error(t, err)
-	assert.Equal(t, 1, calls)
+	s.Error(err)
+	s.Equal(1, calls)
 }
 
-func TestRetryableCall_RespectsContextCancellation(t *testing.T) {
+func (s *RetryTestSuite) TestRetryableCall_RespectsContextCancellation() {
 	ctx, cancel := context.WithCancel(context.Background())
 	calls := 0
 	go func() {
@@ -87,25 +91,29 @@ func TestRetryableCall_RespectsContextCancellation(t *testing.T) {
 		calls++
 		return 0, status.Error(codes.Unavailable, "down")
 	})
-	assert.Error(t, err)
+	s.Error(err)
 	// Could be 1 or 2 depending on timing — never the full 3.
-	assert.Less(t, calls, 3)
+	s.Less(calls, 3)
 }
 
-func TestWithMetaTimeout_DerivesDeadline(t *testing.T) {
+func (s *RetryTestSuite) TestWithMetaTimeout_DerivesDeadline() {
 	parent := context.Background()
 	ctx, cancel := withMetaTimeout(parent, 100*time.Millisecond)
 	defer cancel()
 	deadline, ok := ctx.Deadline()
-	assert.True(t, ok)
-	assert.WithinDuration(t, time.Now().Add(100*time.Millisecond), deadline, 50*time.Millisecond)
+	s.True(ok)
+	s.WithinDuration(time.Now().Add(100*time.Millisecond), deadline, 50*time.Millisecond)
 }
 
-func TestWithIOTimeout_DerivesDeadline(t *testing.T) {
+func (s *RetryTestSuite) TestWithIOTimeout_DerivesDeadline() {
 	parent := context.Background()
 	ctx, cancel := withIOTimeout(parent, 100*time.Millisecond)
 	defer cancel()
 	deadline, ok := ctx.Deadline()
-	assert.True(t, ok)
-	assert.WithinDuration(t, time.Now().Add(100*time.Millisecond), deadline, 50*time.Millisecond)
+	s.True(ok)
+	s.WithinDuration(time.Now().Add(100*time.Millisecond), deadline, 50*time.Millisecond)
+}
+
+func TestRetryTestSuite(t *testing.T) {
+	suite.Run(t, new(RetryTestSuite))
 }

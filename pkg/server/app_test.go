@@ -9,16 +9,20 @@ import (
 
 	"gmountie/pkg/server/config"
 
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 )
+
+type ServerAppTestSuite struct {
+	suite.Suite
+}
 
 // TestStart_ContextCancellationShutsDownGracefully verifies that cancelling
 // the context passed to Start triggers a graceful stop and the function
 // returns nil within a reasonable bound.
-func TestStart_ContextCancellationShutsDownGracefully(t *testing.T) {
+func (s *ServerAppTestSuite) TestStart_ContextCancellationShutsDownGracefully() {
 	// Find a free port so the test isn't flaky on busy machines.
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
+	s.Require().NoError(err)
 	port := uint(lis.Addr().(*net.TCPAddr).Port)
 	lis.Close()
 
@@ -36,7 +40,7 @@ func TestStart_ContextCancellationShutsDownGracefully(t *testing.T) {
 	}()
 
 	// Give the server a moment to bind.
-	require.Eventually(t, func() bool {
+	s.Require().Eventually(func() bool {
 		c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 10*time.Millisecond)
 		if err == nil {
 			c.Close()
@@ -48,8 +52,12 @@ func TestStart_ContextCancellationShutsDownGracefully(t *testing.T) {
 
 	select {
 	case err := <-startErr:
-		require.NoError(t, err, "graceful shutdown should not return an error")
+		s.Require().NoError(err, "graceful shutdown should not return an error")
 	case <-time.After(5 * time.Second):
-		t.Fatal("Start did not return within 5s of context cancel")
+		s.T().Fatal("Start did not return within 5s of context cancel")
 	}
+}
+
+func TestServerAppTestSuite(t *testing.T) {
+	suite.Run(t, new(ServerAppTestSuite))
 }

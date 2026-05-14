@@ -4,18 +4,26 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/suite"
 )
 
-func TestCreateContext_NilCallerDoesNotPanic(t *testing.T) {
+type CreateContextTestSuite struct {
+	suite.Suite
+}
+
+func (s *CreateContextTestSuite) TestCreateContext_NilCallerDoesNotPanic() {
 	defer func() {
 		if r := recover(); r != nil {
-			t.Fatalf("createContext panicked on nil caller: %v", r)
+			s.T().Fatalf("createContext panicked on nil caller: %v", r)
 		}
 	}()
 	c := createContext(context.Background(), nil)
-	assert.NotNil(t, c)
-	assert.Equal(t, uint32(0), c.Caller.Owner.Uid)
-	assert.Equal(t, uint32(0), c.Caller.Owner.Gid)
-	assert.Equal(t, uint32(0), c.Caller.Pid)
+	s.NotNil(c)
+	s.Equal(uint32(0), c.Caller.Owner.Uid)
+	s.Equal(uint32(0), c.Caller.Owner.Gid)
+	s.Equal(uint32(0), c.Caller.Pid)
+}
+
+func TestCreateContextTestSuite(t *testing.T) {
+	suite.Run(t, new(CreateContextTestSuite))
 }

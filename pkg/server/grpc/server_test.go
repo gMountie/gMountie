@@ -7,21 +7,24 @@ import (
 
 	"gmountie/pkg/server/config"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc"
 )
+
+type ServerTestSuite struct {
+	suite.Suite
+}
 
 // TestStartMetricsServer_PortInUseDoesNotPanic verifies that when the
 // metrics port is already occupied, startMetricsServer logs and returns
 // instead of crashing the process via log.Fatal.
-func TestStartMetricsServer_PortInUseDoesNotPanic(t *testing.T) {
+func (s *ServerTestSuite) TestStartMetricsServer_PortInUseDoesNotPanic() {
 	// Occupy :9090 so the metrics server's ListenAndServe will fail.
 	blocker, err := net.Listen("tcp", ":9090")
-	require.NoError(t, err, "if this fails, :9090 was already busy externally")
+	s.Require().NoError(err, "if this fails, :9090 was already busy externally")
 	defer blocker.Close()
 
-	s := &Server{
+	srv := &Server{
 		config: &config.Config{
 			Server: &config.ServerConfig{Address: "127.0.0.1", Port: 0, Metrics: true},
 		},
@@ -29,15 +32,15 @@ func TestStartMetricsServer_PortInUseDoesNotPanic(t *testing.T) {
 		metricsServer: nil,
 	}
 	// Initialise then start. Both must complete without exiting the process.
-	s.initMetricsServer()
-	require.NotNil(t, s.metricsServer)
+	srv.initMetricsServer()
+	s.Require().NotNil(srv.metricsServer)
 
 	// Replace the no-op global mux with a fresh one for hygiene.
 	// (We just need to confirm the goroutine doesn't crash us.)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		s.startMetricsServer()
+		srv.startMetricsServer()
 		// startMetricsServer launches a goroutine; give it a beat to fail.
 		time.Sleep(150 * time.Millisecond)
 	}()
@@ -45,8 +48,12 @@ func TestStartMetricsServer_PortInUseDoesNotPanic(t *testing.T) {
 	select {
 	case <-done:
 		// If we got here without the test binary exiting via log.Fatal, we win.
-		assert.True(t, true)
+		s.True(true)
 	case <-time.After(2 * time.Second):
-		t.Fatal("startMetricsServer hung")
+		s.T().Fatal("startMetricsServer hung")
 	}
+}
+
+func TestServerTestSuite(t *testing.T) {
+	suite.Run(t, new(ServerTestSuite))
 }
