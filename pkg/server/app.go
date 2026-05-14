@@ -8,6 +8,7 @@ import (
 	"gmountie/pkg/server/io"
 	"gmountie/pkg/server/io/middleware"
 	"gmountie/pkg/server/metrics"
+	"gmountie/pkg/server/ops"
 	"gmountie/pkg/server/service"
 	"gmountie/pkg/utils/log"
 	"os"
@@ -62,6 +63,17 @@ func (c *AppContext) GetGrpcServices() []grpc.ServiceRegistrar {
 	}
 }
 
+// firstVolumePath returns the path of the first configured volume, or
+// "" when no volumes are configured. PathReadinessChecker treats the
+// empty case as not-ready, which is the desired behaviour: a server
+// with no volumes shouldn't pass /readyz.
+func firstVolumePath(cfg *config.Config) string {
+	if len(cfg.Volumes) == 0 {
+		return ""
+	}
+	return cfg.Volumes[0].Path
+}
+
 // Start runs the server until ctx is cancelled. On cancellation it triggers a
 // graceful shutdown bounded by shutdownDeadline; if that doesn't complete in
 // time it forces a stop. Returns the first non-nil error among serve errors
@@ -85,6 +97,12 @@ func Start(ctx context.Context, cfg *config.Config) error {
 		),
 	)
 
+	// Build the ops HTTP server (/metrics, /healthz, /readyz, /version).
+	// Port is hardcoded for now; Task 7 makes it configurable.
+	readiness := ops.PathReadinessChecker{Path: firstVolumePath(cfg)}
+	opsServer := ops.NewServer(":9090", readiness)
+	go opsServer.Start()
+
 	serveErr := make(chan error, 1)
 	go func() {
 		serveErr <- s.Serve()
@@ -100,6 +118,10 @@ func Start(ctx context.Context, cfg *config.Config) error {
 		log.Log.Info("shutdown signal received; draining in-flight requests",
 			zap.Duration("deadline", shutdownDeadline))
 
+		// Flip health to NOT_SERVING immediately so external probes see
+		// the drain before GracefulStop runs.
+		s.HealthService.SetNotServing()
+
 		stopped := make(chan struct{})
 		go func() {
 			s.Stop(true)
@@ -111,6 +133,11 @@ func Start(ctx context.Context, cfg *config.Config) error {
 			if err := appCtx.SessionManager.Stop(context.Background()); err != nil {
 				log.Log.Warn("session manager stop returned error", zap.Error(err))
 			}
+			opsCtx, opsCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := opsServer.Stop(opsCtx); err != nil {
+				log.Log.Warn("ops server stop returned error", zap.Error(err))
+			}
+			opsCancel()
 			log.Log.Info("server shut down gracefully")
 			return nil
 		case <-time.After(shutdownDeadline):
@@ -121,6 +148,11 @@ func Start(ctx context.Context, cfg *config.Config) error {
 				log.Log.Warn("session manager stop returned error", zap.Error(err))
 			}
 			sessCancel()
+			opsCtx, opsCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := opsServer.Stop(opsCtx); err != nil {
+				log.Log.Warn("ops server stop returned error", zap.Error(err))
+			}
+			opsCancel()
 			return errors.New("shutdown deadline exceeded")
 		}
 	}
