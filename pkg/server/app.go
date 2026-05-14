@@ -19,19 +19,22 @@ import (
 
 type AppContext struct {
 	// Config is the configuration for the server.
-	Config        *config.Config
-	VolumeService service.VolumeService
-	AuthService   service.AuthService
+	Config         *config.Config
+	VolumeService  service.VolumeService
+	AuthService    service.AuthService
+	SessionManager service.SessionManager
 }
 
 // NewServerAppContext creates a new ServerContext.
 func NewServerAppContext(cfg *config.Config) *AppContext {
 	volumeService := service.NewVolumeService(cfg, service.WithMiddleware(getVolumeMiddleware()...))
 	authService := service.NewAuthServiceFromConfig(cfg.Auth)
+	sessionMgr := service.NewSessionManager(service.SessionManagerOptions{})
 	return &AppContext{
-		Config:        cfg,
-		VolumeService: volumeService,
-		AuthService:   authService,
+		Config:         cfg,
+		VolumeService:  volumeService,
+		AuthService:    authService,
+		SessionManager: sessionMgr,
 	}
 }
 
@@ -39,8 +42,9 @@ func NewServerAppContext(cfg *config.Config) *AppContext {
 func (c *AppContext) GetGrpcServices() []grpc.ServiceRegistrar {
 	return []grpc.ServiceRegistrar{
 		controller.NewGrpcServer(c.VolumeService),
-		controller.NewRpcFileServer(c.VolumeService),
+		controller.NewRpcFileServer(c.VolumeService, c.SessionManager),
 		controller.NewVolumeService(c.VolumeService),
+		controller.NewSessionController(c.SessionManager),
 	}
 }
 
@@ -81,6 +85,9 @@ func Start(ctx context.Context, cfg *config.Config) error {
 
 		select {
 		case <-stopped:
+			if err := appCtx.SessionManager.Stop(context.Background()); err != nil {
+				log.Log.Warn("session manager stop returned error", zap.Error(err))
+			}
 			log.Log.Info("server shut down gracefully")
 			return nil
 		case <-time.After(shutdownDeadline):
