@@ -10,6 +10,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/thanhpk/randstr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/test/bufconn"
@@ -154,6 +155,10 @@ func (c *AppTestingContext) Start() error {
 	}()
 	// Wait for the server to start
 	time.Sleep(1 * time.Second)
+	c.client.Connect()
+	if c.client.SessionID() == "" {
+		return errors.New("client session handshake failed; test harness cannot proceed")
+	}
 	return nil
 }
 
