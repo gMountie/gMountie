@@ -21,6 +21,8 @@ type Config struct {
 	Auth serverConfig.AuthConfig `validate:"required"`
 	// Mount is the mount configuration
 	Mount MountConfig `yaml:"mount,omitempty"`
+	// Rpc is the RPC configuration
+	Rpc *RpcConfig `validate:"required" yaml:"rpc,omitempty"`
 }
 
 // String returns the string representation of the Config
@@ -97,6 +99,13 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		} else {
 			return nil, err
 		}
+	}
+
+	// Parse rpc config (defaults if absent)
+	if cfg, err := NewRpcConfig(v.Sub("rpc")); err == nil {
+		result.Rpc = cfg
+	} else {
+		return nil, err
 	}
 
 	if err := result.Validate(); err != nil {
