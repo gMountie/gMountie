@@ -70,9 +70,7 @@ func (s *SessionManagerTestSuite) TestSessionReleaseFile() {
 }
 
 func (s *SessionManagerTestSuite) TearDownTest() {
-	if c, ok := s.mgr.(interface{ Stop(context.Context) error }); ok {
-		_ = c.Stop(context.Background())
-	}
+	_ = s.mgr.Stop(context.Background())
 }
 
 func TestSessionManagerTestSuite(t *testing.T) {

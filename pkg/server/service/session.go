@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -96,6 +97,7 @@ type sessionManagerImpl struct {
 	sessions *xsync.MapOf[string, *sessionImpl]
 	reapers  *xsync.MapOf[string, *pendingReap]
 	grace    time.Duration
+	wg       sync.WaitGroup
 }
 
 func NewSessionManager(opts SessionManagerOptions) SessionManager {
@@ -148,26 +150,52 @@ func (m *sessionManagerImpl) MarkDisconnected(id string) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.reapers.Store(id, &pendingReap{cancel: cancel})
+	m.wg.Add(1)
 	go func() {
+		defer m.wg.Done()
 		select {
 		case <-ctx.Done():
-			// Cancelled by Resume.
+			return
 		case <-time.After(m.grace):
+			// Only proceed if our reaper entry is still present. If Resume
+			// raced and won the LoadAndDelete, abort without touching the
+			// session.
+			if _, ok := m.reapers.LoadAndDelete(sess.id); !ok {
+				return
+			}
 			m.sessions.Delete(sess.id)
-			m.reapers.Delete(sess.id)
 			sess.ReleaseAll()
 		}
 	}()
 }
 
-func (m *sessionManagerImpl) Stop(_ context.Context) error {
-	m.reapers.Range(func(_ string, r *pendingReap) bool {
-		r.cancel()
+func (m *sessionManagerImpl) Stop(ctx context.Context) error {
+	// Cancel all pending reapers — claim each to prevent the goroutine
+	// from doing its own delete.
+	m.reapers.Range(func(id string, r *pendingReap) bool {
+		if _, ok := m.reapers.LoadAndDelete(id); ok {
+			r.cancel()
+		}
 		return true
 	})
-	m.sessions.Range(func(_ string, sess *sessionImpl) bool {
-		sess.ReleaseAll()
-		m.sessions.Delete(sess.id)
+
+	// Wait for reap goroutines to exit, honouring ctx.
+	done := make(chan struct{})
+	go func() {
+		m.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		// Caller's deadline elapsed; proceed to release anyway.
+	}
+
+	// Claim each remaining session before releasing.
+	m.sessions.Range(func(id string, sess *sessionImpl) bool {
+		if _, ok := m.sessions.LoadAndDelete(id); ok {
+			sess.ReleaseAll()
+		}
 		return true
 	})
 	return nil
