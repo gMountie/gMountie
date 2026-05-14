@@ -3,11 +3,13 @@ package grpc
 import (
 	"fmt"
 	"gmountie/pkg/client/config"
+	"gmountie/pkg/client/metrics"
 	serverConfig "gmountie/pkg/server/config"
 	"gmountie/pkg/utils/log"
 	"os"
 
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // NewClientFromConfig creates a new gRPC Client from the config and
@@ -29,6 +31,18 @@ func NewClientFromConfig(cfg *config.Config) (Client, error) {
 	if cfg.Rpc != nil {
 		opts = append(opts, WithTimeouts(cfg.Rpc.TimeoutMeta, cfg.Rpc.TimeoutIO))
 	}
+
+	// Build and register client metrics once per factory call. Register
+	// tolerates AlreadyRegisteredError so tests building multiple clients
+	// against the default registerer do not panic. Install the retry hook
+	// here too — the io layer can't import metrics state lazily without
+	// creating an import cycle, so metrics owns the global hook.
+	m := metrics.NewMetrics()
+	if err := m.Register(prometheus.DefaultRegisterer); err != nil {
+		return nil, errors.Wrap(err, "register client metrics")
+	}
+	metrics.SetRetryHook(m.RetryInc)
+	opts = append(opts, WithUnaryInterceptors(UnaryClientInFlightInterceptor(m)))
 
 	switch c := authConfig.(type) {
 	case *serverConfig.NoneAuthConfig:

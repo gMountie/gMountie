@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"gmountie/pkg/client/metrics"
+
 	"github.com/avast/retry-go/v4"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -65,6 +67,9 @@ func retryableCall[T any](ctx context.Context, op string, fn func(context.Contex
 		retry.DelayType(retry.BackOffDelay),
 		retry.Context(ctx),
 		retry.LastErrorOnly(true),
+		retry.OnRetry(func(_ uint, err error) {
+			metrics.OnRetry(op, status.Code(err).String())
+		}),
 	)
 	return result, err
 }

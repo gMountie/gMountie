@@ -3,8 +3,11 @@ package io
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
+
+	"gmountie/pkg/client/metrics"
 
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc/codes"
@@ -112,6 +115,30 @@ func (s *RetryTestSuite) TestWithIOTimeout_DerivesDeadline() {
 	deadline, ok := ctx.Deadline()
 	s.True(ok)
 	s.WithinDuration(time.Now().Add(100*time.Millisecond), deadline, 50*time.Millisecond)
+}
+
+func (s *RetryTestSuite) TestRetryableCall_MetricsHookFiresOnRetry() {
+	var mu sync.Mutex
+	seen := map[string]string{}
+	metrics.SetRetryHook(func(op, code string) {
+		mu.Lock()
+		defer mu.Unlock()
+		seen[op] = code
+	})
+	defer metrics.SetRetryHook(nil)
+
+	calls := 0
+	_, err := retryableCall(context.Background(), "FakeOp", func(ctx context.Context) (int, error) {
+		calls++
+		if calls == 1 {
+			return 0, status.Error(codes.Unavailable, "boom")
+		}
+		return 42, nil
+	})
+	s.Require().NoError(err)
+	mu.Lock()
+	defer mu.Unlock()
+	s.Assert().Equal("Unavailable", seen["FakeOp"])
 }
 
 func TestRetryTestSuite(t *testing.T) {

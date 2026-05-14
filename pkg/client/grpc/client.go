@@ -38,16 +38,17 @@ type Client interface {
 
 // ClientImpl is a struct that holds the gRPC ClientImpl
 type ClientImpl struct {
-	endpoint    string
-	conn        *grpc.ClientConn
-	dialOptions []grpc.DialOption
-	fs          proto.RpcFsClient
-	file        proto.RpcFileClient
-	volume      proto.VolumeServiceClient
-	session     proto.SessionServiceClient
-	handshake   *SessionHandshake
-	metaTimeout time.Duration
-	ioTimeout   time.Duration
+	endpoint          string
+	conn              *grpc.ClientConn
+	dialOptions       []grpc.DialOption
+	extraInterceptors []grpc.UnaryClientInterceptor
+	fs                proto.RpcFsClient
+	file              proto.RpcFileClient
+	volume            proto.VolumeServiceClient
+	session           proto.SessionServiceClient
+	handshake         *SessionHandshake
+	metaTimeout       time.Duration
+	ioTimeout         time.Duration
 }
 
 // -------------------- ClientImpl Options --------------------
@@ -67,6 +68,15 @@ func WithDialOptions(dialOptions []grpc.DialOption) ClientOption {
 func WithBasicAuth(username, password string) ClientOption {
 	return func(c *ClientImpl) {
 		c.dialOptions = append(c.dialOptions, grpc.WithPerRPCCredentials(NewBasicAuthCredentials(username, password)))
+	}
+}
+
+// WithUnaryInterceptors appends extra unary client interceptors to the
+// chain alongside the built-in request-id and logging interceptors.
+// Order matters: extras run after the built-ins, closest to the invoker.
+func WithUnaryInterceptors(interceptors ...grpc.UnaryClientInterceptor) ClientOption {
+	return func(c *ClientImpl) {
+		c.extraInterceptors = append(c.extraInterceptors, interceptors...)
 	}
 }
 
@@ -160,15 +170,18 @@ func (c *ClientImpl) IOTimeout() time.Duration {
 	return c.ioTimeout
 }
 
-// GetInterceptors returns the ClientImpl interceptors
-func getInterceptors() []grpc.UnaryClientInterceptor {
+// getInterceptors returns the ClientImpl interceptors, including any
+// extras registered via WithUnaryInterceptors. Built-ins (request-id,
+// logging) run first; extras run closer to the invoker.
+func (c *ClientImpl) getInterceptors() []grpc.UnaryClientInterceptor {
 	opts := []logging.Option{
 		logging.WithLogOnEvents(logging.FinishCall),
 	}
-	return []grpc.UnaryClientInterceptor{
+	base := []grpc.UnaryClientInterceptor{
 		commongrpc.ClientUnaryRequestID(),
 		logging.UnaryClientInterceptor(commongrpc.InterceptorLogger(log.Log), opts...),
 	}
+	return append(base, c.extraInterceptors...)
 }
 
 // getDialOptions returns the dial options
@@ -177,7 +190,7 @@ func (c *ClientImpl) getDialOptions() []grpc.DialOption {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		//grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})),
 		grpc.WithChainUnaryInterceptor(
-			getInterceptors()...,
+			c.getInterceptors()...,
 		),
 	}
 
