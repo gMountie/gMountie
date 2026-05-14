@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"strings"
+
 	"gmountie/pkg/common/config"
 
 	"github.com/go-playground/validator/v10"
@@ -30,13 +32,35 @@ func LoadConfigFromString(cfg string) (*Config, error) {
 
 func ParseConfig(v *viper.Viper) (*Config, error) {
 	var result Config
-	// Enable environment variables.
+
+	// Enable environment variable overrides. `GMOUNTIE_SERVER_PORT` →
+	// `server.port`, etc. The env key replacer maps `_` to `.` so nested
+	// keys can be reached. AutomaticEnv alone doesn't propagate through
+	// Sub(...), so we explicitly bind the nested keys we want overridable
+	// and read them from the parent viper directly.
 	v.SetEnvPrefix(EnvironmentPrefix)
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
-	// Parse the server configuration.
-	v.SetDefault("server", make(map[string]string))
-	result.Server = NewServerConfig(v.Sub("server"))
+	for _, key := range []string{
+		"server.address",
+		"server.port",
+		"server.metrics",
+		"auth.type",
+	} {
+		_ = v.BindEnv(key)
+	}
+
+	// Parse the server configuration — read directly from the parent viper
+	// to honour env-var overrides (see comment above).
+	v.SetDefault("server.address", DefaultAddress)
+	v.SetDefault("server.port", DefaultPort)
+	v.SetDefault("server.metrics", true)
+	result.Server = &ServerConfig{
+		Address: v.GetString("server.address"),
+		Port:    v.GetUint("server.port"),
+		Metrics: v.GetBool("server.metrics"),
+	}
 
 	// Parse the auth configuration.
 	auth, err := NewFromConfig(v.Sub("auth"))

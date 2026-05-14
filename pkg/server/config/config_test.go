@@ -139,8 +139,6 @@ volumes:
 
 // Test environment variable override
 func (s *ConfigTestSuite) TestParse_EnvVarOverride() {
-	s.T().Skip("This test fails") // TODO: Fix this test
-
 	// Setup environment
 	s.T().Setenv("GMOUNTIE_SERVER_PORT", "9000")
 
