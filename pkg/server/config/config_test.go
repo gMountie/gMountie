@@ -102,8 +102,6 @@ volumes:
 
 // Test validation cases
 func (s *ConfigTestSuite) TestParse_EmptyConfig() {
-	s.T().Skip("This test fails") // TODO: Fix this test
-
 	conf := ``
 	_, err := LoadConfigFromString(conf)
 	s.Require().Error(err)

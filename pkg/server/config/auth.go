@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/viper"
@@ -29,6 +30,9 @@ func (a *AuthConfigBase) GetType() AuthConfigType {
 
 // NewFromConfig creates a new AuthConfig from a viper config
 func NewFromConfig(v *viper.Viper) (AuthConfig, error) {
+	if v == nil {
+		return nil, errors.New("auth: missing 'auth' section in config")
+	}
 	var auth AuthConfig
 	var err error
 	switch v.GetString("type") {
