@@ -99,9 +99,8 @@ func Start(ctx context.Context, cfg *config.Config) error {
 	)
 
 	// Build the ops HTTP server (/metrics, /healthz, /readyz, /version).
-	// Port is hardcoded for now; Task 7 makes it configurable.
 	readiness := ops.PathReadinessChecker{Path: firstVolumePath(cfg)}
-	opsServer := ops.NewServer(":9090", readiness)
+	opsServer := ops.NewServer(cfg.Server.MetricsAddr, readiness)
 	go opsServer.Start()
 
 	serveErr := make(chan error, 1)

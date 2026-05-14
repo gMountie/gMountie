@@ -181,6 +181,53 @@ volumes:
 	s.Require().Error(err)
 }
 
+func (s *ConfigTestSuite) TestMetricsAddrDefault() {
+	cfg, err := LoadConfigFromString(`
+server:
+  address: "0.0.0.0"
+  port: 9449
+auth:
+  type: none
+volumes:
+  - name: test
+    path: /tmp
+`)
+	s.Require().NoError(err)
+	s.Assert().Equal(":9090", cfg.Server.MetricsAddr)
+}
+
+func (s *ConfigTestSuite) TestMetricsAddrEnvOverride() {
+	s.T().Setenv("GMOUNTIE_SERVER_METRICS_ADDR", ":19999")
+	cfg, err := LoadConfigFromString(`
+server:
+  address: "0.0.0.0"
+  port: 9449
+auth:
+  type: none
+volumes:
+  - name: test
+    path: /tmp
+`)
+	s.Require().NoError(err)
+	s.Assert().Equal(":19999", cfg.Server.MetricsAddr)
+}
+
+func (s *ConfigTestSuite) TestMetricsAddrExplicitOverride() {
+	cfg, err := LoadConfigFromString(`
+server:
+  address: "0.0.0.0"
+  port: 9449
+  metrics_addr: "127.0.0.1:9091"
+auth:
+  type: none
+volumes:
+  - name: test
+    path: /tmp
+`)
+	s.Require().NoError(err)
+	s.Assert().Equal("127.0.0.1:9091", cfg.Server.MetricsAddr)
+}
+
 // Test Runner
 func TestConfigTestSuite(t *testing.T) {
 	suite.Run(t, new(ConfigTestSuite))

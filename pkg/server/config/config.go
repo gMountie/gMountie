@@ -51,6 +51,7 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		"server.address",
 		"server.port",
 		"server.metrics",
+		"server.metrics_addr",
 		"auth.type",
 	} {
 		_ = v.BindEnv(key)
@@ -61,10 +62,12 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	v.SetDefault("server.address", DefaultAddress)
 	v.SetDefault("server.port", DefaultPort)
 	v.SetDefault("server.metrics", true)
+	v.SetDefault("server.metrics_addr", DefaultMetricsAddr)
 	result.Server = &ServerConfig{
-		Address: v.GetString("server.address"),
-		Port:    v.GetUint("server.port"),
-		Metrics: v.GetBool("server.metrics"),
+		Address:     v.GetString("server.address"),
+		Port:        v.GetUint("server.port"),
+		Metrics:     v.GetBool("server.metrics"),
+		MetricsAddr: v.GetString("server.metrics_addr"),
 	}
 
 	// Parse the auth configuration.
