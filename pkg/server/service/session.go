@@ -145,11 +145,14 @@ func (m *sessionManagerImpl) MarkDisconnected(id string) {
 	if !ok {
 		return
 	}
-	if _, exists := m.reapers.Load(id); exists {
+	ctx, cancel := context.WithCancel(context.Background())
+	reaper := &pendingReap{cancel: cancel}
+	if _, loaded := m.reapers.LoadOrStore(id, reaper); loaded {
+		// Another caller already scheduled a reap for this session — drop
+		// ours on the floor.
+		cancel()
 		return
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	m.reapers.Store(id, &pendingReap{cancel: cancel})
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()

@@ -8,7 +8,9 @@ import (
 	"github.com/pkg/errors"
 )
 
-// NewClientFromConfig creates a new gRPC ClientImpl from the config
+// NewClientFromConfig creates a new gRPC Client from the config and
+// triggers the session handshake. Returns an error if the handshake fails
+// — without it, every fd-carrying RPC would be rejected by the server.
 func NewClientFromConfig(cfg *config.Config) (Client, error) {
 	if cfg == nil || cfg.Server == nil || cfg.Auth == nil {
 		return nil, errors.New("config is empty or auth config is empty")
@@ -27,7 +29,17 @@ func NewClientFromConfig(cfg *config.Config) (Client, error) {
 	case *config.BasicAuthConfig:
 		opts = append(opts, WithBasicAuth(c.Username, c.Password))
 	}
-	return NewClient(createEndpoint(cfg.Server), opts...)
+
+	client, err := NewClient(createEndpoint(cfg.Server), opts...)
+	if err != nil {
+		return nil, err
+	}
+	client.Connect()
+	if client.SessionID() == "" {
+		_ = client.Close()
+		return nil, errors.New("session handshake failed; client unusable")
+	}
+	return client, nil
 }
 
 // createEndpoint creates the endpoint from the client config

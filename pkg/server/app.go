@@ -93,6 +93,11 @@ func Start(ctx context.Context, cfg *config.Config) error {
 		case <-time.After(shutdownDeadline):
 			log.Log.Warn("graceful shutdown timed out; forcing stop")
 			s.Stop(false)
+			sessCtx, sessCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := appCtx.SessionManager.Stop(sessCtx); err != nil {
+				log.Log.Warn("session manager stop returned error", zap.Error(err))
+			}
+			sessCancel()
 			return errors.New("shutdown deadline exceeded")
 		}
 	}
