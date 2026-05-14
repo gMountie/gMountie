@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	commongrpc "gmountie/pkg/common/grpc"
 	"gmountie/pkg/proto"
 	"gmountie/pkg/utils/log"
 
@@ -161,7 +162,7 @@ func (c *ClientImpl) IOTimeout() time.Duration {
 // GetInterceptors returns the ClientImpl interceptors
 func getInterceptors() []grpc.UnaryClientInterceptor {
 	return []grpc.UnaryClientInterceptor{
-		//logging.UnaryClientImplInterceptor(grpc2.InterceptorLogger(log.Log)),
+		commongrpc.ClientUnaryRequestID(),
 	}
 }
 

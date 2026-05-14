@@ -130,7 +130,8 @@ func (s *Server) getOptions() []grpc.ServerOption {
 
 	unaryInterceptors := append(
 		[]grpc.UnaryServerInterceptor{
-			authInterceptor.Unary(), // Must be first for the user to be logged.
+			grpc2.ServerUnaryRequestID(), // FIRST — populate ctx with request_id before auth/logging.
+			authInterceptor.Unary(),      // Must run early for the user to be logged.
 			unaryLog,
 		},
 		s.extraUnaryInterceptors...,
