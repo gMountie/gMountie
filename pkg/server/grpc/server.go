@@ -49,6 +49,23 @@ func WithListener(lis net.Listener) ServerOption {
 	}
 }
 
+// WithExtraUnaryInterceptors appends unary server interceptors to the
+// chain built in getOptions(). They run after the built-in
+// request-id/log-context/auth/log interceptors.
+func WithExtraUnaryInterceptors(unary ...grpc.UnaryServerInterceptor) ServerOption {
+	return func(s *Server) {
+		s.extraUnaryInterceptors = append(s.extraUnaryInterceptors, unary...)
+	}
+}
+
+// WithExtraStreamInterceptors appends stream server interceptors to the
+// chain built in getOptions().
+func WithExtraStreamInterceptors(stream ...grpc.StreamServerInterceptor) ServerOption {
+	return func(s *Server) {
+		s.extraStreamInterceptors = append(s.extraStreamInterceptors, stream...)
+	}
+}
+
 // NewServer creates a new gRPC server.
 func NewServer(config *config.Config, authService service.AuthService, services []ServiceRegistrar, options ...ServerOption) *Server {
 	s := &Server{

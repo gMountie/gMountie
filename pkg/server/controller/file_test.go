@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	mockservice "gmountie/internal/mocks/pkg/server/service"
+	"gmountie/pkg/server/metrics"
 	"gmountie/pkg/server/service"
 	"testing"
 
@@ -32,7 +33,7 @@ func (s *RpcFileServerTestSuite) SetupTest() {
 	sid, err := s.sessionMgr.Create()
 	s.Require().NoError(err)
 	s.sessionID = sid
-	s.server = NewRpcFileServer(s.fsService, s.sessionMgr)
+	s.server = NewRpcFileServer(s.fsService, s.sessionMgr, metrics.NewMetrics())
 }
 
 func (s *RpcFileServerTestSuite) TearDownTest() {

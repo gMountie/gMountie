@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"gmountie/pkg/proto"
+	"gmountie/pkg/server/metrics"
 	"gmountie/pkg/server/service"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -14,13 +15,20 @@ import (
 type RpcFileServerImpl struct {
 	fsService service.VolumeService
 	sessions  service.SessionManager
+	metrics   *metrics.Metrics
 	proto.UnimplementedRpcFileServer
 }
 
 var _ proto.RpcFileServer = (*RpcFileServerImpl)(nil)
 
-func NewRpcFileServer(fsService service.VolumeService, sessions service.SessionManager) *RpcFileServerImpl {
-	return &RpcFileServerImpl{fsService: fsService, sessions: sessions}
+// NewRpcFileServer wires the file controller. When m is nil a fresh,
+// unregistered *Metrics is substituted so callers (e.g. unit tests)
+// don't need to plumb one through.
+func NewRpcFileServer(fsService service.VolumeService, sessions service.SessionManager, m *metrics.Metrics) *RpcFileServerImpl {
+	if m == nil {
+		m = metrics.NewMetrics()
+	}
+	return &RpcFileServerImpl{fsService: fsService, sessions: sessions, metrics: m}
 }
 
 func (r *RpcFileServerImpl) Register(server *grpc.Server) {
@@ -41,6 +49,7 @@ func (r *RpcFileServerImpl) Open(ctx context.Context, request *proto.OpenRequest
 		reply := &proto.OpenReply{Status: int32(s)}
 		if s == fuse.OK {
 			reply.Fd = sess.RegisterFile(request.Path, file)
+			r.metrics.OpenFilesInc(request.Volume, request.SessionId)
 		}
 		return reply, nil
 	})
@@ -60,6 +69,7 @@ func (r *RpcFileServerImpl) Create(ctx context.Context, request *proto.CreateReq
 		reply := &proto.CreateReply{Status: int32(s)}
 		if s == fuse.OK {
 			reply.Fd = sess.RegisterFile(request.Path, file)
+			r.metrics.OpenFilesInc(request.Volume, request.SessionId)
 		}
 		return reply, nil
 	})
@@ -79,6 +89,7 @@ func (r *RpcFileServerImpl) Read(_ context.Context, request *proto.ReadRequest) 
 	if s != fuse.OK {
 		return &proto.ReadReply{Status: int32(s)}, nil
 	}
+	r.metrics.BytesAdd(request.Volume, "out", float64(n.Size()))
 	buf, s = n.Bytes(buf)
 	return &proto.ReadReply{Size: int64(n.Size()), Bytes: buf, Status: int32(s)}, nil
 }
@@ -94,6 +105,9 @@ func (r *RpcFileServerImpl) Write(_ context.Context, request *proto.WriteRequest
 			return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 		}
 		written, s := entry.File.Write(request.Bytes, request.Offset)
+		if s == fuse.OK {
+			r.metrics.BytesAdd(request.Volume, "in", float64(written))
+		}
 		return &proto.WriteReply{Written: written, Status: int32(s)}, nil
 	})
 }
@@ -116,6 +130,7 @@ func (r *RpcFileServerImpl) Release(_ context.Context, request *proto.ReleaseReq
 		return nil, err
 	}
 	sess.ReleaseFile(request.Fd)
+	r.metrics.OpenFilesDec(request.Volume, request.SessionId)
 	return &proto.ReleaseReply{}, nil
 }
 

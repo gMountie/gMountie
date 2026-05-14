@@ -55,8 +55,24 @@ type SessionManager interface {
 	Stop(ctx context.Context) error
 }
 
+// SessionMetrics is a thin hook for the session manager to report its
+// active-session count to a metrics sink. Defined here so the service
+// package stays decoupled from the metrics package.
+type SessionMetrics interface {
+	SessionsActiveInc()
+	SessionsActiveDec()
+}
+
+type noopSessionMetrics struct{}
+
+func (noopSessionMetrics) SessionsActiveInc() {}
+func (noopSessionMetrics) SessionsActiveDec() {}
+
 type SessionManagerOptions struct {
 	GracePeriod time.Duration
+	// Metrics is an optional sink for the active-session gauge. Nil
+	// substitutes a no-op implementation.
+	Metrics SessionMetrics
 }
 
 const DefaultGracePeriod = 30 * time.Second
@@ -130,6 +146,7 @@ type sessionManagerImpl struct {
 	sessions *xsync.MapOf[string, *sessionImpl]
 	reapers  *xsync.MapOf[string, *pendingReap]
 	grace    time.Duration
+	metrics  SessionMetrics
 	wg       sync.WaitGroup
 }
 
@@ -138,10 +155,15 @@ func NewSessionManager(opts SessionManagerOptions) SessionManager {
 	if grace == 0 {
 		grace = DefaultGracePeriod
 	}
+	m := opts.Metrics
+	if m == nil {
+		m = noopSessionMetrics{}
+	}
 	return &sessionManagerImpl{
 		sessions: xsync.NewMapOf[string, *sessionImpl](),
 		reapers:  xsync.NewMapOf[string, *pendingReap](),
 		grace:    grace,
+		metrics:  m,
 	}
 }
 
@@ -157,6 +179,7 @@ func (m *sessionManagerImpl) Create() (string, error) {
 		replies: replies,
 	}
 	m.sessions.Store(id, sess)
+	m.metrics.SessionsActiveInc()
 	return id, nil
 }
 
@@ -204,7 +227,9 @@ func (m *sessionManagerImpl) MarkDisconnected(id string) {
 			if _, ok := m.reapers.LoadAndDelete(sess.id); !ok {
 				return
 			}
-			m.sessions.Delete(sess.id)
+			if _, ok := m.sessions.LoadAndDelete(sess.id); ok {
+				m.metrics.SessionsActiveDec()
+			}
 			sess.ReleaseAll()
 		}
 	}()
@@ -235,6 +260,7 @@ func (m *sessionManagerImpl) Stop(ctx context.Context) error {
 	// Claim each remaining session before releasing.
 	m.sessions.Range(func(id string, sess *sessionImpl) bool {
 		if _, ok := m.sessions.LoadAndDelete(id); ok {
+			m.metrics.SessionsActiveDec()
 			sess.ReleaseAll()
 		}
 		return true

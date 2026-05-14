@@ -7,6 +7,7 @@ import (
 	"gmountie/pkg/server/grpc"
 	"gmountie/pkg/server/io"
 	"gmountie/pkg/server/io/middleware"
+	"gmountie/pkg/server/metrics"
 	"gmountie/pkg/server/service"
 	"gmountie/pkg/utils/log"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	prometheus "github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -24,18 +26,29 @@ type AppContext struct {
 	VolumeService  service.VolumeService
 	AuthService    service.AuthService
 	SessionManager service.SessionManager
+	Metrics        *metrics.Metrics
 }
 
 // NewServerAppContext creates a new ServerContext.
 func NewServerAppContext(cfg *config.Config) *AppContext {
+	m := metrics.NewMetrics()
+	// Register against the default registerer so the existing /metrics
+	// scrape handler picks them up. Register (not MustRegister)
+	// tolerates already-registered collectors so the same default
+	// registerer survives `go test -count=N`.
+	if err := m.Register(prometheus.DefaultRegisterer); err != nil {
+		log.Log.Warn("register server metrics", zap.Error(err))
+	}
+
 	volumeService := service.NewVolumeService(cfg, service.WithMiddleware(getVolumeMiddleware()...))
 	authService := service.NewAuthServiceFromConfig(cfg.Auth)
-	sessionMgr := service.NewSessionManager(service.SessionManagerOptions{})
+	sessionMgr := service.NewSessionManager(service.SessionManagerOptions{Metrics: m})
 	return &AppContext{
 		Config:         cfg,
 		VolumeService:  volumeService,
 		AuthService:    authService,
 		SessionManager: sessionMgr,
+		Metrics:        m,
 	}
 }
 
@@ -43,7 +56,7 @@ func NewServerAppContext(cfg *config.Config) *AppContext {
 func (c *AppContext) GetGrpcServices() []grpc.ServiceRegistrar {
 	return []grpc.ServiceRegistrar{
 		controller.NewGrpcServer(c.VolumeService, c.SessionManager),
-		controller.NewRpcFileServer(c.VolumeService, c.SessionManager),
+		controller.NewRpcFileServer(c.VolumeService, c.SessionManager, c.Metrics),
 		controller.NewVolumeService(c.VolumeService),
 		controller.NewSessionController(c.SessionManager),
 	}
@@ -67,6 +80,9 @@ func Start(ctx context.Context, cfg *config.Config) error {
 		cfg,
 		appCtx.AuthService,
 		appCtx.GetGrpcServices(),
+		grpc.WithExtraUnaryInterceptors(
+			grpc.UnaryServerMetricsInterceptor(appCtx.Metrics),
+		),
 	)
 
 	serveErr := make(chan error, 1)
