@@ -8,8 +8,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hanwen/go-fuse/v2/fuse/nodefs"
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/pkg/errors"
 	"github.com/puzpuzpuz/xsync/v3"
+	"golang.org/x/sync/singleflight"
 )
 
 // FileEntry is a per-session record for an open file.
@@ -29,6 +31,11 @@ type Session interface {
 	// ReleaseAll releases every fd in the session. Called by the manager when
 	// the session is reaped.
 	ReleaseAll()
+	// DoOnce returns the cached reply for requestID if present; otherwise it
+	// calls fn, caches the successful reply, and returns it. Concurrent calls
+	// with the same requestID are collapsed via singleflight so fn runs at
+	// most once. Errored fns are NOT cached — the next caller re-executes.
+	DoOnce(requestID string, fn func() (any, error)) (any, error)
 }
 
 // SessionManager is the per-server registry of sessions.
@@ -54,10 +61,16 @@ type SessionManagerOptions struct {
 
 const DefaultGracePeriod = 30 * time.Second
 
+// DefaultIdempotencyCacheSize is the per-session LRU size for dedup. 256 covers
+// a comfortable churn window for typical FUSE traffic without bloating memory.
+const DefaultIdempotencyCacheSize = 256
+
 type sessionImpl struct {
-	id    string
-	fdNum atomic.Uint64
-	files *xsync.MapOf[uint64, *FileEntry]
+	id      string
+	fdNum   atomic.Uint64
+	files   *xsync.MapOf[uint64, *FileEntry]
+	replies *lru.Cache[string, any]
+	sf      singleflight.Group
 }
 
 func (s *sessionImpl) ID() string { return s.id }
@@ -77,6 +90,26 @@ func (s *sessionImpl) ReleaseFile(fd uint64) {
 	if ok && entry.File != nil {
 		entry.File.Release()
 	}
+}
+
+func (s *sessionImpl) DoOnce(requestID string, fn func() (any, error)) (any, error) {
+	if v, ok := s.replies.Get(requestID); ok {
+		return v, nil
+	}
+	v, err, _ := s.sf.Do(requestID, func() (any, error) {
+		// Double-check after the singleflight wait — another caller may have
+		// completed while we queued.
+		if cached, ok := s.replies.Get(requestID); ok {
+			return cached, nil
+		}
+		out, err := fn()
+		if err != nil {
+			return nil, err
+		}
+		s.replies.Add(requestID, out)
+		return out, nil
+	})
+	return v, err
 }
 
 func (s *sessionImpl) ReleaseAll() {
@@ -114,9 +147,14 @@ func NewSessionManager(opts SessionManagerOptions) SessionManager {
 
 func (m *sessionManagerImpl) Create() (string, error) {
 	id := uuid.NewString()
+	replies, err := lru.New[string, any](DefaultIdempotencyCacheSize)
+	if err != nil {
+		return "", errors.Wrap(err, "create idempotency cache")
+	}
 	sess := &sessionImpl{
-		id:    id,
-		files: xsync.NewMapOf[uint64, *FileEntry](),
+		id:      id,
+		files:   xsync.NewMapOf[uint64, *FileEntry](),
+		replies: replies,
 	}
 	m.sessions.Store(id, sess)
 	return id, nil

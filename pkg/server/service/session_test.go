@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -126,6 +129,112 @@ func (s *SessionManagerTestSuite) TestStopReleasesAllFds() {
 
 	_, err = s.mgr.Get(id)
 	s.Assert().Error(err)
+}
+
+func (s *SessionManagerTestSuite) TestDoOnceCachesSuccessfulReply() {
+	id, _ := s.mgr.Create()
+	sess, _ := s.mgr.Get(id)
+
+	calls := 0
+	fn := func() (any, error) {
+		calls++
+		return "reply-1", nil
+	}
+
+	r1, err := sess.DoOnce("req-A", fn)
+	s.Require().NoError(err)
+	s.Assert().Equal("reply-1", r1)
+
+	r2, err := sess.DoOnce("req-A", fn)
+	s.Require().NoError(err)
+	s.Assert().Equal("reply-1", r2)
+
+	s.Assert().Equal(1, calls, "fn must execute only once for the same request_id")
+}
+
+func (s *SessionManagerTestSuite) TestDoOnceDoesNotCacheErrors() {
+	id, _ := s.mgr.Create()
+	sess, _ := s.mgr.Get(id)
+
+	calls := 0
+	fn := func() (any, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("first fails")
+		}
+		return "reply-ok", nil
+	}
+
+	_, err := sess.DoOnce("req-B", fn)
+	s.Require().Error(err)
+
+	r, err := sess.DoOnce("req-B", fn)
+	s.Require().NoError(err)
+	s.Assert().Equal("reply-ok", r)
+	s.Assert().Equal(2, calls, "errored fn must re-execute on retry with same request_id")
+}
+
+func (s *SessionManagerTestSuite) TestDoOnceCollapsesConcurrentDuplicates() {
+	id, _ := s.mgr.Create()
+	sess, _ := s.mgr.Get(id)
+
+	var mu sync.Mutex
+	calls := 0
+	block := make(chan struct{})
+	fn := func() (any, error) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		<-block
+		return "reply", nil
+	}
+
+	type result struct {
+		v   any
+		err error
+	}
+	results := make(chan result, 5)
+	for i := 0; i < 5; i++ {
+		go func() {
+			v, err := sess.DoOnce("req-C", fn)
+			results <- result{v, err}
+		}()
+	}
+
+	// Give the goroutines a moment to all enter DoOnce and queue on singleflight.
+	time.Sleep(50 * time.Millisecond)
+	close(block)
+
+	for i := 0; i < 5; i++ {
+		r := <-results
+		s.Require().NoError(r.err)
+		s.Assert().Equal("reply", r.v)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	s.Assert().Equal(1, calls, "fn must run exactly once even with 5 concurrent callers using the same request_id")
+}
+
+func (s *SessionManagerTestSuite) TestDoOnceLRUEvictsOldEntries() {
+	id, _ := s.mgr.Create()
+	sess, _ := s.mgr.Get(id)
+
+	// Saturate the LRU (256 entries) and verify the first one is gone.
+	for i := 0; i < 300; i++ {
+		reqID := fmt.Sprintf("req-%d", i)
+		_, err := sess.DoOnce(reqID, func() (any, error) { return i, nil })
+		s.Require().NoError(err)
+	}
+
+	// req-0 should be evicted by now; calling DoOnce with it re-executes.
+	calls := 0
+	_, err := sess.DoOnce("req-0", func() (any, error) {
+		calls++
+		return 999, nil
+	})
+	s.Require().NoError(err)
+	s.Assert().Equal(1, calls, "evicted request_id must re-execute")
 }
 
 func (s *SessionManagerTestSuite) TearDownTest() {
