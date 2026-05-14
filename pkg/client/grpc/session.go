@@ -23,7 +23,9 @@ const (
 // calls Create on connect, runs a goroutine that drains the Keepalive
 // stream, and — when the stream breaks — reattaches via Resume (or falls
 // back to a fresh Create) and reopens the stream. The loop exits only
-// when Close cancels the long-lived stream context.
+// when Close cancels the long-lived stream context. Establish is not
+// safe under concurrent calls; the expected usage is one Establish on
+// connect, then one Close at teardown.
 type SessionHandshake struct {
 	client    proto.SessionServiceClient
 	sessionID string
@@ -76,6 +78,7 @@ func (h *SessionHandshake) Establish(ctx context.Context) error {
 	stream, err := h.client.Keepalive(streamCtx, &proto.KeepaliveRequest{SessionId: reply.SessionId})
 	if err != nil {
 		cancel()
+		h.setSessionID("")
 		return errors.Wrap(err, "session keepalive open")
 	}
 

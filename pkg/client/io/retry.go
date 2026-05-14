@@ -40,10 +40,13 @@ func isRetryableGrpcError(err error) bool {
 // value/error is the result of the final attempt. The function is generic
 // over the RPC reply type T so call sites read naturally.
 //
-// Use this ONLY for idempotent operations. Mutating operations (Write,
-// Create, Mkdir, ...) must NOT use this until idempotency tokens land in
-// Plan 1d, because a server-side success that fails to deliver its reply
-// would otherwise be silently duplicated.
+// retryableCall is safe for both idempotent and idempotency-token-stamped
+// mutating ops. Idempotent ops (GetAttr, OpenDir, Access, GetXAttr,
+// StatFs, Read) can call it directly. Mutating ops MUST allocate a
+// request_id (uuid.NewString()) outside the closure passed to this
+// function and stamp it on the request struct, so the server's
+// per-session idempotency cache short-circuits any retry that the
+// network or a stalled server forced us into.
 func retryableCall[T any](ctx context.Context, op string, fn func(context.Context) (T, error)) (T, error) {
 	var result T
 	err := retry.Do(

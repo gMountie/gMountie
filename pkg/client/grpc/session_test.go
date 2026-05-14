@@ -215,6 +215,21 @@ func (s *SessionHandshakeTestSuite) TestCloseInterruptsRecovery() {
 	}
 }
 
+func (s *SessionHandshakeTestSuite) TestEstablishKeepaliveFailureClearsSessionID() {
+	// Create succeeds.
+	s.sessionClient.EXPECT().Create(mock.Anything, mock.Anything).
+		Return(&proto.SessionCreateReply{SessionId: "first-id"}, nil).Once()
+	// Keepalive fails.
+	s.sessionClient.EXPECT().Keepalive(mock.Anything, mock.Anything).
+		Return(nil, errors.New("network")).Once()
+
+	handshake := NewSessionHandshake(s.sessionClient)
+	err := handshake.Establish(context.Background())
+	s.Require().Error(err)
+	s.Assert().Empty(handshake.SessionID(),
+		"SessionID must be cleared so a retry of Establish runs the full handshake")
+}
+
 func TestSessionHandshakeTestSuite(t *testing.T) {
 	suite.Run(t, new(SessionHandshakeTestSuite))
 }
