@@ -11,6 +11,48 @@ includes:
 
 
 tasks:
+  setup:
+    desc: Install all system packages and Go tools required to build, test, and develop gMountie (Linux/apt only).
+    cmds:
+      - task: setup:system
+      - task: setup:tools
+
+  setup:system:
+    desc: Install system packages via apt (protoc, FUSE, GTK/WebKit for the UI, fio for e2e benches).
+    preconditions:
+      - sh: '[ "$(uname -s)" = "Linux" ]'
+        msg: "setup:system only supports Linux. Install the equivalents manually on other OSes."
+      - sh: command -v apt-get >/dev/null
+        msg: "setup:system requires apt-get. Install the equivalent packages manually with your package manager."
+    cmds:
+      - sudo apt-get update
+      # `nodejs` ships npm bundled on recent Ubuntu; do NOT also request the separate `npm` package — it conflicts.
+      - |
+        sudo apt-get install -y \
+          build-essential \
+          pkg-config \
+          protobuf-compiler \
+          fuse3 \
+          libfuse3-dev \
+          libwebkit2gtk-4.1-dev \
+          libgtk-3-dev \
+          nodejs \
+          fio \
+          iproute2
+
+  setup:tools:
+    desc: Install Go-based developer tools into $GOBIN / $GOPATH/bin. protoc plugins are pinned via the `tool` directive in go.mod.
+    preconditions:
+      - sh: command -v go >/dev/null
+        msg: "Go is not installed or not on PATH. Install Go 1.26+ first: https://go.dev/dl/"
+    cmds:
+      # Installs every entry in go.mod's `tool (...)` block (protoc-gen-go, protoc-gen-go-grpc) at its pinned version.
+      - go install tool
+      # goreleaser and wails3 aren't pinned in go.mod (huge dep trees / CLI source doesn't build cleanly at the library version); install at @latest.
+      - go install github.com/goreleaser/goreleaser/v2@latest
+      - go install github.com/wailsapp/wails/v3/cmd/wails3@latest
+      - echo "Done. Ensure \"$(go env GOPATH)/bin\" is on your PATH."
+
   gen:grpc:
     cmds:
       - |
