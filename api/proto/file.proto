@@ -17,6 +17,7 @@ message OpenRequest {
   string path = 3;
   uint32 flags = 4;
   string session_id = 5;
+  string request_id = 6;
 }
 
 message OpenReply {
@@ -31,6 +32,7 @@ message CreateRequest {
   uint32 flags = 4;
   uint32 mode = 5;
   string session_id = 6;
+  string request_id = 7;
 }
 
 message CreateReply {
@@ -58,6 +60,7 @@ message WriteRequest {
   bytes bytes = 3;
   int64 offset = 4;
   string session_id = 5;
+  string request_id = 6;
 }
 
 message WriteReply {

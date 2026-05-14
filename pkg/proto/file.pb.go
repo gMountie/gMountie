@@ -96,6 +96,7 @@ type OpenRequest struct {
 	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
 	Flags         uint32                 `protobuf:"varint,4,opt,name=flags,proto3" json:"flags,omitempty"`
 	SessionId     string                 `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	RequestId     string                 `protobuf:"bytes,6,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -165,6 +166,13 @@ func (x *OpenRequest) GetSessionId() string {
 	return ""
 }
 
+func (x *OpenRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
 type OpenReply struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Fd            uint64                 `protobuf:"varint,1,opt,name=fd,proto3" json:"fd,omitempty"`
@@ -225,6 +233,7 @@ type CreateRequest struct {
 	Flags         uint32                 `protobuf:"varint,4,opt,name=flags,proto3" json:"flags,omitempty"`
 	Mode          uint32                 `protobuf:"varint,5,opt,name=mode,proto3" json:"mode,omitempty"`
 	SessionId     string                 `protobuf:"bytes,6,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	RequestId     string                 `protobuf:"bytes,7,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -297,6 +306,13 @@ func (x *CreateRequest) GetMode() uint32 {
 func (x *CreateRequest) GetSessionId() string {
 	if x != nil {
 		return x.SessionId
+	}
+	return ""
+}
+
+func (x *CreateRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
 	}
 	return ""
 }
@@ -496,6 +512,7 @@ type WriteRequest struct {
 	Bytes         []byte                 `protobuf:"bytes,3,opt,name=bytes,proto3" json:"bytes,omitempty"`
 	Offset        int64                  `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`
 	SessionId     string                 `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	RequestId     string                 `protobuf:"bytes,6,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -561,6 +578,13 @@ func (x *WriteRequest) GetOffset() int64 {
 func (x *WriteRequest) GetSessionId() string {
 	if x != nil {
 		return x.SessionId
+	}
+	return ""
+}
+
+func (x *WriteRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
 	}
 	return ""
 }
@@ -1474,17 +1498,19 @@ const file_api_proto_file_proto_rawDesc = "" +
 	"\x05start\x18\x01 \x01(\x04R\x05start\x12\x10\n" +
 	"\x03end\x18\x02 \x01(\x04R\x03end\x12\x10\n" +
 	"\x03typ\x18\x03 \x01(\rR\x03typ\x12\x10\n" +
-	"\x03pid\x18\x04 \x01(\rR\x03pid\"\x98\x01\n" +
+	"\x03pid\x18\x04 \x01(\rR\x03pid\"\xb7\x01\n" +
 	"\vOpenRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
 	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x12\n" +
 	"\x04path\x18\x03 \x01(\tR\x04path\x12\x14\n" +
 	"\x05flags\x18\x04 \x01(\rR\x05flags\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x05 \x01(\tR\tsessionId\"3\n" +
+	"session_id\x18\x05 \x01(\tR\tsessionId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x06 \x01(\tR\trequestId\"3\n" +
 	"\tOpenReply\x12\x0e\n" +
 	"\x02fd\x18\x01 \x01(\x04R\x02fd\x12\x16\n" +
-	"\x06status\x18\x02 \x01(\x05R\x06status\"\xae\x01\n" +
+	"\x06status\x18\x02 \x01(\x05R\x06status\"\xcd\x01\n" +
 	"\rCreateRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
 	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x12\n" +
@@ -1492,7 +1518,9 @@ const file_api_proto_file_proto_rawDesc = "" +
 	"\x05flags\x18\x04 \x01(\rR\x05flags\x12\x12\n" +
 	"\x04mode\x18\x05 \x01(\rR\x04mode\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x06 \x01(\tR\tsessionId\"5\n" +
+	"session_id\x18\x06 \x01(\tR\tsessionId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\a \x01(\tR\trequestId\"5\n" +
 	"\vCreateReply\x12\x0e\n" +
 	"\x02fd\x18\x01 \x01(\x04R\x02fd\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\x05R\x06status\"\x80\x01\n" +
@@ -1506,14 +1534,16 @@ const file_api_proto_file_proto_rawDesc = "" +
 	"\tReadReply\x12\x14\n" +
 	"\x05bytes\x18\x01 \x01(\fR\x05bytes\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x03R\x04size\x12\x16\n" +
-	"\x06status\x18\x03 \x01(\x05R\x06status\"\x83\x01\n" +
+	"\x06status\x18\x03 \x01(\x05R\x06status\"\xa2\x01\n" +
 	"\fWriteRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12\x0e\n" +
 	"\x02fd\x18\x02 \x01(\x04R\x02fd\x12\x14\n" +
 	"\x05bytes\x18\x03 \x01(\fR\x05bytes\x12\x16\n" +
 	"\x06offset\x18\x04 \x01(\x03R\x06offset\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x05 \x01(\tR\tsessionId\">\n" +
+	"session_id\x18\x05 \x01(\tR\tsessionId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x06 \x01(\tR\trequestId\">\n" +
 	"\n" +
 	"WriteReply\x12\x18\n" +
 	"\awritten\x18\x01 \x01(\rR\awritten\x12\x16\n" +

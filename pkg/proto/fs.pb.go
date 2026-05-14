@@ -658,6 +658,7 @@ type UnlinkRequest struct {
 	Volume        string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
 	Caller        *Caller                `protobuf:"bytes,2,opt,name=caller,proto3" json:"caller,omitempty"`
 	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
+	RequestId     string                 `protobuf:"bytes,4,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -709,6 +710,13 @@ func (x *UnlinkRequest) GetCaller() *Caller {
 func (x *UnlinkRequest) GetPath() string {
 	if x != nil {
 		return x.Path
+	}
+	return ""
+}
+
+func (x *UnlinkRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
 	}
 	return ""
 }
@@ -875,6 +883,7 @@ type TruncateRequest struct {
 	Caller        *Caller                `protobuf:"bytes,2,opt,name=caller,proto3" json:"caller,omitempty"`
 	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
 	Size          uint64                 `protobuf:"varint,4,opt,name=size,proto3" json:"size,omitempty"`
+	RequestId     string                 `protobuf:"bytes,5,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -937,6 +946,13 @@ func (x *TruncateRequest) GetSize() uint64 {
 	return 0
 }
 
+func (x *TruncateRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
 type TruncateReply struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Status        int32                  `protobuf:"varint,1,opt,name=status,proto3" json:"status,omitempty"`
@@ -988,6 +1004,7 @@ type ChownRequest struct {
 	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
 	Uid           uint32                 `protobuf:"varint,4,opt,name=uid,proto3" json:"uid,omitempty"`
 	Gid           uint32                 `protobuf:"varint,5,opt,name=gid,proto3" json:"gid,omitempty"`
+	RequestId     string                 `protobuf:"bytes,6,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1057,6 +1074,13 @@ func (x *ChownRequest) GetGid() uint32 {
 	return 0
 }
 
+func (x *ChownRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
 type ChownReply struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Status        int32                  `protobuf:"varint,1,opt,name=status,proto3" json:"status,omitempty"`
@@ -1107,6 +1131,7 @@ type ChmodRequest struct {
 	Caller        *Caller                `protobuf:"bytes,2,opt,name=caller,proto3" json:"caller,omitempty"`
 	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
 	Mode          uint32                 `protobuf:"varint,4,opt,name=mode,proto3" json:"mode,omitempty"`
+	RequestId     string                 `protobuf:"bytes,5,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1169,6 +1194,13 @@ func (x *ChmodRequest) GetMode() uint32 {
 	return 0
 }
 
+func (x *ChmodRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
 type ChmodReply struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Status        int32                  `protobuf:"varint,1,opt,name=status,proto3" json:"status,omitempty"`
@@ -1219,6 +1251,7 @@ type MkdirRequest struct {
 	Caller        *Caller                `protobuf:"bytes,2,opt,name=caller,proto3" json:"caller,omitempty"`
 	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
 	Mode          uint32                 `protobuf:"varint,4,opt,name=mode,proto3" json:"mode,omitempty"`
+	RequestId     string                 `protobuf:"bytes,5,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1281,6 +1314,13 @@ func (x *MkdirRequest) GetMode() uint32 {
 	return 0
 }
 
+func (x *MkdirRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
 type MkdirReply struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Status        int32                  `protobuf:"varint,1,opt,name=status,proto3" json:"status,omitempty"`
@@ -1330,6 +1370,7 @@ type RmdirRequest struct {
 	Volume        string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
 	Caller        *Caller                `protobuf:"bytes,2,opt,name=caller,proto3" json:"caller,omitempty"`
 	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
+	RequestId     string                 `protobuf:"bytes,4,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1385,6 +1426,13 @@ func (x *RmdirRequest) GetPath() string {
 	return ""
 }
 
+func (x *RmdirRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
 type RmdirReply struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Status        int32                  `protobuf:"varint,1,opt,name=status,proto3" json:"status,omitempty"`
@@ -1435,6 +1483,7 @@ type RenameRequest struct {
 	Caller        *Caller                `protobuf:"bytes,2,opt,name=caller,proto3" json:"caller,omitempty"`
 	OldName       string                 `protobuf:"bytes,3,opt,name=old_name,json=oldName,proto3" json:"old_name,omitempty"`
 	NewName       string                 `protobuf:"bytes,4,opt,name=new_name,json=newName,proto3" json:"new_name,omitempty"`
+	RequestId     string                 `protobuf:"bytes,5,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1493,6 +1542,13 @@ func (x *RenameRequest) GetOldName() string {
 func (x *RenameRequest) GetNewName() string {
 	if x != nil {
 		return x.NewName
+	}
+	return ""
+}
+
+func (x *RenameRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
 	}
 	return ""
 }
@@ -1720,11 +1776,13 @@ const file_api_proto_fs_proto_rawDesc = "" +
 	"\x04path\x18\x03 \x01(\tR\x04path\"T\n" +
 	"\fOpenDirReply\x12,\n" +
 	"\aentries\x18\x01 \x03(\v2\x12.gmountie.DirEntryR\aentries\x12\x16\n" +
-	"\x06status\x18\x02 \x01(\x05R\x06status\"e\n" +
+	"\x06status\x18\x02 \x01(\x05R\x06status\"\x84\x01\n" +
 	"\rUnlinkRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
 	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x12\n" +
-	"\x04path\x18\x03 \x01(\tR\x04path\"%\n" +
+	"\x04path\x18\x03 \x01(\tR\x04path\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x04 \x01(\tR\trequestId\"%\n" +
 	"\vUnlinkReply\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\x05R\x06status\"y\n" +
 	"\rAccessRequest\x12\x16\n" +
@@ -1733,51 +1791,63 @@ const file_api_proto_fs_proto_rawDesc = "" +
 	"\x04path\x18\x03 \x01(\tR\x04path\x12\x12\n" +
 	"\x04mode\x18\x04 \x01(\rR\x04mode\"%\n" +
 	"\vAccessReply\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\x05R\x06status\"{\n" +
+	"\x06status\x18\x01 \x01(\x05R\x06status\"\x9a\x01\n" +
 	"\x0fTruncateRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
 	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x12\n" +
 	"\x04path\x18\x03 \x01(\tR\x04path\x12\x12\n" +
-	"\x04size\x18\x04 \x01(\x04R\x04size\"'\n" +
+	"\x04size\x18\x04 \x01(\x04R\x04size\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x05 \x01(\tR\trequestId\"'\n" +
 	"\rTruncateReply\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\x05R\x06status\"\x88\x01\n" +
+	"\x06status\x18\x01 \x01(\x05R\x06status\"\xa7\x01\n" +
 	"\fChownRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
 	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x12\n" +
 	"\x04path\x18\x03 \x01(\tR\x04path\x12\x10\n" +
 	"\x03uid\x18\x04 \x01(\rR\x03uid\x12\x10\n" +
-	"\x03gid\x18\x05 \x01(\rR\x03gid\"$\n" +
+	"\x03gid\x18\x05 \x01(\rR\x03gid\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x06 \x01(\tR\trequestId\"$\n" +
 	"\n" +
 	"ChownReply\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\x05R\x06status\"x\n" +
+	"\x06status\x18\x01 \x01(\x05R\x06status\"\x97\x01\n" +
 	"\fChmodRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
 	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x12\n" +
 	"\x04path\x18\x03 \x01(\tR\x04path\x12\x12\n" +
-	"\x04mode\x18\x04 \x01(\rR\x04mode\"$\n" +
+	"\x04mode\x18\x04 \x01(\rR\x04mode\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x05 \x01(\tR\trequestId\"$\n" +
 	"\n" +
 	"ChmodReply\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\x05R\x06status\"x\n" +
+	"\x06status\x18\x01 \x01(\x05R\x06status\"\x97\x01\n" +
 	"\fMkdirRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
 	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x12\n" +
 	"\x04path\x18\x03 \x01(\tR\x04path\x12\x12\n" +
-	"\x04mode\x18\x04 \x01(\rR\x04mode\"$\n" +
+	"\x04mode\x18\x04 \x01(\rR\x04mode\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x05 \x01(\tR\trequestId\"$\n" +
 	"\n" +
 	"MkdirReply\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\x05R\x06status\"d\n" +
+	"\x06status\x18\x01 \x01(\x05R\x06status\"\x83\x01\n" +
 	"\fRmdirRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
 	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x12\n" +
-	"\x04path\x18\x03 \x01(\tR\x04path\"$\n" +
+	"\x04path\x18\x03 \x01(\tR\x04path\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x04 \x01(\tR\trequestId\"$\n" +
 	"\n" +
 	"RmdirReply\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\x05R\x06status\"\x87\x01\n" +
+	"\x06status\x18\x01 \x01(\x05R\x06status\"\xa6\x01\n" +
 	"\rRenameRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
 	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x19\n" +
 	"\bold_name\x18\x03 \x01(\tR\aoldName\x12\x19\n" +
-	"\bnew_name\x18\x04 \x01(\tR\anewName\"%\n" +
+	"\bnew_name\x18\x04 \x01(\tR\anewName\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x05 \x01(\tR\trequestId\"%\n" +
 	"\vRenameReply\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\x05R\x06status\"\x85\x01\n" +
 	"\x0fGetXAttrRequest\x12\x16\n" +
