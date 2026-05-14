@@ -339,6 +339,50 @@ func (_c *MockClient_MetaTimeout_Call) RunAndReturn(run func() time.Duration) *M
 	return _c
 }
 
+// SessionID provides a mock function for the type MockClient
+func (_mock *MockClient) SessionID() string {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for SessionID")
+	}
+
+	var r0 string
+	if returnFunc, ok := ret.Get(0).(func() string); ok {
+		r0 = returnFunc()
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+	return r0
+}
+
+// MockClient_SessionID_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SessionID'
+type MockClient_SessionID_Call struct {
+	*mock.Call
+}
+
+// SessionID is a helper method to define mock.On call
+func (_e *MockClient_Expecter) SessionID() *MockClient_SessionID_Call {
+	return &MockClient_SessionID_Call{Call: _e.mock.On("SessionID")}
+}
+
+func (_c *MockClient_SessionID_Call) Run(run func()) *MockClient_SessionID_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockClient_SessionID_Call) Return(s string) *MockClient_SessionID_Call {
+	_c.Call.Return(s)
+	return _c
+}
+
+func (_c *MockClient_SessionID_Call) RunAndReturn(run func() string) *MockClient_SessionID_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Volume provides a mock function for the type MockClient
 func (_mock *MockClient) Volume() proto.VolumeServiceClient {
 	ret := _mock.Called()

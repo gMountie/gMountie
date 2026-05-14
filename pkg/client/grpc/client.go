@@ -1,10 +1,13 @@
 package grpc
 
 import (
+	"context"
 	"time"
 
 	"gmountie/pkg/proto"
+	"gmountie/pkg/utils/log"
 
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -27,6 +30,8 @@ type Client interface {
 	MetaTimeout() time.Duration
 	// IOTimeout returns the per-RPC timeout for data operations.
 	IOTimeout() time.Duration
+	// SessionID returns the server-assigned session id obtained during Connect.
+	SessionID() string
 }
 
 // ClientImpl is a struct that holds the gRPC ClientImpl
@@ -37,6 +42,8 @@ type ClientImpl struct {
 	fs          proto.RpcFsClient
 	file        proto.RpcFileClient
 	volume      proto.VolumeServiceClient
+	session     proto.SessionServiceClient
+	handshake   *SessionHandshake
 	metaTimeout time.Duration
 	ioTimeout   time.Duration
 }
@@ -92,6 +99,8 @@ func NewClient(endpoint string, options ...ClientOption) (Client, error) {
 	c.file = proto.NewRpcFileClient(conn)
 	c.fs = proto.NewRpcFsClient(conn)
 	c.volume = proto.NewVolumeServiceClient(conn)
+	c.session = proto.NewSessionServiceClient(conn)
+	c.handshake = NewSessionHandshake(c.session)
 	return &c, nil
 }
 
@@ -120,11 +129,23 @@ func (c *ClientImpl) Volume() proto.VolumeServiceClient {
 // Connect connects to the gRPC server
 func (c *ClientImpl) Connect() {
 	c.conn.Connect()
+	if err := c.handshake.Establish(context.Background()); err != nil {
+		log.Log.Error("session handshake failed", zap.Error(err))
+	}
 }
 
 // Close closes the gRPC ClientImpl connection
 func (c *ClientImpl) Close() error {
+	if c.handshake != nil {
+		_ = c.handshake.Close()
+	}
 	return c.conn.Close()
+}
+
+// SessionID returns the server-assigned session id obtained during Connect.
+// Returns "" if the handshake has not completed (Connect not called or failed).
+func (c *ClientImpl) SessionID() string {
+	return c.handshake.SessionID()
 }
 
 // MetaTimeout returns the per-RPC timeout for metadata operations.
