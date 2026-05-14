@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"gmountie/internal/mocks/pkg/client/grpc"
 	mockProto "gmountie/internal/mocks/pkg/proto"
@@ -47,6 +48,11 @@ func (s *SingleVolumeMounterTestSuite) SetupTest() {
 
 	s.client.EXPECT().Fs().Return(mockFsClient).Maybe()
 	s.client.EXPECT().GetEndpoint().Return("localhost:8080").Maybe()
+	// LocalFileSystem now calls MetaTimeout/IOTimeout on every RPC; the FUSE
+	// kernel makes many incoming calls during mount/unmount so we permit any
+	// number including zero (Maybe) at well-defined fast values.
+	s.client.EXPECT().MetaTimeout().Return(2 * time.Second).Maybe()
+	s.client.EXPECT().IOTimeout().Return(30 * time.Second).Maybe()
 }
 
 func (s *SingleVolumeMounterTestSuite) TearDownTest() {
