@@ -10,6 +10,8 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	pathfs2 "gmountie/internal/mocks/github.com/hanwen/go-fuse/v2/fuse/pathfs"
 )
 
@@ -123,6 +125,23 @@ func (s *RpcServerTestSuite) TestStatFs() {
 	// Verify.
 	s.Require().NoError(err)
 	s.Assert().NotNil(reply)
+}
+
+func (s *RpcServerTestSuite) TestStatFs_NilReplyReturnsError() {
+	// Setup.
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	ctx := context.Background()
+	mockFs.EXPECT().StatFs("/test/path").Return(nil)
+
+	// Test.
+	request := &proto.StatFsRequest{Volume: "testVolume", Path: "/test/path"}
+	reply, err := s.server.StatFs(ctx, request)
+
+	// Verify.
+	s.Require().Error(err)
+	s.Equal(codes.NotFound, status.Code(err))
+	s.Nil(reply)
 }
 
 func (s *RpcServerTestSuite) TestUnlink() {

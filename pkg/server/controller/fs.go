@@ -6,6 +6,8 @@ import (
 	"gmountie/pkg/server/service"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type RpcServerImpl struct {
@@ -118,6 +120,9 @@ func (r *RpcServerImpl) StatFs(ctx context.Context, request *proto.StatFsRequest
 		return nil, err
 	}
 	statfs := fs.StatFs(request.Path)
+	if statfs == nil {
+		return nil, status.Errorf(codes.NotFound, "statfs: filesystem returned no data for path %q", request.Path)
+	}
 	reply := &proto.StatFsReply{
 		Blocks:  statfs.Blocks,
 		Bfree:   statfs.Bfree,
