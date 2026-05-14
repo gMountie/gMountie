@@ -6,10 +6,13 @@ import (
 	mockProto "gmountie/internal/mocks/pkg/proto"
 	"gmountie/pkg/proto"
 	"testing"
+	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type LocalFileSystemTestSuite struct {
@@ -26,6 +29,7 @@ func (s *LocalFileSystemTestSuite) SetupTest() {
 	s.fileClient = mockProto.NewMockRpcFileClient(s.T())
 	s.client.EXPECT().Fs().Return(s.fsClient).Maybe()
 	s.client.EXPECT().File().Return(s.fileClient).Maybe()
+	s.client.EXPECT().MetaTimeout().Return(2 * time.Second).Maybe()
 	s.fs = NewLocalFileSystem(s.client, "testVolume").(*LocalFileSystem)
 }
 
@@ -431,6 +435,27 @@ func (s *LocalFileSystemTestSuite) TestGetXAttr_Error() {
 	data, status := s.fs.GetXAttr("/test", "user.test", &fuse.Context{})
 	s.Assert().Equal(fuse.EIO, status)
 	s.Assert().Nil(data)
+}
+
+// TestGetAttr_RetriesOnUnavailable verifies that an idempotent metadata
+// call survives a single transient Unavailable error via the retry wrapper.
+func (s *LocalFileSystemTestSuite) TestGetAttr_RetriesOnUnavailable() {
+	s.fsClient.EXPECT().GetAttr(mock.Anything, mock.Anything).
+		Return(nil, status.Error(codes.Unavailable, "down")).Once()
+	s.fsClient.EXPECT().GetAttr(mock.Anything, mock.Anything).
+		Return(&proto.GetAttrReply{
+			Status:     int32(fuse.OK),
+			Attributes: &proto.Attr{Mode: 0o644, Owner: &proto.Owner{Uid: 1000, Gid: 1000}},
+		}, nil).Once()
+
+	attr, st := s.fs.GetAttr("file", &fuse.Context{
+		Caller: fuse.Caller{Owner: fuse.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		Cancel: make(chan struct{}),
+	})
+
+	s.Require().Equal(fuse.OK, st)
+	s.NotNil(attr)
+	s.fsClient.AssertNumberOfCalls(s.T(), "GetAttr", 2)
 }
 
 func TestLocalFileSystemTestSuite(t *testing.T) {
