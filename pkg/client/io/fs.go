@@ -171,10 +171,11 @@ func (fs *LocalFileSystem) Mkdir(name string, mode uint32, fctx *fuse.Context) f
 	ctx, cancel := withMetaTimeout(fctx, fs.client.MetaTimeout())
 	defer cancel()
 	res, err := fs.client.Fs().Mkdir(ctx, &proto.MkdirRequest{
-		Volume: fs.volume,
-		Caller: createCaller(fctx),
-		Path:   name,
-		Mode:   mode,
+		Volume:    fs.volume,
+		Caller:    createCaller(fctx),
+		Path:      name,
+		Mode:      mode,
+		SessionId: fs.client.SessionID(),
 	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: MkDir", zap.String("path", name), zap.Error(err))
@@ -188,9 +189,10 @@ func (fs *LocalFileSystem) Rmdir(name string, fctx *fuse.Context) (code fuse.Sta
 	ctx, cancel := withMetaTimeout(fctx, fs.client.MetaTimeout())
 	defer cancel()
 	res, err := fs.client.Fs().Rmdir(ctx, &proto.RmdirRequest{
-		Volume: fs.volume,
-		Caller: createCaller(fctx),
-		Path:   name,
+		Volume:    fs.volume,
+		Caller:    createCaller(fctx),
+		Path:      name,
+		SessionId: fs.client.SessionID(),
 	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: RmDir", zap.String("path", name), zap.Error(err))
@@ -204,10 +206,11 @@ func (fs *LocalFileSystem) Rename(oldName string, newName string, fctx *fuse.Con
 	ctx, cancel := withMetaTimeout(fctx, fs.client.MetaTimeout())
 	defer cancel()
 	res, err := fs.client.Fs().Rename(ctx, &proto.RenameRequest{
-		Volume:  fs.volume,
-		Caller:  createCaller(fctx),
-		OldName: oldName,
-		NewName: newName,
+		Volume:    fs.volume,
+		Caller:    createCaller(fctx),
+		OldName:   oldName,
+		NewName:   newName,
+		SessionId: fs.client.SessionID(),
 	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Rename", zap.String("oldName", oldName), zap.String("newName", newName), zap.Error(err))
@@ -261,9 +264,10 @@ func (fs *LocalFileSystem) Unlink(name string, fctx *fuse.Context) (code fuse.St
 	ctx, cancel := withMetaTimeout(fctx, fs.client.MetaTimeout())
 	defer cancel()
 	res, err := fs.client.Fs().Unlink(ctx, &proto.UnlinkRequest{
-		Volume: fs.volume,
-		Caller: createCaller(fctx),
-		Path:   name,
+		Volume:    fs.volume,
+		Caller:    createCaller(fctx),
+		Path:      name,
+		SessionId: fs.client.SessionID(),
 	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Unlink", zap.String("path", name), zap.Error(err))
@@ -277,10 +281,11 @@ func (fs *LocalFileSystem) Truncate(name string, size uint64, fctx *fuse.Context
 	ctx, cancel := withMetaTimeout(fctx, fs.client.MetaTimeout())
 	defer cancel()
 	res, err := fs.client.Fs().Truncate(ctx, &proto.TruncateRequest{
-		Volume: fs.volume,
-		Caller: createCaller(fctx),
-		Path:   name,
-		Size:   size,
+		Volume:    fs.volume,
+		Caller:    createCaller(fctx),
+		Path:      name,
+		Size:      size,
+		SessionId: fs.client.SessionID(),
 	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Truncate", zap.String("path", name), zap.Error(err))
@@ -294,10 +299,11 @@ func (fs *LocalFileSystem) Chmod(name string, mode uint32, fctx *fuse.Context) (
 	ctx, cancel := withMetaTimeout(fctx, fs.client.MetaTimeout())
 	defer cancel()
 	res, err := fs.client.Fs().Chmod(ctx, &proto.ChmodRequest{
-		Volume: fs.volume,
-		Caller: createCaller(fctx),
-		Path:   name,
-		Mode:   mode,
+		Volume:    fs.volume,
+		Caller:    createCaller(fctx),
+		Path:      name,
+		Mode:      mode,
+		SessionId: fs.client.SessionID(),
 	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Chmod", zap.String("path", name), zap.Error(err))
@@ -311,11 +317,12 @@ func (fs *LocalFileSystem) Chown(name string, uid uint32, gid uint32, fctx *fuse
 	ctx, cancel := withMetaTimeout(fctx, fs.client.MetaTimeout())
 	defer cancel()
 	res, err := fs.client.Fs().Chown(ctx, &proto.ChownRequest{
-		Volume: fs.volume,
-		Caller: createCaller(fctx),
-		Path:   name,
-		Uid:    uid,
-		Gid:    gid,
+		Volume:    fs.volume,
+		Caller:    createCaller(fctx),
+		Path:      name,
+		Uid:       uid,
+		Gid:       gid,
+		SessionId: fs.client.SessionID(),
 	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Chown", zap.String("path", name), zap.Error(err))

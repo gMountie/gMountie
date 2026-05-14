@@ -12,6 +12,7 @@ import (
 
 type RpcServerImpl struct {
 	fsService service.VolumeService
+	sessions  service.SessionManager
 	proto.UnimplementedRpcFsServer
 }
 
@@ -19,9 +20,10 @@ type RpcServerImpl struct {
 var _ proto.RpcFsServer = (*RpcServerImpl)(nil)
 
 // NewGrpcServer creates a new gRPC server
-func NewGrpcServer(fsService service.VolumeService) *RpcServerImpl {
+func NewGrpcServer(fsService service.VolumeService, sessions service.SessionManager) *RpcServerImpl {
 	return &RpcServerImpl{
 		fsService: fsService,
+		sessions:  sessions,
 	}
 }
 
@@ -65,30 +67,48 @@ func (r *RpcServerImpl) GetAttr(ctx context.Context, request *proto.GetAttrReque
 }
 
 func (r *RpcServerImpl) Mkdir(ctx context.Context, request *proto.MkdirRequest) (*proto.MkdirReply, error) {
+	sess, err := resolveSession(r.sessions, request.SessionId)
+	if err != nil {
+		return nil, err
+	}
 	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
 	if err != nil {
 		return nil, err
 	}
-	status := fs.Mkdir(request.Path, request.Mode, createContext(ctx, request.Caller))
-	return &proto.MkdirReply{Status: int32(status)}, nil
+	return withIdempotency(sess, request.RequestId, func() (*proto.MkdirReply, error) {
+		s := fs.Mkdir(request.Path, request.Mode, createContext(ctx, request.Caller))
+		return &proto.MkdirReply{Status: int32(s)}, nil
+	})
 }
 
 func (r *RpcServerImpl) Rmdir(ctx context.Context, request *proto.RmdirRequest) (*proto.RmdirReply, error) {
+	sess, err := resolveSession(r.sessions, request.SessionId)
+	if err != nil {
+		return nil, err
+	}
 	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
 	if err != nil {
 		return nil, err
 	}
-	status := fs.Rmdir(request.Path, createContext(ctx, request.Caller))
-	return &proto.RmdirReply{Status: int32(status)}, nil
+	return withIdempotency(sess, request.RequestId, func() (*proto.RmdirReply, error) {
+		s := fs.Rmdir(request.Path, createContext(ctx, request.Caller))
+		return &proto.RmdirReply{Status: int32(s)}, nil
+	})
 }
 
 func (r *RpcServerImpl) Rename(ctx context.Context, request *proto.RenameRequest) (*proto.RenameReply, error) {
+	sess, err := resolveSession(r.sessions, request.SessionId)
+	if err != nil {
+		return nil, err
+	}
 	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
 	if err != nil {
 		return nil, err
 	}
-	status := fs.Rename(request.OldName, request.NewName, createContext(ctx, request.Caller))
-	return &proto.RenameReply{Status: int32(status)}, nil
+	return withIdempotency(sess, request.RequestId, func() (*proto.RenameReply, error) {
+		s := fs.Rename(request.OldName, request.NewName, createContext(ctx, request.Caller))
+		return &proto.RenameReply{Status: int32(s)}, nil
+	})
 }
 
 func (r *RpcServerImpl) OpenDir(ctx context.Context, request *proto.OpenDirRequest) (*proto.OpenDirReply, error) {
@@ -137,12 +157,18 @@ func (r *RpcServerImpl) StatFs(ctx context.Context, request *proto.StatFsRequest
 }
 
 func (r *RpcServerImpl) Unlink(ctx context.Context, request *proto.UnlinkRequest) (*proto.UnlinkReply, error) {
+	sess, err := resolveSession(r.sessions, request.SessionId)
+	if err != nil {
+		return nil, err
+	}
 	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
 	if err != nil {
 		return nil, err
 	}
-	status := fs.Unlink(request.Path, createContext(ctx, request.Caller))
-	return &proto.UnlinkReply{Status: int32(status)}, nil
+	return withIdempotency(sess, request.RequestId, func() (*proto.UnlinkReply, error) {
+		s := fs.Unlink(request.Path, createContext(ctx, request.Caller))
+		return &proto.UnlinkReply{Status: int32(s)}, nil
+	})
 }
 
 func (r *RpcServerImpl) Access(ctx context.Context, request *proto.AccessRequest) (*proto.AccessReply, error) {
@@ -155,30 +181,48 @@ func (r *RpcServerImpl) Access(ctx context.Context, request *proto.AccessRequest
 }
 
 func (r *RpcServerImpl) Truncate(ctx context.Context, request *proto.TruncateRequest) (*proto.TruncateReply, error) {
+	sess, err := resolveSession(r.sessions, request.SessionId)
+	if err != nil {
+		return nil, err
+	}
 	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
 	if err != nil {
 		return nil, err
 	}
-	status := fs.Truncate(request.Path, request.Size, createContext(ctx, request.Caller))
-	return &proto.TruncateReply{Status: int32(status)}, nil
+	return withIdempotency(sess, request.RequestId, func() (*proto.TruncateReply, error) {
+		s := fs.Truncate(request.Path, request.Size, createContext(ctx, request.Caller))
+		return &proto.TruncateReply{Status: int32(s)}, nil
+	})
 }
 
 func (r *RpcServerImpl) Chmod(ctx context.Context, request *proto.ChmodRequest) (*proto.ChmodReply, error) {
+	sess, err := resolveSession(r.sessions, request.SessionId)
+	if err != nil {
+		return nil, err
+	}
 	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
 	if err != nil {
 		return nil, err
 	}
-	status := fs.Chmod(request.Path, request.Mode, createContext(ctx, request.Caller))
-	return &proto.ChmodReply{Status: int32(status)}, nil
+	return withIdempotency(sess, request.RequestId, func() (*proto.ChmodReply, error) {
+		s := fs.Chmod(request.Path, request.Mode, createContext(ctx, request.Caller))
+		return &proto.ChmodReply{Status: int32(s)}, nil
+	})
 }
 
 func (r *RpcServerImpl) Chown(ctx context.Context, request *proto.ChownRequest) (*proto.ChownReply, error) {
+	sess, err := resolveSession(r.sessions, request.SessionId)
+	if err != nil {
+		return nil, err
+	}
 	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
 	if err != nil {
 		return nil, err
 	}
-	status := fs.Chown(request.Path, request.Uid, request.Gid, createContext(ctx, request.Caller))
-	return &proto.ChownReply{Status: int32(status)}, nil
+	return withIdempotency(sess, request.RequestId, func() (*proto.ChownReply, error) {
+		s := fs.Chown(request.Path, request.Uid, request.Gid, createContext(ctx, request.Caller))
+		return &proto.ChownReply{Status: int32(s)}, nil
+	})
 }
 
 // ----- Extended attributes -----

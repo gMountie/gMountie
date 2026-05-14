@@ -47,7 +47,7 @@ func (s *RpcFileServerTestSuite) TestOpen() {
 	mockFs.EXPECT().Open("/test/path", uint32(0), mock.Anything).Return(nodefs.NewDefaultFile(), fuse.OK)
 
 	// Test.
-	request := &proto.OpenRequest{Volume: "testVolume", Path: "/test/path", Flags: 0, Caller: CreateCaller(0, 0, 0), SessionId: s.sessionID}
+	request := &proto.OpenRequest{Volume: "testVolume", Path: "/test/path", Flags: 0, Caller: CreateCaller(0, 0, 0), SessionId: s.sessionID, RequestId: "test-req-open"}
 	reply, err := s.server.Open(ctx, request)
 
 	// Verify.
@@ -64,7 +64,7 @@ func (s *RpcFileServerTestSuite) TestCreate() {
 	mockFs.EXPECT().Create("/test/path", uint32(0), uint32(0), mock.Anything).Return(nodefs.NewDefaultFile(), fuse.OK)
 
 	// Test.
-	request := &proto.CreateRequest{Volume: "testVolume", Path: "/test/path", Flags: 0, Mode: 0, Caller: CreateCaller(0, 0, 0), SessionId: s.sessionID}
+	request := &proto.CreateRequest{Volume: "testVolume", Path: "/test/path", Flags: 0, Mode: 0, Caller: CreateCaller(0, 0, 0), SessionId: s.sessionID, RequestId: "test-req-create"}
 	reply, err := s.server.Create(ctx, request)
 
 	// Verify.
@@ -106,7 +106,7 @@ func (s *RpcFileServerTestSuite) TestWrite() {
 	mockFile.EXPECT().Release().Return().Maybe()
 
 	// Test.
-	request := &proto.WriteRequest{Fd: fd, Bytes: []byte("test data"), Offset: 0, SessionId: s.sessionID}
+	request := &proto.WriteRequest{Fd: fd, Bytes: []byte("test data"), Offset: 0, SessionId: s.sessionID, RequestId: "test-req-write"}
 	reply, err := s.server.Write(ctx, request)
 
 	// Verify.
@@ -186,6 +186,7 @@ func (s *RpcFileServerTestSuite) TestOpenNonOkDoesNotRegisterFd() {
 	request := &proto.OpenRequest{
 		Volume: "testVolume", Path: "/test/path", Flags: 0,
 		Caller: CreateCaller(0, 0, 0), SessionId: s.sessionID,
+		RequestId: "test-req-open-non-ok",
 	}
 	reply, err := s.server.Open(context.Background(), request)
 	s.Require().NoError(err)
@@ -207,6 +208,7 @@ func (s *RpcFileServerTestSuite) TestCreateNonOkDoesNotRegisterFd() {
 	request := &proto.CreateRequest{
 		Volume: "testVolume", Path: "/p",
 		Caller: CreateCaller(0, 0, 0), SessionId: s.sessionID,
+		RequestId: "test-req-create-non-ok",
 	}
 	reply, err := s.server.Create(context.Background(), request)
 	s.Require().NoError(err)
@@ -227,6 +229,42 @@ func (s *RpcFileServerTestSuite) TestUnknownSessionReturnsError() {
 	st, ok := status.FromError(err)
 	s.Require().True(ok)
 	s.Assert().Equal(codes.NotFound, st.Code())
+}
+
+func (s *RpcFileServerTestSuite) TestOpenEmptyRequestIDFails() {
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+
+	request := &proto.OpenRequest{
+		Volume: "testVolume", Path: "/p", Flags: 0,
+		Caller: CreateCaller(0, 0, 0), SessionId: s.sessionID,
+		RequestId: "",
+	}
+	_, err := s.server.Open(context.Background(), request)
+	s.Require().Error(err)
+	st, ok := status.FromError(err)
+	s.Require().True(ok)
+	s.Assert().Equal(codes.InvalidArgument, st.Code())
+}
+
+func (s *RpcFileServerTestSuite) TestOpenDuplicateRequestIDReturnsCachedReply() {
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	mockFs.EXPECT().Open("/p", uint32(0), mock.Anything).
+		Return(nodefs.NewDefaultFile(), fuse.OK).Once()
+
+	request := &proto.OpenRequest{
+		Volume: "testVolume", Path: "/p", Flags: 0,
+		Caller: CreateCaller(0, 0, 0), SessionId: s.sessionID,
+		RequestId: "dup-req-1",
+	}
+	r1, err := s.server.Open(context.Background(), request)
+	s.Require().NoError(err)
+
+	r2, err := s.server.Open(context.Background(), request)
+	s.Require().NoError(err)
+	s.Assert().Equal(r1.Fd, r2.Fd, "duplicate request_id must return the same fd from the cache")
+	s.Assert().Equal(r1.Status, r2.Status)
 }
 
 // --------- Helper Functions ---------

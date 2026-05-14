@@ -2,28 +2,40 @@ package controller
 
 import (
 	"context"
-	"gmountie/internal/mocks/pkg/server/service"
+	mockservice "gmountie/internal/mocks/pkg/server/service"
+	"gmountie/pkg/server/service"
 	"testing"
 
 	"gmountie/pkg/proto"
+
+	pathfs2 "gmountie/internal/mocks/github.com/hanwen/go-fuse/v2/fuse/pathfs"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	pathfs2 "gmountie/internal/mocks/github.com/hanwen/go-fuse/v2/fuse/pathfs"
 )
 
 type RpcServerTestSuite struct {
 	suite.Suite
-	server    *RpcServerImpl
-	fsService *service.MockVolumeService
+	server     *RpcServerImpl
+	fsService  *mockservice.MockVolumeService
+	sessionMgr service.SessionManager
+	sessionID  string
 }
 
 func (s *RpcServerTestSuite) SetupTest() {
-	s.fsService = new(service.MockVolumeService)
-	s.server = NewGrpcServer(s.fsService)
+	s.fsService = new(mockservice.MockVolumeService)
+	s.sessionMgr = service.NewSessionManager(service.SessionManagerOptions{})
+	sid, err := s.sessionMgr.Create()
+	s.Require().NoError(err)
+	s.sessionID = sid
+	s.server = NewGrpcServer(s.fsService, s.sessionMgr)
+}
+
+func (s *RpcServerTestSuite) TearDownTest() {
+	_ = s.sessionMgr.Stop(context.Background())
 }
 
 func (s *RpcServerTestSuite) TestGetAttr() {
@@ -51,7 +63,12 @@ func (s *RpcServerTestSuite) TestMkdir() {
 	mockFs.EXPECT().Mkdir("/test/path", uint32(0), mock.Anything).Return(fuse.OK)
 
 	// Test.
-	request := &proto.MkdirRequest{Volume: "testVolume", Path: "/test/path", Mode: 0, Caller: CreateCaller(0, 0, 0)}
+	request := &proto.MkdirRequest{
+		Volume: "testVolume", Path: "/test/path", Mode: 0,
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID,
+		RequestId: "test-req-mkdir",
+	}
 	reply, err := s.server.Mkdir(ctx, request)
 
 	// Verify.
@@ -68,7 +85,12 @@ func (s *RpcServerTestSuite) TestRmdir() {
 	mockFs.EXPECT().Rmdir("/test/path", mock.Anything).Return(fuse.OK)
 
 	// Test.
-	request := &proto.RmdirRequest{Volume: "testVolume", Path: "/test/path", Caller: CreateCaller(0, 0, 0)}
+	request := &proto.RmdirRequest{
+		Volume: "testVolume", Path: "/test/path",
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID,
+		RequestId: "test-req-rmdir",
+	}
 	reply, err := s.server.Rmdir(ctx, request)
 
 	// Verify.
@@ -85,7 +107,12 @@ func (s *RpcServerTestSuite) TestRename() {
 	mockFs.EXPECT().Rename("/old/path", "/new/path", mock.Anything).Return(fuse.OK)
 
 	// Test.
-	request := &proto.RenameRequest{Volume: "testVolume", OldName: "/old/path", NewName: "/new/path", Caller: CreateCaller(0, 0, 0)}
+	request := &proto.RenameRequest{
+		Volume: "testVolume", OldName: "/old/path", NewName: "/new/path",
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID,
+		RequestId: "test-req-rename",
+	}
 	reply, err := s.server.Rename(ctx, request)
 
 	// Verify.
@@ -152,7 +179,12 @@ func (s *RpcServerTestSuite) TestUnlink() {
 	mockFs.EXPECT().Unlink("/test/path", mock.Anything).Return(fuse.OK)
 
 	// Test.
-	request := &proto.UnlinkRequest{Volume: "testVolume", Path: "/test/path", Caller: CreateCaller(0, 0, 0)}
+	request := &proto.UnlinkRequest{
+		Volume: "testVolume", Path: "/test/path",
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID,
+		RequestId: "test-req-unlink",
+	}
 	reply, err := s.server.Unlink(ctx, request)
 
 	// Verify.
@@ -186,7 +218,12 @@ func (s *RpcServerTestSuite) TestTruncate() {
 	mockFs.EXPECT().Truncate("/test/path", uint64(0), mock.Anything).Return(fuse.OK)
 
 	// Test.
-	request := &proto.TruncateRequest{Volume: "testVolume", Path: "/test/path", Size: 0, Caller: CreateCaller(0, 0, 0)}
+	request := &proto.TruncateRequest{
+		Volume: "testVolume", Path: "/test/path", Size: 0,
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID,
+		RequestId: "test-req-truncate",
+	}
 	reply, err := s.server.Truncate(ctx, request)
 
 	// Verify.
@@ -203,7 +240,12 @@ func (s *RpcServerTestSuite) TestChmod() {
 	mockFs.EXPECT().Chmod("/test/path", uint32(0), mock.Anything).Return(fuse.OK)
 
 	// Test.
-	request := &proto.ChmodRequest{Volume: "testVolume", Path: "/test/path", Mode: 0, Caller: CreateCaller(0, 0, 0)}
+	request := &proto.ChmodRequest{
+		Volume: "testVolume", Path: "/test/path", Mode: 0,
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID,
+		RequestId: "test-req-chmod",
+	}
 	reply, err := s.server.Chmod(ctx, request)
 
 	// Verify.
@@ -220,7 +262,12 @@ func (s *RpcServerTestSuite) TestChown() {
 	mockFs.EXPECT().Chown("/test/path", uint32(0), uint32(0), mock.Anything).Return(fuse.OK)
 
 	// Test.
-	request := &proto.ChownRequest{Volume: "testVolume", Path: "/test/path", Uid: 0, Gid: 0, Caller: CreateCaller(0, 0, 0)}
+	request := &proto.ChownRequest{
+		Volume: "testVolume", Path: "/test/path", Uid: 0, Gid: 0,
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID,
+		RequestId: "test-req-chown",
+	}
 	reply, err := s.server.Chown(ctx, request)
 
 	// Verify.
@@ -244,6 +291,54 @@ func (s *RpcServerTestSuite) TestGetXAttr() {
 	s.Require().NoError(err)
 	s.Assert().NotNil(reply)
 	s.Assert().Equal(int32(fuse.OK), reply.Status)
+}
+
+func (s *RpcServerTestSuite) TestMkdirEmptyRequestIDFails() {
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+
+	request := &proto.MkdirRequest{
+		Volume: "testVolume", Path: "/p", Mode: 0,
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID,
+		RequestId: "",
+	}
+	_, err := s.server.Mkdir(context.Background(), request)
+	s.Require().Error(err)
+	st, ok := status.FromError(err)
+	s.Require().True(ok)
+	s.Assert().Equal(codes.InvalidArgument, st.Code())
+}
+
+func (s *RpcServerTestSuite) TestMkdirDuplicateRequestIDReturnsCachedReply() {
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	mockFs.EXPECT().Mkdir("/p", uint32(0), mock.Anything).Return(fuse.OK).Once()
+
+	request := &proto.MkdirRequest{
+		Volume: "testVolume", Path: "/p", Mode: 0,
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID,
+		RequestId: "dup-req-mkdir",
+	}
+	r1, err := s.server.Mkdir(context.Background(), request)
+	s.Require().NoError(err)
+
+	r2, err := s.server.Mkdir(context.Background(), request)
+	s.Require().NoError(err)
+	s.Assert().Equal(r1.Status, r2.Status, "duplicate request_id must return the cached reply")
+}
+
+func (s *RpcServerTestSuite) TestMkdirUnknownSessionReturnsNotFound() {
+	request := &proto.MkdirRequest{
+		Volume: "testVolume", Path: "/p", Mode: 0,
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: "no-such-session",
+		RequestId: "req-1",
+	}
+	_, err := s.server.Mkdir(context.Background(), request)
+	s.Require().Error(err)
+	s.Assert().Equal(codes.NotFound, status.Code(err))
 }
 
 func TestRpcServerTestSuite(t *testing.T) {

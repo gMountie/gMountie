@@ -77,10 +77,11 @@ func (s *LocalFileSystemTestSuite) TestGetAttr() {
 func (s *LocalFileSystemTestSuite) TestMkdir() {
 	// Setup
 	s.fsClient.EXPECT().Mkdir(mock.Anything, &proto.MkdirRequest{
-		Volume: "testVolume",
-		Path:   "/test",
-		Mode:   0755,
-		Caller: &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		Volume:    "testVolume",
+		Path:      "/test",
+		Mode:      0755,
+		Caller:    &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		SessionId: "test-session",
 	}).Return(&proto.MkdirReply{Status: int32(fuse.OK)}, nil)
 
 	// Test
@@ -99,9 +100,10 @@ func (s *LocalFileSystemTestSuite) TestMkdir() {
 func (s *LocalFileSystemTestSuite) TestRmdir() {
 	// Setup
 	s.fsClient.EXPECT().Rmdir(mock.Anything, &proto.RmdirRequest{
-		Volume: "testVolume",
-		Path:   "/test",
-		Caller: &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		Volume:    "testVolume",
+		Path:      "/test",
+		Caller:    &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		SessionId: "test-session",
 	}).Return(&proto.RmdirReply{Status: int32(fuse.OK)}, nil)
 
 	// Test
@@ -120,10 +122,11 @@ func (s *LocalFileSystemTestSuite) TestRmdir() {
 func (s *LocalFileSystemTestSuite) TestRename() {
 	// Setup
 	s.fsClient.EXPECT().Rename(mock.Anything, &proto.RenameRequest{
-		Volume:  "testVolume",
-		OldName: "/old",
-		NewName: "/new",
-		Caller:  &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		Volume:    "testVolume",
+		OldName:   "/old",
+		NewName:   "/new",
+		Caller:    &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		SessionId: "test-session",
 	}).Return(&proto.RenameReply{Status: int32(fuse.OK)}, nil)
 
 	// Test
@@ -243,9 +246,10 @@ func (s *LocalFileSystemTestSuite) TestCreate() {
 func (s *LocalFileSystemTestSuite) TestUnlink() {
 	// Setup
 	s.fsClient.EXPECT().Unlink(mock.Anything, &proto.UnlinkRequest{
-		Volume: "testVolume",
-		Path:   "/test",
-		Caller: &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		Volume:    "testVolume",
+		Path:      "/test",
+		Caller:    &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		SessionId: "test-session",
 	}).Return(&proto.UnlinkReply{Status: int32(fuse.OK)}, nil)
 
 	// Test
@@ -289,10 +293,11 @@ func (s *LocalFileSystemTestSuite) TestStatFs() {
 func (s *LocalFileSystemTestSuite) TestChmod() {
 	// Setup
 	s.fsClient.EXPECT().Chmod(mock.Anything, &proto.ChmodRequest{
-		Volume: "testVolume",
-		Path:   "/test",
-		Mode:   0644,
-		Caller: &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		Volume:    "testVolume",
+		Path:      "/test",
+		Mode:      0644,
+		Caller:    &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		SessionId: "test-session",
 	}).Return(&proto.ChmodReply{Status: int32(fuse.OK)}, nil)
 
 	// Test
@@ -311,11 +316,12 @@ func (s *LocalFileSystemTestSuite) TestChmod() {
 func (s *LocalFileSystemTestSuite) TestChown() {
 	// Setup
 	s.fsClient.EXPECT().Chown(mock.Anything, &proto.ChownRequest{
-		Volume: "testVolume",
-		Path:   "/test",
-		Uid:    1001,
-		Gid:    1001,
-		Caller: &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		Volume:    "testVolume",
+		Path:      "/test",
+		Uid:       1001,
+		Gid:       1001,
+		Caller:    &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		SessionId: "test-session",
 	}).Return(&proto.ChownReply{Status: int32(fuse.OK)}, nil)
 
 	// Test
@@ -356,10 +362,11 @@ func (s *LocalFileSystemTestSuite) TestAccess() {
 func (s *LocalFileSystemTestSuite) TestTruncate() {
 	// Setup
 	s.fsClient.EXPECT().Truncate(mock.Anything, &proto.TruncateRequest{
-		Volume: "testVolume",
-		Path:   "/test",
-		Size:   1024,
-		Caller: &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		Volume:    "testVolume",
+		Path:      "/test",
+		Size:      1024,
+		Caller:    &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}, Pid: 1000},
+		SessionId: "test-session",
 	}).Return(&proto.TruncateReply{Status: int32(fuse.OK)}, nil)
 
 	// Test

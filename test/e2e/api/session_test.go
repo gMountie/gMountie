@@ -64,6 +64,7 @@ func (s *SessionE2ETestSuite) TestFileOpenWithSessionIDSucceeds() {
 		Flags:     0,
 		Caller:    &proto.Caller{Owner: &proto.Owner{Uid: 0, Gid: 0}, Pid: 0},
 		SessionId: sid,
+		RequestId: "e2e-open-1",
 	})
 	// We only assert the session-resolution layer didn't reject this; the
 	// FUSE status code may vary depending on the volume's filesystem state.

@@ -41,7 +41,7 @@ func NewServerAppContext(cfg *config.Config) *AppContext {
 // GetGrpcServices returns the gRPC services.
 func (c *AppContext) GetGrpcServices() []grpc.ServiceRegistrar {
 	return []grpc.ServiceRegistrar{
-		controller.NewGrpcServer(c.VolumeService),
+		controller.NewGrpcServer(c.VolumeService, c.SessionManager),
 		controller.NewRpcFileServer(c.VolumeService, c.SessionManager),
 		controller.NewVolumeService(c.VolumeService),
 		controller.NewSessionController(c.SessionManager),
