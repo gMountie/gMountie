@@ -1,0 +1,24 @@
+all: false
+dir: internal/mocks/{{ trimPrefix "gmountie/" .SrcPackagePath }}
+filename: mock_{{.InterfaceName}}.go
+template: testify
+template-data:
+  unroll-variadic: true
+packages:
+  github.com/hanwen/go-fuse/v2/fuse/nodefs:
+    interfaces:
+      File: {}
+  github.com/hanwen/go-fuse/v2/fuse/pathfs:
+    interfaces:
+      FileSystem: {}
+  gmountie/pkg/client/grpc:
+    config:
+      all: true
+  gmountie/pkg/proto:
+    config:
+      all: true
+      include-auto-generated: true
+  gmountie/pkg/server/service:
+    config:
+      recursive: true
+      include-interface-regex: .*(Repository|Service)

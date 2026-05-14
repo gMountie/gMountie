@@ -18,7 +18,7 @@ CLI / server (root Taskfile):
 - `task lint` — runs `golangci-lint` via `go run` (uses `.golang-ci.yaml`)
 - `task build` — `goreleaser build --snapshot --clean`
 - `task gen:grpc` — regenerates Go stubs from `api/proto/*.proto` (requires `protoc`, `protoc-gen-go`, `protoc-gen-go-grpc`)
-- `task gen:mocks` — wipes `internal/mocks` and regenerates via mockery (config in `.mockery.yaml`)
+- `task gen:mocks` — wipes `internal/mocks` and regenerates via mockery (config in `.mockery.yml`)
 
 Run a single test: `go test -v -run TestName ./pkg/server/service/...` (Task has no single-test target).
 
@@ -57,7 +57,7 @@ Wails 3 (alpha) shell. `ui/main.go` embeds `frontend/build` and exposes `LoginCo
 Server, client, and UI configs all go through `pkg/common/config` (Viper + `go-playground/validator`). Default paths come from `adrg/xdg`. Env vars use the `GMOUNTIE_` prefix. `gMountie serve` writes a default config on first run if none is found.
 
 ### Mocks
-`task gen:mocks` regenerates `internal/mocks/` from `.mockery.yaml`. Tests import these as `gmountie/internal/mocks/...`. Don't hand-edit anything under `internal/mocks/` — it's blown away on every regen. The coverage task explicitly strips this directory from the profile.
+`task gen:mocks` regenerates `internal/mocks/` from `.mockery.yml`. Tests import these as `gmountie/internal/mocks/...`. Don't hand-edit anything under `internal/mocks/` — it's blown away on every regen. The coverage task explicitly strips this directory from the profile.
 
 ## Conventions worth knowing
 

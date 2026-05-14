@@ -61,7 +61,7 @@ tasks:
   gen:mocks:
     cmds:
       - rm -rf internal/mocks
-      - go run github.com/vektra/mockery/v2@v2.46.3
+      - go run github.com/vektra/mockery/v3@v3.7.0
 
   lint:
     cmds:
