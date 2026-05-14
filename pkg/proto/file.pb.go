@@ -95,6 +95,7 @@ type OpenRequest struct {
 	Caller        *Caller                `protobuf:"bytes,2,opt,name=caller,proto3" json:"caller,omitempty"`
 	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
 	Flags         uint32                 `protobuf:"varint,4,opt,name=flags,proto3" json:"flags,omitempty"`
+	SessionId     string                 `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -157,6 +158,13 @@ func (x *OpenRequest) GetFlags() uint32 {
 	return 0
 }
 
+func (x *OpenRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
 type OpenReply struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Fd            uint64                 `protobuf:"varint,1,opt,name=fd,proto3" json:"fd,omitempty"`
@@ -216,6 +224,7 @@ type CreateRequest struct {
 	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
 	Flags         uint32                 `protobuf:"varint,4,opt,name=flags,proto3" json:"flags,omitempty"`
 	Mode          uint32                 `protobuf:"varint,5,opt,name=mode,proto3" json:"mode,omitempty"`
+	SessionId     string                 `protobuf:"bytes,6,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -285,6 +294,13 @@ func (x *CreateRequest) GetMode() uint32 {
 	return 0
 }
 
+func (x *CreateRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
 type CreateReply struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Fd            uint64                 `protobuf:"varint,1,opt,name=fd,proto3" json:"fd,omitempty"`
@@ -343,6 +359,7 @@ type ReadRequest struct {
 	Fd            uint64                 `protobuf:"varint,2,opt,name=fd,proto3" json:"fd,omitempty"`
 	Offset        int64                  `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
 	Size          uint32                 `protobuf:"varint,4,opt,name=size,proto3" json:"size,omitempty"`
+	SessionId     string                 `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -403,6 +420,13 @@ func (x *ReadRequest) GetSize() uint32 {
 		return x.Size
 	}
 	return 0
+}
+
+func (x *ReadRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
 }
 
 type ReadReply struct {
@@ -471,6 +495,7 @@ type WriteRequest struct {
 	Fd            uint64                 `protobuf:"varint,2,opt,name=fd,proto3" json:"fd,omitempty"`
 	Bytes         []byte                 `protobuf:"bytes,3,opt,name=bytes,proto3" json:"bytes,omitempty"`
 	Offset        int64                  `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`
+	SessionId     string                 `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -533,6 +558,13 @@ func (x *WriteRequest) GetOffset() int64 {
 	return 0
 }
 
+func (x *WriteRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
 type WriteReply struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Written       uint32                 `protobuf:"varint,1,opt,name=written,proto3" json:"written,omitempty"`
@@ -590,6 +622,7 @@ type FsyncRequest struct {
 	Volume        string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
 	Fd            uint64                 `protobuf:"varint,2,opt,name=fd,proto3" json:"fd,omitempty"`
 	Flags         int64                  `protobuf:"varint,3,opt,name=flags,proto3" json:"flags,omitempty"`
+	SessionId     string                 `protobuf:"bytes,4,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -645,6 +678,13 @@ func (x *FsyncRequest) GetFlags() int64 {
 	return 0
 }
 
+func (x *FsyncRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
 type FsyncReply struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Status        int32                  `protobuf:"varint,1,opt,name=status,proto3" json:"status,omitempty"`
@@ -693,6 +733,7 @@ type ReleaseRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Volume        string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
 	Fd            uint64                 `protobuf:"varint,2,opt,name=fd,proto3" json:"fd,omitempty"`
+	SessionId     string                 `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -741,6 +782,13 @@ func (x *ReleaseRequest) GetFd() uint64 {
 	return 0
 }
 
+func (x *ReleaseRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
 type ReleaseReply struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -781,6 +829,7 @@ type FlushRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Volume        string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
 	Fd            uint64                 `protobuf:"varint,2,opt,name=fd,proto3" json:"fd,omitempty"`
+	SessionId     string                 `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -827,6 +876,13 @@ func (x *FlushRequest) GetFd() uint64 {
 		return x.Fd
 	}
 	return 0
+}
+
+func (x *FlushRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
 }
 
 type FlushReply struct {
@@ -880,6 +936,7 @@ type GetLkRequest struct {
 	Owner         uint64                 `protobuf:"varint,3,opt,name=owner,proto3" json:"owner,omitempty"`
 	Flags         uint32                 `protobuf:"varint,4,opt,name=flags,proto3" json:"flags,omitempty"`
 	Lk            *FileLock              `protobuf:"bytes,5,opt,name=lk,proto3" json:"lk,omitempty"`
+	SessionId     string                 `protobuf:"bytes,6,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -949,6 +1006,13 @@ func (x *GetLkRequest) GetLk() *FileLock {
 	return nil
 }
 
+func (x *GetLkRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
 type GetLkReply struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Status        int32                  `protobuf:"varint,1,opt,name=status,proto3" json:"status,omitempty"`
@@ -1008,6 +1072,7 @@ type SetLkRequest struct {
 	Owner         uint64                 `protobuf:"varint,3,opt,name=owner,proto3" json:"owner,omitempty"`
 	Flags         uint32                 `protobuf:"varint,4,opt,name=flags,proto3" json:"flags,omitempty"`
 	Lk            *FileLock              `protobuf:"bytes,5,opt,name=lk,proto3" json:"lk,omitempty"`
+	SessionId     string                 `protobuf:"bytes,6,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1077,6 +1142,13 @@ func (x *SetLkRequest) GetLk() *FileLock {
 	return nil
 }
 
+func (x *SetLkRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
 type SetLkReply struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Status        int32                  `protobuf:"varint,1,opt,name=status,proto3" json:"status,omitempty"`
@@ -1128,6 +1200,7 @@ type SetLkwRequest struct {
 	Owner         uint64                 `protobuf:"varint,3,opt,name=owner,proto3" json:"owner,omitempty"`
 	Flags         uint32                 `protobuf:"varint,4,opt,name=flags,proto3" json:"flags,omitempty"`
 	Lk            *FileLock              `protobuf:"bytes,5,opt,name=lk,proto3" json:"lk,omitempty"`
+	SessionId     string                 `protobuf:"bytes,6,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1197,6 +1270,13 @@ func (x *SetLkwRequest) GetLk() *FileLock {
 	return nil
 }
 
+func (x *SetLkwRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
 type SetLkwReply struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Status        int32                  `protobuf:"varint,1,opt,name=status,proto3" json:"status,omitempty"`
@@ -1250,6 +1330,7 @@ type AllocateRequest struct {
 	Off           uint64                 `protobuf:"varint,5,opt,name=off,proto3" json:"off,omitempty"`
 	Size          uint64                 `protobuf:"varint,6,opt,name=size,proto3" json:"size,omitempty"`
 	Mode          uint32                 `protobuf:"varint,7,opt,name=mode,proto3" json:"mode,omitempty"`
+	SessionId     string                 `protobuf:"bytes,8,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1333,6 +1414,13 @@ func (x *AllocateRequest) GetMode() uint32 {
 	return 0
 }
 
+func (x *AllocateRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
 type AllocateReply struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Status        int32                  `protobuf:"varint,1,opt,name=status,proto3" json:"status,omitempty"`
@@ -1386,86 +1474,106 @@ const file_api_proto_file_proto_rawDesc = "" +
 	"\x05start\x18\x01 \x01(\x04R\x05start\x12\x10\n" +
 	"\x03end\x18\x02 \x01(\x04R\x03end\x12\x10\n" +
 	"\x03typ\x18\x03 \x01(\rR\x03typ\x12\x10\n" +
-	"\x03pid\x18\x04 \x01(\rR\x03pid\"y\n" +
+	"\x03pid\x18\x04 \x01(\rR\x03pid\"\x98\x01\n" +
 	"\vOpenRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
 	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x12\n" +
 	"\x04path\x18\x03 \x01(\tR\x04path\x12\x14\n" +
-	"\x05flags\x18\x04 \x01(\rR\x05flags\"3\n" +
+	"\x05flags\x18\x04 \x01(\rR\x05flags\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x05 \x01(\tR\tsessionId\"3\n" +
 	"\tOpenReply\x12\x0e\n" +
 	"\x02fd\x18\x01 \x01(\x04R\x02fd\x12\x16\n" +
-	"\x06status\x18\x02 \x01(\x05R\x06status\"\x8f\x01\n" +
+	"\x06status\x18\x02 \x01(\x05R\x06status\"\xae\x01\n" +
 	"\rCreateRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
 	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x12\n" +
 	"\x04path\x18\x03 \x01(\tR\x04path\x12\x14\n" +
 	"\x05flags\x18\x04 \x01(\rR\x05flags\x12\x12\n" +
-	"\x04mode\x18\x05 \x01(\rR\x04mode\"5\n" +
+	"\x04mode\x18\x05 \x01(\rR\x04mode\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x06 \x01(\tR\tsessionId\"5\n" +
 	"\vCreateReply\x12\x0e\n" +
 	"\x02fd\x18\x01 \x01(\x04R\x02fd\x12\x16\n" +
-	"\x06status\x18\x02 \x01(\x05R\x06status\"a\n" +
+	"\x06status\x18\x02 \x01(\x05R\x06status\"\x80\x01\n" +
 	"\vReadRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12\x0e\n" +
 	"\x02fd\x18\x02 \x01(\x04R\x02fd\x12\x16\n" +
 	"\x06offset\x18\x03 \x01(\x03R\x06offset\x12\x12\n" +
-	"\x04size\x18\x04 \x01(\rR\x04size\"M\n" +
+	"\x04size\x18\x04 \x01(\rR\x04size\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x05 \x01(\tR\tsessionId\"M\n" +
 	"\tReadReply\x12\x14\n" +
 	"\x05bytes\x18\x01 \x01(\fR\x05bytes\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x03R\x04size\x12\x16\n" +
-	"\x06status\x18\x03 \x01(\x05R\x06status\"d\n" +
+	"\x06status\x18\x03 \x01(\x05R\x06status\"\x83\x01\n" +
 	"\fWriteRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12\x0e\n" +
 	"\x02fd\x18\x02 \x01(\x04R\x02fd\x12\x14\n" +
 	"\x05bytes\x18\x03 \x01(\fR\x05bytes\x12\x16\n" +
-	"\x06offset\x18\x04 \x01(\x03R\x06offset\">\n" +
+	"\x06offset\x18\x04 \x01(\x03R\x06offset\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x05 \x01(\tR\tsessionId\">\n" +
 	"\n" +
 	"WriteReply\x12\x18\n" +
 	"\awritten\x18\x01 \x01(\rR\awritten\x12\x16\n" +
-	"\x06status\x18\x02 \x01(\x05R\x06status\"L\n" +
+	"\x06status\x18\x02 \x01(\x05R\x06status\"k\n" +
 	"\fFsyncRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12\x0e\n" +
 	"\x02fd\x18\x02 \x01(\x04R\x02fd\x12\x14\n" +
-	"\x05flags\x18\x03 \x01(\x03R\x05flags\"$\n" +
+	"\x05flags\x18\x03 \x01(\x03R\x05flags\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x04 \x01(\tR\tsessionId\"$\n" +
 	"\n" +
 	"FsyncReply\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\x05R\x06status\"8\n" +
+	"\x06status\x18\x01 \x01(\x05R\x06status\"W\n" +
 	"\x0eReleaseRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12\x0e\n" +
-	"\x02fd\x18\x02 \x01(\x04R\x02fd\"\x0e\n" +
-	"\fReleaseReply\"6\n" +
+	"\x02fd\x18\x02 \x01(\x04R\x02fd\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x03 \x01(\tR\tsessionId\"\x0e\n" +
+	"\fReleaseReply\"U\n" +
 	"\fFlushRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12\x0e\n" +
-	"\x02fd\x18\x02 \x01(\x04R\x02fd\"$\n" +
+	"\x02fd\x18\x02 \x01(\x04R\x02fd\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x03 \x01(\tR\tsessionId\"$\n" +
 	"\n" +
 	"FlushReply\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\x05R\x06status\"\x86\x01\n" +
+	"\x06status\x18\x01 \x01(\x05R\x06status\"\xa5\x01\n" +
 	"\fGetLkRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12\x0e\n" +
 	"\x02fd\x18\x02 \x01(\x04R\x02fd\x12\x14\n" +
 	"\x05owner\x18\x03 \x01(\x04R\x05owner\x12\x14\n" +
 	"\x05flags\x18\x04 \x01(\rR\x05flags\x12\"\n" +
-	"\x02lk\x18\x05 \x01(\v2\x12.gmountie.FileLockR\x02lk\"H\n" +
+	"\x02lk\x18\x05 \x01(\v2\x12.gmountie.FileLockR\x02lk\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x06 \x01(\tR\tsessionId\"H\n" +
 	"\n" +
 	"GetLkReply\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\x05R\x06status\x12\"\n" +
-	"\x02lk\x18\x02 \x01(\v2\x12.gmountie.FileLockR\x02lk\"\x86\x01\n" +
+	"\x02lk\x18\x02 \x01(\v2\x12.gmountie.FileLockR\x02lk\"\xa5\x01\n" +
 	"\fSetLkRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12\x0e\n" +
 	"\x02fd\x18\x02 \x01(\x04R\x02fd\x12\x14\n" +
 	"\x05owner\x18\x03 \x01(\x04R\x05owner\x12\x14\n" +
 	"\x05flags\x18\x04 \x01(\rR\x05flags\x12\"\n" +
-	"\x02lk\x18\x05 \x01(\v2\x12.gmountie.FileLockR\x02lk\"$\n" +
+	"\x02lk\x18\x05 \x01(\v2\x12.gmountie.FileLockR\x02lk\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x06 \x01(\tR\tsessionId\"$\n" +
 	"\n" +
 	"SetLkReply\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\x05R\x06status\"\x87\x01\n" +
+	"\x06status\x18\x01 \x01(\x05R\x06status\"\xa6\x01\n" +
 	"\rSetLkwRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12\x0e\n" +
 	"\x02fd\x18\x02 \x01(\x04R\x02fd\x12\x14\n" +
 	"\x05owner\x18\x03 \x01(\x04R\x05owner\x12\x14\n" +
 	"\x05flags\x18\x04 \x01(\rR\x05flags\x12\"\n" +
-	"\x02lk\x18\x05 \x01(\v2\x12.gmountie.FileLockR\x02lk\"%\n" +
+	"\x02lk\x18\x05 \x01(\v2\x12.gmountie.FileLockR\x02lk\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x06 \x01(\tR\tsessionId\"%\n" +
 	"\vSetLkwReply\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\x05R\x06status\"\xb1\x01\n" +
+	"\x06status\x18\x01 \x01(\x05R\x06status\"\xd0\x01\n" +
 	"\x0fAllocateRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
 	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x0e\n" +
@@ -1473,7 +1581,9 @@ const file_api_proto_file_proto_rawDesc = "" +
 	"\x04path\x18\x04 \x01(\tR\x04path\x12\x10\n" +
 	"\x03off\x18\x05 \x01(\x04R\x03off\x12\x12\n" +
 	"\x04size\x18\x06 \x01(\x04R\x04size\x12\x12\n" +
-	"\x04mode\x18\a \x01(\rR\x04mode\"'\n" +
+	"\x04mode\x18\a \x01(\rR\x04mode\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\b \x01(\tR\tsessionId\"'\n" +
 	"\rAllocateReply\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\x05R\x06status2\xf5\x04\n" +
 	"\aRpcFile\x122\n" +

@@ -16,6 +16,7 @@ message OpenRequest {
   Caller caller = 2;
   string path = 3;
   uint32 flags = 4;
+  string session_id = 5;
 }
 
 message OpenReply {
@@ -29,6 +30,7 @@ message CreateRequest {
   string path = 3;
   uint32 flags = 4;
   uint32 mode = 5;
+  string session_id = 6;
 }
 
 message CreateReply {
@@ -41,6 +43,7 @@ message ReadRequest {
   uint64 fd = 2;
   int64 offset = 3;
   uint32 size = 4;
+  string session_id = 5;
 }
 
 message ReadReply {
@@ -54,6 +57,7 @@ message WriteRequest {
   uint64 fd = 2;
   bytes bytes = 3;
   int64 offset = 4;
+  string session_id = 5;
 }
 
 message WriteReply {
@@ -65,6 +69,7 @@ message FsyncRequest {
   string volume = 1;
   uint64 fd = 2;
   int64 flags = 3;
+  string session_id = 4;
 }
 
 message FsyncReply {
@@ -74,6 +79,7 @@ message FsyncReply {
 message ReleaseRequest {
   string volume = 1;
   uint64 fd= 2;
+  string session_id = 3;
 }
 
 message ReleaseReply {
@@ -82,6 +88,7 @@ message ReleaseReply {
 message FlushRequest {
   string volume = 1;
   uint64 fd = 2;
+  string session_id = 3;
 }
 
 message FlushReply {
@@ -94,6 +101,7 @@ message GetLkRequest {
   uint64 owner = 3;
   uint32 flags = 4;
   FileLock lk = 5;
+  string session_id = 6;
 }
 
 message GetLkReply {
@@ -107,6 +115,7 @@ message SetLkRequest {
   uint64 owner = 3;
   uint32 flags = 4;
   FileLock lk = 5;
+  string session_id = 6;
 }
 
 message SetLkReply {
@@ -119,6 +128,7 @@ message SetLkwRequest {
   uint64 owner = 3;
   uint32 flags = 4;
   FileLock lk = 5;
+  string session_id = 6;
 }
 
 message SetLkwReply {
@@ -133,6 +143,7 @@ message AllocateRequest {
   uint64 off = 5;
   uint64 size = 6;
   uint32 mode = 7;
+  string session_id = 8;
 }
 
 message AllocateReply {
