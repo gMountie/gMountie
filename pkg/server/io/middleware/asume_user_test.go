@@ -281,6 +281,25 @@ func (s *AssumeUserMiddlewareTestSuite) TestXAttrOperations() {
 	s.fs.AssertExpectations(s.T())
 }
 
+// TestGetAttr_SetfsuidFailureReturnsEPERM verifies that when setfsuid fails,
+// the wrapper returns fuse.EPERM rather than killing the process.
+func (s *AssumeUserMiddlewareTestSuite) TestGetAttr_SetfsuidFailureReturnsEPERM() {
+	ctx := &fuse.Context{
+		Caller: fuse.Caller{Owner: fuse.Owner{Uid: 1000, Gid: 1000}},
+	}
+	// setfsuid returns an error; the wrapper must NOT invoke setfsgid or the
+	// underlying FileSystem, and must return EPERM.
+	s.setfs.On("Setfsuid", 1000).Return(syscall.EPERM).Once()
+
+	attr, status := s.middleware.GetAttr("testfile", ctx)
+
+	s.Nil(attr)
+	s.Equal(fuse.EPERM, status)
+	s.setfs.AssertExpectations(s.T())
+	// fs should NOT have been called.
+	s.fs.AssertNotCalled(s.T(), "GetAttr", mock.Anything, mock.Anything)
+}
+
 func (s *AssumeUserMiddlewareTestSuite) setUpChangeUserMocks() {
 	s.setfs.On("Setfsuid", 1000).Return(nil)
 	s.setfs.On("Setfsuid", syscall.Geteuid()).Return(nil)
