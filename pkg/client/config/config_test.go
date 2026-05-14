@@ -111,6 +111,19 @@ rpc:
 	s.Assert().Equal(time.Minute, result.Rpc.TimeoutIO)
 }
 
+// TestParse_LogEnvBindings verifies GMOUNTIE_LOG_LEVEL / GMOUNTIE_LOG_FORMAT
+// reach cfg.Log.* on the client side, mirroring the server-side asymmetry.
+func (s *ConfigTestSuite) TestParse_LogEnvBindings() {
+	s.T().Setenv("GMOUNTIE_LOG_LEVEL", "debug")
+	s.T().Setenv("GMOUNTIE_LOG_FORMAT", "json")
+
+	result, err := LoadConfigFromString(s.minimalConf)
+	s.Require().NoError(err)
+	s.Require().NotNil(result.Log)
+	s.Assert().Equal("debug", result.Log.Level)
+	s.Assert().Equal("json", result.Log.Format)
+}
+
 // Test Runner
 func TestConfigTestSuite(t *testing.T) {
 	suite.Run(t, new(ConfigTestSuite))

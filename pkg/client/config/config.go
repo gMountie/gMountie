@@ -1,10 +1,12 @@
 package config
 
 import (
+	"os"
+	"strings"
+
 	"gmountie/pkg/common/config"
 	serverConfig "gmountie/pkg/server/config"
 	"gmountie/pkg/utils/log"
-	"os"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/pkg/errors"
@@ -80,6 +82,14 @@ func LoadConfigFromString(cfg string) (*Config, error) {
 func ParseConfig(v *viper.Viper) (*Config, error) {
 	var result Config
 
+	// Enable environment variable overrides. `GMOUNTIE_LOG_LEVEL` →
+	// `log.level`, etc. AutomaticEnv alone doesn't propagate through
+	// Sub(...), so nested keys we want overridable are bound explicitly
+	// and read from the parent viper directly.
+	v.SetEnvPrefix(serverConfig.EnvironmentPrefix)
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+
 	// Parse server config
 	v.SetDefault("server", make(map[string]string))
 	if cfg, err := NewServerConfig(v.Sub("server")); err == nil {
@@ -114,6 +124,8 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	// Parse log config (optional; absent block keeps zero-value defaults).
 	v.SetDefault("log.format", "")
 	v.SetDefault("log.level", "")
+	_ = v.BindEnv("log.format")
+	_ = v.BindEnv("log.level")
 	result.Log = &log.LogConfig{
 		Format: v.GetString("log.format"),
 		Level:  v.GetString("log.level"),

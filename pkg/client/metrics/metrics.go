@@ -33,15 +33,28 @@ func (m *Metrics) MustRegister(r prometheus.Registerer) {
 	r.MustRegister(m.RetryTotal, m.InFlight)
 }
 
-// Register tolerates AlreadyRegisteredError so binaries that build a
-// client more than once per process (or tests running with count>1) do
-// not panic.
+// Register tolerates AlreadyRegisteredError by adopting the existing
+// collector so increments still land in the registered series. Binaries
+// that build a client more than once per process (or tests running with
+// count>1) stay consistent.
 func (m *Metrics) Register(r prometheus.Registerer) error {
 	for _, c := range []prometheus.Collector{m.RetryTotal, m.InFlight} {
 		if err := r.Register(c); err != nil {
 			var ar prometheus.AlreadyRegisteredError
 			if !errors.As(err, &ar) {
 				return errors.Wrap(err, "register client metrics")
+			}
+			// Adopt the previously-registered collector so future
+			// calls through m hit the same instance.
+			switch existing := ar.ExistingCollector.(type) {
+			case *prometheus.CounterVec:
+				if c == prometheus.Collector(m.RetryTotal) {
+					m.RetryTotal = existing
+				}
+			case *prometheus.GaugeVec:
+				if c == prometheus.Collector(m.InFlight) {
+					m.InFlight = existing
+				}
 			}
 		}
 	}

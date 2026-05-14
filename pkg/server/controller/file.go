@@ -89,8 +89,11 @@ func (r *RpcFileServerImpl) Read(_ context.Context, request *proto.ReadRequest) 
 	if s != fuse.OK {
 		return &proto.ReadReply{Status: int32(s)}, nil
 	}
-	r.metrics.BytesAdd(request.Volume, "out", float64(n.Size()))
 	buf, s = n.Bytes(buf)
+	if s != fuse.OK {
+		return &proto.ReadReply{Status: int32(s)}, nil
+	}
+	r.metrics.BytesAdd(request.Volume, "out", float64(n.Size()))
 	return &proto.ReadReply{Size: int64(n.Size()), Bytes: buf, Status: int32(s)}, nil
 }
 

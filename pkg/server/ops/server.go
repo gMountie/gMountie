@@ -15,28 +15,28 @@ import (
 // and /version. Owns no business logic — pure routing over supplied
 // handlers and the readiness service.
 type Server struct {
-	addr      string
-	readiness ReadinessChecker
-	server    *http.Server
+	server *http.Server
 }
 
 // NewServer constructs an ops server bound to addr that delegates
-// readiness checks to readiness.
+// readiness checks to readiness. The underlying *http.Server is built
+// synchronously here so Stop always has a non-nil target regardless of
+// goroutine scheduling between Start and Stop.
 func NewServer(addr string, readiness ReadinessChecker) *Server {
-	return &Server{addr: addr, readiness: readiness}
-}
-
-// Start binds and serves. Returns when ListenAndServe returns. Typical
-// callers run this in a goroutine.
-func (s *Server) Start() {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.Handle("/healthz", LivenessHandler())
-	mux.Handle("/readyz", ReadinessHandler(s.readiness))
+	mux.Handle("/readyz", ReadinessHandler(readiness))
 	mux.Handle("/version", VersionHandler())
+	return &Server{
+		server: &http.Server{Addr: addr, Handler: mux},
+	}
+}
 
-	s.server = &http.Server{Addr: s.addr, Handler: mux}
-	log.Log.Info("ops server starting", zap.String("addr", s.addr))
+// Start blocks running ListenAndServe. Typical callers run it in a
+// goroutine. Returns when the server stops.
+func (s *Server) Start() {
+	log.Log.Info("ops server starting", zap.String("addr", s.server.Addr))
 	if err := s.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Log.Error("ops server stopped", zap.Error(err))
 	}
@@ -44,8 +44,5 @@ func (s *Server) Start() {
 
 // Stop initiates graceful shutdown.
 func (s *Server) Stop(ctx context.Context) error {
-	if s.server == nil {
-		return nil
-	}
 	return s.server.Shutdown(ctx)
 }
