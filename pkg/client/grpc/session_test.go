@@ -65,6 +65,32 @@ func (s *SessionHandshakeTestSuite) TestEstablishReturnsErrorWhenCreateFails() {
 	s.Assert().Empty(handshake.SessionID())
 }
 
+func (s *SessionHandshakeTestSuite) TestEstablishKeepaliveFailureLeavesCloseSafe() {
+	s.sessionClient.EXPECT().Create(mock.Anything, mock.Anything).
+		Return(&proto.SessionCreateReply{SessionId: "abc-123"}, nil).Once()
+	s.sessionClient.EXPECT().Keepalive(mock.Anything, mock.Anything).
+		Return(nil, errors.New("network")).Once()
+
+	handshake := NewSessionHandshake(s.sessionClient)
+	err := handshake.Establish(context.Background())
+	s.Require().Error(err)
+
+	// Close must not deadlock even though Establish failed mid-way.
+	done := make(chan struct{})
+	go func() {
+		_ = handshake.Close()
+		close(done)
+	}()
+	s.Require().Eventually(func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond, "Close should not block when Establish failed")
+}
+
 func TestSessionHandshakeTestSuite(t *testing.T) {
 	suite.Run(t, new(SessionHandshakeTestSuite))
 }

@@ -63,15 +63,14 @@ func (h *SessionHandshake) Establish(ctx context.Context) error {
 	h.mu.Unlock()
 
 	streamCtx, cancel := context.WithCancel(context.Background())
-	h.cancel = cancel
-	h.done = make(chan struct{})
-
 	stream, err := h.client.Keepalive(streamCtx, &proto.KeepaliveRequest{SessionId: reply.SessionId})
 	if err != nil {
 		cancel()
 		return errors.Wrap(err, "session keepalive open")
 	}
 
+	h.cancel = cancel
+	h.done = make(chan struct{})
 	h.running.Store(true)
 	go h.drainKeepalive(stream)
 	return nil
