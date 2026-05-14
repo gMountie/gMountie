@@ -1,0 +1,15 @@
+syntax = "proto3";
+package gmountie;
+option go_package = "pkg/proto";
+
+message VersionRequest {}
+
+message VersionReply {
+  string version = 1;
+  string commit  = 2;
+  string date    = 3;
+}
+
+service VersionService {
+  rpc Get (VersionRequest) returns (VersionReply);
+}
