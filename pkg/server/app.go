@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"gmountie/pkg/server/config"
 	"gmountie/pkg/server/controller"
 	"gmountie/pkg/server/grpc"
@@ -10,6 +11,7 @@ import (
 	"gmountie/pkg/utils/log"
 	"runtime"
 	"syscall"
+	"time"
 
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -42,20 +44,51 @@ func (c *AppContext) GetGrpcServices() []grpc.ServiceRegistrar {
 	}
 }
 
-// Start starts the server.
-func Start(cfg *config.Config) error {
-	context := NewServerAppContext(cfg)
+// Start runs the server until ctx is cancelled. On cancellation it triggers a
+// graceful shutdown bounded by shutdownDeadline; if that doesn't complete in
+// time it forces a stop. Returns the first non-nil error among serve errors
+// and shutdown errors.
+func Start(ctx context.Context, cfg *config.Config) error {
+	const shutdownDeadline = 30 * time.Second
 
+	appCtx := NewServerAppContext(cfg)
 	s := grpc.NewServer(
 		cfg,
-		context.AuthService,
-		context.GetGrpcServices(),
+		appCtx.AuthService,
+		appCtx.GetGrpcServices(),
 	)
 
-	if err := s.Serve(); err != nil {
-		return errors.Wrap(err, "failed to start server")
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- s.Serve()
+	}()
+
+	select {
+	case err := <-serveErr:
+		if err != nil {
+			return errors.Wrap(err, "failed to start server")
+		}
+		return nil
+	case <-ctx.Done():
+		log.Log.Info("shutdown signal received; draining in-flight requests",
+			zap.Duration("deadline", shutdownDeadline))
+
+		stopped := make(chan struct{})
+		go func() {
+			s.Stop(true)
+			close(stopped)
+		}()
+
+		select {
+		case <-stopped:
+			log.Log.Info("server shut down gracefully")
+			return nil
+		case <-time.After(shutdownDeadline):
+			log.Log.Warn("graceful shutdown timed out; forcing stop")
+			s.Stop(false)
+			return errors.New("shutdown deadline exceeded")
+		}
 	}
-	return nil
 }
 
 // getVolumeMiddleware returns the volume middleware.

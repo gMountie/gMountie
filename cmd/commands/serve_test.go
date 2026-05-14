@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bytes"
+	"context"
 	commonConfig "gmountie/pkg/common/config"
 	"gmountie/pkg/server/config"
 	"gmountie/test/e2e/utils"
@@ -19,7 +20,7 @@ type ServeCmdTestSuite struct {
 	buf                 *bytes.Buffer
 	tempDir             string
 	serverStartCalled   bool
-	originalServerStart func(config2 *config.Config) error
+	originalServerStart func(ctx context.Context, cfg *config.Config) error
 }
 
 func (s *ServeCmdTestSuite) SetupTest() {
@@ -33,7 +34,7 @@ func (s *ServeCmdTestSuite) SetupTest() {
 
 	s.serverStartCalled = false
 	s.originalServerStart = serverStart
-	serverStart = func(cfg *config.Config) error {
+	serverStart = func(ctx context.Context, cfg *config.Config) error {
 		s.serverStartCalled = true
 		return nil
 	}

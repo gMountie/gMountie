@@ -1,11 +1,14 @@
 package commands
 
 import (
+	"context"
 	"gmountie/pkg/common/config"
 	"gmountie/pkg/server"
 	serverConfig "gmountie/pkg/server/config"
 	"gmountie/pkg/utils/log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
@@ -74,7 +77,9 @@ var serveCmd = &cobra.Command{
 		}
 
 		// Start server
-		return serverStart(cfg)
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
+		return serverStart(ctx, cfg)
 	},
 }
 
