@@ -185,9 +185,7 @@ func (r *RpcFileServerImpl) Write(stream proto.RpcFile_WriteServer) error {
 // frames must be zero-valued or exactly match frame 1 (proto3 zero values are
 // treated as "inherit"). The returned reply is what the idempotency cache
 // stores under (session_id, request_id).
-func (r *RpcFileServerImpl) applyWriteStream(stream proto.RpcFile_WriteServer, first *proto.WriteFrame, file interface {
-	Write([]byte, int64) (uint32, fuse.Status)
-}) (*proto.WriteReply, error) {
+func (r *RpcFileServerImpl) applyWriteStream(stream proto.RpcFile_WriteServer, first *proto.WriteFrame, file service.FuseFileWriter) (*proto.WriteReply, error) {
 	sink := service.NewWriteFrameSink(file, first.Offset)
 	finalStatus := fuse.OK
 

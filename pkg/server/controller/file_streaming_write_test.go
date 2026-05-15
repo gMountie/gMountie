@@ -64,10 +64,9 @@ func (f *fakeWriteStream) Context() context.Context {
 	return f.ctx
 }
 
-// recordingWriter is a backing FUSE file that records every Write call.
-// Implements nodefs.File via the embedded MockFile but only the Write hook
-// is wired up — other methods will panic if invoked, which is the desired
-// signal during these tests.
+// recordingWriter records every Write call. It is wired into the bench's
+// MockFile via mockFile.EXPECT().Write(...).RunAndReturn(writer.Write), so
+// only the Write hook is exercised during these tests.
 type recordingWriter struct {
 	writes []writeOp
 	status fuse.Status

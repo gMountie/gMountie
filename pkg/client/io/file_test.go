@@ -151,16 +151,26 @@ func (s *GrpcFileTestSuite) TestWriteRetriesOnUnavailable() {
 }
 
 func (s *GrpcFileTestSuite) TestWriteRetryReusesRequestID() {
-	// First open fails before any frame is sent — exercise the retry path.
-	s.fileClient.EXPECT().Write(mock.Anything, mock.Anything).
-		Return(nil, status.Error(codes.Unavailable, "transient")).Once()
-	stub := newWriteStreamStub(s.T(), &proto.WriteReply{Written: 5, Status: 0}, nil)
-	s.fileClient.EXPECT().Write(mock.Anything, mock.Anything).Return(stub, nil).Once()
+	// Phase 1d invariant: requestID must be generated once outside the retry
+	// closure so the server's idempotency cache can short-circuit the replay.
+	// Attempt 1 sends the header frame successfully, then CloseAndRecv fails
+	// with a retryable error — that lets us capture attempt-1 frames and
+	// compare the RequestId against attempt 2's.
+	attempt1 := newWriteStreamStub(s.T(), nil, status.Error(codes.Unavailable, "transient"))
+	s.fileClient.EXPECT().Write(mock.Anything, mock.Anything).Return(attempt1, nil).Once()
+	attempt2 := newWriteStreamStub(s.T(), &proto.WriteReply{Written: 5, Status: 0}, nil)
+	s.fileClient.EXPECT().Write(mock.Anything, mock.Anything).Return(attempt2, nil).Once()
 
 	f := NewGrpcFile(s.fileClient, "vol", "/p", 1, time.Second, "test-session")
-	_, _ = f.Write([]byte("hello"), 0)
-	s.Require().Len(stub.frames, 1)
-	s.Assert().NotEmpty(stub.frames[0].RequestId)
+	n, st := f.Write([]byte("hello"), 0)
+
+	s.Require().Equal(fuse.OK, st)
+	s.Assert().Equal(uint32(5), n)
+	s.Require().Len(attempt1.frames, 1, "attempt 1 should have sent the header frame before CloseAndRecv failed")
+	s.Require().Len(attempt2.frames, 1, "attempt 2 should have sent the header frame")
+	s.Require().NotEmpty(attempt1.frames[0].RequestId)
+	s.Assert().Equal(attempt1.frames[0].RequestId, attempt2.frames[0].RequestId,
+		"retry must reuse the same RequestId so the server idempotency LRU short-circuits the replay")
 }
 
 // TestWriteChunksLargePayload verifies the client splits payloads larger
