@@ -7,3 +7,6 @@
 * Client
   * [CLI](client/cli.md)
   * [Configuration](client/config.md)
+* Design
+  * [Architecture & Protocol](design/architecture.md)
+  * [Identity & Permissions](design/identity-and-permissions.md)
