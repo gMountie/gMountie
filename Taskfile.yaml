@@ -82,3 +82,24 @@ tasks:
     cmds:
       - goreleaser build --snapshot --clean
 
+  perf:install:
+    desc: Install benchstat (golang.org/x/perf/cmd/benchstat).
+    cmds:
+      - go install golang.org/x/perf/cmd/benchstat@latest
+
+  perf:bench:
+    desc: 'Run perf benchmarks under test/e2e/perf. Vars: OUT (output file), COUNT (default 5), BENCHTIME (default 10s).'
+    vars:
+      OUT: '{{.OUT | default (printf "docs/perf/bench-%s.txt" (now | date "2006-01-02T15-04-05"))}}'
+      COUNT: '{{.COUNT | default "5"}}'
+      BENCHTIME: '{{.BENCHTIME | default "10s"}}'
+    cmds:
+      - mkdir -p docs/perf
+      - go test -run=^$ -bench=. -benchmem -count={{.COUNT}} -benchtime={{.BENCHTIME}} ./test/e2e/perf/ | tee {{.OUT}}
+      - echo "wrote {{.OUT}}"
+
+  perf:diff:
+    desc: 'Compare two perf:bench outputs using benchstat. Vars: BEFORE, AFTER.'
+    cmds:
+      - benchstat {{.BEFORE}} {{.AFTER}}
+
