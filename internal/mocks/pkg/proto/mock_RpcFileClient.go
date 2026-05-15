@@ -562,7 +562,7 @@ func (_c *MockRpcFileClient_Open_Call) RunAndReturn(run func(ctx context.Context
 }
 
 // Read provides a mock function for the type MockRpcFileClient
-func (_mock *MockRpcFileClient) Read(ctx context.Context, in *proto.ReadRequest, opts ...grpc.CallOption) (*proto.ReadReply, error) {
+func (_mock *MockRpcFileClient) Read(ctx context.Context, in *proto.ReadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[proto.ReadFrame], error) {
 	// grpc.CallOption
 	_va := make([]interface{}, len(opts))
 	for _i := range opts {
@@ -577,16 +577,16 @@ func (_mock *MockRpcFileClient) Read(ctx context.Context, in *proto.ReadRequest,
 		panic("no return value specified for Read")
 	}
 
-	var r0 *proto.ReadReply
+	var r0 grpc.ServerStreamingClient[proto.ReadFrame]
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.ReadRequest, ...grpc.CallOption) (*proto.ReadReply, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.ReadRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[proto.ReadFrame], error)); ok {
 		return returnFunc(ctx, in, opts...)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.ReadRequest, ...grpc.CallOption) *proto.ReadReply); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.ReadRequest, ...grpc.CallOption) grpc.ServerStreamingClient[proto.ReadFrame]); ok {
 		r0 = returnFunc(ctx, in, opts...)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*proto.ReadReply)
+			r0 = ret.Get(0).(grpc.ServerStreamingClient[proto.ReadFrame])
 		}
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.ReadRequest, ...grpc.CallOption) error); ok {
@@ -638,12 +638,12 @@ func (_c *MockRpcFileClient_Read_Call) Run(run func(ctx context.Context, in *pro
 	return _c
 }
 
-func (_c *MockRpcFileClient_Read_Call) Return(readReply *proto.ReadReply, err error) *MockRpcFileClient_Read_Call {
-	_c.Call.Return(readReply, err)
+func (_c *MockRpcFileClient_Read_Call) Return(serverStreamingClient grpc.ServerStreamingClient[proto.ReadFrame], err error) *MockRpcFileClient_Read_Call {
+	_c.Call.Return(serverStreamingClient, err)
 	return _c
 }
 
-func (_c *MockRpcFileClient_Read_Call) RunAndReturn(run func(ctx context.Context, in *proto.ReadRequest, opts ...grpc.CallOption) (*proto.ReadReply, error)) *MockRpcFileClient_Read_Call {
+func (_c *MockRpcFileClient_Read_Call) RunAndReturn(run func(ctx context.Context, in *proto.ReadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[proto.ReadFrame], error)) *MockRpcFileClient_Read_Call {
 	_c.Call.Return(run)
 	return _c
 }

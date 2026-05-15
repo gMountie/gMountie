@@ -2,10 +2,12 @@ package io
 
 import (
 	"context"
-	mockProto "gmountie/internal/mocks/pkg/proto"
-	"gmountie/pkg/proto"
+	stdio "io"
 	"testing"
 	"time"
+
+	mockProto "gmountie/internal/mocks/pkg/proto"
+	"gmountie/pkg/proto"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"
@@ -13,6 +15,18 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// newReadStreamStub returns a MockRpcFile_ReadClient that yields the given
+// frames in order via Recv(), then EOF. Used to drive the streaming Read
+// client through its frame-accumulation loop in unit tests.
+func newReadStreamStub(t *testing.T, frames ...*proto.ReadFrame) *mockProto.MockRpcFile_ReadClient {
+	stub := mockProto.NewMockRpcFile_ReadClient(t)
+	for _, f := range frames {
+		stub.EXPECT().Recv().Return(f, nil).Once()
+	}
+	stub.EXPECT().Recv().Return(nil, stdio.EOF).Maybe()
+	return stub
+}
 
 type GrpcFileTestSuite struct {
 	suite.Suite
@@ -28,17 +42,17 @@ func (s *GrpcFileTestSuite) SetupTest() {
 func (s *GrpcFileTestSuite) TestRead() {
 	// Setup
 	testData := []byte("test data")
+	stream := newReadStreamStub(s.T(),
+		&proto.ReadFrame{Data: testData, Status: int32(fuse.OK)},
+		&proto.ReadFrame{Status: int32(fuse.OK)},
+	)
 	s.fileClient.EXPECT().Read(mock.Anything, &proto.ReadRequest{
 		Volume:    "testVolume",
 		Fd:        1,
 		Offset:    0,
 		Size:      1024,
 		SessionId: "test-session",
-	}, mock.Anything).Return(&proto.ReadReply{
-		Bytes:  testData,
-		Size:   int64(len(testData)),
-		Status: int32(fuse.OK),
-	}, nil)
+	}, mock.Anything).Return(stream, nil)
 
 	// Test
 	dest := make([]byte, 1024)
@@ -46,6 +60,8 @@ func (s *GrpcFileTestSuite) TestRead() {
 
 	// Verify
 	s.Require().Equal(fuse.OK, status)
+	s.Require().NotNil(result)
+	s.Assert().Equal(len(testData), result.Size())
 	rData, rStatus := result.Bytes(make([]byte, result.Size()))
 	s.Assert().Equal(testData, rData)
 	s.Assert().Equal(fuse.OK, rStatus)
@@ -277,7 +293,7 @@ func (s *GrpcFileTestSuite) TestAllocate() {
 
 // Error cases
 func (s *GrpcFileTestSuite) TestRead_Error() {
-	// Setup
+	// Setup: stream open fails.
 	s.fileClient.EXPECT().Read(mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, context.DeadlineExceeded)
 
@@ -304,17 +320,18 @@ func (s *GrpcFileTestSuite) TestWrite_Error() {
 }
 
 // TestRead_RetriesOnUnavailable verifies that Read survives a single
-// transient Unavailable.
+// transient Unavailable. Each retry opens a fresh stream.
 func (s *GrpcFileTestSuite) TestRead_RetriesOnUnavailable() {
 	dest := make([]byte, 10)
 
 	s.fileClient.EXPECT().Read(mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, status.Error(codes.Unavailable, "down")).Once()
+	streamOK := newReadStreamStub(s.T(),
+		&proto.ReadFrame{Data: []byte("0123456789"), Status: int32(fuse.OK)},
+		&proto.ReadFrame{Status: int32(fuse.OK)},
+	)
 	s.fileClient.EXPECT().Read(mock.Anything, mock.Anything, mock.Anything).
-		Return(&proto.ReadReply{
-			Bytes:  []byte("0123456789"),
-			Status: int32(fuse.OK),
-		}, nil).Once()
+		Return(streamOK, nil).Once()
 
 	result, st := s.file.Read(dest, 0)
 
@@ -324,9 +341,12 @@ func (s *GrpcFileTestSuite) TestRead_RetriesOnUnavailable() {
 }
 
 func (s *GrpcFileTestSuite) TestReadStampsSessionID() {
+	stream := newReadStreamStub(s.T(),
+		&proto.ReadFrame{Status: int32(fuse.OK)},
+	)
 	s.fileClient.EXPECT().Read(mock.Anything, mock.MatchedBy(func(req *proto.ReadRequest) bool {
 		return req.SessionId == "test-session"
-	}), mock.Anything).Return(&proto.ReadReply{Status: 0}, nil).Once()
+	}), mock.Anything).Return(stream, nil).Once()
 
 	f := NewGrpcFile(s.fileClient, "vol", "/p", 1, time.Second, "test-session")
 	buf := make([]byte, 4)

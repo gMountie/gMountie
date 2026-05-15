@@ -57,7 +57,7 @@ func NewServerAppContext(cfg *config.Config) *AppContext {
 func (c *AppContext) GetGrpcServices() []grpc.ServiceRegistrar {
 	return []grpc.ServiceRegistrar{
 		controller.NewGrpcServer(c.VolumeService, c.SessionManager),
-		controller.NewRpcFileServer(c.VolumeService, c.SessionManager, c.Metrics),
+		controller.NewRpcFileServer(c.VolumeService, c.SessionManager, c.Metrics, c.Config.Server.FrameSizeBytes),
 		controller.NewVolumeService(c.VolumeService),
 		controller.NewSessionController(c.SessionManager),
 		controller.NewVersionController(),

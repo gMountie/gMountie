@@ -33,7 +33,7 @@ func (s *RpcFileServerTestSuite) SetupTest() {
 	sid, err := s.sessionMgr.Create()
 	s.Require().NoError(err)
 	s.sessionID = sid
-	s.server = NewRpcFileServer(s.fsService, s.sessionMgr, metrics.NewMetrics())
+	s.server = NewRpcFileServer(s.fsService, s.sessionMgr, metrics.NewMetrics(), 1<<20)
 }
 
 func (s *RpcFileServerTestSuite) TearDownTest() {
@@ -81,18 +81,21 @@ func (s *RpcFileServerTestSuite) TestRead() {
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	sess, _ := s.sessionMgr.Get(s.sessionID)
 	fd := sess.RegisterFile("/test/path", mockFile)
-	ctx := context.Background()
-	mockFile.EXPECT().Read(mock.Anything, int64(0)).Return(fuse.ReadResultData([]byte("test data")), fuse.OK)
+	mockFile.EXPECT().Read(mock.Anything, int64(0)).Return(fuse.ReadResultData([]byte("test data")), fuse.OK).Once()
+	// Second call hits the EOF branch (short read returned len("test data")<1024).
 	mockFile.EXPECT().Release().Return().Maybe()
 
 	// Test.
 	request := &proto.ReadRequest{Fd: fd, Size: 1024, Offset: 0, SessionId: s.sessionID}
-	reply, err := s.server.Read(ctx, request)
+	stream := newFakeReadStream(context.Background())
+	err := s.server.Read(request, stream)
 
 	// Verify.
 	s.Require().NoError(err)
-	s.Assert().NotNil(reply)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
+	s.Require().NotEmpty(stream.frames)
+	// First frame should carry the data, last frame is terminal OK.
+	s.Assert().Equal([]byte("test data"), stream.frames[0].Data)
+	s.Assert().Equal(int32(fuse.OK), stream.frames[len(stream.frames)-1].Status)
 }
 
 func (s *RpcFileServerTestSuite) TestWrite() {
@@ -225,7 +228,8 @@ func (s *RpcFileServerTestSuite) TestUnknownSessionReturnsError() {
 		Volume: "testVolume", Fd: 1, Size: 1, Offset: 0,
 		SessionId: "no-such-session",
 	}
-	_, err := s.server.Read(context.Background(), request)
+	stream := newFakeReadStream(context.Background())
+	err := s.server.Read(request, stream)
 	s.Require().Error(err)
 	st, ok := status.FromError(err)
 	s.Require().True(ok)

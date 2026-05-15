@@ -15,6 +15,11 @@ const (
 	// DefaultRpcTimeoutIO is the default per-RPC timeout for data operations
 	// (Read, Write). Tuned for moderate-sized payloads over an internet link.
 	DefaultRpcTimeoutIO = 30 * time.Second
+	// DefaultReadaheadChunkBytes is the default size of a single readahead
+	// fetch issued by the client behind a sequential-read kernel hint. The
+	// readahead path is wired up by a later phase task; the value is declared
+	// here so config plumbing can ship ahead of the consumer.
+	DefaultReadaheadChunkBytes = 64 << 10
 )
 
 // RpcConfig holds per-RPC client-side timeouts and (in future plans) retry
@@ -27,20 +32,27 @@ type RpcConfig struct {
 	// TimeoutIO bounds each data RPC (Read, Write, and file-state ops like
 	// Flush/Fsync/Release/locking/Allocate).
 	TimeoutIO time.Duration `mapstructure:"timeout_io" validate:"required,gte=1ms"`
+	// ReadaheadChunkBytes is the size of a single readahead fetch. Declared
+	// here so config plumbing can ship ahead of the consumer; wired up by a
+	// later phase task. Zero means "no readahead", which is the current
+	// behaviour.
+	ReadaheadChunkBytes int `mapstructure:"readahead_chunk_bytes" validate:"gte=0"`
 }
 
 // NewRpcConfig parses an RpcConfig from a viper sub-tree. A nil v yields
 // defaults; an empty sub-tree yields defaults; explicit values override.
 func NewRpcConfig(v *viper.Viper) (*RpcConfig, error) {
 	cfg := &RpcConfig{
-		TimeoutMeta: DefaultRpcTimeoutMeta,
-		TimeoutIO:   DefaultRpcTimeoutIO,
+		TimeoutMeta:         DefaultRpcTimeoutMeta,
+		TimeoutIO:           DefaultRpcTimeoutIO,
+		ReadaheadChunkBytes: DefaultReadaheadChunkBytes,
 	}
 	if v == nil {
 		return cfg, nil
 	}
 	v.SetDefault("timeout_meta", DefaultRpcTimeoutMeta)
 	v.SetDefault("timeout_io", DefaultRpcTimeoutIO)
+	v.SetDefault("readahead_chunk_bytes", DefaultReadaheadChunkBytes)
 	if err := v.UnmarshalExact(cfg, viper.DecodeHook(mapstructure.StringToTimeDurationHookFunc())); err != nil {
 		return nil, err
 	}

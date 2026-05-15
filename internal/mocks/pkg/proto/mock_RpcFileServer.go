@@ -9,6 +9,7 @@ import (
 	"gmountie/pkg/proto"
 
 	mock "github.com/stretchr/testify/mock"
+	"google.golang.org/grpc"
 )
 
 // NewMockRpcFileServer creates a new instance of MockRpcFileServer. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
@@ -447,31 +448,20 @@ func (_c *MockRpcFileServer_Open_Call) RunAndReturn(run func(context1 context.Co
 }
 
 // Read provides a mock function for the type MockRpcFileServer
-func (_mock *MockRpcFileServer) Read(context1 context.Context, readRequest *proto.ReadRequest) (*proto.ReadReply, error) {
-	ret := _mock.Called(context1, readRequest)
+func (_mock *MockRpcFileServer) Read(readRequest *proto.ReadRequest, serverStreamingServer grpc.ServerStreamingServer[proto.ReadFrame]) error {
+	ret := _mock.Called(readRequest, serverStreamingServer)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Read")
 	}
 
-	var r0 *proto.ReadReply
-	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.ReadRequest) (*proto.ReadReply, error)); ok {
-		return returnFunc(context1, readRequest)
-	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.ReadRequest) *proto.ReadReply); ok {
-		r0 = returnFunc(context1, readRequest)
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(*proto.ReadRequest, grpc.ServerStreamingServer[proto.ReadFrame]) error); ok {
+		r0 = returnFunc(readRequest, serverStreamingServer)
 	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*proto.ReadReply)
-		}
+		r0 = ret.Error(0)
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.ReadRequest) error); ok {
-		r1 = returnFunc(context1, readRequest)
-	} else {
-		r1 = ret.Error(1)
-	}
-	return r0, r1
+	return r0
 }
 
 // MockRpcFileServer_Read_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Read'
@@ -480,21 +470,21 @@ type MockRpcFileServer_Read_Call struct {
 }
 
 // Read is a helper method to define mock.On call
-//   - context1 context.Context
 //   - readRequest *proto.ReadRequest
-func (_e *MockRpcFileServer_Expecter) Read(context1 interface{}, readRequest interface{}) *MockRpcFileServer_Read_Call {
-	return &MockRpcFileServer_Read_Call{Call: _e.mock.On("Read", context1, readRequest)}
+//   - serverStreamingServer grpc.ServerStreamingServer[proto.ReadFrame]
+func (_e *MockRpcFileServer_Expecter) Read(readRequest interface{}, serverStreamingServer interface{}) *MockRpcFileServer_Read_Call {
+	return &MockRpcFileServer_Read_Call{Call: _e.mock.On("Read", readRequest, serverStreamingServer)}
 }
 
-func (_c *MockRpcFileServer_Read_Call) Run(run func(context1 context.Context, readRequest *proto.ReadRequest)) *MockRpcFileServer_Read_Call {
+func (_c *MockRpcFileServer_Read_Call) Run(run func(readRequest *proto.ReadRequest, serverStreamingServer grpc.ServerStreamingServer[proto.ReadFrame])) *MockRpcFileServer_Read_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 context.Context
+		var arg0 *proto.ReadRequest
 		if args[0] != nil {
-			arg0 = args[0].(context.Context)
+			arg0 = args[0].(*proto.ReadRequest)
 		}
-		var arg1 *proto.ReadRequest
+		var arg1 grpc.ServerStreamingServer[proto.ReadFrame]
 		if args[1] != nil {
-			arg1 = args[1].(*proto.ReadRequest)
+			arg1 = args[1].(grpc.ServerStreamingServer[proto.ReadFrame])
 		}
 		run(
 			arg0,
@@ -504,12 +494,12 @@ func (_c *MockRpcFileServer_Read_Call) Run(run func(context1 context.Context, re
 	return _c
 }
 
-func (_c *MockRpcFileServer_Read_Call) Return(readReply *proto.ReadReply, err error) *MockRpcFileServer_Read_Call {
-	_c.Call.Return(readReply, err)
+func (_c *MockRpcFileServer_Read_Call) Return(err error) *MockRpcFileServer_Read_Call {
+	_c.Call.Return(err)
 	return _c
 }
 
-func (_c *MockRpcFileServer_Read_Call) RunAndReturn(run func(context1 context.Context, readRequest *proto.ReadRequest) (*proto.ReadReply, error)) *MockRpcFileServer_Read_Call {
+func (_c *MockRpcFileServer_Read_Call) RunAndReturn(run func(readRequest *proto.ReadRequest, serverStreamingServer grpc.ServerStreamingServer[proto.ReadFrame]) error) *MockRpcFileServer_Read_Call {
 	_c.Call.Return(run)
 	return _c
 }

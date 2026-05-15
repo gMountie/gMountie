@@ -16,6 +16,7 @@ type RpcFileServerImpl struct {
 	fsService service.VolumeService
 	sessions  service.SessionManager
 	metrics   *metrics.Metrics
+	streamer  *service.ReadStreamer
 	proto.UnimplementedRpcFileServer
 }
 
@@ -23,12 +24,18 @@ var _ proto.RpcFileServer = (*RpcFileServerImpl)(nil)
 
 // NewRpcFileServer wires the file controller. When m is nil a fresh,
 // unregistered *Metrics is substituted so callers (e.g. unit tests)
-// don't need to plumb one through.
-func NewRpcFileServer(fsService service.VolumeService, sessions service.SessionManager, m *metrics.Metrics) *RpcFileServerImpl {
+// don't need to plumb one through. frameSize bounds each ReadFrame
+// emitted by the streaming Read handler.
+func NewRpcFileServer(fsService service.VolumeService, sessions service.SessionManager, m *metrics.Metrics, frameSize int) *RpcFileServerImpl {
 	if m == nil {
 		m = metrics.NewMetrics()
 	}
-	return &RpcFileServerImpl{fsService: fsService, sessions: sessions, metrics: m}
+	return &RpcFileServerImpl{
+		fsService: fsService,
+		sessions:  sessions,
+		metrics:   m,
+		streamer:  service.NewReadStreamer(frameSize),
+	}
 }
 
 func (r *RpcFileServerImpl) Register(server *grpc.Server) {
@@ -75,26 +82,44 @@ func (r *RpcFileServerImpl) Create(ctx context.Context, request *proto.CreateReq
 	})
 }
 
-func (r *RpcFileServerImpl) Read(_ context.Context, request *proto.ReadRequest) (*proto.ReadReply, error) {
+// Read is server-streaming: the server emits one ReadFrame per chunk of at
+// most ServerConfig.FrameSizeBytes, followed by a terminal frame whose
+// Status carries the final FUSE result (typically OK or an errno). The
+// streaming loop lives in service.ReadStreamer; this handler is a thin
+// resolve+delegate.
+func (r *RpcFileServerImpl) Read(request *proto.ReadRequest, stream proto.RpcFile_ReadServer) error {
 	sess, err := resolveSession(r.sessions, request.SessionId)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	entry, ok := sess.GetFile(request.Fd)
 	if !ok {
-		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
+		// Surface bad-fd as a terminal status frame rather than a transport
+		// error so the client gets a clean errno through the FUSE layer.
+		return stream.Send(&proto.ReadFrame{Status: int32(fuse.EBADF)})
 	}
-	buf := make([]byte, request.Size)
-	n, s := entry.File.Read(buf, request.Offset)
-	if s != fuse.OK {
-		return &proto.ReadReply{Status: int32(s)}, nil
+
+	fileRead := func(buf []byte, off int64) (int, fuse.Status) {
+		res, st := entry.File.Read(buf, off)
+		if !st.Ok() {
+			return 0, st
+		}
+		out, st := res.Bytes(buf)
+		if !st.Ok() {
+			return 0, st
+		}
+		// ReadResult.Bytes may return a slice that does not alias buf; copy
+		// into buf so the streamer's `buf[:n]` slicing remains correct.
+		n := copy(buf, out)
+		return n, fuse.OK
 	}
-	buf, s = n.Bytes(buf)
-	if s != fuse.OK {
-		return &proto.ReadReply{Status: int32(s)}, nil
+	emit := func(data []byte, st fuse.Status) error {
+		if len(data) > 0 {
+			r.metrics.BytesAdd(request.Volume, "out", float64(len(data)))
+		}
+		return stream.Send(&proto.ReadFrame{Data: data, Status: int32(st)})
 	}
-	r.metrics.BytesAdd(request.Volume, "out", float64(n.Size()))
-	return &proto.ReadReply{Size: int64(n.Size()), Bytes: buf, Status: int32(s)}, nil
+	return r.streamer.Stream(stream.Context(), int(request.Size), request.Offset, fileRead, emit)
 }
 
 func (r *RpcFileServerImpl) Write(_ context.Context, request *proto.WriteRequest) (*proto.WriteReply, error) {

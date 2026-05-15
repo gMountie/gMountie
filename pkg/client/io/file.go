@@ -2,14 +2,17 @@ package io
 
 import (
 	"context"
+	stdio "io"
+	"time"
+
 	"gmountie/pkg/proto"
 	"gmountie/pkg/server/grpc/snappy"
 	"gmountie/pkg/utils/log"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hanwen/go-fuse/v2/fuse/nodefs"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -36,25 +39,65 @@ func NewGrpcFile(fileClient proto.RpcFileClient, volume, path string, fd uint64,
 	}
 }
 
+// readResult is the accumulated outcome of a single streaming Read attempt:
+// how many bytes landed in dest and the terminal FUSE status reported by the
+// server. The two are tracked together so retryableCall can replace them
+// wholesale on each attempt without partial-state bleed-through.
+type readResult struct {
+	written int
+	status  fuse.Status
+}
+
+// Read consumes the server-streaming Read RPC, accumulating frames into dest
+// in order. Each retry attempt opens a fresh stream — Read is naturally
+// idempotent (no side effects) so we do not stamp a request_id.
 func (f *GrpcFile) Read(dest []byte, off int64) (fuse.ReadResult, fuse.Status) {
 	ctx, cancel := withIOTimeout(context.Background(), f.ioTimeout)
 	defer cancel()
-	res, err := retryableCall(ctx, "Read", func(ctx context.Context) (*proto.ReadReply, error) {
-		return f.fileClient.Read(ctx, &proto.ReadRequest{
+	res, err := retryableCall(ctx, "Read", func(ctx context.Context) (readResult, error) {
+		stream, err := f.fileClient.Read(ctx, &proto.ReadRequest{
 			Volume:    f.volume,
 			Fd:        f.fd,
 			Offset:    off,
 			Size:      uint32(len(dest)),
 			SessionId: f.sessionID,
-		},
-			grpc.UseCompressor(snappy.Name),
-		)
+		}, grpc.UseCompressor(snappy.Name))
+		if err != nil {
+			return readResult{}, err
+		}
+		out := readResult{status: fuse.OK}
+		for {
+			frame, recvErr := stream.Recv()
+			if errors.Is(recvErr, stdio.EOF) {
+				return out, nil
+			}
+			if recvErr != nil {
+				return readResult{}, recvErr
+			}
+			if st := fuse.Status(frame.GetStatus()); !st.Ok() {
+				out.status = st
+				return out, nil
+			}
+			data := frame.GetData()
+			if len(data) == 0 {
+				// Terminal OK frame: server signalled clean end-of-stream.
+				continue
+			}
+			if out.written+len(data) > len(dest) {
+				return readResult{}, errors.New("server sent more bytes than requested")
+			}
+			copy(dest[out.written:], data)
+			out.written += len(data)
+		}
 	})
-	if err != nil || res == nil {
+	if err != nil {
 		log.Log.Error("error in call: Read", zap.String("path", f.path), zap.Error(err))
 		return nil, fuse.EIO
 	}
-	return fuse.ReadResultData(res.Bytes), fuse.Status(res.Status)
+	if !res.status.Ok() {
+		return nil, res.status
+	}
+	return fuse.ReadResultData(dest[:res.written]), fuse.OK
 }
 
 func (f *GrpcFile) Write(data []byte, off int64) (written uint32, code fuse.Status) {

@@ -8,6 +8,12 @@ const (
 	// DefaultMetricsAddr is the default address the ops HTTP server
 	// (/metrics, /healthz, /readyz, /version) listens on.
 	DefaultMetricsAddr = ":9090"
+	// DefaultFrameSizeBytes is the default chunk size for server-streamed
+	// reads. One frame per ReadStreamer iteration; the client accumulates
+	// frames into the caller-supplied buffer. 1 MiB balances per-RPC
+	// allocation cost against keeping each frame well under the default 4 MiB
+	// gRPC message ceiling.
+	DefaultFrameSizeBytes = 1 << 20
 )
 
 // ServerConfig is a struct that holds the configuration for the server
@@ -20,5 +26,8 @@ type ServerConfig struct {
 	Metrics bool
 	// MetricsAddr is the address the ops HTTP server listens on.
 	MetricsAddr string `validate:"hostname_port" mapstructure:"metrics_addr"`
+	// FrameSizeBytes bounds each ReadFrame emitted by the server's streaming
+	// Read. Capped at 16 MiB to stay safely under gRPC's max recv size; floor
+	// of 4 KiB matches the typical page size.
+	FrameSizeBytes int `validate:"min=4096,max=16777216" mapstructure:"frame_size_bytes"`
 }
-

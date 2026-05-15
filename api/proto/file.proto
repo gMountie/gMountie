@@ -48,10 +48,9 @@ message ReadRequest {
   string session_id = 5;
 }
 
-message ReadReply {
-  bytes bytes = 1;
-  int64 size = 2;
-  int32 status = 3;
+message ReadFrame {
+  bytes data = 1;
+  int32 status = 2;
 }
 
 message WriteRequest {
@@ -156,7 +155,7 @@ message AllocateReply {
 service RpcFile {
   rpc Open (OpenRequest) returns (OpenReply);
   rpc Create (CreateRequest) returns (CreateReply);
-  rpc Read (ReadRequest) returns (ReadReply);
+  rpc Read (ReadRequest) returns (stream ReadFrame);
   rpc Write (WriteRequest) returns (WriteReply);
   rpc Release (ReleaseRequest) returns (ReleaseReply);
   rpc Fsync (FsyncRequest) returns (FsyncReply);
