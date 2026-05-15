@@ -253,7 +253,7 @@ func (fs *LocalFileSystem) Open(name string, flags uint32, fctx *fuse.Context) (
 	if fuse.Status(res.Status) != fuse.OK {
 		return nil, fuse.Status(res.Status)
 	}
-	return NewGrpcFile(fs.client.File(), fs.volume, name, res.Fd, fs.client.IOTimeout(), fs.client.SessionID()), fuse.Status(res.Status)
+	return NewGrpcFile(fs.client.File(), fs.volume, name, res.Fd, fs.client.IOTimeout(), fs.client.SessionID(), fs.client.ReadaheadChunkBytes(), fs.client.ReadaheadThreshold()), fuse.Status(res.Status)
 }
 
 func (fs *LocalFileSystem) Create(name string, flags uint32, mode uint32, fctx *fuse.Context) (file nodefs.File, code fuse.Status) {
@@ -278,7 +278,7 @@ func (fs *LocalFileSystem) Create(name string, flags uint32, mode uint32, fctx *
 	if fuse.Status(res.Status) != fuse.OK {
 		return nil, fuse.Status(res.Status)
 	}
-	return NewGrpcFile(fs.client.File(), fs.volume, name, res.Fd, fs.client.IOTimeout(), fs.client.SessionID()), fuse.Status(res.Status)
+	return NewGrpcFile(fs.client.File(), fs.volume, name, res.Fd, fs.client.IOTimeout(), fs.client.SessionID(), fs.client.ReadaheadChunkBytes(), fs.client.ReadaheadThreshold()), fuse.Status(res.Status)
 }
 
 func (fs *LocalFileSystem) Unlink(name string, fctx *fuse.Context) (code fuse.Status) {

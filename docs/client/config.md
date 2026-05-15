@@ -58,10 +58,30 @@ defaults so dead-connection detection is symmetric in both directions.
 | timeout\_meta           | duration | 5s       | Per-RPC timeout for metadata ops                            |
 | timeout\_io             | duration | 30s      | Per-RPC timeout for data ops (Read, Write, ...)             |
 | readahead\_chunk\_bytes | integer  | 65536    | Size of a single readahead fetch (0 disables readahead)     |
+| readahead\_threshold    | integer  | 3        | Sequential reads required before a prefetch is armed        |
 | max\_message\_bytes     | integer  | 16777216 | Cap on inbound/outbound gRPC message size (16 MiB default)  |
 
 `max_message_bytes` is validated to the range [65536, 67108864] (64 KiB to
 64 MiB) and should typically mirror the server's value.
+
+`readahead_threshold` is validated to the range [1, 16]; smaller values
+arm prefetch sooner (more aggressive, more wasted fetches on
+random-access workloads), larger values delay arming. Setting
+`readahead_chunk_bytes: 0` disables the readahead path entirely,
+regardless of threshold.
+
+### Readahead
+
+When sequential reads are detected on an fd, the client prefetches a
+single `readahead_chunk_bytes`-sized chunk one chunk ahead of the
+current offset. The next Read that lines up with the prefetched range
+is served from the in-memory ring without touching the network. There
+is at most one outstanding prefetch per fd; the ring is dropped on any
+non-sequential Read (backwards seek or gap), and the in-flight prefetch
+is cancelled when the fd is released.
+
+The win shows up most clearly on high-RTT connections where each
+round-trip costs. Localhost is roughly neutral.
 
 ### Keepalive
 
@@ -81,6 +101,8 @@ Example:
 rpc:
   timeout_meta: 5s
   timeout_io: 30s
+  readahead_chunk_bytes: 131072  # 128 KiB
+  readahead_threshold: 3
   max_message_bytes: 33554432  # 32 MiB
   keepalive:
     time: 15s

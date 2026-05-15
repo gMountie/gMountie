@@ -339,6 +339,94 @@ func (_c *MockClient_MetaTimeout_Call) RunAndReturn(run func() time.Duration) *M
 	return _c
 }
 
+// ReadaheadChunkBytes provides a mock function for the type MockClient
+func (_mock *MockClient) ReadaheadChunkBytes() int {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for ReadaheadChunkBytes")
+	}
+
+	var r0 int
+	if returnFunc, ok := ret.Get(0).(func() int); ok {
+		r0 = returnFunc()
+	} else {
+		r0 = ret.Get(0).(int)
+	}
+	return r0
+}
+
+// MockClient_ReadaheadChunkBytes_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ReadaheadChunkBytes'
+type MockClient_ReadaheadChunkBytes_Call struct {
+	*mock.Call
+}
+
+// ReadaheadChunkBytes is a helper method to define mock.On call
+func (_e *MockClient_Expecter) ReadaheadChunkBytes() *MockClient_ReadaheadChunkBytes_Call {
+	return &MockClient_ReadaheadChunkBytes_Call{Call: _e.mock.On("ReadaheadChunkBytes")}
+}
+
+func (_c *MockClient_ReadaheadChunkBytes_Call) Run(run func()) *MockClient_ReadaheadChunkBytes_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockClient_ReadaheadChunkBytes_Call) Return(n int) *MockClient_ReadaheadChunkBytes_Call {
+	_c.Call.Return(n)
+	return _c
+}
+
+func (_c *MockClient_ReadaheadChunkBytes_Call) RunAndReturn(run func() int) *MockClient_ReadaheadChunkBytes_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ReadaheadThreshold provides a mock function for the type MockClient
+func (_mock *MockClient) ReadaheadThreshold() int {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for ReadaheadThreshold")
+	}
+
+	var r0 int
+	if returnFunc, ok := ret.Get(0).(func() int); ok {
+		r0 = returnFunc()
+	} else {
+		r0 = ret.Get(0).(int)
+	}
+	return r0
+}
+
+// MockClient_ReadaheadThreshold_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ReadaheadThreshold'
+type MockClient_ReadaheadThreshold_Call struct {
+	*mock.Call
+}
+
+// ReadaheadThreshold is a helper method to define mock.On call
+func (_e *MockClient_Expecter) ReadaheadThreshold() *MockClient_ReadaheadThreshold_Call {
+	return &MockClient_ReadaheadThreshold_Call{Call: _e.mock.On("ReadaheadThreshold")}
+}
+
+func (_c *MockClient_ReadaheadThreshold_Call) Run(run func()) *MockClient_ReadaheadThreshold_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockClient_ReadaheadThreshold_Call) Return(n int) *MockClient_ReadaheadThreshold_Call {
+	_c.Call.Return(n)
+	return _c
+}
+
+func (_c *MockClient_ReadaheadThreshold_Call) RunAndReturn(run func() int) *MockClient_ReadaheadThreshold_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // SessionID provides a mock function for the type MockClient
 func (_mock *MockClient) SessionID() string {
 	ret := _mock.Called()

@@ -37,6 +37,10 @@ type Client interface {
 	IOTimeout() time.Duration
 	// SessionID returns the server-assigned session id obtained during Connect.
 	SessionID() string
+	// ReadaheadChunkBytes is the prefetch fetch size. Zero disables readahead.
+	ReadaheadChunkBytes() int
+	// ReadaheadThreshold is the sequential-read count that arms a prefetch.
+	ReadaheadThreshold() int
 }
 
 // ClientImpl is a struct that holds the gRPC ClientImpl
@@ -53,6 +57,8 @@ type ClientImpl struct {
 	handshake         *SessionHandshake
 	metaTimeout       time.Duration
 	ioTimeout         time.Duration
+	readaheadChunk    int
+	readaheadThresh   int
 }
 
 // -------------------- ClientImpl Options --------------------
@@ -92,14 +98,25 @@ func WithTimeouts(meta, io time.Duration) ClientOption {
 	}
 }
 
+// WithReadahead sets the per-fd readahead parameters used when opening
+// GrpcFile instances. chunkBytes of 0 disables readahead.
+func WithReadahead(chunkBytes, threshold int) ClientOption {
+	return func(c *ClientImpl) {
+		c.readaheadChunk = chunkBytes
+		c.readaheadThresh = threshold
+	}
+}
+
 // ---------------------- Constructor ----------------------
 
 // NewClient creates a new gRPC ClientImpl
 func NewClient(endpoint string, options ...ClientOption) (Client, error) {
 	c := ClientImpl{
-		endpoint:    endpoint,
-		metaTimeout: 5 * time.Second,
-		ioTimeout:   30 * time.Second,
+		endpoint:        endpoint,
+		metaTimeout:     5 * time.Second,
+		ioTimeout:       30 * time.Second,
+		readaheadChunk:  64 << 10,
+		readaheadThresh: 3,
 	}
 	for _, opt := range options {
 		opt(&c)
@@ -178,6 +195,18 @@ func (c *ClientImpl) MetaTimeout() time.Duration {
 // IOTimeout returns the per-RPC timeout for data operations.
 func (c *ClientImpl) IOTimeout() time.Duration {
 	return c.ioTimeout
+}
+
+// ReadaheadChunkBytes returns the configured readahead fetch size.
+// Zero disables readahead on opened files.
+func (c *ClientImpl) ReadaheadChunkBytes() int {
+	return c.readaheadChunk
+}
+
+// ReadaheadThreshold returns the number of strictly-sequential reads
+// required before the client arms a prefetch.
+func (c *ClientImpl) ReadaheadThreshold() int {
+	return c.readaheadThresh
 }
 
 // getInterceptors returns the ClientImpl interceptors, including any

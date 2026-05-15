@@ -24,19 +24,40 @@ type GrpcFile struct {
 	fd         uint64
 	ioTimeout  time.Duration
 	sessionID  string
+	// readahead is non-nil when readahead is enabled for this fd. The
+	// synchronous Read path consults Serve before issuing a network Read
+	// and feeds Observe afterwards; the prefetch goroutine writes via
+	// Store.
+	readahead *Readahead
+	// lifeCtx is cancelled by Release so any in-flight prefetch goroutine
+	// returns promptly instead of holding the file open on the server
+	// past the FUSE close.
+	lifeCtx    context.Context
+	lifeCancel context.CancelFunc
 	nodefs.File
 }
 
-func NewGrpcFile(fileClient proto.RpcFileClient, volume, path string, fd uint64, ioTimeout time.Duration, sessionID string) *GrpcFile {
-	return &GrpcFile{
+// NewGrpcFile constructs a GrpcFile bound to fd on the named volume.
+// readaheadChunk of 0 disables the readahead path entirely; otherwise
+// readaheadChunk-sized prefetches arm after readaheadThreshold
+// strictly-sequential reads.
+func NewGrpcFile(fileClient proto.RpcFileClient, volume, path string, fd uint64, ioTimeout time.Duration, sessionID string, readaheadChunk, readaheadThreshold int) *GrpcFile {
+	ctx, cancel := context.WithCancel(context.Background())
+	f := &GrpcFile{
 		fileClient: fileClient,
 		path:       path,
 		volume:     volume,
 		fd:         fd,
 		ioTimeout:  ioTimeout,
 		sessionID:  sessionID,
+		lifeCtx:    ctx,
+		lifeCancel: cancel,
 		File:       nodefs.NewDefaultFile(),
 	}
+	if readaheadChunk > 0 && readaheadThreshold > 0 {
+		f.readahead = NewReadahead(readaheadChunk, readaheadThreshold)
+	}
+	return f
 }
 
 // readResult is the accumulated outcome of a single streaming Read attempt:
@@ -51,7 +72,21 @@ type readResult struct {
 // Read consumes the server-streaming Read RPC, accumulating frames into dest
 // in order. Each retry attempt opens a fresh stream — Read is naturally
 // idempotent (no side effects) so we do not stamp a request_id.
+//
+// If readahead is enabled and the previous prefetch fully covers the
+// requested range, Serve returns the bytes directly without touching the
+// network. Otherwise we issue the streaming Read, then feed Observe with
+// the result; if Observe arms a prefetch, we kick off a background
+// doPrefetch goroutine bounded by f.lifeCtx so Release cancels it.
 func (f *GrpcFile) Read(dest []byte, off int64) (fuse.ReadResult, fuse.Status) {
+	if f.readahead != nil {
+		if n, hit := f.readahead.Serve(dest, off); hit {
+			if prefetchOff, ok := f.readahead.Observe(off, n); ok {
+				go f.doPrefetch(prefetchOff)
+			}
+			return fuse.ReadResultData(dest[:n]), fuse.OK
+		}
+	}
 	ctx, cancel := withIOTimeout(context.Background(), f.ioTimeout)
 	defer cancel()
 	res, err := retryableCall(ctx, "Read", func(ctx context.Context) (readResult, error) {
@@ -97,7 +132,63 @@ func (f *GrpcFile) Read(dest []byte, off int64) (fuse.ReadResult, fuse.Status) {
 	if !res.status.Ok() {
 		return nil, res.status
 	}
+	if f.readahead != nil {
+		if prefetchOff, ok := f.readahead.Observe(off, res.written); ok {
+			go f.doPrefetch(prefetchOff)
+		}
+	}
 	return fuse.ReadResultData(dest[:res.written]), fuse.OK
+}
+
+// doPrefetch issues a streaming Read for the next chunk and parks the
+// result in the readahead ring on success. It runs under f.lifeCtx so
+// Release cancels in-flight prefetches. Errors are intentionally
+// swallowed — the synchronous Read path will re-fetch on the next Read
+// if the ring is empty, and the prefetch is a hint, not a contract.
+func (f *GrpcFile) doPrefetch(off int64) {
+	if f.readahead == nil {
+		return
+	}
+	chunk := f.readahead.chunkSize
+	ctx, cancel := withIOTimeout(f.lifeCtx, f.ioTimeout)
+	defer cancel()
+	stream, err := f.fileClient.Read(ctx, &proto.ReadRequest{
+		Volume:    f.volume,
+		Fd:        f.fd,
+		Offset:    off,
+		Size:      uint32(chunk),
+		SessionId: f.sessionID,
+	}, grpc.UseCompressor(snappy.Name))
+	if err != nil {
+		return
+	}
+	buf := make([]byte, chunk)
+	written := 0
+	for {
+		frame, recvErr := stream.Recv()
+		if errors.Is(recvErr, stdio.EOF) {
+			break
+		}
+		if recvErr != nil {
+			return
+		}
+		if st := fuse.Status(frame.GetStatus()); !st.Ok() {
+			return
+		}
+		data := frame.GetData()
+		if len(data) == 0 {
+			continue
+		}
+		if written+len(data) > len(buf) {
+			return
+		}
+		copy(buf[written:], data)
+		written += len(data)
+	}
+	if written == 0 {
+		return
+	}
+	f.readahead.Store(off, buf[:written])
 }
 
 // writeFrameSizeBytes bounds a single WriteFrame's data slice. Hardcoded
@@ -157,6 +248,11 @@ func (f *GrpcFile) Write(data []byte, off int64) (written uint32, code fuse.Stat
 }
 
 func (f *GrpcFile) Release() {
+	// Cancel any in-flight prefetch goroutine first so it bails out
+	// before we issue the server-side Release.
+	if f.lifeCancel != nil {
+		f.lifeCancel()
+	}
 	ctx, cancel := withIOTimeout(context.Background(), f.ioTimeout)
 	defer cancel()
 	_, err := f.fileClient.Release(ctx, &proto.ReleaseRequest{

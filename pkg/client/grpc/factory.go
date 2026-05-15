@@ -32,6 +32,7 @@ func NewClientFromConfig(cfg *config.Config) (Client, error) {
 
 	if cfg.Rpc != nil {
 		opts = append(opts, WithTimeouts(cfg.Rpc.TimeoutMeta, cfg.Rpc.TimeoutIO))
+		opts = append(opts, WithReadahead(cfg.Rpc.ReadaheadChunkBytes, cfg.Rpc.ReadaheadThreshold))
 		// Wire keepalive + message-size caps from RpcConfig. Matching the
 		// server's keepalive params lets the client detect dead connections
 		// within ~Time+Timeout instead of hanging until TCP gives up.

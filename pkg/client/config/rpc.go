@@ -16,10 +16,11 @@ const (
 	// (Read, Write). Tuned for moderate-sized payloads over an internet link.
 	DefaultRpcTimeoutIO = 30 * time.Second
 	// DefaultReadaheadChunkBytes is the default size of a single readahead
-	// fetch issued by the client behind a sequential-read kernel hint. The
-	// readahead path is wired up by a later phase task; the value is declared
-	// here so config plumbing can ship ahead of the consumer.
+	// fetch issued by the client behind a sequential-read kernel hint.
 	DefaultReadaheadChunkBytes = 64 << 10
+	// DefaultReadaheadThreshold is the number of strictly-sequential reads
+	// required before the client arms a one-chunk-ahead prefetch.
+	DefaultReadaheadThreshold = 3
 	// DefaultMaxMessageBytes is the default cap for inbound/outbound gRPC
 	// message sizes on the client side. Mirrors the server default so a
 	// well-configured pair never trips its own limits.
@@ -59,11 +60,12 @@ type RpcConfig struct {
 	// TimeoutIO bounds each data RPC (Read, Write, and file-state ops like
 	// Flush/Fsync/Release/locking/Allocate).
 	TimeoutIO time.Duration `mapstructure:"timeout_io" validate:"required,gte=1ms"`
-	// ReadaheadChunkBytes is the size of a single readahead fetch. Declared
-	// here so config plumbing can ship ahead of the consumer; wired up by a
-	// later phase task. Zero means "no readahead", which is the current
-	// behaviour.
+	// ReadaheadChunkBytes is the size of a single readahead fetch. Zero
+	// means "no readahead".
 	ReadaheadChunkBytes int `mapstructure:"readahead_chunk_bytes" validate:"gte=0"`
+	// ReadaheadThreshold is the number of strictly-sequential reads
+	// required before the client arms a one-chunk-ahead prefetch.
+	ReadaheadThreshold int `mapstructure:"readahead_threshold" validate:"min=1,max=16"`
 	// MaxMessageBytes caps both inbound and outbound gRPC message sizes on
 	// the client. Mirror of the server-side cap; same [64 KiB, 64 MiB] range.
 	MaxMessageBytes int `mapstructure:"max_message_bytes" validate:"min=65536,max=67108864"`
@@ -78,6 +80,7 @@ func NewRpcConfig(v *viper.Viper) (*RpcConfig, error) {
 		TimeoutMeta:         DefaultRpcTimeoutMeta,
 		TimeoutIO:           DefaultRpcTimeoutIO,
 		ReadaheadChunkBytes: DefaultReadaheadChunkBytes,
+		ReadaheadThreshold:  DefaultReadaheadThreshold,
 		MaxMessageBytes:     DefaultMaxMessageBytes,
 		Keepalive: ClientKeepaliveConfig{
 			Time:                DefaultKeepaliveTime,
@@ -91,6 +94,7 @@ func NewRpcConfig(v *viper.Viper) (*RpcConfig, error) {
 	v.SetDefault("timeout_meta", DefaultRpcTimeoutMeta)
 	v.SetDefault("timeout_io", DefaultRpcTimeoutIO)
 	v.SetDefault("readahead_chunk_bytes", DefaultReadaheadChunkBytes)
+	v.SetDefault("readahead_threshold", DefaultReadaheadThreshold)
 	v.SetDefault("max_message_bytes", DefaultMaxMessageBytes)
 	v.SetDefault("keepalive.time", DefaultKeepaliveTime)
 	v.SetDefault("keepalive.timeout", DefaultKeepaliveTimeout)
