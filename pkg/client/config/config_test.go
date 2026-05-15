@@ -111,6 +111,59 @@ rpc:
 	s.Assert().Equal(time.Minute, result.Rpc.TimeoutIO)
 }
 
+// TestParse_FUSEDefaults verifies that omitting the fuse: section yields
+// the documented default FUSE mount tuning.
+func (s *ConfigTestSuite) TestParse_FUSEDefaults() {
+	conf := `
+server:
+  address: 127.0.0.1
+  port: 9449
+auth:
+  type: none
+`
+	result, err := LoadConfigFromString(conf)
+	s.Require().NoError(err)
+	s.Require().NotNil(result.FUSE)
+	s.Assert().Equal(DefaultFUSEMaxWriteBytes, result.FUSE.MaxWriteBytes)
+	s.Assert().Equal(DefaultFUSEMaxBackground, result.FUSE.MaxBackground)
+	s.Assert().Equal(DefaultFUSEWritebackCache, result.FUSE.WritebackCache)
+}
+
+// TestParse_FUSEOverride verifies explicit fuse values override the defaults.
+func (s *ConfigTestSuite) TestParse_FUSEOverride() {
+	conf := `
+server:
+  address: 127.0.0.1
+  port: 9449
+auth:
+  type: none
+fuse:
+  max_write_bytes: 524288
+  max_background: 128
+  writeback_cache: true
+`
+	result, err := LoadConfigFromString(conf)
+	s.Require().NoError(err)
+	s.Assert().Equal(512<<10, result.FUSE.MaxWriteBytes)
+	s.Assert().Equal(128, result.FUSE.MaxBackground)
+	s.Assert().True(result.FUSE.WritebackCache)
+}
+
+// TestParse_FUSEValidation rejects out-of-range values.
+func (s *ConfigTestSuite) TestParse_FUSEValidation() {
+	conf := `
+server:
+  address: 127.0.0.1
+  port: 9449
+auth:
+  type: none
+fuse:
+  max_write_bytes: 1024
+`
+	_, err := LoadConfigFromString(conf)
+	s.Require().Error(err)
+}
+
 // TestParse_LogEnvBindings verifies GMOUNTIE_LOG_LEVEL / GMOUNTIE_LOG_FORMAT
 // reach cfg.Log.* on the client side, mirroring the server-side asymmetry.
 func (s *ConfigTestSuite) TestParse_LogEnvBindings() {

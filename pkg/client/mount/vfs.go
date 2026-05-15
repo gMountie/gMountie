@@ -3,6 +3,7 @@ package mount
 import (
 	"errors"
 	"fmt"
+	"gmountie/pkg/client/config"
 	"gmountie/pkg/client/grpc"
 	"gmountie/pkg/client/io"
 	"gmountie/pkg/utils/log"
@@ -37,16 +38,21 @@ type VFSVolumeMounterImpl struct {
 	volumes *xsync.MapOf[string, *pathfs.PathNodeFs]
 	// client is the grpc client
 	client grpc.Client
+	// fuse is the FUSE-kernel-side tuning config.
+	fuse *config.FUSEConfig
 	// initialized is a flag to check if the mounter is initialized
 	initialized bool
 }
 
-// NewMultiVolumeMounter creates a new VFSVolumeMounterImpl
-func NewMultiVolumeMounter(client grpc.Client, path string) VFSVolumeMounter {
+// NewMultiVolumeMounter creates a new VFSVolumeMounterImpl. fuseCfg must
+// be non-nil; the client config layer guarantees this by treating FUSE
+// as a required block with defaults.
+func NewMultiVolumeMounter(client grpc.Client, path string, fuseCfg *config.FUSEConfig) VFSVolumeMounter {
 	m := &VFSVolumeMounterImpl{
 		path:        path,
 		volumes:     xsync.NewMapOf[string, *pathfs.PathNodeFs](),
 		client:      client,
+		fuse:        fuseCfg,
 		initialized: false,
 	}
 	return m
@@ -162,9 +168,12 @@ func (m *VFSVolumeMounterImpl) mountMemFS(path string) error {
 	m.root = nodefs.NewDefaultNode()
 	// create a new FileSystemConnector
 	m.connector = nodefs.NewFileSystemConnector(m.root, createConnectorOptions())
+	// Negotiate the FUSE frame ceiling with the server up-front. A failed
+	// handshake falls back to the configured value — never gate the mount.
+	maxWrite := negotiateMaxWriteBytes(m.client, m.fuse)
 	// create a new server
 	var err error
-	m.server, err = fuse.NewServer(m.connector.RawFS(), path, createMountOptions(m.client.GetEndpoint(), ""))
+	m.server, err = fuse.NewServer(m.connector.RawFS(), path, createMountOptions(m.client.GetEndpoint(), "", m.fuse, maxWrite))
 	if err != nil {
 		return err
 	}

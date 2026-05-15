@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"gmountie/pkg/client/config"
 	"gmountie/pkg/proto"
 	"os"
 	"path/filepath"
@@ -33,11 +34,16 @@ func (s *VFSVolumeMounterTestSuite) SetupTest() {
 	err = os.Mkdir(s.mntDir, 0755)
 	s.Require().NoError(err)
 
-	s.mounter = NewMultiVolumeMounter(s.client, s.mntDir)
+	s.mounter = NewMultiVolumeMounter(s.client, s.mntDir, &config.FUSEConfig{
+		MaxWriteBytes:  config.DefaultFUSEMaxWriteBytes,
+		MaxBackground:  config.DefaultFUSEMaxBackground,
+		WritebackCache: config.DefaultFUSEWritebackCache,
+	})
 
 	// Setup common mock expectations
 	mockFsClient := &mockProto.MockRpcFsClient{}
 	mockFileClient := &mockProto.MockRpcFileClient{}
+	mockVersionClient := &mockProto.MockVersionServiceClient{}
 
 	mockFsClient.EXPECT().Access(mock.Anything, mock.Anything).Return(&proto.AccessReply{
 		Status: int32(fuse.ENOSYS),
@@ -45,9 +51,15 @@ func (s *VFSVolumeMounterTestSuite) SetupTest() {
 	mockFsClient.EXPECT().GetAttr(mock.Anything, mock.Anything).Return(&proto.GetAttrReply{
 		Status: int32(fuse.ENOSYS),
 	}, nil).Maybe()
+	// Mount path negotiates the FUSE frame ceiling via Version.Get; return
+	// the default frame size so the configured MaxWriteBytes is preserved.
+	mockVersionClient.EXPECT().Get(mock.Anything, mock.Anything).Return(&proto.VersionReply{
+		FrameSizeBytes: int32(config.DefaultFUSEMaxWriteBytes),
+	}, nil).Maybe()
 
 	s.client.EXPECT().Fs().Return(mockFsClient).Maybe()
 	s.client.EXPECT().File().Return(mockFileClient).Maybe()
+	s.client.EXPECT().Version().Return(mockVersionClient).Maybe()
 	s.client.EXPECT().GetEndpoint().Return("localhost:8080").Maybe()
 	// LocalFileSystem now calls MetaTimeout/IOTimeout on every RPC; the FUSE
 	// kernel makes many incoming calls during mount/unmount so we permit any

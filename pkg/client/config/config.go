@@ -25,6 +25,8 @@ type Config struct {
 	Mount MountConfig `yaml:"mount,omitempty"`
 	// Rpc is the RPC configuration
 	Rpc *RpcConfig `validate:"required" yaml:"rpc,omitempty"`
+	// FUSE is the FUSE-kernel-side tuning configuration (mount options).
+	FUSE *FUSEConfig `validate:"required" yaml:"fuse,omitempty"`
 	// Log is the optional logger configuration. Nil keeps the
 	// init-time auto-detected defaults.
 	Log *log.LogConfig `yaml:"log,omitempty"`
@@ -117,6 +119,13 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	// Parse rpc config (defaults if absent)
 	if cfg, err := NewRpcConfig(v.Sub("rpc")); err == nil {
 		result.Rpc = cfg
+	} else {
+		return nil, err
+	}
+
+	// Parse fuse config (defaults if absent)
+	if cfg, err := NewFUSEConfig(v.Sub("fuse")); err == nil {
+		result.FUSE = cfg
 	} else {
 		return nil, err
 	}

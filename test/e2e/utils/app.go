@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	"gmountie/pkg/client"
+	clientConfig "gmountie/pkg/client/config"
 	grpcClient "gmountie/pkg/client/grpc"
 	"gmountie/pkg/server"
 	"gmountie/pkg/server/config"
@@ -115,7 +116,11 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 		return nil, err
 	}
 	appCtx.client = c
-	appCtx.clientCtx = client.NewAppContext(c, "")
+	appCtx.clientCtx = client.NewAppContext(c, "", &clientConfig.FUSEConfig{
+		MaxWriteBytes:  clientConfig.DefaultFUSEMaxWriteBytes,
+		MaxBackground:  clientConfig.DefaultFUSEMaxBackground,
+		WritebackCache: clientConfig.DefaultFUSEWritebackCache,
+	})
 	return appCtx, nil
 }
 

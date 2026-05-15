@@ -28,6 +28,9 @@ type Client interface {
 	Fs() proto.RpcFsClient
 	// Volume returns the gRPC Volume client.
 	Volume() proto.VolumeServiceClient
+	// Version returns the gRPC Version client. Used at mount time to
+	// negotiate the FUSE frame ceiling with the server.
+	Version() proto.VersionServiceClient
 	// MetaTimeout returns the per-RPC timeout for metadata operations.
 	MetaTimeout() time.Duration
 	// IOTimeout returns the per-RPC timeout for data operations.
@@ -45,6 +48,7 @@ type ClientImpl struct {
 	fs                proto.RpcFsClient
 	file              proto.RpcFileClient
 	volume            proto.VolumeServiceClient
+	version           proto.VersionServiceClient
 	session           proto.SessionServiceClient
 	handshake         *SessionHandshake
 	metaTimeout       time.Duration
@@ -111,6 +115,7 @@ func NewClient(endpoint string, options ...ClientOption) (Client, error) {
 	c.file = proto.NewRpcFileClient(conn)
 	c.fs = proto.NewRpcFsClient(conn)
 	c.volume = proto.NewVolumeServiceClient(conn)
+	c.version = proto.NewVersionServiceClient(conn)
 	c.session = proto.NewSessionServiceClient(conn)
 	c.handshake = NewSessionHandshake(c.session)
 	return &c, nil
@@ -136,6 +141,11 @@ func (c *ClientImpl) Fs() proto.RpcFsClient {
 // Volume returns the gRPC Volume client
 func (c *ClientImpl) Volume() proto.VolumeServiceClient {
 	return c.volume
+}
+
+// Version returns the gRPC Version client.
+func (c *ClientImpl) Version() proto.VersionServiceClient {
+	return c.version
 }
 
 // Connect connects to the gRPC server

@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"gmountie/pkg/client/config"
 	"gmountie/pkg/client/grpc"
 	"gmountie/pkg/client/io"
 	"gmountie/pkg/utils/log"
@@ -22,13 +23,17 @@ type SingleVolumeMounter interface {
 // SingleVolumeMounterImpl is a service that mounts volumes
 type SingleVolumeMounterImpl struct {
 	client grpc.Client
+	fuse   *config.FUSEConfig
 	mounts *xsync.MapOf[string, *fuse.Server]
 }
 
-// NewSingleVolumeMounter creates a new SingleVolumeMounterImpl
-func NewSingleVolumeMounter(client grpc.Client) SingleVolumeMounter {
+// NewSingleVolumeMounter creates a new SingleVolumeMounterImpl. fuseCfg
+// must be non-nil; the client config layer guarantees this by treating
+// FUSE as a required block with defaults.
+func NewSingleVolumeMounter(client grpc.Client, fuseCfg *config.FUSEConfig) SingleVolumeMounter {
 	return &SingleVolumeMounterImpl{
 		client: client,
+		fuse:   fuseCfg,
 		mounts: xsync.NewMapOf[string, *fuse.Server](),
 	}
 }
@@ -40,10 +45,12 @@ func (m *SingleVolumeMounterImpl) Mount(volume, path string) error {
 		return errors.Errorf("volume %s is already mounted", volume)
 	}
 
+	maxWrite := negotiateMaxWriteBytes(m.client, m.fuse)
+
 	fs := io.NewLocalFileSystem(m.client, volume)
 	nodeFS := pathfs.NewPathNodeFs(fs, createFsOptions())
 	connector := nodefs.NewFileSystemConnector(nodeFS.Root(), createConnectorOptions())
-	server, err := fuse.NewServer(connector.RawFS(), path, createMountOptions(m.client.GetEndpoint(), volume))
+	server, err := fuse.NewServer(connector.RawFS(), path, createMountOptions(m.client.GetEndpoint(), volume, m.fuse, maxWrite))
 	if err != nil {
 		return errors.Wrap(err, "mount fail")
 	}

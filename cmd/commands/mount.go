@@ -82,7 +82,7 @@ var mountCmd = &cobra.Command{
 		}(c)
 
 		// Create mounter
-		mounter := mount.NewSingleVolumeMounter(c)
+		mounter := mount.NewSingleVolumeMounter(c, cfg.FUSE)
 		defer func(mounter mount.SingleVolumeMounter) {
 			err := mounter.Close()
 			if err != nil {

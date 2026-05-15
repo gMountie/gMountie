@@ -58,12 +58,17 @@ func (*VersionRequest) Descriptor() ([]byte, []int) {
 }
 
 type VersionReply struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Version       string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
-	Commit        string                 `protobuf:"bytes,2,opt,name=commit,proto3" json:"commit,omitempty"`
-	Date          string                 `protobuf:"bytes,3,opt,name=date,proto3" json:"date,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Version string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
+	Commit  string                 `protobuf:"bytes,2,opt,name=commit,proto3" json:"commit,omitempty"`
+	Date    string                 `protobuf:"bytes,3,opt,name=date,proto3" json:"date,omitempty"`
+	// FrameSizeBytes is the server's configured per-frame ceiling for
+	// streaming Read/Write RPCs. The client uses it to cap FUSE MaxWrite
+	// (which go-fuse also uses as max_read) so the kernel never asks for
+	// a frame the server would split anyway. Zero means "unset / unknown".
+	FrameSizeBytes int32 `protobuf:"varint,4,opt,name=frame_size_bytes,json=frameSizeBytes,proto3" json:"frame_size_bytes,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *VersionReply) Reset() {
@@ -117,16 +122,24 @@ func (x *VersionReply) GetDate() string {
 	return ""
 }
 
+func (x *VersionReply) GetFrameSizeBytes() int32 {
+	if x != nil {
+		return x.FrameSizeBytes
+	}
+	return 0
+}
+
 var File_api_proto_version_proto protoreflect.FileDescriptor
 
 const file_api_proto_version_proto_rawDesc = "" +
 	"\n" +
 	"\x17api/proto/version.proto\x12\bgmountie\"\x10\n" +
-	"\x0eVersionRequest\"T\n" +
+	"\x0eVersionRequest\"~\n" +
 	"\fVersionReply\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x16\n" +
 	"\x06commit\x18\x02 \x01(\tR\x06commit\x12\x12\n" +
-	"\x04date\x18\x03 \x01(\tR\x04date2I\n" +
+	"\x04date\x18\x03 \x01(\tR\x04date\x12(\n" +
+	"\x10frame_size_bytes\x18\x04 \x01(\x05R\x0eframeSizeBytes2I\n" +
 	"\x0eVersionService\x127\n" +
 	"\x03Get\x12\x18.gmountie.VersionRequest\x1a\x16.gmountie.VersionReplyB\vZ\tpkg/protob\x06proto3"
 

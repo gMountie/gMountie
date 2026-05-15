@@ -383,6 +383,52 @@ func (_c *MockClient_SessionID_Call) RunAndReturn(run func() string) *MockClient
 	return _c
 }
 
+// Version provides a mock function for the type MockClient
+func (_mock *MockClient) Version() proto.VersionServiceClient {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Version")
+	}
+
+	var r0 proto.VersionServiceClient
+	if returnFunc, ok := ret.Get(0).(func() proto.VersionServiceClient); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(proto.VersionServiceClient)
+		}
+	}
+	return r0
+}
+
+// MockClient_Version_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Version'
+type MockClient_Version_Call struct {
+	*mock.Call
+}
+
+// Version is a helper method to define mock.On call
+func (_e *MockClient_Expecter) Version() *MockClient_Version_Call {
+	return &MockClient_Version_Call{Call: _e.mock.On("Version")}
+}
+
+func (_c *MockClient_Version_Call) Run(run func()) *MockClient_Version_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockClient_Version_Call) Return(versionServiceClient proto.VersionServiceClient) *MockClient_Version_Call {
+	_c.Call.Return(versionServiceClient)
+	return _c
+}
+
+func (_c *MockClient_Version_Call) RunAndReturn(run func() proto.VersionServiceClient) *MockClient_Version_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Volume provides a mock function for the type MockClient
 func (_mock *MockClient) Volume() proto.VolumeServiceClient {
 	ret := _mock.Called()

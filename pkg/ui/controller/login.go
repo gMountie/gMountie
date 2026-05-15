@@ -141,7 +141,7 @@ func (l *LoginControllerImpl) createAppContext(cfg *clientConfig.Config) error {
 		return err
 	}
 
-	appCtx := client.NewAppContext(newClient, config2.GetDefaultMountPath())
+	appCtx := client.NewAppContext(newClient, config2.GetDefaultMountPath(), cfg.FUSE)
 	l.appService.SetContext(appCtx)
 	return nil
 }

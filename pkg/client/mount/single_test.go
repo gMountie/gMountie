@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"gmountie/pkg/client/config"
 	"gmountie/pkg/proto"
 	"os"
 	"path/filepath"
@@ -25,7 +26,11 @@ type SingleVolumeMounterTestSuite struct {
 
 func (s *SingleVolumeMounterTestSuite) SetupTest() {
 	s.client = grpc.NewMockClient(s.T())
-	s.mounter = NewSingleVolumeMounter(s.client)
+	s.mounter = NewSingleVolumeMounter(s.client, &config.FUSEConfig{
+		MaxWriteBytes:  config.DefaultFUSEMaxWriteBytes,
+		MaxBackground:  config.DefaultFUSEMaxBackground,
+		WritebackCache: config.DefaultFUSEWritebackCache,
+	})
 
 	var err error
 	s.tempDir, err = os.MkdirTemp("", "gmountie-test-*")
@@ -36,6 +41,7 @@ func (s *SingleVolumeMounterTestSuite) SetupTest() {
 
 	// Setup common mock expectations
 	mockFsClient := &mockProto.MockRpcFsClient{}
+	mockVersionClient := &mockProto.MockVersionServiceClient{}
 	//mockFileClient := &mockProto.MockRpcFileClient{}
 	//mockVolumeClient := &mockProto.MockVolumeServiceClient{}
 
@@ -45,8 +51,14 @@ func (s *SingleVolumeMounterTestSuite) SetupTest() {
 	mockFsClient.EXPECT().GetAttr(mock.Anything, mock.Anything).Return(&proto.GetAttrReply{
 		Status: int32(fuse.ENOSYS),
 	}, nil).Maybe()
+	// Mount path negotiates the FUSE frame ceiling via Version.Get; return
+	// the default frame size so the configured MaxWriteBytes is preserved.
+	mockVersionClient.EXPECT().Get(mock.Anything, mock.Anything).Return(&proto.VersionReply{
+		FrameSizeBytes: int32(config.DefaultFUSEMaxWriteBytes),
+	}, nil).Maybe()
 
 	s.client.EXPECT().Fs().Return(mockFsClient).Maybe()
+	s.client.EXPECT().Version().Return(mockVersionClient).Maybe()
 	s.client.EXPECT().GetEndpoint().Return("localhost:8080").Maybe()
 	// LocalFileSystem now calls MetaTimeout/IOTimeout on every RPC; the FUSE
 	// kernel makes many incoming calls during mount/unmount so we permit any

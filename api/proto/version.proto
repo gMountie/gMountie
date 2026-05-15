@@ -8,6 +8,11 @@ message VersionReply {
   string version = 1;
   string commit  = 2;
   string date    = 3;
+  // FrameSizeBytes is the server's configured per-frame ceiling for
+  // streaming Read/Write RPCs. The client uses it to cap FUSE MaxWrite
+  // (which go-fuse also uses as max_read) so the kernel never asks for
+  // a frame the server would split anyway. Zero means "unset / unknown".
+  int32 frame_size_bytes = 4;
 }
 
 service VersionService {

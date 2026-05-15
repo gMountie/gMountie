@@ -88,6 +88,44 @@ rpc:
     permit_without_stream: true
 ```
 
+## FUSE Options
+
+The `fuse` section tunes the FUSE-kernel-side mount knobs. The defaults
+match a 1 MiB streaming-frame profile; raise `max_write_bytes` if the
+server's `frame_size_bytes` is larger.
+
+| Option              | Type    | Default  | Description                                                      |
+|---------------------|---------|----------|------------------------------------------------------------------|
+| max\_write\_bytes   | integer | 1048576  | Ceiling for FUSE WRITE/READ size in bytes (1 MiB default)        |
+| max\_background     | integer | 64       | Max async background requests the kernel may have in flight      |
+| writeback\_cache    | boolean | false    | Enable the kernel's writeback page cache for the mount           |
+
+`max_write_bytes` is validated to the range [4096, 16777216] (4 KiB to
+16 MiB). go-fuse sets the kernel's `max_read` equal to `MaxWrite`, so
+this single knob drives both directions of FUSE-kernel transfer size.
+
+`max_background` is validated to the range [1, 1024]; the upper bound is
+a sanity ceiling, not a tuned value.
+
+At mount time the client calls the server's `Version` RPC and caps
+`max_write_bytes` at the server's advertised `frame_size_bytes` so the
+kernel never asks for a frame the server would split anyway. A failed
+or unavailable Version call falls back to the configured value — the
+mount is not gated on the negotiation.
+
+`writeback_cache` defaults to off; the client read/write path is still
+synchronous pending the cache layer. Toggling it on enables the FUSE
+`CAP_WRITEBACK_CACHE` capability bit.
+
+Example:
+
+```yaml
+fuse:
+  max_write_bytes: 2097152  # 2 MiB
+  max_background: 128
+  writeback_cache: false
+```
+
 ## Authentication Options
 
 The `auth` section configures client authentication:

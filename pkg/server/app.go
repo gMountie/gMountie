@@ -60,7 +60,7 @@ func (c *AppContext) GetGrpcServices() []grpc.ServiceRegistrar {
 		controller.NewRpcFileServer(c.VolumeService, c.SessionManager, c.Metrics, c.Config.Server.FrameSizeBytes),
 		controller.NewVolumeService(c.VolumeService),
 		controller.NewSessionController(c.SessionManager),
-		controller.NewVersionController(),
+		controller.NewVersionController(c.Config.Server.FrameSizeBytes),
 	}
 }
 
