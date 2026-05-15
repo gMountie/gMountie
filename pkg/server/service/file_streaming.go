@@ -43,6 +43,10 @@ func (s *ReadStreamer) Stream(
 ) error {
 	remaining := totalSize
 	off := startOffset
+	// One buffer reused across frames. emit must consume data synchronously
+	// (gRPC stream.Send marshals before returning), which the controller
+	// closure does — so overwriting the buffer for the next read is safe.
+	buf := make([]byte, s.frameSize)
 	for remaining > 0 {
 		if err := ctx.Err(); err != nil {
 			return errors.Wrap(err, "read stream cancelled")
@@ -51,8 +55,7 @@ func (s *ReadStreamer) Stream(
 		if chunk > s.frameSize {
 			chunk = s.frameSize
 		}
-		buf := make([]byte, chunk)
-		n, st := fileRead(buf, off)
+		n, st := fileRead(buf[:chunk], off)
 		if !st.Ok() {
 			return emit(nil, st)
 		}

@@ -34,7 +34,15 @@ func newFakeReadStream(ctx context.Context) *fakeReadStream {
 	return &fakeReadStream{ctx: ctx}
 }
 
+// Send copies the frame's Data so that capture survives the streamer reusing
+// the underlying buffer across iterations — mirrors how gRPC serialises the
+// payload synchronously before returning from Send in production.
 func (f *fakeReadStream) Send(frame *proto.ReadFrame) error {
+	if frame != nil && frame.Data != nil {
+		dup := make([]byte, len(frame.Data))
+		copy(dup, frame.Data)
+		frame = &proto.ReadFrame{Data: dup, Status: frame.Status}
+	}
 	f.frames = append(f.frames, frame)
 	return nil
 }
@@ -59,6 +67,32 @@ func (r *chunkedReader) Read(buf []byte, off int64) (fuse.ReadResult, fuse.Statu
 		end = int64(len(r.data))
 	}
 	return fuse.ReadResultData(r.data[off:end]), fuse.OK
+}
+
+// failingReader returns failAfterBytes worth of payload across one or more
+// reads, then returns failStatus on the next call. Used to exercise the
+// mid-stream error path in ReadStreamer.
+type failingReader struct {
+	data           []byte
+	failAfterBytes int64
+	failStatus     fuse.Status
+	served         int64
+}
+
+func (r *failingReader) Read(buf []byte, off int64) (fuse.ReadResult, fuse.Status) {
+	if r.served >= r.failAfterBytes {
+		return nil, r.failStatus
+	}
+	end := off + int64(len(buf))
+	if end > r.failAfterBytes {
+		end = r.failAfterBytes
+	}
+	if end > int64(len(r.data)) {
+		end = int64(len(r.data))
+	}
+	chunk := r.data[off:end]
+	r.served += int64(len(chunk))
+	return fuse.ReadResultData(chunk), fuse.OK
 }
 
 type StreamingReadSuite struct {
@@ -161,6 +195,45 @@ func (s *StreamingReadSuite) TestRead_EOFReturnsShortFinalFrame() {
 
 	got := append(stream.frames[0].Data, stream.frames[1].Data...)
 	s.Assert().Equal(payload, got)
+}
+
+func (s *StreamingReadSuite) TestRead_MidStreamErrorEmitsTerminalErrnoFrame() {
+	// Backing reader serves 1 MiB cleanly, then fails with EIO. We request
+	// 3 MiB so the failure occurs after the first frame has been emitted —
+	// the streamer must follow up with a single terminal frame carrying the
+	// errno status, not silently truncate.
+	const fileSize = 5 << 20
+	payload := make([]byte, fileSize)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+
+	mockFs := new(pathfs2.MockFileSystem)
+	mockFile := new(nodefs2.MockFile)
+	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil).Maybe()
+	reader := &failingReader{data: payload, failAfterBytes: int64(s.frameSize), failStatus: fuse.EIO}
+	mockFile.EXPECT().
+		Read(mock.Anything, mock.AnythingOfType("int64")).
+		RunAndReturn(reader.Read).Maybe()
+	mockFile.EXPECT().Release().Return().Maybe()
+	sess, _ := s.sessionMgr.Get(s.sessionID)
+	fd := sess.RegisterFile("/test/path", mockFile)
+
+	stream := newFakeReadStream(context.Background())
+	err := s.server.Read(&proto.ReadRequest{
+		Volume:    "testVolume",
+		Fd:        fd,
+		Offset:    0,
+		Size:      uint32(3 << 20),
+		SessionId: s.sessionID,
+	}, stream)
+
+	s.Require().NoError(err, "mid-stream errno should surface as a terminal frame, not a transport error")
+	s.Require().Len(stream.frames, 2, "expected one data frame + one terminal errno frame")
+	s.Assert().Equal(int32(fuse.OK), stream.frames[0].Status, "first frame carries the served chunk")
+	s.Assert().Equal(s.frameSize, len(stream.frames[0].Data))
+	s.Assert().Equal(int32(fuse.EIO), stream.frames[1].Status, "terminal frame carries the errno")
+	s.Assert().Empty(stream.frames[1].Data, "terminal errno frame must not carry stale data")
 }
 
 func (s *StreamingReadSuite) TestRead_ReturnsErrnoOnBadFd() {
