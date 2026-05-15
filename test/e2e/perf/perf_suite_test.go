@@ -72,8 +72,12 @@ func setupBenchEnv(b *testing.B) *benchEnv {
 	ctx.MountVolume(volume)
 
 	b.Cleanup(func() {
+		// If ctx.Close fails the FUSE mount may still be live; removing the
+		// mountpoint dir via volume.Close in that state corrupts the next
+		// benchmark's setup. Skip volume.Close on a failed ctx.Close.
 		if err := ctx.Close(); err != nil {
-			b.Logf("ctx.Close: %v", err)
+			b.Logf("ctx.Close (mount may still be active, skipping volume removal): %v", err)
+			return
 		}
 		if err := volume.Close(); err != nil {
 			b.Logf("volume.Close: %v", err)

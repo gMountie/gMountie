@@ -95,7 +95,9 @@ tasks:
       BENCHTIME: '{{.BENCHTIME | default "10s"}}'
     cmds:
       - mkdir -p docs/perf
-      - go test -run=^$ -bench=. -benchmem -count={{.COUNT}} -benchtime={{.BENCHTIME}} ./test/e2e/perf/ | tee {{.OUT}}
+      - |
+        set -o pipefail
+        go test -run=^$ -bench=. -benchmem -count={{.COUNT}} -benchtime={{.BENCHTIME}} ./test/e2e/perf/ | tee {{.OUT}}
       - echo "wrote {{.OUT}}"
 
   perf:diff:
