@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"gmountie/pkg/proto"
+	"gmountie/pkg/server/config"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"google.golang.org/grpc/codes"
@@ -41,7 +42,7 @@ type CompoundDispatcher struct {
 // config.DefaultCompoundMaxParallel.
 func NewCompoundDispatcher(fs FsHandlers, maxParallel int) *CompoundDispatcher {
 	if maxParallel <= 0 {
-		maxParallel = 8
+		maxParallel = config.DefaultCompoundMaxParallel
 	}
 	return &CompoundDispatcher{fs: fs, maxParallel: maxParallel}
 }
