@@ -118,11 +118,3 @@ func (r *Readahead) Serve(dest []byte, off int64) (int, bool) {
 	return len(dest), true
 }
 
-// HasPending reports whether a prefetched buffer is currently parked in
-// the ring. Used by the synchronous Read path to decide whether to issue
-// a prefetch without re-querying Observe.
-func (r *Readahead) HasPending() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.prefetched != nil
-}

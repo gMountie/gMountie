@@ -160,6 +160,7 @@ func (f *GrpcFile) doPrefetch(off int64) {
 		SessionId: f.sessionID,
 	}, grpc.UseCompressor(snappy.Name))
 	if err != nil {
+		log.Log.Debug("readahead prefetch: stream open failed", zap.String("path", f.path), zap.Int64("offset", off), zap.Error(err))
 		return
 	}
 	buf := make([]byte, chunk)
@@ -170,9 +171,11 @@ func (f *GrpcFile) doPrefetch(off int64) {
 			break
 		}
 		if recvErr != nil {
+			log.Log.Debug("readahead prefetch: stream recv failed", zap.String("path", f.path), zap.Int64("offset", off), zap.Error(recvErr))
 			return
 		}
 		if st := fuse.Status(frame.GetStatus()); !st.Ok() {
+			log.Log.Debug("readahead prefetch: server returned non-OK status", zap.String("path", f.path), zap.Int64("offset", off), zap.Stringer("status", st))
 			return
 		}
 		data := frame.GetData()
