@@ -41,6 +41,10 @@ type Client interface {
 	ReadaheadChunkBytes() int
 	// ReadaheadThreshold is the sequential-read count that arms a prefetch.
 	ReadaheadThreshold() int
+	// WriteCoalesceBytes is the per-fd small-write coalescing threshold.
+	// Zero disables coalescing; small contiguous writes pass straight
+	// through to the streaming Write RPC.
+	WriteCoalesceBytes() int
 }
 
 // ClientImpl is a struct that holds the gRPC ClientImpl
@@ -59,6 +63,7 @@ type ClientImpl struct {
 	ioTimeout         time.Duration
 	readaheadChunk    int
 	readaheadThresh   int
+	writeCoalesce     int
 }
 
 // -------------------- ClientImpl Options --------------------
@@ -107,6 +112,14 @@ func WithReadahead(chunkBytes, threshold int) ClientOption {
 	}
 }
 
+// WithWriteCoalesce sets the per-fd small-write coalescing threshold used
+// when opening GrpcFile instances. bytes of 0 disables coalescing.
+func WithWriteCoalesce(bytes int) ClientOption {
+	return func(c *ClientImpl) {
+		c.writeCoalesce = bytes
+	}
+}
+
 // ---------------------- Constructor ----------------------
 
 // NewClient creates a new gRPC ClientImpl
@@ -117,6 +130,7 @@ func NewClient(endpoint string, options ...ClientOption) (Client, error) {
 		ioTimeout:       30 * time.Second,
 		readaheadChunk:  64 << 10,
 		readaheadThresh: 3,
+		writeCoalesce:   1 << 20,
 	}
 	for _, opt := range options {
 		opt(&c)
@@ -207,6 +221,12 @@ func (c *ClientImpl) ReadaheadChunkBytes() int {
 // required before the client arms a prefetch.
 func (c *ClientImpl) ReadaheadThreshold() int {
 	return c.readaheadThresh
+}
+
+// WriteCoalesceBytes returns the per-fd small-write coalescing threshold.
+// Zero disables coalescing on opened files.
+func (c *ClientImpl) WriteCoalesceBytes() int {
+	return c.writeCoalesce
 }
 
 // getInterceptors returns the ClientImpl interceptors, including any

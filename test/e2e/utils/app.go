@@ -58,6 +58,16 @@ func WithBasicAuth(username, password string) TestOptions {
 	}
 }
 
+// WithServerStreamInterceptors installs extra stream server interceptors on
+// the test gRPC server. Useful for tests that need to count or inspect
+// streaming RPCs (e.g. verifying client-side write coalescing reduces the
+// number of Write streams).
+func WithServerStreamInterceptors(interceptors ...grpc.StreamServerInterceptor) TestOptions {
+	return func(c *AppTestingContext) {
+		c.serverOptions = append(c.serverOptions, grpcServer.WithExtraStreamInterceptors(interceptors...))
+	}
+}
+
 // WithRandomTestVolume creates random test volume.
 func WithRandomTestVolume(randomfiles bool) TestOptions {
 	return func(c *AppTestingContext) {

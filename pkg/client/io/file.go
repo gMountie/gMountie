@@ -29,6 +29,12 @@ type GrpcFile struct {
 	// and feeds Observe afterwards; the prefetch goroutine writes via
 	// Store.
 	readahead *Readahead
+	// coalescer is non-nil when per-fd small-write coalescing is enabled.
+	// Write consults it before sending; Flush/Release/Fsync drain it
+	// first. coalesceThreshold mirrors the coalescer's threshold so the
+	// big-write short-circuit doesn't need a Coalescer accessor.
+	coalescer         *WriteCoalescer
+	coalesceThreshold int
 	// lifeCtx is cancelled by Release so any in-flight prefetch goroutine
 	// returns promptly instead of holding the file open on the server
 	// past the FUSE close.
@@ -40,22 +46,28 @@ type GrpcFile struct {
 // NewGrpcFile constructs a GrpcFile bound to fd on the named volume.
 // readaheadChunk of 0 disables the readahead path entirely; otherwise
 // readaheadChunk-sized prefetches arm after readaheadThreshold
-// strictly-sequential reads.
-func NewGrpcFile(fileClient proto.RpcFileClient, volume, path string, fd uint64, ioTimeout time.Duration, sessionID string, readaheadChunk, readaheadThreshold int) *GrpcFile {
+// strictly-sequential reads. coalesceBytes of 0 disables per-fd write
+// coalescing; otherwise small contiguous writes accumulate up to
+// coalesceBytes before flushing.
+func NewGrpcFile(fileClient proto.RpcFileClient, volume, path string, fd uint64, ioTimeout time.Duration, sessionID string, readaheadChunk, readaheadThreshold, coalesceBytes int) *GrpcFile {
 	ctx, cancel := context.WithCancel(context.Background())
 	f := &GrpcFile{
-		fileClient: fileClient,
-		path:       path,
-		volume:     volume,
-		fd:         fd,
-		ioTimeout:  ioTimeout,
-		sessionID:  sessionID,
-		lifeCtx:    ctx,
-		lifeCancel: cancel,
-		File:       nodefs.NewDefaultFile(),
+		fileClient:        fileClient,
+		path:              path,
+		volume:            volume,
+		fd:                fd,
+		ioTimeout:         ioTimeout,
+		sessionID:         sessionID,
+		coalesceThreshold: coalesceBytes,
+		lifeCtx:           ctx,
+		lifeCancel:        cancel,
+		File:              nodefs.NewDefaultFile(),
 	}
 	if readaheadChunk > 0 && readaheadThreshold > 0 {
 		f.readahead = NewReadahead(readaheadChunk, readaheadThreshold)
+	}
+	if coalesceBytes > 0 {
+		f.coalescer = NewWriteCoalescer(coalesceBytes)
 	}
 	return f
 }
@@ -199,15 +211,18 @@ func (f *GrpcFile) doPrefetch(off int64) {
 // server. 1 MiB matches the server's default FrameSizeBytes.
 const writeFrameSizeBytes = 1 << 20
 
-// Write proxies a FUSE Write to the server-streaming Write RPC. Frame 1
-// carries the header; subsequent frames carry only `data`. requestID is
-// generated once outside the retry closure so any retry attempt re-sends
-// the same id and the server's per-session idempotency cache
-// short-circuits the apply on the second attempt.
-func (f *GrpcFile) Write(data []byte, off int64) (written uint32, code fuse.Status) {
+// streamingWrite issues a single server-streaming Write RPC for data at
+// off, stamped with the caller-supplied requestID. requestID flows through
+// every retry attempt unchanged so the server's per-session idempotency
+// LRU short-circuits the replay on the second attempt. The retry closure
+// re-opens the stream from scratch on each attempt.
+//
+// Frame 1 carries the header (volume, fd, session_id, request_id, offset)
+// plus the first writeFrameSizeBytes of data. Subsequent frames carry
+// only the data slice.
+func (f *GrpcFile) streamingWrite(data []byte, off int64, requestID string) (uint32, fuse.Status) {
 	ctx, cancel := withIOTimeout(context.Background(), f.ioTimeout)
 	defer cancel()
-	requestID := uuid.NewString()
 	res, err := retryableCall(ctx, "Write", func(ctx context.Context) (*proto.WriteReply, error) {
 		stream, err := f.fileClient.Write(ctx, grpc.UseCompressor(snappy.Name))
 		if err != nil {
@@ -250,11 +265,76 @@ func (f *GrpcFile) Write(data []byte, off int64) (written uint32, code fuse.Stat
 	return res.Written, fuse.Status(res.Status)
 }
 
+// Write proxies a FUSE Write to the server-streaming Write RPC.
+//
+// When per-fd write coalescing is enabled (f.coalescer != nil), small
+// contiguous writes accumulate in an in-memory buffer up to
+// f.coalesceThreshold. Buffered writes are reported as successful to FUSE
+// optimistically — durability is established on Flush, which drains the
+// buffer before calling the server's Flush RPC. This matches FUSE's
+// write-then-Flush durability contract: applications that need a write
+// observed by another reader must Flush (or close).
+//
+// Big writes (len(data) >= threshold) bypass the coalescer entirely:
+// first the pending buffer is drained and sent, then the big write is
+// sent. The order matters — sending the big write first would let later
+// bytes land on disk before earlier buffered bytes.
+func (f *GrpcFile) Write(data []byte, off int64) (uint32, fuse.Status) {
+	// Coalescing disabled: pass through to the streaming Write directly.
+	if f.coalescer == nil {
+		return f.streamingWrite(data, off, uuid.NewString())
+	}
+	// Big writes bypass the buffer. Drain any pending bytes first so the
+	// on-disk order matches the call order.
+	if len(data) >= f.coalesceThreshold {
+		if pending := f.coalescer.Drain(); pending != nil {
+			if _, st := f.streamingWrite(pending.Data, pending.Offset, uuid.NewString()); !st.Ok() {
+				return 0, st
+			}
+		}
+		return f.streamingWrite(data, off, uuid.NewString())
+	}
+	// Small write: append. If the coalescer hands back a batch, flush it.
+	// The optimistic-return contract: tell FUSE we wrote len(data) bytes
+	// even though we may have only buffered them. Durability arrives on
+	// Flush.
+	if batch := f.coalescer.Append(data, off); batch != nil {
+		if _, st := f.streamingWrite(batch.Data, batch.Offset, uuid.NewString()); !st.Ok() {
+			return 0, st
+		}
+	}
+	return uint32(len(data)), fuse.OK
+}
+
+// drainCoalescer flushes any pending coalesced bytes to the wire. Returns
+// fuse.OK on a no-op (coalescer disabled or buffer empty) or on a clean
+// send; returns the failing status if the streaming Write reports one.
+// Used by Flush/Release/Fsync to push pending bytes before the file-state
+// RPC so the server sees the writes in order.
+func (f *GrpcFile) drainCoalescer() fuse.Status {
+	if f.coalescer == nil {
+		return fuse.OK
+	}
+	pending := f.coalescer.Drain()
+	if pending == nil {
+		return fuse.OK
+	}
+	_, st := f.streamingWrite(pending.Data, pending.Offset, uuid.NewString())
+	return st
+}
+
 func (f *GrpcFile) Release() {
 	// Cancel any in-flight prefetch goroutine first so it bails out
 	// before we issue the server-side Release.
 	if f.lifeCancel != nil {
 		f.lifeCancel()
+	}
+	// Drain any buffered writes — Release can't propagate an error, so we
+	// log and continue. Leaking the server-side fd would be worse than
+	// swallowing a write error here; the kernel has already closed our end.
+	if st := f.drainCoalescer(); !st.Ok() {
+		log.Log.Error("error draining coalescer on Release",
+			zap.String("path", f.path), zap.Stringer("status", st))
 	}
 	ctx, cancel := withIOTimeout(context.Background(), f.ioTimeout)
 	defer cancel()
@@ -269,6 +349,13 @@ func (f *GrpcFile) Release() {
 }
 
 func (f *GrpcFile) Flush() fuse.Status {
+	// Drain pending coalesced writes first — they are the whole point of
+	// the optimistic-return contract on Write. If the drain fails, return
+	// EIO and skip the server-side Flush; the application's Flush() (or
+	// close()) call is the right place to surface a buffered-write error.
+	if st := f.drainCoalescer(); !st.Ok() {
+		return st
+	}
 	ctx, cancel := withIOTimeout(context.Background(), f.ioTimeout)
 	defer cancel()
 	res, err := f.fileClient.Flush(ctx, &proto.FlushRequest{
@@ -284,6 +371,11 @@ func (f *GrpcFile) Flush() fuse.Status {
 }
 
 func (f *GrpcFile) Fsync(flags int) fuse.Status {
+	// Same drain-then-RPC ordering as Flush: fsync must observe the
+	// buffered writes on the server side.
+	if st := f.drainCoalescer(); !st.Ok() {
+		return st
+	}
 	ctx, cancel := withIOTimeout(context.Background(), f.ioTimeout)
 	defer cancel()
 	res, err := f.fileClient.Fsync(ctx, &proto.FsyncRequest{

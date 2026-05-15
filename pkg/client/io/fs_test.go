@@ -34,6 +34,7 @@ func (s *LocalFileSystemTestSuite) SetupTest() {
 	s.client.EXPECT().SessionID().Return("test-session").Maybe()
 	s.client.EXPECT().ReadaheadChunkBytes().Return(0).Maybe()
 	s.client.EXPECT().ReadaheadThreshold().Return(0).Maybe()
+	s.client.EXPECT().WriteCoalesceBytes().Return(0).Maybe()
 	s.fs = NewLocalFileSystem(s.client, "testVolume").(*LocalFileSystem)
 }
 

@@ -59,6 +59,7 @@ defaults so dead-connection detection is symmetric in both directions.
 | timeout\_io             | duration | 30s      | Per-RPC timeout for data ops (Read, Write, ...)             |
 | readahead\_chunk\_bytes | integer  | 65536    | Size of a single readahead fetch (0 disables readahead)     |
 | readahead\_threshold    | integer  | 3        | Sequential reads required before a prefetch is armed        |
+| write\_coalesce\_bytes  | integer  | 1048576  | Per-fd small-write coalescing threshold (0 disables)        |
 | max\_message\_bytes     | integer  | 16777216 | Cap on inbound/outbound gRPC message size (16 MiB default)  |
 
 `max_message_bytes` is validated to the range [65536, 67108864] (64 KiB to
@@ -69,6 +70,11 @@ arm prefetch sooner (more aggressive, more wasted fetches on
 random-access workloads), larger values delay arming. Setting
 `readahead_chunk_bytes: 0` disables the readahead path entirely,
 regardless of threshold.
+
+`write_coalesce_bytes` is validated to the range [0, 16777216] (0 to
+16 MiB). 0 disables coalescing entirely so every Write call hits the
+network; the default 1 MiB matches the streaming-frame size and absorbs
+the common "many tiny appends" pattern (logs, build outputs, etc.).
 
 ### Readahead
 
@@ -82,6 +88,30 @@ is cancelled when the fd is released.
 
 The win shows up most clearly on high-RTT connections where each
 round-trip costs. Localhost is roughly neutral.
+
+### Write Coalescing
+
+Per-fd, small contiguous writes accumulate in an in-memory buffer up to
+`write_coalesce_bytes`. The buffer flushes on three conditions:
+
+- the buffer reaches the threshold,
+- the next Write lands at a non-contiguous offset (the prior buffer is
+  flushed; the new write seeds a fresh buffer at its offset), or
+- the application calls Flush, Fsync, or closes the fd (Release).
+
+Writes equal to or larger than the threshold bypass the buffer entirely:
+the pending buffer (if any) is flushed first, then the big write goes
+through. This preserves on-disk byte order.
+
+Coalescing returns from Write *optimistically* — FUSE's write-then-Flush
+durability model means applications that need a write observed by another
+reader must Flush (or close). A failed buffered write surfaces on the
+next Flush/Fsync as `EIO`; Release swallows the error and logs it
+(symmetric with how Release already handles RPC failures).
+
+Like readahead, the win shows up most clearly on high-RTT connections;
+localhost is roughly neutral. Workloads that already write in large
+chunks (>= the threshold) are unaffected.
 
 ### Keepalive
 
@@ -103,6 +133,7 @@ rpc:
   timeout_io: 30s
   readahead_chunk_bytes: 131072  # 128 KiB
   readahead_threshold: 3
+  write_coalesce_bytes: 1048576  # 1 MiB
   max_message_bytes: 33554432  # 32 MiB
   keepalive:
     time: 15s

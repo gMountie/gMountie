@@ -80,7 +80,7 @@ type GrpcFileTestSuite struct {
 
 func (s *GrpcFileTestSuite) SetupTest() {
 	s.fileClient = mockProto.NewMockRpcFileClient(s.T())
-	s.file = NewGrpcFile(s.fileClient, "testVolume", "/test/path", 1, 30*time.Second, "test-session", 0, 0)
+	s.file = NewGrpcFile(s.fileClient, "testVolume", "/test/path", 1, 30*time.Second, "test-session", 0, 0, 0)
 }
 
 func (s *GrpcFileTestSuite) TestRead() {
@@ -142,7 +142,7 @@ func (s *GrpcFileTestSuite) TestWriteRetriesOnUnavailable() {
 	stub := newWriteStreamStub(s.T(), &proto.WriteReply{Written: 5, Status: 0}, nil)
 	s.fileClient.EXPECT().Write(mock.Anything, mock.Anything).Return(stub, nil).Once()
 
-	f := NewGrpcFile(s.fileClient, "vol", "/p", 1, time.Second, "test-session", 0, 0)
+	f := NewGrpcFile(s.fileClient, "vol", "/p", 1, time.Second, "test-session", 0, 0, 0)
 	n, st := f.Write([]byte("hello"), 0)
 	s.Require().Equal(fuse.OK, st)
 	s.Assert().Equal(uint32(5), n)
@@ -161,7 +161,7 @@ func (s *GrpcFileTestSuite) TestWriteRetryReusesRequestID() {
 	attempt2 := newWriteStreamStub(s.T(), &proto.WriteReply{Written: 5, Status: 0}, nil)
 	s.fileClient.EXPECT().Write(mock.Anything, mock.Anything).Return(attempt2, nil).Once()
 
-	f := NewGrpcFile(s.fileClient, "vol", "/p", 1, time.Second, "test-session", 0, 0)
+	f := NewGrpcFile(s.fileClient, "vol", "/p", 1, time.Second, "test-session", 0, 0, 0)
 	n, st := f.Write([]byte("hello"), 0)
 
 	s.Require().Equal(fuse.OK, st)
@@ -446,7 +446,7 @@ func (s *GrpcFileTestSuite) TestReadStampsSessionID() {
 		return req.SessionId == "test-session"
 	}), mock.Anything).Return(stream, nil).Once()
 
-	f := NewGrpcFile(s.fileClient, "vol", "/p", 1, time.Second, "test-session", 0, 0)
+	f := NewGrpcFile(s.fileClient, "vol", "/p", 1, time.Second, "test-session", 0, 0, 0)
 	buf := make([]byte, 4)
 	_, st := f.Read(buf, 0)
 	s.Assert().Equal(fuse.OK, st)

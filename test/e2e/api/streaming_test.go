@@ -6,11 +6,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"gmountie/test/e2e/utils"
 
 	"github.com/stretchr/testify/suite"
+	"google.golang.org/grpc"
 )
 
 // StreamingReadE2ESuite exercises the server-streaming Read path through a
@@ -193,4 +195,105 @@ func (s *StreamingWriteE2ESuite) TestBidirectional1GiB() {
 
 func TestStreamingWriteE2ESuite(t *testing.T) {
 	suite.Run(t, new(StreamingWriteE2ESuite))
+}
+
+// WriteCoalesceE2ESuite verifies that the client-side per-fd write
+// coalescer batches many small contiguous writes into far fewer streaming
+// Write RPCs against the server. The suite installs a stream interceptor
+// on the test gRPC server that counts RpcFile/Write streams so the test
+// can assert on observed RPC volume in addition to byte-for-byte content.
+type WriteCoalesceE2ESuite struct {
+	suite.Suite
+	testAppCtx *utils.AppTestingContext
+	volume     *utils.TestVolume
+	writeRPCs  atomic.Int64
+}
+
+func (s *WriteCoalesceE2ESuite) countingWriteInterceptor() grpc.StreamServerInterceptor {
+	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		if info.FullMethod == "/gmountie.RpcFile/Write" {
+			s.writeRPCs.Add(1)
+		}
+		return handler(srv, ss)
+	}
+}
+
+func (s *WriteCoalesceE2ESuite) SetupSuite() {
+	ctx, err := utils.NewAppTestingContext(
+		utils.WithBasicAuth("test", "test"),
+		utils.WithRandomTestVolume(false),
+		utils.WithServerStreamInterceptors(s.countingWriteInterceptor()),
+	)
+	s.Require().NoError(err)
+	s.Require().NoError(ctx.Start())
+	s.testAppCtx = ctx
+	s.volume = ctx.GetVolumes()[0]
+	ctx.MountVolume(s.volume)
+}
+
+func (s *WriteCoalesceE2ESuite) TearDownSuite() {
+	if s.testAppCtx != nil {
+		_ = s.testAppCtx.Close()
+	}
+	if s.volume != nil {
+		_ = s.volume.Close()
+	}
+}
+
+// TestManySmallWritesCoalesce performs 4096 sequential 8-byte writes (32 KiB
+// total) through the FUSE mount and asserts:
+//   - the server-side file content matches what was written byte-for-byte,
+//   - the number of observed Write RPCs is far below the 4096 small-write
+//     count — with the default 1 MiB threshold, 32 KiB of contiguous data
+//     should produce a single batched RPC plus at most a few on Flush/Release.
+//
+// Without coalescing this would issue ~4096 Write streams. We use an
+// upper bound of 32 to keep the assertion robust against kernel page-cache
+// behaviour and FUSE write coalescing in the kernel, while still being a
+// strong signal that the client coalescer is doing meaningful work.
+func (s *WriteCoalesceE2ESuite) TestManySmallWritesCoalesce() {
+	const (
+		writeCount = 4096
+		writeSize  = 8
+	)
+	s.writeRPCs.Store(0)
+
+	mountPath := filepath.Join(s.volume.GetMountPath(), "coalesce.bin")
+	f, err := os.Create(mountPath)
+	s.Require().NoError(err)
+
+	want := make([]byte, 0, writeCount*writeSize)
+	chunk := make([]byte, writeSize)
+	for i := 0; i < writeCount; i++ {
+		// Deterministic per-write content so any out-of-order or dropped
+		// bytes show up in the byte-for-byte server-side check.
+		for j := range chunk {
+			chunk[j] = byte((i + j) % 251)
+		}
+		n, werr := f.Write(chunk)
+		s.Require().NoError(werr)
+		s.Require().Equal(writeSize, n)
+		want = append(want, chunk...)
+	}
+	s.Require().NoError(f.Sync())
+	s.Require().NoError(f.Close())
+
+	// Verify server-side content.
+	srcPath := filepath.Join(s.volume.GetSrcPath(), "coalesce.bin")
+	got, err := os.ReadFile(srcPath)
+	s.Require().NoError(err)
+	s.Require().Equal(len(want), len(got), "short file server-side")
+	s.Require().Equal(sha256.Sum256(want), sha256.Sum256(got), "payload mismatch server-side")
+
+	// Verify the client coalesced the small writes into far fewer RPCs.
+	// Without coalescing this would be ~4096; with a 1 MiB threshold and
+	// 32 KiB total, we expect on the order of 1.
+	observed := s.writeRPCs.Load()
+	s.T().Logf("observed %d Write RPCs for %d small writes (%d bytes)", observed, writeCount, writeCount*writeSize)
+	s.Assert().Less(observed, int64(32),
+		"expected coalescer to reduce 4096 small writes to <32 Write RPCs, got %d", observed)
+}
+
+func TestWriteCoalesceE2ESuite(t *testing.T) {
+	suite.Run(t, new(WriteCoalesceE2ESuite))
 }

@@ -21,6 +21,11 @@ const (
 	// DefaultReadaheadThreshold is the number of strictly-sequential reads
 	// required before the client arms a one-chunk-ahead prefetch.
 	DefaultReadaheadThreshold = 3
+	// DefaultWriteCoalesceBytes is the per-fd small-write coalescing
+	// threshold. Small contiguous writes accumulate until the buffer
+	// reaches this size (or Flush/Release/Fsync drains it). 0 disables
+	// coalescing.
+	DefaultWriteCoalesceBytes = 1 << 20
 	// DefaultMaxMessageBytes is the default cap for inbound/outbound gRPC
 	// message sizes on the client side. Mirrors the server default so a
 	// well-configured pair never trips its own limits.
@@ -66,6 +71,11 @@ type RpcConfig struct {
 	// ReadaheadThreshold is the number of strictly-sequential reads
 	// required before the client arms a one-chunk-ahead prefetch.
 	ReadaheadThreshold int `mapstructure:"readahead_threshold" validate:"min=1,max=16"`
+	// WriteCoalesceBytes caps the per-fd small-write coalescing buffer.
+	// Writes >= this size pass through directly; smaller contiguous writes
+	// accumulate until the buffer reaches this size or Flush/Release
+	// drains it. 0 disables coalescing.
+	WriteCoalesceBytes int `mapstructure:"write_coalesce_bytes" validate:"min=0,max=16777216"`
 	// MaxMessageBytes caps both inbound and outbound gRPC message sizes on
 	// the client. Mirror of the server-side cap; same [64 KiB, 64 MiB] range.
 	MaxMessageBytes int `mapstructure:"max_message_bytes" validate:"min=65536,max=67108864"`
@@ -81,6 +91,7 @@ func NewRpcConfig(v *viper.Viper) (*RpcConfig, error) {
 		TimeoutIO:           DefaultRpcTimeoutIO,
 		ReadaheadChunkBytes: DefaultReadaheadChunkBytes,
 		ReadaheadThreshold:  DefaultReadaheadThreshold,
+		WriteCoalesceBytes:  DefaultWriteCoalesceBytes,
 		MaxMessageBytes:     DefaultMaxMessageBytes,
 		Keepalive: ClientKeepaliveConfig{
 			Time:                DefaultKeepaliveTime,
@@ -95,6 +106,7 @@ func NewRpcConfig(v *viper.Viper) (*RpcConfig, error) {
 	v.SetDefault("timeout_io", DefaultRpcTimeoutIO)
 	v.SetDefault("readahead_chunk_bytes", DefaultReadaheadChunkBytes)
 	v.SetDefault("readahead_threshold", DefaultReadaheadThreshold)
+	v.SetDefault("write_coalesce_bytes", DefaultWriteCoalesceBytes)
 	v.SetDefault("max_message_bytes", DefaultMaxMessageBytes)
 	v.SetDefault("keepalive.time", DefaultKeepaliveTime)
 	v.SetDefault("keepalive.timeout", DefaultKeepaliveTimeout)
