@@ -13,18 +13,23 @@ import (
 type RpcServerImpl struct {
 	fsService service.VolumeService
 	sessions  service.SessionManager
+	compound  *service.CompoundDispatcher
 	proto.UnimplementedRpcFsServer
 }
 
 // Verify that RpcServerImpl implements proto.RpcFsServer
 var _ proto.RpcFsServer = (*RpcServerImpl)(nil)
 
-// NewGrpcServer creates a new gRPC server
-func NewGrpcServer(fsService service.VolumeService, sessions service.SessionManager) *RpcServerImpl {
-	return &RpcServerImpl{
+// NewGrpcServer creates a new gRPC server. The CompoundDispatcher is built
+// here so it can reference the RpcServerImpl as its FsHandlers — avoids
+// exposing a post-construction setter just for the back-reference.
+func NewGrpcServer(fsService service.VolumeService, sessions service.SessionManager, compoundMaxParallel int) *RpcServerImpl {
+	srv := &RpcServerImpl{
 		fsService: fsService,
 		sessions:  sessions,
 	}
+	srv.compound = service.NewCompoundDispatcher(srv, compoundMaxParallel)
+	return srv
 }
 
 // Register registers the gRPC server
@@ -234,4 +239,14 @@ func (r *RpcServerImpl) GetXAttr(ctx context.Context, request *proto.GetXAttrReq
 	}
 	data, status := fs.GetXAttr(request.Path, request.Attribute, createContext(ctx, request.Caller))
 	return &proto.GetXAttrReply{Data: data, Status: int32(status)}, nil
+}
+
+// Compound runs a batched read-only metadata request via the
+// CompoundDispatcher. Per-op errors are surfaced inside the reply slot — the
+// outer RPC only returns a Go error if the dispatcher itself panics, which
+// it doesn't. The handler is intentionally thin: all logic lives in the
+// dispatcher.
+func (r *RpcServerImpl) Compound(ctx context.Context, request *proto.CompoundRequest) (*proto.CompoundBatch, error) {
+	replies := r.compound.Dispatch(ctx, request.GetOps())
+	return &proto.CompoundBatch{Replies: replies}, nil
 }

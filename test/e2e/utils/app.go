@@ -76,7 +76,11 @@ func WithRandomTestVolume(randomfiles bool) TestOptions {
 // NewAppTestingContext creates a new AppTestingContext.
 func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 	appCtx := &AppTestingContext{}
-	appCtx.cfg.Server = &config.ServerConfig{Metrics: false, FrameSizeBytes: config.DefaultFrameSizeBytes}
+	appCtx.cfg.Server = &config.ServerConfig{
+		Metrics:             false,
+		FrameSizeBytes:      config.DefaultFrameSizeBytes,
+		CompoundMaxParallel: config.DefaultCompoundMaxParallel,
+	}
 	// Apply the options
 	for _, opt := range options {
 		opt(appCtx)

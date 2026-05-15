@@ -242,6 +242,74 @@ func (_c *MockRpcFsServer_Chown_Call) RunAndReturn(run func(context1 context.Con
 	return _c
 }
 
+// Compound provides a mock function for the type MockRpcFsServer
+func (_mock *MockRpcFsServer) Compound(context1 context.Context, compoundRequest *proto.CompoundRequest) (*proto.CompoundBatch, error) {
+	ret := _mock.Called(context1, compoundRequest)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Compound")
+	}
+
+	var r0 *proto.CompoundBatch
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.CompoundRequest) (*proto.CompoundBatch, error)); ok {
+		return returnFunc(context1, compoundRequest)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.CompoundRequest) *proto.CompoundBatch); ok {
+		r0 = returnFunc(context1, compoundRequest)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proto.CompoundBatch)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.CompoundRequest) error); ok {
+		r1 = returnFunc(context1, compoundRequest)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockRpcFsServer_Compound_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Compound'
+type MockRpcFsServer_Compound_Call struct {
+	*mock.Call
+}
+
+// Compound is a helper method to define mock.On call
+//   - context1 context.Context
+//   - compoundRequest *proto.CompoundRequest
+func (_e *MockRpcFsServer_Expecter) Compound(context1 interface{}, compoundRequest interface{}) *MockRpcFsServer_Compound_Call {
+	return &MockRpcFsServer_Compound_Call{Call: _e.mock.On("Compound", context1, compoundRequest)}
+}
+
+func (_c *MockRpcFsServer_Compound_Call) Run(run func(context1 context.Context, compoundRequest *proto.CompoundRequest)) *MockRpcFsServer_Compound_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *proto.CompoundRequest
+		if args[1] != nil {
+			arg1 = args[1].(*proto.CompoundRequest)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFsServer_Compound_Call) Return(compoundBatch *proto.CompoundBatch, err error) *MockRpcFsServer_Compound_Call {
+	_c.Call.Return(compoundBatch, err)
+	return _c
+}
+
+func (_c *MockRpcFsServer_Compound_Call) RunAndReturn(run func(context1 context.Context, compoundRequest *proto.CompoundRequest) (*proto.CompoundBatch, error)) *MockRpcFsServer_Compound_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetAttr provides a mock function for the type MockRpcFsServer
 func (_mock *MockRpcFsServer) GetAttr(context1 context.Context, getAttrRequest *proto.GetAttrRequest) (*proto.GetAttrReply, error) {
 	ret := _mock.Called(context1, getAttrRequest)

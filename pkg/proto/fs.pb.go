@@ -1773,6 +1773,379 @@ func (x *GetXAttrReply) GetStatus() int32 {
 	return 0
 }
 
+// CompoundOp carries a single read-only metadata op inside a Compound batch.
+// The set is intentionally limited to ops with no idempotency / session
+// requirements (no request_id / session_id fields). Per NFSv4 Compound
+// semantics, per-op errors do NOT abort the batch — see CompoundReply.
+type CompoundOp struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Op:
+	//
+	//	*CompoundOp_GetAttr
+	//	*CompoundOp_StatFs
+	//	*CompoundOp_OpenDir
+	//	*CompoundOp_Access
+	//	*CompoundOp_GetXattr
+	Op            isCompoundOp_Op `protobuf_oneof:"op"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CompoundOp) Reset() {
+	*x = CompoundOp{}
+	mi := &file_api_proto_fs_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CompoundOp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CompoundOp) ProtoMessage() {}
+
+func (x *CompoundOp) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_fs_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CompoundOp.ProtoReflect.Descriptor instead.
+func (*CompoundOp) Descriptor() ([]byte, []int) {
+	return file_api_proto_fs_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *CompoundOp) GetOp() isCompoundOp_Op {
+	if x != nil {
+		return x.Op
+	}
+	return nil
+}
+
+func (x *CompoundOp) GetGetAttr() *GetAttrRequest {
+	if x != nil {
+		if x, ok := x.Op.(*CompoundOp_GetAttr); ok {
+			return x.GetAttr
+		}
+	}
+	return nil
+}
+
+func (x *CompoundOp) GetStatFs() *StatFsRequest {
+	if x != nil {
+		if x, ok := x.Op.(*CompoundOp_StatFs); ok {
+			return x.StatFs
+		}
+	}
+	return nil
+}
+
+func (x *CompoundOp) GetOpenDir() *OpenDirRequest {
+	if x != nil {
+		if x, ok := x.Op.(*CompoundOp_OpenDir); ok {
+			return x.OpenDir
+		}
+	}
+	return nil
+}
+
+func (x *CompoundOp) GetAccess() *AccessRequest {
+	if x != nil {
+		if x, ok := x.Op.(*CompoundOp_Access); ok {
+			return x.Access
+		}
+	}
+	return nil
+}
+
+func (x *CompoundOp) GetGetXattr() *GetXAttrRequest {
+	if x != nil {
+		if x, ok := x.Op.(*CompoundOp_GetXattr); ok {
+			return x.GetXattr
+		}
+	}
+	return nil
+}
+
+type isCompoundOp_Op interface {
+	isCompoundOp_Op()
+}
+
+type CompoundOp_GetAttr struct {
+	GetAttr *GetAttrRequest `protobuf:"bytes,1,opt,name=get_attr,json=getAttr,proto3,oneof"`
+}
+
+type CompoundOp_StatFs struct {
+	StatFs *StatFsRequest `protobuf:"bytes,2,opt,name=stat_fs,json=statFs,proto3,oneof"`
+}
+
+type CompoundOp_OpenDir struct {
+	OpenDir *OpenDirRequest `protobuf:"bytes,3,opt,name=open_dir,json=openDir,proto3,oneof"`
+}
+
+type CompoundOp_Access struct {
+	Access *AccessRequest `protobuf:"bytes,4,opt,name=access,proto3,oneof"`
+}
+
+type CompoundOp_GetXattr struct {
+	GetXattr *GetXAttrRequest `protobuf:"bytes,5,opt,name=get_xattr,json=getXattr,proto3,oneof"`
+}
+
+func (*CompoundOp_GetAttr) isCompoundOp_Op() {}
+
+func (*CompoundOp_StatFs) isCompoundOp_Op() {}
+
+func (*CompoundOp_OpenDir) isCompoundOp_Op() {}
+
+func (*CompoundOp_Access) isCompoundOp_Op() {}
+
+func (*CompoundOp_GetXattr) isCompoundOp_Op() {}
+
+// CompoundReply is the per-op result inside a CompoundBatch. The variant
+// matches the request op when it produced a typed reply; on a transport-class
+// failure (e.g. unknown volume) the slot carries `status` (an int32 fuse
+// status, errno-equivalent) so the batch shape stays N-in / N-out regardless
+// of which sub-ops failed.
+type CompoundReply struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Reply:
+	//
+	//	*CompoundReply_GetAttr
+	//	*CompoundReply_StatFs
+	//	*CompoundReply_OpenDir
+	//	*CompoundReply_Access
+	//	*CompoundReply_GetXattr
+	//	*CompoundReply_Status
+	Reply         isCompoundReply_Reply `protobuf_oneof:"reply"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CompoundReply) Reset() {
+	*x = CompoundReply{}
+	mi := &file_api_proto_fs_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CompoundReply) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CompoundReply) ProtoMessage() {}
+
+func (x *CompoundReply) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_fs_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CompoundReply.ProtoReflect.Descriptor instead.
+func (*CompoundReply) Descriptor() ([]byte, []int) {
+	return file_api_proto_fs_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *CompoundReply) GetReply() isCompoundReply_Reply {
+	if x != nil {
+		return x.Reply
+	}
+	return nil
+}
+
+func (x *CompoundReply) GetGetAttr() *GetAttrReply {
+	if x != nil {
+		if x, ok := x.Reply.(*CompoundReply_GetAttr); ok {
+			return x.GetAttr
+		}
+	}
+	return nil
+}
+
+func (x *CompoundReply) GetStatFs() *StatFsReply {
+	if x != nil {
+		if x, ok := x.Reply.(*CompoundReply_StatFs); ok {
+			return x.StatFs
+		}
+	}
+	return nil
+}
+
+func (x *CompoundReply) GetOpenDir() *OpenDirReply {
+	if x != nil {
+		if x, ok := x.Reply.(*CompoundReply_OpenDir); ok {
+			return x.OpenDir
+		}
+	}
+	return nil
+}
+
+func (x *CompoundReply) GetAccess() *AccessReply {
+	if x != nil {
+		if x, ok := x.Reply.(*CompoundReply_Access); ok {
+			return x.Access
+		}
+	}
+	return nil
+}
+
+func (x *CompoundReply) GetGetXattr() *GetXAttrReply {
+	if x != nil {
+		if x, ok := x.Reply.(*CompoundReply_GetXattr); ok {
+			return x.GetXattr
+		}
+	}
+	return nil
+}
+
+func (x *CompoundReply) GetStatus() int32 {
+	if x != nil {
+		if x, ok := x.Reply.(*CompoundReply_Status); ok {
+			return x.Status
+		}
+	}
+	return 0
+}
+
+type isCompoundReply_Reply interface {
+	isCompoundReply_Reply()
+}
+
+type CompoundReply_GetAttr struct {
+	GetAttr *GetAttrReply `protobuf:"bytes,1,opt,name=get_attr,json=getAttr,proto3,oneof"`
+}
+
+type CompoundReply_StatFs struct {
+	StatFs *StatFsReply `protobuf:"bytes,2,opt,name=stat_fs,json=statFs,proto3,oneof"`
+}
+
+type CompoundReply_OpenDir struct {
+	OpenDir *OpenDirReply `protobuf:"bytes,3,opt,name=open_dir,json=openDir,proto3,oneof"`
+}
+
+type CompoundReply_Access struct {
+	Access *AccessReply `protobuf:"bytes,4,opt,name=access,proto3,oneof"`
+}
+
+type CompoundReply_GetXattr struct {
+	GetXattr *GetXAttrReply `protobuf:"bytes,5,opt,name=get_xattr,json=getXattr,proto3,oneof"`
+}
+
+type CompoundReply_Status struct {
+	Status int32 `protobuf:"varint,6,opt,name=status,proto3,oneof"`
+}
+
+func (*CompoundReply_GetAttr) isCompoundReply_Reply() {}
+
+func (*CompoundReply_StatFs) isCompoundReply_Reply() {}
+
+func (*CompoundReply_OpenDir) isCompoundReply_Reply() {}
+
+func (*CompoundReply_Access) isCompoundReply_Reply() {}
+
+func (*CompoundReply_GetXattr) isCompoundReply_Reply() {}
+
+func (*CompoundReply_Status) isCompoundReply_Reply() {}
+
+type CompoundRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ops           []*CompoundOp          `protobuf:"bytes,1,rep,name=ops,proto3" json:"ops,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CompoundRequest) Reset() {
+	*x = CompoundRequest{}
+	mi := &file_api_proto_fs_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CompoundRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CompoundRequest) ProtoMessage() {}
+
+func (x *CompoundRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_fs_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CompoundRequest.ProtoReflect.Descriptor instead.
+func (*CompoundRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_fs_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *CompoundRequest) GetOps() []*CompoundOp {
+	if x != nil {
+		return x.Ops
+	}
+	return nil
+}
+
+type CompoundBatch struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Replies       []*CompoundReply       `protobuf:"bytes,1,rep,name=replies,proto3" json:"replies,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CompoundBatch) Reset() {
+	*x = CompoundBatch{}
+	mi := &file_api_proto_fs_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CompoundBatch) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CompoundBatch) ProtoMessage() {}
+
+func (x *CompoundBatch) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_fs_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CompoundBatch.ProtoReflect.Descriptor instead.
+func (*CompoundBatch) Descriptor() ([]byte, []int) {
+	return file_api_proto_fs_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *CompoundBatch) GetReplies() []*CompoundReply {
+	if x != nil {
+		return x.Replies
+	}
+	return nil
+}
+
 var File_api_proto_fs_proto protoreflect.FileDescriptor
 
 const file_api_proto_fs_proto_rawDesc = "" +
@@ -1927,7 +2300,27 @@ const file_api_proto_fs_proto_rawDesc = "" +
 	"\tattribute\x18\x04 \x01(\tR\tattribute\";\n" +
 	"\rGetXAttrReply\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x16\n" +
-	"\x06status\x18\x02 \x01(\x05R\x06status2\xc5\x05\n" +
+	"\x06status\x18\x02 \x01(\x05R\x06status\"\xa1\x02\n" +
+	"\n" +
+	"CompoundOp\x125\n" +
+	"\bget_attr\x18\x01 \x01(\v2\x18.gmountie.GetAttrRequestH\x00R\agetAttr\x122\n" +
+	"\astat_fs\x18\x02 \x01(\v2\x17.gmountie.StatFsRequestH\x00R\x06statFs\x125\n" +
+	"\bopen_dir\x18\x03 \x01(\v2\x18.gmountie.OpenDirRequestH\x00R\aopenDir\x121\n" +
+	"\x06access\x18\x04 \x01(\v2\x17.gmountie.AccessRequestH\x00R\x06access\x128\n" +
+	"\tget_xattr\x18\x05 \x01(\v2\x19.gmountie.GetXAttrRequestH\x00R\bgetXattrB\x04\n" +
+	"\x02op\"\xb7\x02\n" +
+	"\rCompoundReply\x123\n" +
+	"\bget_attr\x18\x01 \x01(\v2\x16.gmountie.GetAttrReplyH\x00R\agetAttr\x120\n" +
+	"\astat_fs\x18\x02 \x01(\v2\x15.gmountie.StatFsReplyH\x00R\x06statFs\x123\n" +
+	"\bopen_dir\x18\x03 \x01(\v2\x16.gmountie.OpenDirReplyH\x00R\aopenDir\x12/\n" +
+	"\x06access\x18\x04 \x01(\v2\x15.gmountie.AccessReplyH\x00R\x06access\x126\n" +
+	"\tget_xattr\x18\x05 \x01(\v2\x17.gmountie.GetXAttrReplyH\x00R\bgetXattr\x12\x18\n" +
+	"\x06status\x18\x06 \x01(\x05H\x00R\x06statusB\a\n" +
+	"\x05reply\"9\n" +
+	"\x0fCompoundRequest\x12&\n" +
+	"\x03ops\x18\x01 \x03(\v2\x14.gmountie.CompoundOpR\x03ops\"B\n" +
+	"\rCompoundBatch\x121\n" +
+	"\areplies\x18\x01 \x03(\v2\x17.gmountie.CompoundReplyR\areplies2\x85\x06\n" +
 	"\x05RpcFs\x12;\n" +
 	"\aGetAttr\x12\x18.gmountie.GetAttrRequest\x1a\x16.gmountie.GetAttrReply\x128\n" +
 	"\x06StatFs\x12\x17.gmountie.StatFsRequest\x1a\x15.gmountie.StatFsReply\x12;\n" +
@@ -1940,7 +2333,8 @@ const file_api_proto_fs_proto_rawDesc = "" +
 	"\x05Mkdir\x12\x16.gmountie.MkdirRequest\x1a\x14.gmountie.MkdirReply\x125\n" +
 	"\x05Rmdir\x12\x16.gmountie.RmdirRequest\x1a\x14.gmountie.RmdirReply\x128\n" +
 	"\x06Rename\x12\x17.gmountie.RenameRequest\x1a\x15.gmountie.RenameReply\x12>\n" +
-	"\bGetXAttr\x12\x19.gmountie.GetXAttrRequest\x1a\x17.gmountie.GetXAttrReplyB\vZ\tpkg/protob\x06proto3"
+	"\bGetXAttr\x12\x19.gmountie.GetXAttrRequest\x1a\x17.gmountie.GetXAttrReply\x12>\n" +
+	"\bCompound\x12\x19.gmountie.CompoundRequest\x1a\x17.gmountie.CompoundBatchB\vZ\tpkg/protob\x06proto3"
 
 var (
 	file_api_proto_fs_proto_rawDescOnce sync.Once
@@ -1954,7 +2348,7 @@ func file_api_proto_fs_proto_rawDescGZIP() []byte {
 	return file_api_proto_fs_proto_rawDescData
 }
 
-var file_api_proto_fs_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_api_proto_fs_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
 var file_api_proto_fs_proto_goTypes = []any{
 	(*DirEntry)(nil),        // 0: gmountie.DirEntry
 	(*Attr)(nil),            // 1: gmountie.Attr
@@ -1982,53 +2376,71 @@ var file_api_proto_fs_proto_goTypes = []any{
 	(*RenameReply)(nil),     // 23: gmountie.RenameReply
 	(*GetXAttrRequest)(nil), // 24: gmountie.GetXAttrRequest
 	(*GetXAttrReply)(nil),   // 25: gmountie.GetXAttrReply
-	(*Owner)(nil),           // 26: gmountie.Owner
-	(*Caller)(nil),          // 27: gmountie.Caller
+	(*CompoundOp)(nil),      // 26: gmountie.CompoundOp
+	(*CompoundReply)(nil),   // 27: gmountie.CompoundReply
+	(*CompoundRequest)(nil), // 28: gmountie.CompoundRequest
+	(*CompoundBatch)(nil),   // 29: gmountie.CompoundBatch
+	(*Owner)(nil),           // 30: gmountie.Owner
+	(*Caller)(nil),          // 31: gmountie.Caller
 }
 var file_api_proto_fs_proto_depIdxs = []int32{
-	26, // 0: gmountie.Attr.owner:type_name -> gmountie.Owner
-	27, // 1: gmountie.GetAttrRequest.caller:type_name -> gmountie.Caller
+	30, // 0: gmountie.Attr.owner:type_name -> gmountie.Owner
+	31, // 1: gmountie.GetAttrRequest.caller:type_name -> gmountie.Caller
 	1,  // 2: gmountie.GetAttrReply.attributes:type_name -> gmountie.Attr
-	27, // 3: gmountie.OpenDirRequest.caller:type_name -> gmountie.Caller
+	31, // 3: gmountie.OpenDirRequest.caller:type_name -> gmountie.Caller
 	0,  // 4: gmountie.OpenDirReply.entries:type_name -> gmountie.DirEntry
-	27, // 5: gmountie.UnlinkRequest.caller:type_name -> gmountie.Caller
-	27, // 6: gmountie.AccessRequest.caller:type_name -> gmountie.Caller
-	27, // 7: gmountie.TruncateRequest.caller:type_name -> gmountie.Caller
-	27, // 8: gmountie.ChownRequest.caller:type_name -> gmountie.Caller
-	27, // 9: gmountie.ChmodRequest.caller:type_name -> gmountie.Caller
-	27, // 10: gmountie.MkdirRequest.caller:type_name -> gmountie.Caller
-	27, // 11: gmountie.RmdirRequest.caller:type_name -> gmountie.Caller
-	27, // 12: gmountie.RenameRequest.caller:type_name -> gmountie.Caller
-	27, // 13: gmountie.GetXAttrRequest.caller:type_name -> gmountie.Caller
-	4,  // 14: gmountie.RpcFs.GetAttr:input_type -> gmountie.GetAttrRequest
-	2,  // 15: gmountie.RpcFs.StatFs:input_type -> gmountie.StatFsRequest
-	6,  // 16: gmountie.RpcFs.OpenDir:input_type -> gmountie.OpenDirRequest
-	8,  // 17: gmountie.RpcFs.Unlink:input_type -> gmountie.UnlinkRequest
-	10, // 18: gmountie.RpcFs.Access:input_type -> gmountie.AccessRequest
-	12, // 19: gmountie.RpcFs.Truncate:input_type -> gmountie.TruncateRequest
-	14, // 20: gmountie.RpcFs.Chown:input_type -> gmountie.ChownRequest
-	16, // 21: gmountie.RpcFs.Chmod:input_type -> gmountie.ChmodRequest
-	18, // 22: gmountie.RpcFs.Mkdir:input_type -> gmountie.MkdirRequest
-	20, // 23: gmountie.RpcFs.Rmdir:input_type -> gmountie.RmdirRequest
-	22, // 24: gmountie.RpcFs.Rename:input_type -> gmountie.RenameRequest
-	24, // 25: gmountie.RpcFs.GetXAttr:input_type -> gmountie.GetXAttrRequest
-	5,  // 26: gmountie.RpcFs.GetAttr:output_type -> gmountie.GetAttrReply
-	3,  // 27: gmountie.RpcFs.StatFs:output_type -> gmountie.StatFsReply
-	7,  // 28: gmountie.RpcFs.OpenDir:output_type -> gmountie.OpenDirReply
-	9,  // 29: gmountie.RpcFs.Unlink:output_type -> gmountie.UnlinkReply
-	11, // 30: gmountie.RpcFs.Access:output_type -> gmountie.AccessReply
-	13, // 31: gmountie.RpcFs.Truncate:output_type -> gmountie.TruncateReply
-	15, // 32: gmountie.RpcFs.Chown:output_type -> gmountie.ChownReply
-	17, // 33: gmountie.RpcFs.Chmod:output_type -> gmountie.ChmodReply
-	19, // 34: gmountie.RpcFs.Mkdir:output_type -> gmountie.MkdirReply
-	21, // 35: gmountie.RpcFs.Rmdir:output_type -> gmountie.RmdirReply
-	23, // 36: gmountie.RpcFs.Rename:output_type -> gmountie.RenameReply
-	25, // 37: gmountie.RpcFs.GetXAttr:output_type -> gmountie.GetXAttrReply
-	26, // [26:38] is the sub-list for method output_type
-	14, // [14:26] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	31, // 5: gmountie.UnlinkRequest.caller:type_name -> gmountie.Caller
+	31, // 6: gmountie.AccessRequest.caller:type_name -> gmountie.Caller
+	31, // 7: gmountie.TruncateRequest.caller:type_name -> gmountie.Caller
+	31, // 8: gmountie.ChownRequest.caller:type_name -> gmountie.Caller
+	31, // 9: gmountie.ChmodRequest.caller:type_name -> gmountie.Caller
+	31, // 10: gmountie.MkdirRequest.caller:type_name -> gmountie.Caller
+	31, // 11: gmountie.RmdirRequest.caller:type_name -> gmountie.Caller
+	31, // 12: gmountie.RenameRequest.caller:type_name -> gmountie.Caller
+	31, // 13: gmountie.GetXAttrRequest.caller:type_name -> gmountie.Caller
+	4,  // 14: gmountie.CompoundOp.get_attr:type_name -> gmountie.GetAttrRequest
+	2,  // 15: gmountie.CompoundOp.stat_fs:type_name -> gmountie.StatFsRequest
+	6,  // 16: gmountie.CompoundOp.open_dir:type_name -> gmountie.OpenDirRequest
+	10, // 17: gmountie.CompoundOp.access:type_name -> gmountie.AccessRequest
+	24, // 18: gmountie.CompoundOp.get_xattr:type_name -> gmountie.GetXAttrRequest
+	5,  // 19: gmountie.CompoundReply.get_attr:type_name -> gmountie.GetAttrReply
+	3,  // 20: gmountie.CompoundReply.stat_fs:type_name -> gmountie.StatFsReply
+	7,  // 21: gmountie.CompoundReply.open_dir:type_name -> gmountie.OpenDirReply
+	11, // 22: gmountie.CompoundReply.access:type_name -> gmountie.AccessReply
+	25, // 23: gmountie.CompoundReply.get_xattr:type_name -> gmountie.GetXAttrReply
+	26, // 24: gmountie.CompoundRequest.ops:type_name -> gmountie.CompoundOp
+	27, // 25: gmountie.CompoundBatch.replies:type_name -> gmountie.CompoundReply
+	4,  // 26: gmountie.RpcFs.GetAttr:input_type -> gmountie.GetAttrRequest
+	2,  // 27: gmountie.RpcFs.StatFs:input_type -> gmountie.StatFsRequest
+	6,  // 28: gmountie.RpcFs.OpenDir:input_type -> gmountie.OpenDirRequest
+	8,  // 29: gmountie.RpcFs.Unlink:input_type -> gmountie.UnlinkRequest
+	10, // 30: gmountie.RpcFs.Access:input_type -> gmountie.AccessRequest
+	12, // 31: gmountie.RpcFs.Truncate:input_type -> gmountie.TruncateRequest
+	14, // 32: gmountie.RpcFs.Chown:input_type -> gmountie.ChownRequest
+	16, // 33: gmountie.RpcFs.Chmod:input_type -> gmountie.ChmodRequest
+	18, // 34: gmountie.RpcFs.Mkdir:input_type -> gmountie.MkdirRequest
+	20, // 35: gmountie.RpcFs.Rmdir:input_type -> gmountie.RmdirRequest
+	22, // 36: gmountie.RpcFs.Rename:input_type -> gmountie.RenameRequest
+	24, // 37: gmountie.RpcFs.GetXAttr:input_type -> gmountie.GetXAttrRequest
+	28, // 38: gmountie.RpcFs.Compound:input_type -> gmountie.CompoundRequest
+	5,  // 39: gmountie.RpcFs.GetAttr:output_type -> gmountie.GetAttrReply
+	3,  // 40: gmountie.RpcFs.StatFs:output_type -> gmountie.StatFsReply
+	7,  // 41: gmountie.RpcFs.OpenDir:output_type -> gmountie.OpenDirReply
+	9,  // 42: gmountie.RpcFs.Unlink:output_type -> gmountie.UnlinkReply
+	11, // 43: gmountie.RpcFs.Access:output_type -> gmountie.AccessReply
+	13, // 44: gmountie.RpcFs.Truncate:output_type -> gmountie.TruncateReply
+	15, // 45: gmountie.RpcFs.Chown:output_type -> gmountie.ChownReply
+	17, // 46: gmountie.RpcFs.Chmod:output_type -> gmountie.ChmodReply
+	19, // 47: gmountie.RpcFs.Mkdir:output_type -> gmountie.MkdirReply
+	21, // 48: gmountie.RpcFs.Rmdir:output_type -> gmountie.RmdirReply
+	23, // 49: gmountie.RpcFs.Rename:output_type -> gmountie.RenameReply
+	25, // 50: gmountie.RpcFs.GetXAttr:output_type -> gmountie.GetXAttrReply
+	29, // 51: gmountie.RpcFs.Compound:output_type -> gmountie.CompoundBatch
+	39, // [39:52] is the sub-list for method output_type
+	26, // [26:39] is the sub-list for method input_type
+	26, // [26:26] is the sub-list for extension type_name
+	26, // [26:26] is the sub-list for extension extendee
+	0,  // [0:26] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_fs_proto_init() }
@@ -2037,13 +2449,28 @@ func file_api_proto_fs_proto_init() {
 		return
 	}
 	file_api_proto_common_proto_init()
+	file_api_proto_fs_proto_msgTypes[26].OneofWrappers = []any{
+		(*CompoundOp_GetAttr)(nil),
+		(*CompoundOp_StatFs)(nil),
+		(*CompoundOp_OpenDir)(nil),
+		(*CompoundOp_Access)(nil),
+		(*CompoundOp_GetXattr)(nil),
+	}
+	file_api_proto_fs_proto_msgTypes[27].OneofWrappers = []any{
+		(*CompoundReply_GetAttr)(nil),
+		(*CompoundReply_StatFs)(nil),
+		(*CompoundReply_OpenDir)(nil),
+		(*CompoundReply_Access)(nil),
+		(*CompoundReply_GetXattr)(nil),
+		(*CompoundReply_Status)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_fs_proto_rawDesc), len(file_api_proto_fs_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   26,
+			NumMessages:   30,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

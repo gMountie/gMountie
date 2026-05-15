@@ -14,6 +14,11 @@ const (
 	// allocation cost against keeping each frame well under the default 4 MiB
 	// gRPC message ceiling.
 	DefaultFrameSizeBytes = 1 << 20
+	// DefaultCompoundMaxParallel bounds the in-flight sub-ops the
+	// CompoundDispatcher will dispatch concurrently for a single Compound RPC.
+	// 8 keeps tail latency reasonable on slow links without flooding the
+	// volume filesystem with parallel metadata syscalls.
+	DefaultCompoundMaxParallel = 8
 )
 
 // ServerConfig is a struct that holds the configuration for the server
@@ -30,4 +35,8 @@ type ServerConfig struct {
 	// Read. Capped at 16 MiB to stay safely under gRPC's max recv size; floor
 	// of 4 KiB matches the typical page size.
 	FrameSizeBytes int `validate:"min=4096,max=16777216" mapstructure:"frame_size_bytes"`
+	// CompoundMaxParallel caps the concurrent sub-ops in flight for a single
+	// Compound RPC. Defaults to DefaultCompoundMaxParallel; the upper bound is
+	// a sanity cap, not a tuned value.
+	CompoundMaxParallel int `validate:"min=1,max=256" mapstructure:"compound_max_parallel"`
 }

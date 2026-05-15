@@ -300,6 +300,93 @@ func (_c *MockRpcFsClient_Chown_Call) RunAndReturn(run func(ctx context.Context,
 	return _c
 }
 
+// Compound provides a mock function for the type MockRpcFsClient
+func (_mock *MockRpcFsClient) Compound(ctx context.Context, in *proto.CompoundRequest, opts ...grpc.CallOption) (*proto.CompoundBatch, error) {
+	// grpc.CallOption
+	_va := make([]interface{}, len(opts))
+	for _i := range opts {
+		_va[_i] = opts[_i]
+	}
+	var _ca []interface{}
+	_ca = append(_ca, ctx, in)
+	_ca = append(_ca, _va...)
+	ret := _mock.Called(_ca...)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Compound")
+	}
+
+	var r0 *proto.CompoundBatch
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.CompoundRequest, ...grpc.CallOption) (*proto.CompoundBatch, error)); ok {
+		return returnFunc(ctx, in, opts...)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.CompoundRequest, ...grpc.CallOption) *proto.CompoundBatch); ok {
+		r0 = returnFunc(ctx, in, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proto.CompoundBatch)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.CompoundRequest, ...grpc.CallOption) error); ok {
+		r1 = returnFunc(ctx, in, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockRpcFsClient_Compound_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Compound'
+type MockRpcFsClient_Compound_Call struct {
+	*mock.Call
+}
+
+// Compound is a helper method to define mock.On call
+//   - ctx context.Context
+//   - in *proto.CompoundRequest
+//   - opts ...grpc.CallOption
+func (_e *MockRpcFsClient_Expecter) Compound(ctx interface{}, in interface{}, opts ...interface{}) *MockRpcFsClient_Compound_Call {
+	return &MockRpcFsClient_Compound_Call{Call: _e.mock.On("Compound",
+		append([]interface{}{ctx, in}, opts...)...)}
+}
+
+func (_c *MockRpcFsClient_Compound_Call) Run(run func(ctx context.Context, in *proto.CompoundRequest, opts ...grpc.CallOption)) *MockRpcFsClient_Compound_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *proto.CompoundRequest
+		if args[1] != nil {
+			arg1 = args[1].(*proto.CompoundRequest)
+		}
+		var arg2 []grpc.CallOption
+		variadicArgs := make([]grpc.CallOption, len(args)-2)
+		for i, a := range args[2:] {
+			if a != nil {
+				variadicArgs[i] = a.(grpc.CallOption)
+			}
+		}
+		arg2 = variadicArgs
+		run(
+			arg0,
+			arg1,
+			arg2...,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFsClient_Compound_Call) Return(compoundBatch *proto.CompoundBatch, err error) *MockRpcFsClient_Compound_Call {
+	_c.Call.Return(compoundBatch, err)
+	return _c
+}
+
+func (_c *MockRpcFsClient_Compound_Call) RunAndReturn(run func(ctx context.Context, in *proto.CompoundRequest, opts ...grpc.CallOption) (*proto.CompoundBatch, error)) *MockRpcFsClient_Compound_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetAttr provides a mock function for the type MockRpcFsClient
 func (_mock *MockRpcFsClient) GetAttr(ctx context.Context, in *proto.GetAttrRequest, opts ...grpc.CallOption) (*proto.GetAttrReply, error) {
 	// grpc.CallOption

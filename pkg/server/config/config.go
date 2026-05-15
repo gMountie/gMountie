@@ -53,6 +53,7 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		"server.metrics",
 		"server.metrics_addr",
 		"server.frame_size_bytes",
+		"server.compound_max_parallel",
 		"auth.type",
 	} {
 		_ = v.BindEnv(key)
@@ -65,12 +66,14 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	v.SetDefault("server.metrics", true)
 	v.SetDefault("server.metrics_addr", DefaultMetricsAddr)
 	v.SetDefault("server.frame_size_bytes", DefaultFrameSizeBytes)
+	v.SetDefault("server.compound_max_parallel", DefaultCompoundMaxParallel)
 	result.Server = &ServerConfig{
-		Address:        v.GetString("server.address"),
-		Port:           v.GetUint("server.port"),
-		Metrics:        v.GetBool("server.metrics"),
-		MetricsAddr:    v.GetString("server.metrics_addr"),
-		FrameSizeBytes: v.GetInt("server.frame_size_bytes"),
+		Address:             v.GetString("server.address"),
+		Port:                v.GetUint("server.port"),
+		Metrics:             v.GetBool("server.metrics"),
+		MetricsAddr:         v.GetString("server.metrics_addr"),
+		FrameSizeBytes:      v.GetInt("server.frame_size_bytes"),
+		CompoundMaxParallel: v.GetInt("server.compound_max_parallel"),
 	}
 
 	// Parse the auth configuration.

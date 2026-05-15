@@ -31,6 +31,7 @@ const (
 	RpcFs_Rmdir_FullMethodName    = "/gmountie.RpcFs/Rmdir"
 	RpcFs_Rename_FullMethodName   = "/gmountie.RpcFs/Rename"
 	RpcFs_GetXAttr_FullMethodName = "/gmountie.RpcFs/GetXAttr"
+	RpcFs_Compound_FullMethodName = "/gmountie.RpcFs/Compound"
 )
 
 // RpcFsClient is the client API for RpcFs service.
@@ -49,6 +50,7 @@ type RpcFsClient interface {
 	Rmdir(ctx context.Context, in *RmdirRequest, opts ...grpc.CallOption) (*RmdirReply, error)
 	Rename(ctx context.Context, in *RenameRequest, opts ...grpc.CallOption) (*RenameReply, error)
 	GetXAttr(ctx context.Context, in *GetXAttrRequest, opts ...grpc.CallOption) (*GetXAttrReply, error)
+	Compound(ctx context.Context, in *CompoundRequest, opts ...grpc.CallOption) (*CompoundBatch, error)
 }
 
 type rpcFsClient struct {
@@ -179,6 +181,16 @@ func (c *rpcFsClient) GetXAttr(ctx context.Context, in *GetXAttrRequest, opts ..
 	return out, nil
 }
 
+func (c *rpcFsClient) Compound(ctx context.Context, in *CompoundRequest, opts ...grpc.CallOption) (*CompoundBatch, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CompoundBatch)
+	err := c.cc.Invoke(ctx, RpcFs_Compound_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RpcFsServer is the server API for RpcFs service.
 // All implementations must embed UnimplementedRpcFsServer
 // for forward compatibility.
@@ -195,6 +207,7 @@ type RpcFsServer interface {
 	Rmdir(context.Context, *RmdirRequest) (*RmdirReply, error)
 	Rename(context.Context, *RenameRequest) (*RenameReply, error)
 	GetXAttr(context.Context, *GetXAttrRequest) (*GetXAttrReply, error)
+	Compound(context.Context, *CompoundRequest) (*CompoundBatch, error)
 	mustEmbedUnimplementedRpcFsServer()
 }
 
@@ -240,6 +253,9 @@ func (UnimplementedRpcFsServer) Rename(context.Context, *RenameRequest) (*Rename
 }
 func (UnimplementedRpcFsServer) GetXAttr(context.Context, *GetXAttrRequest) (*GetXAttrReply, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetXAttr not implemented")
+}
+func (UnimplementedRpcFsServer) Compound(context.Context, *CompoundRequest) (*CompoundBatch, error) {
+	return nil, status.Error(codes.Unimplemented, "method Compound not implemented")
 }
 func (UnimplementedRpcFsServer) mustEmbedUnimplementedRpcFsServer() {}
 func (UnimplementedRpcFsServer) testEmbeddedByValue()               {}
@@ -478,6 +494,24 @@ func _RpcFs_GetXAttr_Handler(srv interface{}, ctx context.Context, dec func(inte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RpcFs_Compound_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CompoundRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RpcFsServer).Compound(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RpcFs_Compound_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RpcFsServer).Compound(ctx, req.(*CompoundRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RpcFs_ServiceDesc is the grpc.ServiceDesc for RpcFs service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -532,6 +566,10 @@ var RpcFs_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetXAttr",
 			Handler:    _RpcFs_GetXAttr_Handler,
+		},
+		{
+			MethodName: "Compound",
+			Handler:    _RpcFs_Compound_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -31,7 +31,7 @@ func (s *RpcServerTestSuite) SetupTest() {
 	sid, err := s.sessionMgr.Create()
 	s.Require().NoError(err)
 	s.sessionID = sid
-	s.server = NewGrpcServer(s.fsService, s.sessionMgr)
+	s.server = NewGrpcServer(s.fsService, s.sessionMgr, 0)
 }
 
 func (s *RpcServerTestSuite) TearDownTest() {
