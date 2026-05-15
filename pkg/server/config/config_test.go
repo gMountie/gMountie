@@ -2,6 +2,7 @@ package config
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 )
@@ -229,6 +230,70 @@ volumes:
 }
 
 // Test Runner
+func (s *ConfigTestSuite) TestMaxMessageBytesAndKeepaliveDefaults() {
+	cfg, err := LoadConfigFromString(`
+server:
+  address: "0.0.0.0"
+  port: 9449
+auth:
+  type: none
+volumes:
+  - name: test
+    path: /tmp
+`)
+	s.Require().NoError(err)
+	s.Assert().Equal(DefaultMaxMessageBytes, cfg.Server.MaxMessageBytes)
+	s.Assert().Equal(DefaultKeepaliveTime, cfg.Server.Keepalive.Time)
+	s.Assert().Equal(DefaultKeepaliveTimeout, cfg.Server.Keepalive.Timeout)
+	s.Assert().Equal(DefaultKeepaliveMinTime, cfg.Server.Keepalive.MinTime)
+	s.Assert().Equal(DefaultKeepalivePermitWithoutStream, cfg.Server.Keepalive.PermitWithoutStream)
+}
+
+func (s *ConfigTestSuite) TestKeepaliveEnvOverride() {
+	s.T().Setenv("GMOUNTIE_SERVER_MAX_MESSAGE_BYTES", "33554432")
+	s.T().Setenv("GMOUNTIE_SERVER_KEEPALIVE_TIME", "45s")
+	s.T().Setenv("GMOUNTIE_SERVER_KEEPALIVE_TIMEOUT", "15s")
+	cfg, err := LoadConfigFromString(`
+server:
+  address: "0.0.0.0"
+  port: 9449
+auth:
+  type: none
+volumes:
+  - name: test
+    path: /tmp
+`)
+	s.Require().NoError(err)
+	s.Assert().Equal(33554432, cfg.Server.MaxMessageBytes)
+	s.Assert().Equal(45*time.Second, cfg.Server.Keepalive.Time)
+	s.Assert().Equal(15*time.Second, cfg.Server.Keepalive.Timeout)
+}
+
+func (s *ConfigTestSuite) TestKeepaliveExplicitYAML() {
+	cfg, err := LoadConfigFromString(`
+server:
+  address: "0.0.0.0"
+  port: 9449
+  max_message_bytes: 1048576
+  keepalive:
+    time: 1m
+    timeout: 20s
+    min_time: 5s
+    permit_without_stream: false
+auth:
+  type: none
+volumes:
+  - name: test
+    path: /tmp
+`)
+	s.Require().NoError(err)
+	s.Assert().Equal(1048576, cfg.Server.MaxMessageBytes)
+	s.Assert().Equal(1*time.Minute, cfg.Server.Keepalive.Time)
+	s.Assert().Equal(20*time.Second, cfg.Server.Keepalive.Timeout)
+	s.Assert().Equal(5*time.Second, cfg.Server.Keepalive.MinTime)
+	s.Assert().False(cfg.Server.Keepalive.PermitWithoutStream)
+}
+
 func TestConfigTestSuite(t *testing.T) {
 	suite.Run(t, new(ConfigTestSuite))
 }

@@ -33,6 +33,7 @@ The `server` section configures the core server settings:
 | address             | string   | "0\.0\.0\.0" | IP address the server listens on                           |
 | port                | integer  | 9449         | Port number for the gRPC server                            |
 | metrics             | boolean  | true         | Enable/disable Prometheus metrics                          |
+| metrics\_addr       | string   | ":9090"      | Address the ops HTTP server listens on                     |
 | max\_message\_bytes | integer  | 16777216     | Cap on inbound/outbound gRPC message size (16 MiB default) |
 
 `max_message_bytes` is validated to the range [65536, 67108864] (64 KiB to
