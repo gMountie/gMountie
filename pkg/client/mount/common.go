@@ -96,6 +96,11 @@ func negotiateMaxWriteBytes(client clientgrpc.Client, cfg *config.FUSEConfig) in
 		return cfg.MaxWriteBytes
 	}
 	if serverFrame >= cfg.MaxWriteBytes {
+		log.Log.Debug(
+			"version negotiation: server frame ceiling at or above configured max_write_bytes; no cap applied",
+			zap.Int("configured", cfg.MaxWriteBytes),
+			zap.Int("server_frame_size_bytes", serverFrame),
+		)
 		return cfg.MaxWriteBytes
 	}
 	log.Log.Info(
