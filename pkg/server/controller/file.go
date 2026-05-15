@@ -2,11 +2,14 @@ package controller
 
 import (
 	"context"
+	stdio "io"
+
 	"gmountie/pkg/proto"
 	"gmountie/pkg/server/metrics"
 	"gmountie/pkg/server/service"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -122,22 +125,146 @@ func (r *RpcFileServerImpl) Read(request *proto.ReadRequest, stream proto.RpcFil
 	return r.streamer.Stream(stream.Context(), int(request.Size), request.Offset, fileRead, emit)
 }
 
-func (r *RpcFileServerImpl) Write(_ context.Context, request *proto.WriteRequest) (*proto.WriteReply, error) {
-	sess, err := resolveSession(r.sessions, request.SessionId)
+// Write is client-streaming: the client sends one or more WriteFrame messages
+// and the server replies once after the stream closes. The FIRST frame carries
+// the header (volume/fd/session_id/request_id/offset); subsequent frames carry
+// only `data`. Idempotency is keyed on (session_id, request_id) from frame 1,
+// so a retry of the entire stream short-circuits to the cached reply.
+//
+// The frame application loop lives in service.WriteFrameSink; this handler
+// validates frame 1, consults the idempotency cache, and either drains or
+// applies the stream accordingly.
+func (r *RpcFileServerImpl) Write(stream proto.RpcFile_WriteServer) error {
+	first, err := stream.Recv()
 	if err != nil {
-		return nil, err
+		if errors.Is(err, stdio.EOF) {
+			return status.Error(codes.InvalidArgument, "Write: empty stream, no header frame")
+		}
+		return errors.Wrap(err, "Write: receive first frame")
 	}
-	return withIdempotency(sess, request.RequestId, func() (*proto.WriteReply, error) {
-		entry, ok := sess.GetFile(request.Fd)
+	if first.Volume == "" || first.Fd == 0 || first.SessionId == "" || first.RequestId == "" {
+		return status.Error(codes.InvalidArgument, "Write: first frame must carry volume, fd, session_id and request_id")
+	}
+
+	sess, err := resolveSession(r.sessions, first.SessionId)
+	if err != nil {
+		return err
+	}
+
+	// applied flips true inside DoOnce only on a cache miss. On a hit we must
+	// drain the remainder of the stream before replying so gRPC sees a clean
+	// half-close.
+	applied := false
+	raw, err := sess.DoOnce(first.RequestId, func() (any, error) {
+		applied = true
+		entry, ok := sess.GetFile(first.Fd)
 		if !ok {
-			return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
+			return nil, status.Errorf(codes.NotFound, "fd %d not found in session", first.Fd)
 		}
-		written, s := entry.File.Write(request.Bytes, request.Offset)
-		if s == fuse.OK {
-			r.metrics.BytesAdd(request.Volume, "in", float64(written))
-		}
-		return &proto.WriteReply{Written: written, Status: int32(s)}, nil
+		return r.applyWriteStream(stream, first, entry.File)
 	})
+	if err != nil {
+		return err
+	}
+
+	if !applied {
+		if drainErr := drainWriteStream(stream); drainErr != nil {
+			return drainErr
+		}
+	}
+
+	reply, ok := raw.(*proto.WriteReply)
+	if !ok {
+		return status.Error(codes.Internal, "Write: idempotency cache: unexpected reply type")
+	}
+	return stream.SendAndClose(reply)
+}
+
+// applyWriteStream applies frame 1's data, then iterates remaining frames from
+// the stream until EOF or a non-OK FUSE status. Header fields on subsequent
+// frames must be zero-valued or exactly match frame 1 (proto3 zero values are
+// treated as "inherit"). The returned reply is what the idempotency cache
+// stores under (session_id, request_id).
+func (r *RpcFileServerImpl) applyWriteStream(stream proto.RpcFile_WriteServer, first *proto.WriteFrame, file interface {
+	Write([]byte, int64) (uint32, fuse.Status)
+}) (*proto.WriteReply, error) {
+	sink := service.NewWriteFrameSink(file, first.Offset)
+	finalStatus := fuse.OK
+
+	if firstN, st := sink.WriteFrame(first.Data); !st.Ok() {
+		finalStatus = st
+	} else {
+		if firstN > 0 {
+			r.metrics.BytesAdd(first.Volume, "in", float64(firstN))
+		}
+		for finalStatus.Ok() {
+			frame, recvErr := stream.Recv()
+			if errors.Is(recvErr, stdio.EOF) {
+				break
+			}
+			if recvErr != nil {
+				return nil, errors.Wrap(recvErr, "Write: receive frame")
+			}
+			if err := validateContinuationFrame(frame, first); err != nil {
+				return nil, err
+			}
+			n, st := sink.WriteFrame(frame.Data)
+			if !st.Ok() {
+				finalStatus = st
+				break
+			}
+			if n > 0 {
+				r.metrics.BytesAdd(first.Volume, "in", float64(n))
+			}
+		}
+	}
+
+	// On a non-OK terminal status we still want to drain the remainder of the
+	// stream so the client sees a clean half-close rather than RST_STREAM.
+	if !finalStatus.Ok() {
+		if drainErr := drainWriteStream(stream); drainErr != nil {
+			return nil, drainErr
+		}
+	}
+
+	return &proto.WriteReply{Written: sink.Total(), Status: int32(finalStatus)}, nil
+}
+
+// validateContinuationFrame enforces the "either zero or matches frame 1"
+// invariant on header fields of subsequent frames. proto3 zero values mean
+// "inherit from frame 1"; non-zero values must equal frame 1's value.
+func validateContinuationFrame(frame, first *proto.WriteFrame) error {
+	if frame.Volume != "" && frame.Volume != first.Volume {
+		return status.Error(codes.InvalidArgument, "Write: continuation frame volume mismatch")
+	}
+	if frame.Fd != 0 && frame.Fd != first.Fd {
+		return status.Error(codes.InvalidArgument, "Write: continuation frame fd mismatch")
+	}
+	if frame.SessionId != "" && frame.SessionId != first.SessionId {
+		return status.Error(codes.InvalidArgument, "Write: continuation frame session_id mismatch")
+	}
+	if frame.RequestId != "" && frame.RequestId != first.RequestId {
+		return status.Error(codes.InvalidArgument, "Write: continuation frame request_id mismatch")
+	}
+	if frame.Offset != 0 && frame.Offset != first.Offset {
+		return status.Error(codes.InvalidArgument, "Write: continuation frame offset mismatch")
+	}
+	return nil
+}
+
+// drainWriteStream consumes remaining frames from stream until EOF. Used on
+// idempotency-cache hits (no apply) and on early termination (FUSE error) so
+// the transport sees a clean half-close.
+func drainWriteStream(stream proto.RpcFile_WriteServer) error {
+	for {
+		_, err := stream.Recv()
+		if errors.Is(err, stdio.EOF) {
+			return nil
+		}
+		if err != nil {
+			return errors.Wrap(err, "Write: drain stream")
+		}
+	}
 }
 
 func (r *RpcFileServerImpl) Fsync(_ context.Context, request *proto.FsyncRequest) (*proto.FsyncReply, error) {

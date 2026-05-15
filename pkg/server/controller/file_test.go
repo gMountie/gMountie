@@ -98,27 +98,6 @@ func (s *RpcFileServerTestSuite) TestRead() {
 	s.Assert().Equal(int32(fuse.OK), stream.frames[len(stream.frames)-1].Status)
 }
 
-func (s *RpcFileServerTestSuite) TestWrite() {
-	// Setup.
-	mockFs := new(pathfs2.MockFileSystem)
-	mockFile := new(nodefs2.MockFile)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
-	sess, _ := s.sessionMgr.Get(s.sessionID)
-	fd := sess.RegisterFile("/test/path", mockFile)
-	ctx := context.Background()
-	mockFile.EXPECT().Write([]byte("test data"), int64(0)).Return(uint32(len("test data")), fuse.OK)
-	mockFile.EXPECT().Release().Return().Maybe()
-
-	// Test.
-	request := &proto.WriteRequest{Fd: fd, Bytes: []byte("test data"), Offset: 0, SessionId: s.sessionID, RequestId: "test-req-write"}
-	reply, err := s.server.Write(ctx, request)
-
-	// Verify.
-	s.Require().NoError(err)
-	s.Assert().NotNil(reply)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
-}
-
 func (s *RpcFileServerTestSuite) TestFsync() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)

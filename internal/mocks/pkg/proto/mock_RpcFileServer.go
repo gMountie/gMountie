@@ -709,31 +709,20 @@ func (_c *MockRpcFileServer_SetLkw_Call) RunAndReturn(run func(context1 context.
 }
 
 // Write provides a mock function for the type MockRpcFileServer
-func (_mock *MockRpcFileServer) Write(context1 context.Context, writeRequest *proto.WriteRequest) (*proto.WriteReply, error) {
-	ret := _mock.Called(context1, writeRequest)
+func (_mock *MockRpcFileServer) Write(clientStreamingServer grpc.ClientStreamingServer[proto.WriteFrame, proto.WriteReply]) error {
+	ret := _mock.Called(clientStreamingServer)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Write")
 	}
 
-	var r0 *proto.WriteReply
-	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.WriteRequest) (*proto.WriteReply, error)); ok {
-		return returnFunc(context1, writeRequest)
-	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.WriteRequest) *proto.WriteReply); ok {
-		r0 = returnFunc(context1, writeRequest)
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(grpc.ClientStreamingServer[proto.WriteFrame, proto.WriteReply]) error); ok {
+		r0 = returnFunc(clientStreamingServer)
 	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*proto.WriteReply)
-		}
+		r0 = ret.Error(0)
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.WriteRequest) error); ok {
-		r1 = returnFunc(context1, writeRequest)
-	} else {
-		r1 = ret.Error(1)
-	}
-	return r0, r1
+	return r0
 }
 
 // MockRpcFileServer_Write_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Write'
@@ -742,36 +731,30 @@ type MockRpcFileServer_Write_Call struct {
 }
 
 // Write is a helper method to define mock.On call
-//   - context1 context.Context
-//   - writeRequest *proto.WriteRequest
-func (_e *MockRpcFileServer_Expecter) Write(context1 interface{}, writeRequest interface{}) *MockRpcFileServer_Write_Call {
-	return &MockRpcFileServer_Write_Call{Call: _e.mock.On("Write", context1, writeRequest)}
+//   - clientStreamingServer grpc.ClientStreamingServer[proto.WriteFrame, proto.WriteReply]
+func (_e *MockRpcFileServer_Expecter) Write(clientStreamingServer interface{}) *MockRpcFileServer_Write_Call {
+	return &MockRpcFileServer_Write_Call{Call: _e.mock.On("Write", clientStreamingServer)}
 }
 
-func (_c *MockRpcFileServer_Write_Call) Run(run func(context1 context.Context, writeRequest *proto.WriteRequest)) *MockRpcFileServer_Write_Call {
+func (_c *MockRpcFileServer_Write_Call) Run(run func(clientStreamingServer grpc.ClientStreamingServer[proto.WriteFrame, proto.WriteReply])) *MockRpcFileServer_Write_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 context.Context
+		var arg0 grpc.ClientStreamingServer[proto.WriteFrame, proto.WriteReply]
 		if args[0] != nil {
-			arg0 = args[0].(context.Context)
-		}
-		var arg1 *proto.WriteRequest
-		if args[1] != nil {
-			arg1 = args[1].(*proto.WriteRequest)
+			arg0 = args[0].(grpc.ClientStreamingServer[proto.WriteFrame, proto.WriteReply])
 		}
 		run(
 			arg0,
-			arg1,
 		)
 	})
 	return _c
 }
 
-func (_c *MockRpcFileServer_Write_Call) Return(writeReply *proto.WriteReply, err error) *MockRpcFileServer_Write_Call {
-	_c.Call.Return(writeReply, err)
+func (_c *MockRpcFileServer_Write_Call) Return(err error) *MockRpcFileServer_Write_Call {
+	_c.Call.Return(err)
 	return _c
 }
 
-func (_c *MockRpcFileServer_Write_Call) RunAndReturn(run func(context1 context.Context, writeRequest *proto.WriteRequest) (*proto.WriteReply, error)) *MockRpcFileServer_Write_Call {
+func (_c *MockRpcFileServer_Write_Call) RunAndReturn(run func(clientStreamingServer grpc.ClientStreamingServer[proto.WriteFrame, proto.WriteReply]) error) *MockRpcFileServer_Write_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -100,21 +100,54 @@ func (f *GrpcFile) Read(dest []byte, off int64) (fuse.ReadResult, fuse.Status) {
 	return fuse.ReadResultData(dest[:res.written]), fuse.OK
 }
 
+// writeFrameSizeBytes bounds a single WriteFrame's data slice. Hardcoded
+// here for now; Task 7 of the Phase 3 plan negotiates this value with the
+// server. 1 MiB matches the server's default FrameSizeBytes.
+const writeFrameSizeBytes = 1 << 20
+
+// Write proxies a FUSE Write to the server-streaming Write RPC. Frame 1
+// carries the header; subsequent frames carry only `data`. requestID is
+// generated once outside the retry closure so any retry attempt re-sends
+// the same id and the server's per-session idempotency cache
+// short-circuits the apply on the second attempt.
 func (f *GrpcFile) Write(data []byte, off int64) (written uint32, code fuse.Status) {
 	ctx, cancel := withIOTimeout(context.Background(), f.ioTimeout)
 	defer cancel()
 	requestID := uuid.NewString()
 	res, err := retryableCall(ctx, "Write", func(ctx context.Context) (*proto.WriteReply, error) {
-		return f.fileClient.Write(ctx, &proto.WriteRequest{
+		stream, err := f.fileClient.Write(ctx, grpc.UseCompressor(snappy.Name))
+		if err != nil {
+			return nil, err
+		}
+		// Frame 1 always carries the header. If data fits in a single frame
+		// we send it whole; otherwise we send the first writeFrameSizeBytes
+		// here and loop on the remainder below.
+		first := writeFrameSizeBytes
+		if first > len(data) {
+			first = len(data)
+		}
+		header := &proto.WriteFrame{
 			Volume:    f.volume,
 			Fd:        f.fd,
-			Offset:    off,
-			Bytes:     data,
 			SessionId: f.sessionID,
 			RequestId: requestID,
-		},
-			grpc.UseCompressor(snappy.Name),
-		)
+			Offset:    off,
+			Data:      data[:first],
+		}
+		if sendErr := stream.Send(header); sendErr != nil {
+			return nil, sendErr
+		}
+		for sent := first; sent < len(data); {
+			end := sent + writeFrameSizeBytes
+			if end > len(data) {
+				end = len(data)
+			}
+			if sendErr := stream.Send(&proto.WriteFrame{Data: data[sent:end]}); sendErr != nil {
+				return nil, sendErr
+			}
+			sent = end
+		}
+		return stream.CloseAndRecv()
 	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Write", zap.String("path", f.path), zap.Error(err))

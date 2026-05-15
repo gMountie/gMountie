@@ -39,7 +39,7 @@ type RpcFileClient interface {
 	Open(ctx context.Context, in *OpenRequest, opts ...grpc.CallOption) (*OpenReply, error)
 	Create(ctx context.Context, in *CreateRequest, opts ...grpc.CallOption) (*CreateReply, error)
 	Read(ctx context.Context, in *ReadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadFrame], error)
-	Write(ctx context.Context, in *WriteRequest, opts ...grpc.CallOption) (*WriteReply, error)
+	Write(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[WriteFrame, WriteReply], error)
 	Release(ctx context.Context, in *ReleaseRequest, opts ...grpc.CallOption) (*ReleaseReply, error)
 	Fsync(ctx context.Context, in *FsyncRequest, opts ...grpc.CallOption) (*FsyncReply, error)
 	Flush(ctx context.Context, in *FlushRequest, opts ...grpc.CallOption) (*FlushReply, error)
@@ -96,15 +96,18 @@ func (c *rpcFileClient) Read(ctx context.Context, in *ReadRequest, opts ...grpc.
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RpcFile_ReadClient = grpc.ServerStreamingClient[ReadFrame]
 
-func (c *rpcFileClient) Write(ctx context.Context, in *WriteRequest, opts ...grpc.CallOption) (*WriteReply, error) {
+func (c *rpcFileClient) Write(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[WriteFrame, WriteReply], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(WriteReply)
-	err := c.cc.Invoke(ctx, RpcFile_Write_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &RpcFile_ServiceDesc.Streams[1], RpcFile_Write_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[WriteFrame, WriteReply]{ClientStream: stream}
+	return x, nil
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RpcFile_WriteClient = grpc.ClientStreamingClient[WriteFrame, WriteReply]
 
 func (c *rpcFileClient) Release(ctx context.Context, in *ReleaseRequest, opts ...grpc.CallOption) (*ReleaseReply, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -183,7 +186,7 @@ type RpcFileServer interface {
 	Open(context.Context, *OpenRequest) (*OpenReply, error)
 	Create(context.Context, *CreateRequest) (*CreateReply, error)
 	Read(*ReadRequest, grpc.ServerStreamingServer[ReadFrame]) error
-	Write(context.Context, *WriteRequest) (*WriteReply, error)
+	Write(grpc.ClientStreamingServer[WriteFrame, WriteReply]) error
 	Release(context.Context, *ReleaseRequest) (*ReleaseReply, error)
 	Fsync(context.Context, *FsyncRequest) (*FsyncReply, error)
 	Flush(context.Context, *FlushRequest) (*FlushReply, error)
@@ -210,8 +213,8 @@ func (UnimplementedRpcFileServer) Create(context.Context, *CreateRequest) (*Crea
 func (UnimplementedRpcFileServer) Read(*ReadRequest, grpc.ServerStreamingServer[ReadFrame]) error {
 	return status.Error(codes.Unimplemented, "method Read not implemented")
 }
-func (UnimplementedRpcFileServer) Write(context.Context, *WriteRequest) (*WriteReply, error) {
-	return nil, status.Error(codes.Unimplemented, "method Write not implemented")
+func (UnimplementedRpcFileServer) Write(grpc.ClientStreamingServer[WriteFrame, WriteReply]) error {
+	return status.Error(codes.Unimplemented, "method Write not implemented")
 }
 func (UnimplementedRpcFileServer) Release(context.Context, *ReleaseRequest) (*ReleaseReply, error) {
 	return nil, status.Error(codes.Unimplemented, "method Release not implemented")
@@ -302,23 +305,12 @@ func _RpcFile_Read_Handler(srv interface{}, stream grpc.ServerStream) error {
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RpcFile_ReadServer = grpc.ServerStreamingServer[ReadFrame]
 
-func _RpcFile_Write_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(WriteRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(RpcFileServer).Write(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: RpcFile_Write_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RpcFileServer).Write(ctx, req.(*WriteRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+func _RpcFile_Write_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(RpcFileServer).Write(&grpc.GenericServerStream[WriteFrame, WriteReply]{ServerStream: stream})
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RpcFile_WriteServer = grpc.ClientStreamingServer[WriteFrame, WriteReply]
 
 func _RpcFile_Release_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReleaseRequest)
@@ -462,10 +454,6 @@ var RpcFile_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _RpcFile_Create_Handler,
 		},
 		{
-			MethodName: "Write",
-			Handler:    _RpcFile_Write_Handler,
-		},
-		{
 			MethodName: "Release",
 			Handler:    _RpcFile_Release_Handler,
 		},
@@ -499,6 +487,11 @@ var RpcFile_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "Read",
 			Handler:       _RpcFile_Read_Handler,
 			ServerStreams: true,
+		},
+		{
+			StreamName:    "Write",
+			Handler:       _RpcFile_Write_Handler,
+			ClientStreams: true,
 		},
 	},
 	Metadata: "api/proto/file.proto",

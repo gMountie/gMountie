@@ -497,32 +497,37 @@ func (x *ReadFrame) GetStatus() int32 {
 	return 0
 }
 
-type WriteRequest struct {
+// WriteFrame is a single chunk of a client-streaming Write RPC. The FIRST
+// frame carries the full header (volume/fd/session_id/request_id/offset).
+// Subsequent frames carry only `data` — header fields MUST be zero-valued
+// (the server pins the values from frame 1 and rejects any non-zero
+// mismatch as InvalidArgument).
+type WriteFrame struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Volume        string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
 	Fd            uint64                 `protobuf:"varint,2,opt,name=fd,proto3" json:"fd,omitempty"`
-	Bytes         []byte                 `protobuf:"bytes,3,opt,name=bytes,proto3" json:"bytes,omitempty"`
-	Offset        int64                  `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`
-	SessionId     string                 `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	RequestId     string                 `protobuf:"bytes,6,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	SessionId     string                 `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	RequestId     string                 `protobuf:"bytes,4,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	Offset        int64                  `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
+	Data          []byte                 `protobuf:"bytes,6,opt,name=data,proto3" json:"data,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *WriteRequest) Reset() {
-	*x = WriteRequest{}
+func (x *WriteFrame) Reset() {
+	*x = WriteFrame{}
 	mi := &file_api_proto_file_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *WriteRequest) String() string {
+func (x *WriteFrame) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*WriteRequest) ProtoMessage() {}
+func (*WriteFrame) ProtoMessage() {}
 
-func (x *WriteRequest) ProtoReflect() protoreflect.Message {
+func (x *WriteFrame) ProtoReflect() protoreflect.Message {
 	mi := &file_api_proto_file_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -534,51 +539,51 @@ func (x *WriteRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use WriteRequest.ProtoReflect.Descriptor instead.
-func (*WriteRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use WriteFrame.ProtoReflect.Descriptor instead.
+func (*WriteFrame) Descriptor() ([]byte, []int) {
 	return file_api_proto_file_proto_rawDescGZIP(), []int{7}
 }
 
-func (x *WriteRequest) GetVolume() string {
+func (x *WriteFrame) GetVolume() string {
 	if x != nil {
 		return x.Volume
 	}
 	return ""
 }
 
-func (x *WriteRequest) GetFd() uint64 {
+func (x *WriteFrame) GetFd() uint64 {
 	if x != nil {
 		return x.Fd
 	}
 	return 0
 }
 
-func (x *WriteRequest) GetBytes() []byte {
-	if x != nil {
-		return x.Bytes
-	}
-	return nil
-}
-
-func (x *WriteRequest) GetOffset() int64 {
-	if x != nil {
-		return x.Offset
-	}
-	return 0
-}
-
-func (x *WriteRequest) GetSessionId() string {
+func (x *WriteFrame) GetSessionId() string {
 	if x != nil {
 		return x.SessionId
 	}
 	return ""
 }
 
-func (x *WriteRequest) GetRequestId() string {
+func (x *WriteFrame) GetRequestId() string {
 	if x != nil {
 		return x.RequestId
 	}
 	return ""
+}
+
+func (x *WriteFrame) GetOffset() int64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *WriteFrame) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
 }
 
 type WriteReply struct {
@@ -1525,16 +1530,17 @@ const file_api_proto_file_proto_rawDesc = "" +
 	"session_id\x18\x05 \x01(\tR\tsessionId\"7\n" +
 	"\tReadFrame\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x16\n" +
-	"\x06status\x18\x02 \x01(\x05R\x06status\"\xa2\x01\n" +
-	"\fWriteRequest\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\x05R\x06status\"\x9e\x01\n" +
+	"\n" +
+	"WriteFrame\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12\x0e\n" +
-	"\x02fd\x18\x02 \x01(\x04R\x02fd\x12\x14\n" +
-	"\x05bytes\x18\x03 \x01(\fR\x05bytes\x12\x16\n" +
-	"\x06offset\x18\x04 \x01(\x03R\x06offset\x12\x1d\n" +
+	"\x02fd\x18\x02 \x01(\x04R\x02fd\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x05 \x01(\tR\tsessionId\x12\x1d\n" +
+	"session_id\x18\x03 \x01(\tR\tsessionId\x12\x1d\n" +
 	"\n" +
-	"request_id\x18\x06 \x01(\tR\trequestId\">\n" +
+	"request_id\x18\x04 \x01(\tR\trequestId\x12\x16\n" +
+	"\x06offset\x18\x05 \x01(\x03R\x06offset\x12\x12\n" +
+	"\x04data\x18\x06 \x01(\fR\x04data\">\n" +
 	"\n" +
 	"WriteReply\x12\x18\n" +
 	"\awritten\x18\x01 \x01(\rR\awritten\x12\x16\n" +
@@ -1611,7 +1617,7 @@ const file_api_proto_file_proto_rawDesc = "" +
 	"\x04Open\x12\x15.gmountie.OpenRequest\x1a\x13.gmountie.OpenReply\x128\n" +
 	"\x06Create\x12\x17.gmountie.CreateRequest\x1a\x15.gmountie.CreateReply\x124\n" +
 	"\x04Read\x12\x15.gmountie.ReadRequest\x1a\x13.gmountie.ReadFrame0\x01\x125\n" +
-	"\x05Write\x12\x16.gmountie.WriteRequest\x1a\x14.gmountie.WriteReply\x12;\n" +
+	"\x05Write\x12\x14.gmountie.WriteFrame\x1a\x14.gmountie.WriteReply(\x01\x12;\n" +
 	"\aRelease\x12\x18.gmountie.ReleaseRequest\x1a\x16.gmountie.ReleaseReply\x125\n" +
 	"\x05Fsync\x12\x16.gmountie.FsyncRequest\x1a\x14.gmountie.FsyncReply\x125\n" +
 	"\x05Flush\x12\x16.gmountie.FlushRequest\x1a\x14.gmountie.FlushReply\x125\n" +
@@ -1641,7 +1647,7 @@ var file_api_proto_file_proto_goTypes = []any{
 	(*CreateReply)(nil),     // 4: gmountie.CreateReply
 	(*ReadRequest)(nil),     // 5: gmountie.ReadRequest
 	(*ReadFrame)(nil),       // 6: gmountie.ReadFrame
-	(*WriteRequest)(nil),    // 7: gmountie.WriteRequest
+	(*WriteFrame)(nil),      // 7: gmountie.WriteFrame
 	(*WriteReply)(nil),      // 8: gmountie.WriteReply
 	(*FsyncRequest)(nil),    // 9: gmountie.FsyncRequest
 	(*FsyncReply)(nil),      // 10: gmountie.FsyncReply
@@ -1670,7 +1676,7 @@ var file_api_proto_file_proto_depIdxs = []int32{
 	1,  // 7: gmountie.RpcFile.Open:input_type -> gmountie.OpenRequest
 	3,  // 8: gmountie.RpcFile.Create:input_type -> gmountie.CreateRequest
 	5,  // 9: gmountie.RpcFile.Read:input_type -> gmountie.ReadRequest
-	7,  // 10: gmountie.RpcFile.Write:input_type -> gmountie.WriteRequest
+	7,  // 10: gmountie.RpcFile.Write:input_type -> gmountie.WriteFrame
 	11, // 11: gmountie.RpcFile.Release:input_type -> gmountie.ReleaseRequest
 	9,  // 12: gmountie.RpcFile.Fsync:input_type -> gmountie.FsyncRequest
 	13, // 13: gmountie.RpcFile.Flush:input_type -> gmountie.FlushRequest
