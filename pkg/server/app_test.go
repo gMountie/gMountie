@@ -27,7 +27,18 @@ func (s *ServerAppTestSuite) TestStart_ContextCancellationShutsDownGracefully() 
 	lis.Close()
 
 	cfg := &config.Config{
-		Server:  &config.ServerConfig{Address: "127.0.0.1", Port: port, Metrics: false},
+		Server: &config.ServerConfig{
+			Address:         "127.0.0.1",
+			Port:            port,
+			Metrics:         false,
+			MaxMessageBytes: config.DefaultMaxMessageBytes,
+			Keepalive: config.ServerKeepaliveConfig{
+				Time:                config.DefaultKeepaliveTime,
+				Timeout:             config.DefaultKeepaliveTimeout,
+				MinTime:             config.DefaultKeepaliveMinTime,
+				PermitWithoutStream: config.DefaultKeepalivePermitWithoutStream,
+			},
+		},
 		Auth:    &config.NoneAuthConfig{},
 		Volumes: []*config.VolumeConfig{},
 	}

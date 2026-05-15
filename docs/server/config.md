@@ -28,19 +28,50 @@ volumes:
 
 The `server` section configures the core server settings:
 
-| Option  | Type    | Default      | Description                       |
-|---------|---------|--------------|-----------------------------------|
-| address | string  | "0\.0\.0\.0" | IP address the server listens on  |
-| port    | integer | 9449         | Port number for the gRPC server   |
-| metrics | boolean | true         | Enable/disable Prometheus metrics |
+| Option              | Type     | Default      | Description                                                |
+|---------------------|----------|--------------|------------------------------------------------------------|
+| address             | string   | "0\.0\.0\.0" | IP address the server listens on                           |
+| port                | integer  | 9449         | Port number for the gRPC server                            |
+| metrics             | boolean  | true         | Enable/disable Prometheus metrics                          |
+| max\_message\_bytes | integer  | 16777216     | Cap on inbound/outbound gRPC message size (16 MiB default) |
+
+`max_message_bytes` is validated to the range [65536, 67108864] (64 KiB to
+64 MiB). The default sits well above the streaming `frame_size_bytes` so a
+single Read/Write frame plus header overhead always fits.
 
 Example:
 
 ```yaml
 server:
-  address: 192.168.1.100 # Listen on specific interface 
-  port: 8080 # Custom port 
+  address: 192.168.1.100 # Listen on specific interface
+  port: 8080 # Custom port
   metrics: false # Disable metrics
+  max_message_bytes: 33554432 # 32 MiB
+```
+
+### Keepalive
+
+The `server.keepalive` block tunes gRPC HTTP/2 keepalive pings. Defaults
+make the server ping idle connections every 30s and tear them down 10s
+after a missed ACK, so a dead client (or a half-open NAT path) surfaces
+within ~40s instead of waiting on TCP timeouts.
+
+| Option                          | Type     | Default | Description                                                      |
+|---------------------------------|----------|---------|------------------------------------------------------------------|
+| time                            | duration | 30s     | Interval between pings to an idle connection                     |
+| timeout                         | duration | 10s     | Wait time for a ping ACK before closing the connection           |
+| min\_time                       | duration | 10s     | Minimum interval the server tolerates between client pings       |
+| permit\_without\_stream         | boolean  | true    | Allow client pings when no streams are in flight                 |
+
+Example:
+
+```yaml
+server:
+  keepalive:
+    time: 15s
+    timeout: 5s
+    min_time: 5s
+    permit_without_stream: true
 ```
 
 ## Authentication Options

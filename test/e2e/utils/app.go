@@ -80,6 +80,13 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 		Metrics:             false,
 		FrameSizeBytes:      config.DefaultFrameSizeBytes,
 		CompoundMaxParallel: config.DefaultCompoundMaxParallel,
+		MaxMessageBytes:     config.DefaultMaxMessageBytes,
+		Keepalive: config.ServerKeepaliveConfig{
+			Time:                config.DefaultKeepaliveTime,
+			Timeout:             config.DefaultKeepaliveTimeout,
+			MinTime:             config.DefaultKeepaliveMinTime,
+			PermitWithoutStream: config.DefaultKeepalivePermitWithoutStream,
+		},
 	}
 	// Apply the options
 	for _, opt := range options {
@@ -92,7 +99,7 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 	// Create a new server
 	appCtx.serverOptions = append(appCtx.serverOptions, grpcServer.WithListener(appCtx.listener))
 	appCtx.server = grpcServer.NewServer(
-		&config.Config{},
+		&appCtx.cfg,
 		appCtx.serverCtx.AuthService,
 		appCtx.serverCtx.GetGrpcServices(),
 		appCtx.serverOptions...,

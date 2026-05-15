@@ -47,6 +47,47 @@ server:
   tls: true               # Enable TLS
 ```
 
+## RPC Options
+
+The `rpc` section configures per-RPC timeouts, message-size caps, and
+HTTP/2 keepalive params on the client side. Match the server's keepalive
+defaults so dead-connection detection is symmetric in both directions.
+
+| Option                  | Type     | Default  | Description                                                 |
+|-------------------------|----------|----------|-------------------------------------------------------------|
+| timeout\_meta           | duration | 5s       | Per-RPC timeout for metadata ops                            |
+| timeout\_io             | duration | 30s      | Per-RPC timeout for data ops (Read, Write, ...)             |
+| readahead\_chunk\_bytes | integer  | 65536    | Size of a single readahead fetch (0 disables readahead)     |
+| max\_message\_bytes     | integer  | 16777216 | Cap on inbound/outbound gRPC message size (16 MiB default)  |
+
+`max_message_bytes` is validated to the range [65536, 67108864] (64 KiB to
+64 MiB) and should typically mirror the server's value.
+
+### Keepalive
+
+The `rpc.keepalive` block tunes gRPC HTTP/2 keepalive pings on the client.
+Defaults ping every 30s and time out after 10s, surfacing a dead server as
+an `Unavailable` error within ~40s instead of waiting on TCP timeouts.
+
+| Option                  | Type     | Default | Description                                           |
+|-------------------------|----------|---------|-------------------------------------------------------|
+| time                    | duration | 30s     | Interval between pings to an idle connection          |
+| timeout                 | duration | 10s     | Wait time for a ping ACK before closing the conn      |
+| permit\_without\_stream | boolean  | true    | Allow pings when no streams are in flight             |
+
+Example:
+
+```yaml
+rpc:
+  timeout_meta: 5s
+  timeout_io: 30s
+  max_message_bytes: 33554432  # 32 MiB
+  keepalive:
+    time: 15s
+    timeout: 5s
+    permit_without_stream: true
+```
+
 ## Authentication Options
 
 The `auth` section configures client authentication:

@@ -54,6 +54,11 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		"server.metrics_addr",
 		"server.frame_size_bytes",
 		"server.compound_max_parallel",
+		"server.max_message_bytes",
+		"server.keepalive.time",
+		"server.keepalive.timeout",
+		"server.keepalive.min_time",
+		"server.keepalive.permit_without_stream",
 		"auth.type",
 	} {
 		_ = v.BindEnv(key)
@@ -67,6 +72,11 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	v.SetDefault("server.metrics_addr", DefaultMetricsAddr)
 	v.SetDefault("server.frame_size_bytes", DefaultFrameSizeBytes)
 	v.SetDefault("server.compound_max_parallel", DefaultCompoundMaxParallel)
+	v.SetDefault("server.max_message_bytes", DefaultMaxMessageBytes)
+	v.SetDefault("server.keepalive.time", DefaultKeepaliveTime)
+	v.SetDefault("server.keepalive.timeout", DefaultKeepaliveTimeout)
+	v.SetDefault("server.keepalive.min_time", DefaultKeepaliveMinTime)
+	v.SetDefault("server.keepalive.permit_without_stream", DefaultKeepalivePermitWithoutStream)
 	result.Server = &ServerConfig{
 		Address:             v.GetString("server.address"),
 		Port:                v.GetUint("server.port"),
@@ -74,6 +84,13 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		MetricsAddr:         v.GetString("server.metrics_addr"),
 		FrameSizeBytes:      v.GetInt("server.frame_size_bytes"),
 		CompoundMaxParallel: v.GetInt("server.compound_max_parallel"),
+		MaxMessageBytes:     v.GetInt("server.max_message_bytes"),
+		Keepalive: ServerKeepaliveConfig{
+			Time:                v.GetDuration("server.keepalive.time"),
+			Timeout:             v.GetDuration("server.keepalive.timeout"),
+			MinTime:             v.GetDuration("server.keepalive.min_time"),
+			PermitWithoutStream: v.GetBool("server.keepalive.permit_without_stream"),
+		},
 	}
 
 	// Parse the auth configuration.

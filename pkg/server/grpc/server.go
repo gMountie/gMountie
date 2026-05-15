@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	_ "google.golang.org/grpc/encoding/gzip" // Installing the gzip encoding as an available compressor.
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -177,10 +178,30 @@ func (s *Server) getOptions() []grpc.ServerOption {
 		s.extraStreamInterceptors...,
 	)
 
-	return []grpc.ServerOption{
+	opts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(unaryInterceptors...),
 		grpc.ChainStreamInterceptor(streamInterceptors...),
 	}
+	// Wire keepalive + message-size guards from config. The server pings idle
+	// connections every Time and tears them down after Timeout without an ack.
+	// EnforcementPolicy keeps overly chatty clients honest. MaxRecv/SendMsgSize
+	// caps protect against runaway payloads.
+	if s.config != nil && s.config.Server != nil {
+		srv := s.config.Server
+		opts = append(opts,
+			grpc.KeepaliveParams(keepalive.ServerParameters{
+				Time:    srv.Keepalive.Time,
+				Timeout: srv.Keepalive.Timeout,
+			}),
+			grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+				MinTime:             srv.Keepalive.MinTime,
+				PermitWithoutStream: srv.Keepalive.PermitWithoutStream,
+			}),
+			grpc.MaxRecvMsgSize(srv.MaxMessageBytes),
+			grpc.MaxSendMsgSize(srv.MaxMessageBytes),
+		)
+	}
+	return opts
 }
 
 // getLoggingInterceptor returns a new logging interceptor.

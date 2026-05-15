@@ -10,6 +10,8 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 // NewClientFromConfig creates a new gRPC Client from the config and
@@ -30,6 +32,21 @@ func NewClientFromConfig(cfg *config.Config) (Client, error) {
 
 	if cfg.Rpc != nil {
 		opts = append(opts, WithTimeouts(cfg.Rpc.TimeoutMeta, cfg.Rpc.TimeoutIO))
+		// Wire keepalive + message-size caps from RpcConfig. Matching the
+		// server's keepalive params lets the client detect dead connections
+		// within ~Time+Timeout instead of hanging until TCP gives up.
+		dialOpts := []grpc.DialOption{
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:                cfg.Rpc.Keepalive.Time,
+				Timeout:             cfg.Rpc.Keepalive.Timeout,
+				PermitWithoutStream: cfg.Rpc.Keepalive.PermitWithoutStream,
+			}),
+			grpc.WithDefaultCallOptions(
+				grpc.MaxCallRecvMsgSize(cfg.Rpc.MaxMessageBytes),
+				grpc.MaxCallSendMsgSize(cfg.Rpc.MaxMessageBytes),
+			),
+		}
+		opts = append(opts, WithDialOptions(dialOpts))
 	}
 
 	// Build and register client metrics once per factory call. Register

@@ -1,5 +1,7 @@
 package config
 
+import "time"
+
 const (
 	// DefaultAddress is the default address that the server will listen on
 	DefaultAddress = "0.0.0.0"
@@ -19,7 +21,43 @@ const (
 	// 8 keeps tail latency reasonable on slow links without flooding the
 	// volume filesystem with parallel metadata syscalls.
 	DefaultCompoundMaxParallel = 8
+	// DefaultMaxMessageBytes is the default cap for gRPC inbound/outbound
+	// message sizes. 16 MiB sits well above the streaming Read/Write frame
+	// size while still rejecting accidental jumbo payloads. Validation pins
+	// the configurable range to [64 KiB, 64 MiB].
+	DefaultMaxMessageBytes = 16 << 20
+	// DefaultKeepaliveTime is how often the server pings an otherwise idle
+	// connection to verify liveness.
+	DefaultKeepaliveTime = 30 * time.Second
+	// DefaultKeepaliveTimeout bounds how long the server waits for a ping ack
+	// before tearing the connection down.
+	DefaultKeepaliveTimeout = 10 * time.Second
+	// DefaultKeepaliveMinTime is the minimum interval the server permits
+	// between client keepalive pings. Clients pinging more aggressively get
+	// GOAWAY'd.
+	DefaultKeepaliveMinTime = 10 * time.Second
+	// DefaultKeepalivePermitWithoutStream lets clients ping when there are
+	// no active RPCs. Required so an idle FUSE mount still detects a dead
+	// server.
+	DefaultKeepalivePermitWithoutStream = true
 )
+
+// ServerKeepaliveConfig holds the gRPC server-side keepalive parameters
+// and matching enforcement policy. Defaults are tuned to detect dead
+// connections within ~Time+Timeout while tolerating idle FUSE mounts.
+type ServerKeepaliveConfig struct {
+	// Time is how often the server pings an idle connection.
+	Time time.Duration `mapstructure:"time" validate:"gte=1s"`
+	// Timeout is how long the server waits for a ping ack before
+	// closing the connection.
+	Timeout time.Duration `mapstructure:"timeout" validate:"gte=1s"`
+	// MinTime is the minimum interval between client pings the server will
+	// tolerate. Clients pinging faster than this get GOAWAY'd.
+	MinTime time.Duration `mapstructure:"min_time" validate:"gte=1s"`
+	// PermitWithoutStream allows clients to ping even when no streams are
+	// in flight. Must be enabled to detect dead servers from idle mounts.
+	PermitWithoutStream bool `mapstructure:"permit_without_stream"`
+}
 
 // ServerConfig is a struct that holds the configuration for the server
 type ServerConfig struct {
@@ -39,4 +77,11 @@ type ServerConfig struct {
 	// Compound RPC. Defaults to DefaultCompoundMaxParallel; the upper bound is
 	// a sanity cap, not a tuned value.
 	CompoundMaxParallel int `validate:"min=1,max=256" mapstructure:"compound_max_parallel"`
+	// MaxMessageBytes caps both inbound and outbound gRPC message sizes.
+	// Range pins values to [64 KiB, 64 MiB] — small enough to refuse runaway
+	// requests, large enough to handle the streaming Read/Write frame plus
+	// header overhead.
+	MaxMessageBytes int `validate:"min=65536,max=67108864" mapstructure:"max_message_bytes"`
+	// Keepalive controls gRPC HTTP/2 keepalive pings and enforcement.
+	Keepalive ServerKeepaliveConfig `mapstructure:"keepalive"`
 }
