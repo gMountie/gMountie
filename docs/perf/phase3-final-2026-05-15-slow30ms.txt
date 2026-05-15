@@ -1,0 +1,51 @@
+goos: linux
+goarch: amd64
+pkg: gmountie/test/e2e/perf
+cpu: Intel Core Processor (Broadwell, IBRS)
+BenchmarkOpenStatClose-4     	 8912089	      2884 ns/op	     257 B/op	       2 allocs/op
+BenchmarkOpenStatClose-4     	 8561250	      2808 ns/op	     258 B/op	       2 allocs/op
+BenchmarkOpenStatClose-4     	 8102642	      2983 ns/op	     258 B/op	       2 allocs/op
+BenchmarkReaddir100-4        	     795	  28882114 ns/op	 3489419 B/op	   44305 allocs/op
+BenchmarkReaddir100-4        	     825	  30179724 ns/op	 3582101 B/op	   44320 allocs/op
+BenchmarkReaddir100-4        	     774	  29457358 ns/op	 3598837 B/op	   44316 allocs/op
+BenchmarkLookup-4            	 8614189	      2993 ns/op	     274 B/op	       2 allocs/op
+BenchmarkLookup-4            	 8149096	      3045 ns/op	     274 B/op	       2 allocs/op
+BenchmarkLookup-4            	 8245450	      3014 ns/op	     274 B/op	       2 allocs/op
+BenchmarkRandomRead4KiB-4    	--- FAIL: BenchmarkRandomRead4KiB-4
+    random_io_bench_test.go:27: open: open /tmp/gmountie-test-2789427090/mount/rand_read.bin: input/output error
+BenchmarkRandomRead4KiB-4    	--- FAIL: BenchmarkRandomRead4KiB-4
+    random_io_bench_test.go:27: open: open /tmp/gmountie-test-3271421842/mount/rand_read.bin: input/output error
+BenchmarkRandomRead4KiB-4    	--- FAIL: BenchmarkRandomRead4KiB-4
+    random_io_bench_test.go:27: open: open /tmp/gmountie-test-3552426279/mount/rand_read.bin: input/output error
+BenchmarkRandomWrite4KiB-4   	   35174	    652115 ns/op	   6.28 MB/s	   62002 B/op	     724 allocs/op
+BenchmarkRandomWrite4KiB-4   	   38226	    653399 ns/op	   6.27 MB/s	   61343 B/op	     724 allocs/op
+BenchmarkRandomWrite4KiB-4   	   36031	    559265 ns/op	   7.32 MB/s	   61039 B/op	     724 allocs/op
+BenchmarkSeqRead1MiB-4       	--- FAIL: BenchmarkSeqRead1MiB-4
+    seq_io_bench_test.go:52: open: open /tmp/gmountie-test-2264431940/mount/seq_read.bin: input/output error
+BenchmarkSeqRead1MiB-4       	    1680	  12527522 ns/op	  83.70 MB/s	16928000 B/op	    5278 allocs/op
+BenchmarkSeqRead1MiB-4       	    2100	  11228878 ns/op	  93.38 MB/s	16869541 B/op	    5283 allocs/op
+BenchmarkSeqRead16MiB-4      	     151	 157501098 ns/op	 106.52 MB/s	200741157 B/op	   48587 allocs/op
+BenchmarkSeqRead16MiB-4      	     157	 144057249 ns/op	 116.46 MB/s	201483024 B/op	   49294 allocs/op
+BenchmarkSeqRead16MiB-4      	     158	 137319204 ns/op	 122.18 MB/s	197084196 B/op	   48947 allocs/op
+BenchmarkSeqRead64MiB-4      	      42	 633585281 ns/op	 105.92 MB/s	788561947 B/op	  187462 allocs/op
+BenchmarkSeqRead64MiB-4      	      43	 597388898 ns/op	 112.34 MB/s	777478002 B/op	  188428 allocs/op
+BenchmarkSeqRead64MiB-4      	      38	 598228337 ns/op	 112.18 MB/s	782516943 B/op	  182749 allocs/op
+BenchmarkSeqWrite1MiB-4      	    1285	  17990566 ns/op	  58.28 MB/s	 1409684 B/op	    3405 allocs/op
+BenchmarkSeqWrite1MiB-4      	--- FAIL: BenchmarkSeqWrite1MiB-4
+    seq_io_bench_test.go:111: remove: remove /tmp/gmountie-test-740634400/mount/seq_write.bin: input/output error
+BenchmarkSeqWrite1MiB-4      	--- FAIL: BenchmarkSeqWrite1MiB-4
+    seq_io_bench_test.go:111: remove: remove /tmp/gmountie-test-2258245235/mount/seq_write.bin: input/output error
+BenchmarkSeqWrite16MiB-4     	--- FAIL: BenchmarkSeqWrite16MiB-4
+    seq_io_bench_test.go:95: create: open /tmp/gmountie-test-2233071108/mount/seq_write.bin: input/output error
+BenchmarkSeqWrite16MiB-4     	     100	 202866992 ns/op	  82.70 MB/s	18408351 B/op	    9116 allocs/op
+BenchmarkSeqWrite16MiB-4     	--- FAIL: BenchmarkSeqWrite16MiB
+    seq_io_bench_test.go:95: create: open /tmp/gmountie-test-1940214276/mount/seq_write.bin: input/output error
+--- FAIL: BenchmarkSeqWrite16MiB-4
+    seq_io_bench_test.go:95: create: open /tmp/gmountie-test-1940214276/mount/seq_write.bin: input/output error
+BenchmarkSeqWrite64MiB-4     	      30	 890813494 ns/op	  75.33 MB/s	71939642 B/op	   28502 allocs/op
+BenchmarkSeqWrite64MiB-4     	      34	 888441858 ns/op	  75.54 MB/s	72048652 B/op	   27915 allocs/op
+BenchmarkSeqWrite64MiB-4     	      30	 924706605 ns/op	  72.57 MB/s	72274079 B/op	   29107 allocs/op
+FAIL
+exit status 1
+FAIL	gmountie/test/e2e/perf	1119.745s
+FAIL

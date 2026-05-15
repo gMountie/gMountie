@@ -1,0 +1,85 @@
+docs/perf/baseline-2026-05-15-localhost.txt:11: parsing iteration count: invalid syntax
+docs/perf/baseline-2026-05-15-localhost.txt:21: parsing iteration count: invalid syntax
+docs/perf/baseline-2026-05-15-localhost.txt:23: parsing iteration count: invalid syntax
+docs/perf/baseline-2026-05-15-localhost.txt:25: parsing iteration count: invalid syntax
+docs/perf/baseline-2026-05-15-localhost.txt:34: parsing iteration count: invalid syntax
+docs/perf/baseline-2026-05-15-localhost.txt:60: parsing iteration count: invalid syntax
+docs/perf/baseline-2026-05-15-localhost.txt:68: parsing iteration count: invalid syntax
+docs/perf/phase3-final-2026-05-15-localhost.txt:21: parsing iteration count: invalid syntax
+docs/perf/phase3-final-2026-05-15-localhost.txt:31: parsing iteration count: invalid syntax
+docs/perf/phase3-final-2026-05-15-localhost.txt:37: parsing iteration count: invalid syntax
+docs/perf/phase3-final-2026-05-15-localhost.txt:41: parsing iteration count: invalid syntax
+docs/perf/phase3-final-2026-05-15-localhost.txt:47: parsing iteration count: invalid syntax
+docs/perf/phase3-final-2026-05-15-localhost.txt:51: parsing iteration count: invalid syntax
+docs/perf/phase3-final-2026-05-15-localhost.txt:55: parsing iteration count: invalid syntax
+docs/perf/phase3-final-2026-05-15-localhost.txt:57: parsing iteration count: invalid syntax
+docs/perf/phase3-final-2026-05-15-localhost.txt:59: parsing iteration count: invalid syntax
+docs/perf/phase3-final-2026-05-15-localhost.txt:61: parsing iteration count: invalid syntax
+docs/perf/phase3-final-2026-05-15-localhost.txt:64: parsing iteration count: invalid syntax
+docs/perf/phase3-final-2026-05-15-localhost.txt:66: parsing iteration count: invalid syntax
+docs/perf/phase3-final-2026-05-15-localhost.txt:68: parsing iteration count: invalid syntax
+goos: linux
+goarch: amd64
+pkg: gmountie/test/e2e/perf
+cpu: Intel Core Processor (Broadwell, IBRS)
+                  │ docs/perf/baseline-2026-05-15-localhost.txt │ docs/perf/phase3-final-2026-05-15-localhost.txt │
+                  │                   sec/op                    │         sec/op          vs base                 │
+OpenStatClose-4                                    2.374µ ± ∞ ¹             2.824µ ± ∞ ¹  +18.96% (p=0.008 n=5)
+Readdir100-4                                       27.02m ± ∞ ¹             28.71m ± ∞ ¹   +6.25% (p=0.032 n=4+5)
+Lookup-4                                           2.427µ ± ∞ ¹             2.883µ ± ∞ ¹  +18.79% (p=0.008 n=5)
+RandomRead4KiB-4                                   3.691µ ± ∞ ¹           359.705µ ± ∞ ¹        ~ (p=0.133 n=2+4)
+RandomWrite4KiB-4                                  759.0µ ± ∞ ¹             653.7µ ± ∞ ¹  -13.87% (p=0.008 n=5)
+SeqRead1MiB-4                                      9.041m ± ∞ ¹            12.055m ± ∞ ¹  +33.34% (p=0.029 n=4)
+SeqRead16MiB-4                                     116.2m ± ∞ ¹             158.3m ± ∞ ¹  +36.18% (p=0.036 n=5+3)
+SeqRead64MiB-4                                     446.6m ± ∞ ¹             629.1m ± ∞ ¹  +40.87% (p=0.036 n=5+3)
+SeqWrite1MiB-4                                     25.72m ± ∞ ¹             16.96m ± ∞ ¹        ~ (p=0.133 n=4+2)
+SeqWrite16MiB-4                                    321.6m ± ∞ ¹             232.5m ± ∞ ¹        ~ (p=0.400 n=4+1)
+SeqWrite64MiB-4                                   1226.3m ± ∞ ¹             963.5m ± ∞ ¹  -21.43% (p=0.008 n=5)
+geomean                                            3.752m                   5.802m        +54.61%
+¹ need >= 6 samples for confidence interval at level 0.95
+
+                  │ docs/perf/baseline-2026-05-15-localhost.txt │ docs/perf/phase3-final-2026-05-15-localhost.txt │
+                  │                    B/op                     │         B/op           vs base                  │
+OpenStatClose-4                                     256.0 ± ∞ ¹             258.0 ± ∞ ¹    +0.78% (p=0.008 n=5)
+Readdir100-4                                      3.036Mi ± ∞ ¹           3.352Mi ± ∞ ¹   +10.43% (p=0.016 n=4+5)
+Lookup-4                                            272.0 ± ∞ ¹             274.0 ± ∞ ¹    +0.74% (p=0.008 n=5)
+RandomRead4KiB-4                                    208.0 ± ∞ ¹          528186.0 ± ∞ ¹         ~ (p=0.133 n=2+4)
+RandomWrite4KiB-4                                 65.31Ki ± ∞ ¹           59.52Ki ± ∞ ¹    -8.87% (p=0.008 n=5)
+SeqRead1MiB-4                                     2.616Mi ± ∞ ¹          16.103Mi ± ∞ ¹  +515.63% (p=0.029 n=4)
+SeqRead16MiB-4                                    39.09Mi ± ∞ ¹          189.02Mi ± ∞ ¹  +383.61% (p=0.036 n=5+3)
+SeqRead64MiB-4                                    155.4Mi ± ∞ ¹           741.7Mi ± ∞ ¹  +377.26% (p=0.036 n=5+3)
+SeqWrite1MiB-4                                    1.641Mi ± ∞ ¹           1.357Mi ± ∞ ¹         ~ (p=0.133 n=4+2)
+SeqWrite16MiB-4                                   21.49Mi ± ∞ ¹           17.71Mi ± ∞ ¹         ~ (p=0.400 n=4+1)
+SeqWrite64MiB-4                                   82.57Mi ± ∞ ¹           70.26Mi ± ∞ ¹   -14.91% (p=0.008 n=5)
+geomean                                           448.0Ki                 1.335Mi        +205.19%
+¹ need >= 6 samples for confidence interval at level 0.95
+
+                  │ docs/perf/baseline-2026-05-15-localhost.txt │ docs/perf/phase3-final-2026-05-15-localhost.txt │
+                  │                  allocs/op                  │      allocs/op        vs base                   │
+OpenStatClose-4                                     2.000 ± ∞ ¹            2.000 ± ∞ ¹        ~ (p=1.000 n=5)   ²
+Readdir100-4                                       44.17k ± ∞ ¹           44.30k ± ∞ ¹   +0.29% (p=0.016 n=4+5)
+Lookup-4                                            2.000 ± ∞ ¹            2.000 ± ∞ ¹        ~ (p=1.000 n=5)   ²
+RandomRead4KiB-4                                    2.000 ± ∞ ¹          132.000 ± ∞ ¹        ~ (p=0.133 n=2+4)
+RandomWrite4KiB-4                                   887.0 ± ∞ ¹            724.0 ± ∞ ¹  -18.38% (p=0.008 n=5)
+SeqRead1MiB-4                                      6.476k ± ∞ ¹           5.311k ± ∞ ¹  -17.98% (p=0.029 n=4)
+SeqRead16MiB-4                                     63.94k ± ∞ ¹           48.66k ± ∞ ¹  -23.90% (p=0.036 n=5+3)
+SeqRead64MiB-4                                     249.1k ± ∞ ¹           186.4k ± ∞ ¹  -25.17% (p=0.036 n=5+3)
+SeqWrite1MiB-4                                     6.899k ± ∞ ¹           3.413k ± ∞ ¹        ~ (p=0.133 n=4+2)
+SeqWrite16MiB-4                                   65.478k ± ∞ ¹           9.266k ± ∞ ¹        ~ (p=0.400 n=4+1)
+SeqWrite64MiB-4                                   253.02k ± ∞ ¹           28.30k ± ∞ ¹  -88.81% (p=0.008 n=5)
+geomean                                            2.110k                 1.821k        -13.70%
+¹ need >= 6 samples for confidence interval at level 0.95
+² all samples are equal
+
+                  │ docs/perf/baseline-2026-05-15-localhost.txt │ docs/perf/phase3-final-2026-05-15-localhost.txt │
+                  │                     B/s                     │          B/s            vs base                 │
+RandomRead4KiB-4                                1058.35Mi ± ∞ ¹            10.97Mi ± ∞ ¹        ~ (p=0.133 n=2+4)
+RandomWrite4KiB-4                                 5.150Mi ± ∞ ¹            5.980Mi ± ∞ ¹  +16.11% (p=0.008 n=5)
+SeqRead1MiB-4                                    110.62Mi ± ∞ ¹            82.98Mi ± ∞ ¹  -24.99% (p=0.029 n=4)
+SeqRead16MiB-4                                    137.6Mi ± ∞ ¹            101.1Mi ± ∞ ¹  -26.57% (p=0.036 n=5+3)
+SeqRead64MiB-4                                    143.3Mi ± ∞ ¹            101.7Mi ± ∞ ¹  -29.01% (p=0.036 n=5+3)
+SeqWrite1MiB-4                                    38.89Mi ± ∞ ¹            58.98Mi ± ∞ ¹        ~ (p=0.133 n=4+2)
+SeqWrite16MiB-4                                   49.77Mi ± ∞ ¹            68.83Mi ± ∞ ¹        ~ (p=0.400 n=4+1)
+SeqWrite64MiB-4                                   52.19Mi ± ∞ ¹            66.42Mi ± ∞ ¹  +27.28% (p=0.008 n=5)
+geomean                                           76.73Mi                  44.39Mi        -42.14%
+¹ need >= 6 samples for confidence interval at level 0.95
