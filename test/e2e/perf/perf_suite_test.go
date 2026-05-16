@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"testing"
+	"time"
 
 	"gmountie/pkg/utils/log"
 	"gmountie/test/e2e/utils"
@@ -71,6 +72,16 @@ func setupBenchEnv(b *testing.B) *benchEnv {
 	}
 	ctx.MountVolume(volume)
 
+	// FUSE WaitMount returns once the kernel accepts the mount, but in
+	// rapid mount/unmount cycles the very first op against the new mount
+	// sometimes comes back with a pre-cancelled context (kernel teardown
+	// of the previous mount's FUSE session bleeds into the new one). Poke
+	// the mount until a Stat succeeds before handing control to the
+	// bench loop so the b.N timer isn't measuring a startup glitch.
+	if err := waitMountReady(volume.GetMountPath(), 2*time.Second); err != nil {
+		b.Fatalf("mount not ready: %v", err)
+	}
+
 	b.Cleanup(func() {
 		// If ctx.Close fails the FUSE mount may still be live; removing the
 		// mountpoint dir via volume.Close in that state corrupts the next
@@ -90,4 +101,58 @@ func setupBenchEnv(b *testing.B) *benchEnv {
 		mountPoint: volume.GetMountPath(),
 		dataDir:    volume.GetSrcPath(),
 	}
+}
+
+// AssertReady re-probes the mount with the same Stat+Create+Remove cycle
+// waitMountReady runs at setup. Benches that seed data via the
+// server-side dataDir between setupBenchEnv and the timed loop should
+// call this right before b.ResetTimer — heavy seeding can introduce a
+// gap during which the kernel side of the new mount briefly stalls and
+// the first bench-loop FUSE op surfaces EIO. The re-probe absorbs that
+// without contaminating the bench measurement.
+func (e *benchEnv) AssertReady(b *testing.B) {
+	b.Helper()
+	if err := waitMountReady(e.mountPoint, time.Second); err != nil {
+		b.Fatalf("mount not ready post-setup: %v", err)
+	}
+}
+
+// waitMountReady probes the mount with a Stat + Create + Remove cycle
+// until all three succeed in a single pass, retrying with backoff up to
+// budget. The first FUSE op after a rapid mount/unmount cycle
+// occasionally surfaces an EIO from a pre-cancelled op context; running
+// the probe out-of-band keeps that startup glitch off the bench timer.
+// Probing Create + Remove (not just Stat) catches benches whose first
+// timed op writes through different FUSE code paths than a bare Stat.
+func waitMountReady(path string, budget time.Duration) error {
+	deadline := time.Now().Add(budget)
+	delay := 5 * time.Millisecond
+	var lastErr error
+	for {
+		lastErr = probeMountOnce(path)
+		if lastErr == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return lastErr
+		}
+		time.Sleep(delay)
+		if delay < 100*time.Millisecond {
+			delay *= 2
+		}
+	}
+}
+
+func probeMountOnce(mountPath string) error {
+	if _, err := os.Stat(mountPath); err != nil {
+		return err
+	}
+	probe := mountPath + "/.gmountie-probe"
+	if err := os.WriteFile(probe, []byte{0}, 0o600); err != nil {
+		return err
+	}
+	if err := os.Remove(probe); err != nil {
+		return err
+	}
+	return nil
 }

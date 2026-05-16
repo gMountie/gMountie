@@ -17,6 +17,7 @@ func BenchmarkOpenStatClose(b *testing.B) {
 		b.Fatalf("seed: %v", err)
 	}
 	clientPath := filepath.Join(env.mountPoint, "stat.target")
+	env.AssertReady(b)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -46,6 +47,7 @@ func BenchmarkReaddir100(b *testing.B) {
 		}
 	}
 	clientDir := filepath.Join(env.mountPoint, "ls100")
+	env.AssertReady(b)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -71,6 +73,7 @@ func BenchmarkLookup(b *testing.B) {
 		b.Fatalf("seed: %v", err)
 	}
 	clientPath := filepath.Join(env.mountPoint, "lookup.target")
+	env.AssertReady(b)
 
 	b.ReportAllocs()
 	b.ResetTimer()

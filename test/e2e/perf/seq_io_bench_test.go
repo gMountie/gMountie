@@ -38,6 +38,7 @@ func benchmarkSeqRead(b *testing.B, size int) {
 	env := setupBenchEnv(b)
 	seedPath := filepath.Join(env.dataDir, "seq_read.bin")
 	seedFile(b, seedPath, size)
+	env.AssertReady(b)
 
 	clientPath := filepath.Join(env.mountPoint, "seq_read.bin")
 	buf := make([]byte, 256<<10)
@@ -84,6 +85,7 @@ func benchmarkSeqWrite(b *testing.B, size int) {
 	if _, err := io.ReadFull(rand.Reader, payload); err != nil {
 		b.Fatalf("rand payload: %v", err)
 	}
+	env.AssertReady(b)
 
 	b.SetBytes(int64(size))
 	b.ReportAllocs()

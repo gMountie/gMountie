@@ -21,6 +21,7 @@ func BenchmarkRandomRead4KiB(b *testing.B) {
 	env := setupBenchEnv(b)
 	seedPath := filepath.Join(env.dataDir, "rand_read.bin")
 	seedFile(b, seedPath, randomFileSize)
+	env.AssertReady(b)
 
 	f, err := os.Open(filepath.Join(env.mountPoint, "rand_read.bin"))
 	if err != nil {
@@ -67,6 +68,7 @@ func BenchmarkRandomWrite4KiB(b *testing.B) {
 		b.Fatalf("seed: %v", err)
 	}
 	_ = f0.Close()
+	env.AssertReady(b)
 
 	f, err := os.OpenFile(filepath.Join(env.mountPoint, "rand_write.bin"), os.O_RDWR, 0o600)
 	if err != nil {

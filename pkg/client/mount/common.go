@@ -131,9 +131,16 @@ func createFsOptions() *pathfs.PathNodeFsOptions {
 	}
 }
 
-// stopServer stops the server
+// stopServer requests the FUSE kernel to detach the mount, then blocks
+// until the server's Serve goroutine has fully exited. The second step
+// matters when callers spin up a fresh mount on the heels of an unmount
+// (e.g. back-to-back benchmark iterations): Unmount only requests
+// teardown — go-fuse's Serve loop may still be draining the kernel
+// connection. A new fuse.NewServer issued before Serve returns can land
+// the kernel in a state where the very first op on the new mount comes
+// back with a pre-cancelled context. Waiting here closes that window.
 func stopServer(server *fuse.Server) error {
-	return retry.Do(
+	if err := retry.Do(
 		func() error {
 			err := server.Unmount()
 			if err != nil {
@@ -144,5 +151,9 @@ func stopServer(server *fuse.Server) error {
 		},
 		retry.Attempts(3),
 		retry.Delay(5*time.Second),
-	)
+	); err != nil {
+		return err
+	}
+	server.Wait()
+	return nil
 }
