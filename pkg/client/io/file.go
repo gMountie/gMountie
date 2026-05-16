@@ -5,6 +5,7 @@ import (
 	stdio "io"
 	"time"
 
+	grpcclient "gmountie/pkg/client/grpc"
 	"gmountie/pkg/proto"
 	"gmountie/pkg/server/grpc/snappy"
 	"gmountie/pkg/utils/log"
@@ -44,12 +45,12 @@ type GrpcFile struct {
 }
 
 // NewGrpcFile constructs a GrpcFile bound to fd on the named volume.
-// readaheadChunk of 0 disables the readahead path entirely; otherwise
-// readaheadChunk-sized prefetches arm after readaheadThreshold
-// strictly-sequential reads. coalesceBytes of 0 disables per-fd write
-// coalescing; otherwise small contiguous writes accumulate up to
-// coalesceBytes before flushing.
-func NewGrpcFile(fileClient proto.RpcFileClient, volume, path string, fd uint64, ioTimeout time.Duration, sessionID string, readaheadChunk, readaheadThreshold, coalesceBytes int) *GrpcFile {
+// cfg bundles the per-file knobs: ReadaheadChunkBytes of 0 disables the
+// readahead path entirely; otherwise prefetches arm after
+// ReadaheadThreshold strictly-sequential reads. WriteCoalesceBytes of 0
+// disables per-fd write coalescing; otherwise small contiguous writes
+// accumulate up to that threshold before flushing.
+func NewGrpcFile(fileClient proto.RpcFileClient, volume, path string, fd uint64, ioTimeout time.Duration, sessionID string, cfg grpcclient.PerFileConfig) *GrpcFile {
 	ctx, cancel := context.WithCancel(context.Background())
 	f := &GrpcFile{
 		fileClient:        fileClient,
@@ -58,16 +59,16 @@ func NewGrpcFile(fileClient proto.RpcFileClient, volume, path string, fd uint64,
 		fd:                fd,
 		ioTimeout:         ioTimeout,
 		sessionID:         sessionID,
-		coalesceThreshold: coalesceBytes,
+		coalesceThreshold: cfg.WriteCoalesceBytes,
 		lifeCtx:           ctx,
 		lifeCancel:        cancel,
 		File:              nodefs.NewDefaultFile(),
 	}
-	if readaheadChunk > 0 && readaheadThreshold > 0 {
-		f.readahead = NewReadahead(readaheadChunk, readaheadThreshold)
+	if cfg.ReadaheadChunkBytes > 0 && cfg.ReadaheadThreshold > 0 {
+		f.readahead = NewReadahead(cfg.ReadaheadChunkBytes, cfg.ReadaheadThreshold)
 	}
-	if coalesceBytes > 0 {
-		f.coalescer = NewWriteCoalescer(coalesceBytes)
+	if cfg.WriteCoalesceBytes > 0 {
+		f.coalescer = NewWriteCoalescer(cfg.WriteCoalesceBytes)
 	}
 	return f
 }

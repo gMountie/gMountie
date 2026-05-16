@@ -5,6 +5,7 @@
 package grpc
 
 import (
+	"gmountie/pkg/client/grpc"
 	"gmountie/pkg/proto"
 	"time"
 
@@ -339,90 +340,46 @@ func (_c *MockClient_MetaTimeout_Call) RunAndReturn(run func() time.Duration) *M
 	return _c
 }
 
-// ReadaheadChunkBytes provides a mock function for the type MockClient
-func (_mock *MockClient) ReadaheadChunkBytes() int {
+// PerFileConfig provides a mock function for the type MockClient
+func (_mock *MockClient) PerFileConfig() grpc.PerFileConfig {
 	ret := _mock.Called()
 
 	if len(ret) == 0 {
-		panic("no return value specified for ReadaheadChunkBytes")
+		panic("no return value specified for PerFileConfig")
 	}
 
-	var r0 int
-	if returnFunc, ok := ret.Get(0).(func() int); ok {
+	var r0 grpc.PerFileConfig
+	if returnFunc, ok := ret.Get(0).(func() grpc.PerFileConfig); ok {
 		r0 = returnFunc()
 	} else {
-		r0 = ret.Get(0).(int)
+		r0 = ret.Get(0).(grpc.PerFileConfig)
 	}
 	return r0
 }
 
-// MockClient_ReadaheadChunkBytes_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ReadaheadChunkBytes'
-type MockClient_ReadaheadChunkBytes_Call struct {
+// MockClient_PerFileConfig_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'PerFileConfig'
+type MockClient_PerFileConfig_Call struct {
 	*mock.Call
 }
 
-// ReadaheadChunkBytes is a helper method to define mock.On call
-func (_e *MockClient_Expecter) ReadaheadChunkBytes() *MockClient_ReadaheadChunkBytes_Call {
-	return &MockClient_ReadaheadChunkBytes_Call{Call: _e.mock.On("ReadaheadChunkBytes")}
+// PerFileConfig is a helper method to define mock.On call
+func (_e *MockClient_Expecter) PerFileConfig() *MockClient_PerFileConfig_Call {
+	return &MockClient_PerFileConfig_Call{Call: _e.mock.On("PerFileConfig")}
 }
 
-func (_c *MockClient_ReadaheadChunkBytes_Call) Run(run func()) *MockClient_ReadaheadChunkBytes_Call {
+func (_c *MockClient_PerFileConfig_Call) Run(run func()) *MockClient_PerFileConfig_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		run()
 	})
 	return _c
 }
 
-func (_c *MockClient_ReadaheadChunkBytes_Call) Return(n int) *MockClient_ReadaheadChunkBytes_Call {
-	_c.Call.Return(n)
+func (_c *MockClient_PerFileConfig_Call) Return(perFileConfig grpc.PerFileConfig) *MockClient_PerFileConfig_Call {
+	_c.Call.Return(perFileConfig)
 	return _c
 }
 
-func (_c *MockClient_ReadaheadChunkBytes_Call) RunAndReturn(run func() int) *MockClient_ReadaheadChunkBytes_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// ReadaheadThreshold provides a mock function for the type MockClient
-func (_mock *MockClient) ReadaheadThreshold() int {
-	ret := _mock.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for ReadaheadThreshold")
-	}
-
-	var r0 int
-	if returnFunc, ok := ret.Get(0).(func() int); ok {
-		r0 = returnFunc()
-	} else {
-		r0 = ret.Get(0).(int)
-	}
-	return r0
-}
-
-// MockClient_ReadaheadThreshold_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ReadaheadThreshold'
-type MockClient_ReadaheadThreshold_Call struct {
-	*mock.Call
-}
-
-// ReadaheadThreshold is a helper method to define mock.On call
-func (_e *MockClient_Expecter) ReadaheadThreshold() *MockClient_ReadaheadThreshold_Call {
-	return &MockClient_ReadaheadThreshold_Call{Call: _e.mock.On("ReadaheadThreshold")}
-}
-
-func (_c *MockClient_ReadaheadThreshold_Call) Run(run func()) *MockClient_ReadaheadThreshold_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockClient_ReadaheadThreshold_Call) Return(n int) *MockClient_ReadaheadThreshold_Call {
-	_c.Call.Return(n)
-	return _c
-}
-
-func (_c *MockClient_ReadaheadThreshold_Call) RunAndReturn(run func() int) *MockClient_ReadaheadThreshold_Call {
+func (_c *MockClient_PerFileConfig_Call) RunAndReturn(run func() grpc.PerFileConfig) *MockClient_PerFileConfig_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -559,50 +516,6 @@ func (_c *MockClient_Volume_Call) Return(volumeServiceClient proto.VolumeService
 }
 
 func (_c *MockClient_Volume_Call) RunAndReturn(run func() proto.VolumeServiceClient) *MockClient_Volume_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// WriteCoalesceBytes provides a mock function for the type MockClient
-func (_mock *MockClient) WriteCoalesceBytes() int {
-	ret := _mock.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for WriteCoalesceBytes")
-	}
-
-	var r0 int
-	if returnFunc, ok := ret.Get(0).(func() int); ok {
-		r0 = returnFunc()
-	} else {
-		r0 = ret.Get(0).(int)
-	}
-	return r0
-}
-
-// MockClient_WriteCoalesceBytes_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'WriteCoalesceBytes'
-type MockClient_WriteCoalesceBytes_Call struct {
-	*mock.Call
-}
-
-// WriteCoalesceBytes is a helper method to define mock.On call
-func (_e *MockClient_Expecter) WriteCoalesceBytes() *MockClient_WriteCoalesceBytes_Call {
-	return &MockClient_WriteCoalesceBytes_Call{Call: _e.mock.On("WriteCoalesceBytes")}
-}
-
-func (_c *MockClient_WriteCoalesceBytes_Call) Run(run func()) *MockClient_WriteCoalesceBytes_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockClient_WriteCoalesceBytes_Call) Return(n int) *MockClient_WriteCoalesceBytes_Call {
-	_c.Call.Return(n)
-	return _c
-}
-
-func (_c *MockClient_WriteCoalesceBytes_Call) RunAndReturn(run func() int) *MockClient_WriteCoalesceBytes_Call {
 	_c.Call.Return(run)
 	return _c
 }

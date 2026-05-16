@@ -37,14 +37,25 @@ type Client interface {
 	IOTimeout() time.Duration
 	// SessionID returns the server-assigned session id obtained during Connect.
 	SessionID() string
-	// ReadaheadChunkBytes is the prefetch fetch size. Zero disables readahead.
-	ReadaheadChunkBytes() int
-	// ReadaheadThreshold is the sequential-read count that arms a prefetch.
-	ReadaheadThreshold() int
+	// PerFileConfig returns the runtime knobs each newly-opened GrpcFile
+	// inherits from the Client. Bundling them keeps the interface from
+	// widening on every new per-file feature.
+	PerFileConfig() PerFileConfig
+}
+
+// PerFileConfig bundles the runtime tuning knobs that each newly-opened
+// GrpcFile inherits from the Client. Zero values mean "feature off".
+type PerFileConfig struct {
+	// ReadaheadChunkBytes is the prefetch fetch size. Zero disables
+	// readahead on the opened file.
+	ReadaheadChunkBytes int
+	// ReadaheadThreshold is the number of strictly-sequential reads
+	// required before the client arms a prefetch.
+	ReadaheadThreshold int
 	// WriteCoalesceBytes is the per-fd small-write coalescing threshold.
-	// Zero disables coalescing; small contiguous writes pass straight
+	// Zero disables coalescing; small contiguous writes flow straight
 	// through to the streaming Write RPC.
-	WriteCoalesceBytes() int
+	WriteCoalesceBytes int
 }
 
 // ClientImpl is a struct that holds the gRPC ClientImpl
@@ -61,9 +72,7 @@ type ClientImpl struct {
 	handshake         *SessionHandshake
 	metaTimeout       time.Duration
 	ioTimeout         time.Duration
-	readaheadChunk    int
-	readaheadThresh   int
-	writeCoalesce     int
+	perFile           PerFileConfig
 }
 
 // -------------------- ClientImpl Options --------------------
@@ -107,8 +116,8 @@ func WithTimeouts(meta, io time.Duration) ClientOption {
 // GrpcFile instances. chunkBytes of 0 disables readahead.
 func WithReadahead(chunkBytes, threshold int) ClientOption {
 	return func(c *ClientImpl) {
-		c.readaheadChunk = chunkBytes
-		c.readaheadThresh = threshold
+		c.perFile.ReadaheadChunkBytes = chunkBytes
+		c.perFile.ReadaheadThreshold = threshold
 	}
 }
 
@@ -116,7 +125,7 @@ func WithReadahead(chunkBytes, threshold int) ClientOption {
 // when opening GrpcFile instances. bytes of 0 disables coalescing.
 func WithWriteCoalesce(bytes int) ClientOption {
 	return func(c *ClientImpl) {
-		c.writeCoalesce = bytes
+		c.perFile.WriteCoalesceBytes = bytes
 	}
 }
 
@@ -125,12 +134,14 @@ func WithWriteCoalesce(bytes int) ClientOption {
 // NewClient creates a new gRPC ClientImpl
 func NewClient(endpoint string, options ...ClientOption) (Client, error) {
 	c := ClientImpl{
-		endpoint:        endpoint,
-		metaTimeout:     5 * time.Second,
-		ioTimeout:       30 * time.Second,
-		readaheadChunk:  64 << 10,
-		readaheadThresh: 3,
-		writeCoalesce:   1 << 20,
+		endpoint:    endpoint,
+		metaTimeout: 5 * time.Second,
+		ioTimeout:   30 * time.Second,
+		perFile: PerFileConfig{
+			ReadaheadChunkBytes: 64 << 10,
+			ReadaheadThreshold:  3,
+			WriteCoalesceBytes:  1 << 20,
+		},
 	}
 	for _, opt := range options {
 		opt(&c)
@@ -211,22 +222,10 @@ func (c *ClientImpl) IOTimeout() time.Duration {
 	return c.ioTimeout
 }
 
-// ReadaheadChunkBytes returns the configured readahead fetch size.
-// Zero disables readahead on opened files.
-func (c *ClientImpl) ReadaheadChunkBytes() int {
-	return c.readaheadChunk
-}
-
-// ReadaheadThreshold returns the number of strictly-sequential reads
-// required before the client arms a prefetch.
-func (c *ClientImpl) ReadaheadThreshold() int {
-	return c.readaheadThresh
-}
-
-// WriteCoalesceBytes returns the per-fd small-write coalescing threshold.
-// Zero disables coalescing on opened files.
-func (c *ClientImpl) WriteCoalesceBytes() int {
-	return c.writeCoalesce
+// PerFileConfig returns the bundled per-file knobs newly-opened GrpcFile
+// instances inherit from this Client.
+func (c *ClientImpl) PerFileConfig() PerFileConfig {
+	return c.perFile
 }
 
 // getInterceptors returns the ClientImpl interceptors, including any

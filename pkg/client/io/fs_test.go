@@ -2,7 +2,8 @@ package io
 
 import (
 	"context"
-	"gmountie/internal/mocks/pkg/client/grpc"
+	grpc "gmountie/internal/mocks/pkg/client/grpc"
+	grpcclient "gmountie/pkg/client/grpc"
 	mockProto "gmountie/internal/mocks/pkg/proto"
 	"gmountie/pkg/proto"
 	"testing"
@@ -32,9 +33,7 @@ func (s *LocalFileSystemTestSuite) SetupTest() {
 	s.client.EXPECT().MetaTimeout().Return(2 * time.Second).Maybe()
 	s.client.EXPECT().IOTimeout().Return(30 * time.Second).Maybe()
 	s.client.EXPECT().SessionID().Return("test-session").Maybe()
-	s.client.EXPECT().ReadaheadChunkBytes().Return(0).Maybe()
-	s.client.EXPECT().ReadaheadThreshold().Return(0).Maybe()
-	s.client.EXPECT().WriteCoalesceBytes().Return(0).Maybe()
+	s.client.EXPECT().PerFileConfig().Return(grpcclient.PerFileConfig{}).Maybe()
 	s.fs = NewLocalFileSystem(s.client, "testVolume").(*LocalFileSystem)
 }
 
