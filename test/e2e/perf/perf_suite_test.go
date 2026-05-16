@@ -52,13 +52,21 @@ type benchEnv struct {
 
 // setupBenchEnv spins up a server + mount and registers cleanup. The volume is
 // created empty (no random files) so benchmarks can seed deterministic data.
+// The transport is bufconn (in-process) by default. Set GMOUNTIE_BENCH_TCP=1
+// to swap to a real loopback TCP listener so tc netem shaping on lo
+// affects the gRPC path — used by `task perf:bench:tcp` for the F4 harness
+// that the Phase 3 final-review flagged as a follow-up.
 func setupBenchEnv(b *testing.B) *benchEnv {
 	b.Helper()
 
-	ctx, err := utils.NewAppTestingContext(
+	opts := []utils.TestOptions{
 		utils.WithBasicAuth("test", "test"),
 		utils.WithRandomTestVolume(false),
-	)
+	}
+	if os.Getenv("GMOUNTIE_BENCH_TCP") != "" {
+		opts = append(opts, utils.WithTCPTransport())
+	}
+	ctx, err := utils.NewAppTestingContext(opts...)
 	if err != nil {
 		b.Fatalf("NewAppTestingContext: %v", err)
 	}
@@ -78,7 +86,7 @@ func setupBenchEnv(b *testing.B) *benchEnv {
 	// of the previous mount's FUSE session bleeds into the new one). Poke
 	// the mount until a Stat succeeds before handing control to the
 	// bench loop so the b.N timer isn't measuring a startup glitch.
-	if err := waitMountReady(volume.GetMountPath(), 2*time.Second); err != nil {
+	if err := waitMountReady(volume.GetMountPath(), readyBudget()); err != nil {
 		b.Fatalf("mount not ready: %v", err)
 	}
 
@@ -112,9 +120,20 @@ func setupBenchEnv(b *testing.B) *benchEnv {
 // without contaminating the bench measurement.
 func (e *benchEnv) AssertReady(b *testing.B) {
 	b.Helper()
-	if err := waitMountReady(e.mountPoint, time.Second); err != nil {
+	if err := waitMountReady(e.mountPoint, readyBudget()); err != nil {
 		b.Fatalf("mount not ready post-setup: %v", err)
 	}
+}
+
+// readyBudget returns how long the probe is willing to wait. The TCP
+// transport variant runs under tc netem shaping that can add tens of
+// milliseconds per RPC, so the probe (which issues several FUSE round-
+// trips) needs more headroom than the bufconn path.
+func readyBudget() time.Duration {
+	if os.Getenv("GMOUNTIE_BENCH_TCP") != "" {
+		return 10 * time.Second
+	}
+	return 2 * time.Second
 }
 
 // waitMountReady probes the mount with a Stat + Create + Remove cycle

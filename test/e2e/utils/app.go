@@ -29,8 +29,15 @@ type AppTestingContext struct {
 	clientOptions []grpcClient.ClientOption
 	// serverOptions is the server options.
 	serverOptions []grpcServer.ServerOption
-	// listener is the listener for the gRPC server.
+	// useTCP toggles between the default in-memory bufconn transport
+	// and a real loopback TCP listener. TCP is enabled via
+	// WithTCPTransport so perf benches can exercise tc netem shaping.
+	useTCP bool
+	// listener is the in-memory bufconn listener used in the default
+	// configuration; nil when useTCP is set.
 	listener *bufconn.Listener
+	// tcpListener is the TCP listener used when useTCP is set.
+	tcpListener net.Listener
 	// server is the gRPC server.
 	server *grpcServer.Server
 	// client is the gRPC client.
@@ -65,6 +72,18 @@ func WithBasicAuth(username, password string) TestOptions {
 func WithServerStreamInterceptors(interceptors ...grpc.StreamServerInterceptor) TestOptions {
 	return func(c *AppTestingContext) {
 		c.serverOptions = append(c.serverOptions, grpcServer.WithExtraStreamInterceptors(interceptors...))
+	}
+}
+
+// WithTCPTransport switches the test harness from the default
+// bufconn (in-process pipe) transport to a real loopback TCP
+// listener on 127.0.0.1:0. Perf benches set this so tc netem
+// shaping on lo actually affects the gRPC path; bufconn never
+// touches lo so it cannot be shaped. Functional tests can
+// usually leave this off.
+func WithTCPTransport() TestOptions {
+	return func(c *AppTestingContext) {
+		c.useTCP = true
 	}
 }
 
@@ -105,23 +124,18 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 	}
 	// Create a new server app context
 	appCtx.serverCtx = server.NewServerAppContext(&appCtx.cfg)
-	// Create listener
-	appCtx.listener = bufconn.Listen(1024 * 1024)
-	// Create a new server
-	appCtx.serverOptions = append(appCtx.serverOptions, grpcServer.WithListener(appCtx.listener))
+
+	dialTarget, err := appCtx.setupTransport()
+	if err != nil {
+		return nil, err
+	}
 	appCtx.server = grpcServer.NewServer(
 		&appCtx.cfg,
 		appCtx.serverCtx.AuthService,
 		appCtx.serverCtx.GetGrpcServices(),
 		appCtx.serverOptions...,
 	)
-	// Create a new client
-	appCtx.clientOptions = append(appCtx.clientOptions, grpcClient.WithDialOptions([]grpc.DialOption{
-		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
-			return appCtx.listener.Dial()
-		}),
-	}))
-	c, err := grpcClient.NewClient("passthrough://bufnet", appCtx.clientOptions...)
+	c, err := grpcClient.NewClient(dialTarget, appCtx.clientOptions...)
 	if err != nil {
 		return nil, err
 	}
@@ -137,6 +151,34 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 // GetServerApp returns the server app context.
 func (c *AppTestingContext) GetServerApp() *server.AppContext {
 	return c.serverCtx
+}
+
+// setupTransport wires the listener + dial options based on useTCP and
+// returns the dial target string for grpcClient.NewClient. The default
+// transport is bufconn (in-memory pipe) so existing tests run without
+// network sockets; WithTCPTransport switches to a real 127.0.0.1
+// listener so loopback shaping (tc netem) takes effect on the gRPC
+// path.
+func (c *AppTestingContext) setupTransport() (string, error) {
+	if c.useTCP {
+		lis, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return "", errors.Wrap(err, "test harness TCP listener")
+		}
+		c.tcpListener = lis
+		c.serverOptions = append(c.serverOptions, grpcServer.WithListener(lis))
+		// passthrough:///TARGET (three slashes; passthrough resolver
+		// treats whatever follows as the literal dial address).
+		return "passthrough:///" + lis.Addr().String(), nil
+	}
+	c.listener = bufconn.Listen(1024 * 1024)
+	c.serverOptions = append(c.serverOptions, grpcServer.WithListener(c.listener))
+	c.clientOptions = append(c.clientOptions, grpcClient.WithDialOptions([]grpc.DialOption{
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+			return c.listener.Dial()
+		}),
+	}))
+	return "passthrough://bufnet", nil
 }
 
 // GetClientApp returns the client app context.
