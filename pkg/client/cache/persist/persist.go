@@ -83,6 +83,7 @@ func (p *Persist) Close() error {
 // Root returns the cache directory passed to Open.
 func (p *Persist) Root() string { return p.root }
 
-// DB exposes the bbolt handle for sibling files in this package only.
-// Other packages compose via the typed methods (data_idx, kv, etc.).
-func (p *Persist) DB() *bolt.DB { return p.db }
+// boltDB returns the bbolt handle for sibling files in this package.
+// External packages compose via the typed methods (data_idx, kv, etc.)
+// added in later Sub-spec C tasks.
+func (p *Persist) boltDB() *bolt.DB { return p.db }
