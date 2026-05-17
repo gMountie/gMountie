@@ -14,6 +14,10 @@ packages:
   gmountie/pkg/client/grpc:
     config:
       all: true
+  gmountie/pkg/client/io:
+    interfaces:
+      FileSystemBackend: {}
+      FileHandle: {}
   gmountie/pkg/proto:
     config:
       all: true
