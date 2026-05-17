@@ -44,6 +44,10 @@ type AppTestingContext struct {
 	client grpcClient.Client
 	// volumes are the test volumes.
 	volumes []*TestVolume
+	// cacheCfg is the client-side cache configuration. Defaulted to
+	// the package-level disabled defaults in NewAppTestingContext;
+	// WithCache overrides this before NewAppContext sees it.
+	cacheCfg *clientConfig.CacheConfig
 }
 
 // TestOptions is a type that defines the TestOptions function.
@@ -87,6 +91,17 @@ func WithTCPTransport() TestOptions {
 	}
 }
 
+// WithCache enables and configures the client-side cache decorator for
+// this test harness. Mirrors how the operator-facing CacheConfig is
+// wired through SingleVolumeMounter at mount time; tests opt in by
+// passing this option, otherwise the harness keeps the cache disabled
+// (matching the production default).
+func WithCache(cfg clientConfig.CacheConfig) TestOptions {
+	return func(c *AppTestingContext) {
+		c.cacheCfg = &cfg
+	}
+}
+
 // WithRandomTestVolume creates random test volume.
 func WithRandomTestVolume(randomfiles bool) TestOptions {
 	return func(c *AppTestingContext) {
@@ -118,6 +133,16 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 			PermitWithoutStream: config.DefaultKeepalivePermitWithoutStream,
 		},
 	}
+	// Default to the disabled-cache config; WithCache may override
+	// before NewAppContext is called below.
+	appCtx.cacheCfg = &clientConfig.CacheConfig{
+		Enabled:        clientConfig.DefaultCacheEnabled,
+		MaxSizeBytes:   clientConfig.DefaultCacheMaxSizeBytes,
+		ChunkSizeBytes: clientConfig.DefaultCacheChunkSizeBytes,
+		AttrTTL:        clientConfig.DefaultCacheAttrTTL,
+		DirTTL:         clientConfig.DefaultCacheDirTTL,
+		NegativeTTL:    clientConfig.DefaultCacheNegativeTTL,
+	}
 	// Apply the options
 	for _, opt := range options {
 		opt(appCtx)
@@ -144,14 +169,7 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 		MaxWriteBytes:  clientConfig.DefaultFUSEMaxWriteBytes,
 		MaxBackground:  clientConfig.DefaultFUSEMaxBackground,
 		WritebackCache: clientConfig.DefaultFUSEWritebackCache,
-	}, &clientConfig.CacheConfig{
-		Enabled:        clientConfig.DefaultCacheEnabled,
-		MaxSizeBytes:   clientConfig.DefaultCacheMaxSizeBytes,
-		ChunkSizeBytes: clientConfig.DefaultCacheChunkSizeBytes,
-		AttrTTL:        clientConfig.DefaultCacheAttrTTL,
-		DirTTL:         clientConfig.DefaultCacheDirTTL,
-		NegativeTTL:    clientConfig.DefaultCacheNegativeTTL,
-	})
+	}, appCtx.cacheCfg)
 	return appCtx, nil
 }
 
