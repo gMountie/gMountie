@@ -164,6 +164,75 @@ fuse:
 	s.Require().Error(err)
 }
 
+// TestCacheDefaults verifies that omitting the cache: section yields
+// the documented Phase 4 Sub-spec B defaults.
+func (s *ConfigTestSuite) TestCacheDefaults() {
+	conf := `
+server:
+  address: 127.0.0.1
+  port: 9449
+auth:
+  type: none
+`
+	result, err := LoadConfigFromString(conf)
+	s.Require().NoError(err)
+	s.Require().NotNil(result.Cache)
+	s.Assert().Equal(DefaultCacheEnabled, result.Cache.Enabled)
+	s.Assert().Equal(DefaultCacheMaxSizeBytes, result.Cache.MaxSizeBytes)
+	s.Assert().Equal(DefaultCacheChunkSizeBytes, result.Cache.ChunkSizeBytes)
+	s.Assert().Equal(DefaultCacheAttrTTL, result.Cache.AttrTTL)
+	s.Assert().Equal(DefaultCacheDirTTL, result.Cache.DirTTL)
+	s.Assert().Equal(DefaultCacheNegativeTTL, result.Cache.NegativeTTL)
+}
+
+// TestCacheEnvOverride verifies GMOUNTIE_CACHE_* env vars reach
+// cfg.Cache.* when the YAML omits the cache block. Confirms the nested
+// BindEnv wiring works on the client side.
+func (s *ConfigTestSuite) TestCacheEnvOverride() {
+	s.T().Setenv("GMOUNTIE_CACHE_ENABLED", "true")
+	s.T().Setenv("GMOUNTIE_CACHE_MAX_SIZE_BYTES", "2147483648")
+	s.T().Setenv("GMOUNTIE_CACHE_ATTR_TTL", "10s")
+
+	result, err := LoadConfigFromString(s.minimalConf)
+	s.Require().NoError(err)
+	s.Require().NotNil(result.Cache)
+	s.Assert().True(result.Cache.Enabled)
+	s.Assert().Equal(1<<31, result.Cache.MaxSizeBytes)
+	s.Assert().Equal(10*time.Second, result.Cache.AttrTTL)
+	// Untouched keys keep defaults.
+	s.Assert().Equal(DefaultCacheChunkSizeBytes, result.Cache.ChunkSizeBytes)
+	s.Assert().Equal(DefaultCacheDirTTL, result.Cache.DirTTL)
+	s.Assert().Equal(DefaultCacheNegativeTTL, result.Cache.NegativeTTL)
+}
+
+// TestCacheExplicitYAML verifies a fully populated cache: block round-trips
+// through the duration decode hook and overrides every default.
+func (s *ConfigTestSuite) TestCacheExplicitYAML() {
+	conf := `
+server:
+  address: 127.0.0.1
+  port: 9449
+auth:
+  type: none
+cache:
+  enabled: true
+  max_size_bytes: 536870912
+  chunk_size_bytes: 524288
+  attr_ttl: 1m
+  dir_ttl: 30s
+  negative_ttl: 500ms
+`
+	result, err := LoadConfigFromString(conf)
+	s.Require().NoError(err)
+	s.Require().NotNil(result.Cache)
+	s.Assert().True(result.Cache.Enabled)
+	s.Assert().Equal(512<<20, result.Cache.MaxSizeBytes)
+	s.Assert().Equal(512<<10, result.Cache.ChunkSizeBytes)
+	s.Assert().Equal(time.Minute, result.Cache.AttrTTL)
+	s.Assert().Equal(30*time.Second, result.Cache.DirTTL)
+	s.Assert().Equal(500*time.Millisecond, result.Cache.NegativeTTL)
+}
+
 // TestParse_LogEnvBindings verifies GMOUNTIE_LOG_LEVEL / GMOUNTIE_LOG_FORMAT
 // reach cfg.Log.* on the client side, mirroring the server-side asymmetry.
 func (s *ConfigTestSuite) TestParse_LogEnvBindings() {

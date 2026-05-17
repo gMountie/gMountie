@@ -27,6 +27,10 @@ type Config struct {
 	Rpc *RpcConfig `validate:"required" yaml:"rpc,omitempty"`
 	// FUSE is the FUSE-kernel-side tuning configuration (mount options).
 	FUSE *FUSEConfig `validate:"required" yaml:"fuse,omitempty"`
+	// Cache is the client-side cache configuration. Sub-spec B of Phase 4
+	// adds an in-memory cache layer decorating FileSystemBackend; disabled
+	// by default.
+	Cache *CacheConfig `validate:"required" yaml:"cache,omitempty"`
 	// Log is the optional logger configuration. Nil keeps the
 	// init-time auto-detected defaults.
 	Log *log.LogConfig `yaml:"log,omitempty"`
@@ -126,6 +130,42 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	// Parse fuse config (defaults if absent)
 	if cfg, err := NewFUSEConfig(v.Sub("fuse")); err == nil {
 		result.FUSE = cfg
+	} else {
+		return nil, err
+	}
+
+	// Parse cache config (defaults if absent). Env-var overrides for
+	// nested keys require explicit BindEnv on the parent viper (see
+	// comment above re AutomaticEnv vs Sub); the values are then mirrored
+	// into the sub-tree before sub-unmarshal.
+	for _, key := range []string{
+		"cache.enabled",
+		"cache.max_size_bytes",
+		"cache.chunk_size_bytes",
+		"cache.attr_ttl",
+		"cache.dir_ttl",
+		"cache.negative_ttl",
+	} {
+		_ = v.BindEnv(key)
+	}
+	cacheSub := v.Sub("cache")
+	if cacheSub == nil {
+		cacheSub = viper.New()
+	}
+	for _, key := range []string{
+		"enabled",
+		"max_size_bytes",
+		"chunk_size_bytes",
+		"attr_ttl",
+		"dir_ttl",
+		"negative_ttl",
+	} {
+		if v.IsSet("cache." + key) {
+			cacheSub.Set(key, v.Get("cache."+key))
+		}
+	}
+	if cfg, err := NewCacheConfig(cacheSub); err == nil {
+		result.Cache = cfg
 	} else {
 		return nil, err
 	}
