@@ -118,6 +118,26 @@ func WithRandomTestVolume(randomfiles bool) TestOptions {
 	}
 }
 
+// WithExistingVolume adds a volume with a pinned name and an existing
+// server-side source directory. Both name and srcPath are caller-owned
+// (e.g. via t.TempDir()) so that multiple AppTestingContext instances can
+// point at the same backing data and the same per-volume cache directory
+// (cache.Path/<name>). Each context gets its own mount subdirectory.
+// Use this in restart and dual-mount tests instead of WithRandomTestVolume.
+func WithExistingVolume(name, srcPath string) TestOptions {
+	return func(c *AppTestingContext) {
+		v, err := NewTestVolumeWithExistingSrc(name, srcPath)
+		if err != nil {
+			panic(err)
+		}
+		c.volumes = append(c.volumes, v)
+		c.cfg.Volumes = append(c.cfg.Volumes, &config.VolumeConfig{
+			Name: v.Name,
+			Path: v.GetSrcPath(),
+		})
+	}
+}
+
 // NewAppTestingContext creates a new AppTestingContext.
 func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 	appCtx := &AppTestingContext{}
@@ -222,17 +242,23 @@ func (c *AppTestingContext) GetVolumes() []*TestVolume {
 	return c.volumes
 }
 
-// MountVolume mounts the test volume.
-func (c *AppTestingContext) MountVolume(v *TestVolume) {
-	wait := make(chan struct{})
+// MountVolumeErr mounts the test volume and returns any error. Callers
+// that want test-fatal behaviour on error should use MountVolume instead.
+func (c *AppTestingContext) MountVolumeErr(v *TestVolume) error {
+	type result struct{ err error }
+	ch := make(chan result, 1)
 	go func() {
-		err := c.clientCtx.SingleVolumeMounter.Mount(v.Name, v.GetMountPath())
-		if err != nil {
-			panic(err)
-		}
-		close(wait)
+		ch <- result{err: c.clientCtx.SingleVolumeMounter.Mount(v.Name, v.GetMountPath())}
 	}()
-	<-wait
+	r := <-ch
+	return r.err
+}
+
+// MountVolume mounts the test volume and panics on error.
+func (c *AppTestingContext) MountVolume(v *TestVolume) {
+	if err := c.MountVolumeErr(v); err != nil {
+		panic(err)
+	}
 }
 
 // UnmountVolume unmounts the test volume.
