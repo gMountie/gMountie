@@ -46,6 +46,20 @@ Client (Your Computer) <-> gRPC <-> Server (Remote System)
 FUSE Mount                          Real Filesystem
 ```
 
+## Naming & Branding 📛
+
+The project name is written **`gMountie`** — lowercase `g`, capital `M`. The `g` is for **gRPC**, the wire protocol the client and server speak.
+
+Canonical forms across the project:
+
+| Form | Use for |
+| --- | --- |
+| `gMountie` | Prose, docs, marketing, README, CLI help strings |
+| `gmountie` | Go module path, binary name, package names, file/repo names, URLs |
+| `GMOUNTIE_` | Environment variable prefix |
+
+Please avoid `GMountie`, `Gmountie`, or other variants when contributing.
+
 ## Contributing 🤝
 
 We love contributions! Whether it's:
