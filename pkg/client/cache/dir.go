@@ -24,7 +24,7 @@ func newDirCache(acct *accountant, dirTTL time.Duration, now func() time.Time) *
 	if now == nil {
 		now = time.Now
 	}
-	return &dirCache{st: newStore(acct), now: now, dirTTL: dirTTL}
+	return &dirCache{st: newStore(acct, "dir"), now: now, dirTTL: dirTTL}
 }
 
 // get returns (entries, true) on a fresh hit, (nil, false) on miss or
@@ -97,6 +97,6 @@ func newDirCacheWithPersist(acct *accountant, dirTTL time.Duration, now func() t
 		_ = p.PutDirBytes(key, buf.Bytes())
 	}
 	remover := func(key string) { _ = p.DeleteDirBytes(key) }
-	c.st = newStoreWithPersist(acct, loader, putter, remover)
+	c.st = newStoreWithPersist(acct, loader, putter, remover, "dir")
 	return c
 }

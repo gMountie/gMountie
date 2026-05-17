@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"gmountie/pkg/client/cache/persist"
+	"gmountie/pkg/client/metrics"
 )
 
 // dataCache stores file content as fixed-size chunks keyed by
@@ -19,7 +20,7 @@ type dataCache struct {
 }
 
 func newDataCache(acct *accountant, chunkSizeBytes int) *dataCache {
-	return &dataCache{st: newStore(acct), chunkSizeBytes: chunkSizeBytes}
+	return &dataCache{st: newStore(acct, "data"), chunkSizeBytes: chunkSizeBytes}
 }
 
 // ChunkSize returns the configured chunk size in bytes.
@@ -110,16 +111,19 @@ func newDataCacheWithPersist(acct *accountant, chunkSizeBytes int, p *persist.Pe
 			return
 		}
 		data := value.([]byte)
-		hash, _, err := p.WriteChunk(data)
+		hash, dedup, err := p.WriteChunk(data)
 		if err != nil {
 			return
+		}
+		if dedup {
+			metrics.CacheDedupeHit()
 		}
 		_ = p.PutChunkRef(path, idx, persist.ChunkRef{Hash: hash, Size: uint32(len(data))})
 	}
 	// Per-key Remover is a no-op for data: the bulk persistCleaner
 	// drives index+refcount invalidation in one cursor walk. The
 	// memory tier's per-key remove is still cheap (map delete).
-	c.st = newStoreWithPersist(acct, loader, putter, func(string) {})
+	c.st = newStoreWithPersist(acct, loader, putter, func(string) {}, "data")
 	c.persistCleaner = func(path string) { _ = p.InvalidatePathChunks(path) }
 	return c
 }

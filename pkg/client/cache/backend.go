@@ -12,6 +12,7 @@ import (
 
 	"gmountie/pkg/client/cache/persist"
 	"gmountie/pkg/client/io"
+	"gmountie/pkg/client/metrics"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
@@ -53,6 +54,7 @@ func (b *cachedBackend) Stat(ctx context.Context, p string) (*io.Attr, fuse.Stat
 		}
 		return nil, fuse.ENOENT
 	}
+	metrics.CacheMiss("attr")
 	a, st := b.inner.Stat(ctx, p)
 	if st == fuse.OK && a != nil {
 		b.attr.putPositive(p, a)
@@ -70,6 +72,7 @@ func (b *cachedBackend) Lookup(ctx context.Context, parent, name string) (*io.At
 		}
 		return nil, fuse.ENOENT
 	}
+	metrics.CacheMiss("attr")
 	a, st := b.inner.Lookup(ctx, parent, name)
 	if st == fuse.OK && a != nil {
 		b.attr.putPositive(full, a)
@@ -83,6 +86,7 @@ func (b *cachedBackend) ListDir(ctx context.Context, p string) ([]io.DirEntry, f
 	if entries, hit := b.dir.get(p); hit {
 		return entries, fuse.OK
 	}
+	metrics.CacheMiss("dir")
 	entries, st := b.inner.ListDir(ctx, p)
 	if st == fuse.OK {
 		b.dir.put(p, entries)
@@ -131,6 +135,7 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 			continue
 		}
 		// Miss: fetch this chunk from inner. Read full-chunk-aligned.
+		metrics.CacheMiss("data")
 		buf := make([]byte, chunkSize)
 		n, st := b.inner.Read(ctx, ch.inner, chunkStart, buf)
 		if st != fuse.OK {

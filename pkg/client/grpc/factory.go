@@ -61,6 +61,9 @@ func NewClientFromConfig(cfg *config.Config) (Client, error) {
 		return nil, errors.Wrap(err, "register client metrics")
 	}
 	metrics.SetRetryHook(m.RetryInc)
+	metrics.SetCacheHitHook(m.CacheHitInc)
+	metrics.SetCacheMissHook(m.CacheMissInc)
+	metrics.SetCacheDedupeHitHook(m.CacheDedupeHitInc)
 	opts = append(opts, WithUnaryInterceptors(UnaryClientInFlightInterceptor(m)))
 
 	switch c := authConfig.(type) {

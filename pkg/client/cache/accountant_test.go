@@ -14,7 +14,7 @@ type AccountantTestSuite struct {
 // entry is evicted when the cap is exceeded.
 func (s *AccountantTestSuite) TestSingleStoreEvictsLRU() {
 	acct := newAccountant(30)
-	st := newStore(acct)
+	st := newStore(acct, "attr")
 	st.put("a", "va", 10) // inserts: [a]
 	st.put("b", "vb", 10) // [b, a]
 	st.put("c", "vc", 10) // [c, b, a]; used=30, at cap
@@ -30,7 +30,7 @@ func (s *AccountantTestSuite) TestSingleStoreEvictsLRU() {
 // entry to MRU and saves it from imminent eviction.
 func (s *AccountantTestSuite) TestTouchProtectsFromEviction() {
 	acct := newAccountant(30)
-	st := newStore(acct)
+	st := newStore(acct, "attr")
 	st.put("a", "va", 10)
 	st.put("b", "vb", 10)
 	st.put("c", "vc", 10)
@@ -46,8 +46,8 @@ func (s *AccountantTestSuite) TestTouchProtectsFromEviction() {
 // across all registered stores, not just the inserting one.
 func (s *AccountantTestSuite) TestCrossStoreEvictsGloballyLRU() {
 	acct := newAccountant(30)
-	stA := newStore(acct)
-	stB := newStore(acct)
+	stA := newStore(acct, "attr")
+	stB := newStore(acct, "dir")
 	stA.put("a1", "v", 10) // global LRU
 	stB.put("b1", "v", 10)
 	stB.put("b2", "v", 10) // used=30; a1 is global LRU
@@ -61,7 +61,7 @@ func (s *AccountantTestSuite) TestCrossStoreEvictsGloballyLRU() {
 // TestZeroBudgetDisablesEviction verifies that budget<=0 means "no cap".
 func (s *AccountantTestSuite) TestZeroBudgetDisablesEviction() {
 	acct := newAccountant(0)
-	st := newStore(acct)
+	st := newStore(acct, "attr")
 	for i := 0; i < 1000; i++ {
 		st.put(string(rune(i)), "v", 100)
 	}

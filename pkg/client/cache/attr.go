@@ -34,7 +34,7 @@ func newAttrCache(acct *accountant, attrTTL, negativeTTL time.Duration, now func
 		now = time.Now
 	}
 	return &attrCache{
-		st:          newStore(acct),
+		st:          newStore(acct, "attr"),
 		now:         now,
 		attrTTL:     attrTTL,
 		negativeTTL: negativeTTL,
@@ -156,6 +156,6 @@ func newAttrCacheWithPersist(acct *accountant, attrTTL, negativeTTL time.Duratio
 		_ = p.PutAttrBytes(key, buf.Bytes())
 	}
 	remover := func(key string) { _ = p.DeleteAttrBytes(key) }
-	c.st = newStoreWithPersist(acct, loader, putter, remover)
+	c.st = newStoreWithPersist(acct, loader, putter, remover, "attr")
 	return c
 }

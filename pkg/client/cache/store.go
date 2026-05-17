@@ -1,6 +1,10 @@
 package cache
 
-import "sync"
+import (
+	"sync"
+
+	"gmountie/pkg/client/metrics"
+)
 
 // store is a generic key→entry map that defers byte-accounting and
 // eviction to a shared accountant. The store's API is intentionally
@@ -22,13 +26,16 @@ import "sync"
 // The eviction callback (removeKey) does NOT call Remover: memory
 // eviction must leave on-disk entries alone per the Sub-spec C tier
 // contract.
+//
+// cacheType is one of "attr", "dir", "data" — used only for metrics labels.
 type store struct {
-	mu      sync.RWMutex
-	entries map[string]*entry
-	acct    *accountant
-	loader  Loader
-	putter  Putter
-	remover Remover
+	mu        sync.RWMutex
+	entries   map[string]*entry
+	acct      *accountant
+	loader    Loader
+	putter    Putter
+	remover   Remover
+	cacheType string
 }
 
 // Loader returns a value loaded from a lower tier (disk persist).
@@ -45,16 +52,16 @@ type Putter func(key string, value any, size int)
 // must leave the on-disk entry intact.
 type Remover func(key string)
 
-func newStore(acct *accountant) *store {
-	return &store{entries: make(map[string]*entry), acct: acct}
+func newStore(acct *accountant, cacheType string) *store {
+	return &store{entries: make(map[string]*entry), acct: acct, cacheType: cacheType}
 }
 
-func newStoreWithLoader(acct *accountant, loader Loader, putter Putter) *store {
-	return &store{entries: make(map[string]*entry), acct: acct, loader: loader, putter: putter}
+func newStoreWithLoader(acct *accountant, loader Loader, putter Putter, cacheType string) *store {
+	return &store{entries: make(map[string]*entry), acct: acct, loader: loader, putter: putter, cacheType: cacheType}
 }
 
-func newStoreWithPersist(acct *accountant, loader Loader, putter Putter, remover Remover) *store {
-	return &store{entries: make(map[string]*entry), acct: acct, loader: loader, putter: putter, remover: remover}
+func newStoreWithPersist(acct *accountant, loader Loader, putter Putter, remover Remover, cacheType string) *store {
+	return &store{entries: make(map[string]*entry), acct: acct, loader: loader, putter: putter, remover: remover, cacheType: cacheType}
 }
 
 // get returns the entry for key (or nil if absent). Promotes to MRU
@@ -63,21 +70,32 @@ func newStoreWithPersist(acct *accountant, loader Loader, putter Putter, remover
 // memory tier via put (which write-throughs to the putter — that's
 // fine; promotion is structurally identical to insertion from the
 // loader's point of view).
+//
+// Fires metrics.CacheHit("memory", ...) on a memory tier hit,
+// metrics.CacheHit("disk", ...) on a loader (disk) hit, and
+// metrics.CacheMiss(...) when both tiers missed.
 func (s *store) get(key string) *entry {
 	s.mu.RLock()
 	e, ok := s.entries[key]
 	s.mu.RUnlock()
 	if ok {
 		s.acct.touch(e)
+		metrics.CacheHit("memory", s.cacheType)
 		return e
 	}
 	if s.loader == nil {
+		// Memory-only store: a miss here is the final answer.
+		// Misses for memory-only stores are reported by the sub-cache
+		// callers in backend.go (at the fall-through-to-inner sites)
+		// so that expiry-invalidated entries also count correctly.
 		return nil
 	}
 	value, size, hit := s.loader(key)
 	if !hit {
+		// Both tiers missed; caller (backend.go) bumps CacheMiss.
 		return nil
 	}
+	metrics.CacheHit("disk", s.cacheType)
 	s.put(key, value, size)
 	s.mu.RLock()
 	e = s.entries[key]
