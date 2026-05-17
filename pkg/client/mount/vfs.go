@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"gmountie/pkg/client/cache"
+	"gmountie/pkg/client/cache/persist"
 	"gmountie/pkg/client/config"
 	"gmountie/pkg/client/grpc"
 	"gmountie/pkg/client/io"
@@ -15,6 +17,7 @@ import (
 	"github.com/avast/retry-go/v4"
 	gofs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	pkgerrors "github.com/pkg/errors"
 	"github.com/puzpuzpuz/xsync/v3"
 	"go.uber.org/zap"
 )
@@ -45,6 +48,9 @@ type VFSVolumeMounterImpl struct {
 	server *fuse.Server
 	// volumes tracks the persistent child inode for each mounted volume
 	volumes *xsync.MapOf[string, *gofs.Inode]
+	// persists tracks the open persist handle for each mounted volume;
+	// only populated when cache.Enabled is true.
+	persists *xsync.MapOf[string, *persist.Persist]
 	// client is the grpc client
 	client grpc.Client
 	// fuse is the FUSE-kernel-side tuning config.
@@ -64,6 +70,7 @@ func NewMultiVolumeMounter(client grpc.Client, path string, fuseCfg *config.FUSE
 	m := &VFSVolumeMounterImpl{
 		path:        path,
 		volumes:     xsync.NewMapOf[string, *gofs.Inode](),
+		persists:    xsync.NewMapOf[string, *persist.Persist](),
 		client:      client,
 		fuse:        fuseCfg,
 		cache:       cacheCfg,
@@ -98,7 +105,13 @@ func (m *VFSVolumeMounterImpl) Mount(volumeName string) error {
 	// survives until we explicitly RmChild it.
 	var backend io.FileSystemBackend = io.NewBackendClient(m.client, volumeName)
 	if m.cache.Enabled {
-		backend = cache.NewCachedBackend(backend, cache.ConfigFromClient(m.cache), nil)
+		root := filepath.Join(m.cache.Path, volumeName)
+		p, err := persist.Open(persist.Options{Root: root, DiskMaxBytes: int64(m.cache.DiskMaxBytes)})
+		if err != nil {
+			return pkgerrors.Wrap(err, "open cache persist")
+		}
+		m.persists.Store(volumeName, p)
+		backend = cache.NewCachedBackend(backend, cache.ConfigFromClient(m.cache), p)
 	}
 	volRoot := io.NewMountieRoot(backend)
 	ctx := context.Background()
@@ -131,6 +144,10 @@ func (m *VFSVolumeMounterImpl) Unmount(volumeName string) error {
 	}
 	childInode.ForgetPersistent()
 	m.volumes.Delete(volumeName)
+	if p, ok := m.persists.Load(volumeName); ok {
+		_ = p.Close()
+		m.persists.Delete(volumeName)
+	}
 	log.Log.Info("volume unmounted", zap.String("volume", volumeName))
 	return nil
 }
@@ -175,7 +192,18 @@ func (m *VFSVolumeMounterImpl) Close() error {
 		return errRetry
 	}
 	log.Log.Info("root filesystem unmounted", zap.String("path", m.path))
-	return nil
+	// Close any persist handles that were not already drained by UnmountAll.
+	// The kernel connection is gone at this point, so no in-flight requests
+	// can reach the cached backend.
+	var persistErrs []error
+	m.persists.Range(func(volume string, p *persist.Persist) bool {
+		if err := p.Close(); err != nil {
+			persistErrs = append(persistErrs, err)
+		}
+		m.persists.Delete(volume)
+		return true
+	})
+	return errors.Join(persistErrs...)
 }
 
 // mountMemFS mounts the in-memory parent inode to the path. gofs.Mount

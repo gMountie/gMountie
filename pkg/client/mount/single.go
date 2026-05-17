@@ -1,9 +1,11 @@
 package mount
 
 import (
+	"path/filepath"
 	"time"
 
 	"gmountie/pkg/client/cache"
+	"gmountie/pkg/client/cache/persist"
 	"gmountie/pkg/client/config"
 	"gmountie/pkg/client/grpc"
 	"gmountie/pkg/client/io"
@@ -24,10 +26,11 @@ type SingleVolumeMounter interface {
 
 // SingleVolumeMounterImpl is a service that mounts volumes
 type SingleVolumeMounterImpl struct {
-	client grpc.Client
-	fuse   *config.FUSEConfig
-	cache  config.CacheConfig
-	mounts *xsync.MapOf[string, *fuse.Server]
+	client   grpc.Client
+	fuse     *config.FUSEConfig
+	cache    config.CacheConfig
+	mounts   *xsync.MapOf[string, *fuse.Server]
+	persists *xsync.MapOf[string, *persist.Persist]
 }
 
 // NewSingleVolumeMounter creates a new SingleVolumeMounterImpl. fuseCfg
@@ -36,10 +39,11 @@ type SingleVolumeMounterImpl struct {
 // and only applied when cacheCfg.Enabled is true.
 func NewSingleVolumeMounter(client grpc.Client, fuseCfg *config.FUSEConfig, cacheCfg config.CacheConfig) SingleVolumeMounter {
 	return &SingleVolumeMounterImpl{
-		client: client,
-		fuse:   fuseCfg,
-		cache:  cacheCfg,
-		mounts: xsync.NewMapOf[string, *fuse.Server](),
+		client:   client,
+		fuse:     fuseCfg,
+		cache:    cacheCfg,
+		mounts:   xsync.NewMapOf[string, *fuse.Server](),
+		persists: xsync.NewMapOf[string, *persist.Persist](),
 	}
 }
 
@@ -54,7 +58,13 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) error {
 
 	var backend io.FileSystemBackend = io.NewBackendClient(m.client, volume)
 	if m.cache.Enabled {
-		backend = cache.NewCachedBackend(backend, cache.ConfigFromClient(m.cache), nil)
+		root := filepath.Join(m.cache.Path, volume)
+		p, err := persist.Open(persist.Options{Root: root, DiskMaxBytes: int64(m.cache.DiskMaxBytes)})
+		if err != nil {
+			return errors.Wrap(err, "open cache persist")
+		}
+		m.persists.Store(volume, p)
+		backend = cache.NewCachedBackend(backend, cache.ConfigFromClient(m.cache), p)
 	}
 	root := io.NewMountieRoot(backend)
 	mountOpts := createMountOptions(m.client.GetEndpoint(), volume, m.fuse, maxWrite)
@@ -102,6 +112,10 @@ func (m *SingleVolumeMounterImpl) Unmount(volume string) error {
 		return err
 	}
 	m.mounts.Delete(volume)
+	if p, ok := m.persists.Load(volume); ok {
+		_ = p.Close()
+		m.persists.Delete(volume)
+	}
 	log.Log.Info("unmounted volume", zap.String("volume", volume))
 	return nil
 }

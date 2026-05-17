@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"gmountie/pkg/client/cache/persist"
 	"gmountie/pkg/client/config"
 	"gmountie/pkg/proto"
 	"os"
@@ -147,6 +148,34 @@ func (s *SingleVolumeMounterTestSuite) TestClose() {
 	// Verify volume is unmounted
 	mounted := s.mounter.IsVolumeMounted("test-volume")
 	s.Assert().False(mounted)
+}
+
+func (s *SingleVolumeMounterTestSuite) TestMountFailsWithLockedCacheDir() {
+	// Pre-acquire the lock on the volume-scoped cache dir before Mount runs.
+	cacheRoot := s.T().TempDir()
+	volume := "test-vol"
+	stub, err := persist.Open(persist.Options{Root: filepath.Join(cacheRoot, volume)})
+	s.Require().NoError(err)
+	defer stub.Close()
+
+	cacheCfg := config.CacheConfig{
+		Enabled:        true,
+		Path:           cacheRoot,
+		MemoryMaxBytes: config.DefaultCacheMemoryMaxBytes,
+		DiskMaxBytes:   config.DefaultCacheDiskMaxBytes,
+		ChunkSizeBytes: config.DefaultCacheChunkSizeBytes,
+		AttrTTL:        time.Second,
+		DirTTL:         time.Second,
+		NegativeTTL:    time.Second,
+	}
+	m := NewSingleVolumeMounter(s.client, &config.FUSEConfig{
+		MaxWriteBytes:  config.DefaultFUSEMaxWriteBytes,
+		MaxBackground:  config.DefaultFUSEMaxBackground,
+		WritebackCache: config.DefaultFUSEWritebackCache,
+	}, cacheCfg)
+	err = m.Mount(volume, s.T().TempDir())
+	s.Require().Error(err)
+	s.Assert().ErrorIs(err, persist.ErrCacheLocked)
 }
 
 func TestSingleVolumeMounterTestSuite(t *testing.T) {
