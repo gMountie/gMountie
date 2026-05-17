@@ -1,7 +1,10 @@
 package api
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"io"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"testing"
@@ -135,6 +138,39 @@ func (s *CacheEnabledFSSuite) TestRecreateAfterUnlinkInvalidatesNegative() {
 	got, err := os.ReadFile(path)
 	s.Require().NoError(err)
 	s.Assert().Equal([]byte("second"), got, "after Create, Stat must see the new file (negative cache dropped)")
+}
+
+// TestMultiChunkReadRoundTrip writes a payload larger than ChunkSizeBytes
+// (3.5 MiB against a 1 MiB chunk size, so 4 chunks of which the last is
+// short) and reads it back through the mount. Regression guard for the
+// Read-truncates-at-chunk-boundary bug fixed in af59a86: the bug caused
+// any multi-chunk Read to return only the first chunk's worth of bytes,
+// which the existing short-payload tests didn't catch.
+func (s *CacheEnabledFSSuite) TestMultiChunkReadRoundTrip() {
+	const payloadSize = 3*(1<<20) + 512*1024 // 3.5 MiB - spans 4 chunks
+	payload := make([]byte, payloadSize)
+	if _, err := io.ReadFull(rand.New(rand.NewSource(42)), payload); err != nil {
+		s.Require().NoError(err)
+	}
+	wantSum := sha256.Sum256(payload)
+
+	path := filepath.Join(s.mountPath(), fmt.Sprintf("mc-%d.bin", time.Now().UnixNano()))
+	s.Require().NoError(os.WriteFile(path, payload, 0o644))
+
+	// First read: misses on every chunk, populates cache.
+	got, err := os.ReadFile(path)
+	s.Require().NoError(err)
+	s.Assert().Len(got, payloadSize, "first read must return full payload (not truncated to chunk 0)")
+	gotSum := sha256.Sum256(got)
+	s.Assert().Equal(wantSum, gotSum, "first read SHA-256 must match")
+
+	// Second read: hits every chunk in cache; same multi-chunk traversal
+	// must still return the full payload.
+	got2, err := os.ReadFile(path)
+	s.Require().NoError(err)
+	s.Assert().Len(got2, payloadSize, "second read (all chunks cached) must return full payload")
+	got2Sum := sha256.Sum256(got2)
+	s.Assert().Equal(wantSum, got2Sum, "second read SHA-256 must match")
 }
 
 func TestCacheEnabledFSSuite(t *testing.T) {

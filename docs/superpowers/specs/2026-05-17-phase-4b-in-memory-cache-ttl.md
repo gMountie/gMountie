@@ -134,7 +134,7 @@ below. Each row is covered by a dedicated unit test.
 | Op | Invalidates |
 |---|---|
 | `Write(fh, off, data)` | data chunks overlapping `[off, off+len(data))` for `fh.Path()`; attr for `fh.Path()` (size + mtime change) |
-| `Truncate(path, size)` | all data chunks for `path` with index ≥ chunk containing `size`; attr for `path` |
+| `Truncate(path, size)` | **all** data chunks for `path`; attr for `path`. (Conservative drop-all rather than "chunks past `size`": Truncate may zero-extend or shrink, so every cached chunk's relationship to the new file length is suspect; dropping the rest is one extra fetch on the next Read, dropping the wrong ones is a stale-data bug.) |
 | `Chmod(path, mode)` | attr for `path` |
 | `Chown(path, uid, gid)` | attr for `path` |
 | `Create(parent, name, …)` | dir for `parent`; attr for `parent` (mtime); also drops the negative attr for `joinPath(parent, name)` if cached |
