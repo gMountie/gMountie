@@ -31,6 +31,7 @@ type SingleVolumeMounterImpl struct {
 	cache    config.CacheConfig
 	mounts   *xsync.MapOf[string, *fuse.Server]
 	persists *xsync.MapOf[string, *persist.Persist]
+	backends *xsync.MapOf[string, io.FileSystemBackend]
 }
 
 // NewSingleVolumeMounter creates a new SingleVolumeMounterImpl. fuseCfg
@@ -44,6 +45,7 @@ func NewSingleVolumeMounter(client grpc.Client, fuseCfg *config.FUSEConfig, cach
 		cache:    cacheCfg,
 		mounts:   xsync.NewMapOf[string, *fuse.Server](),
 		persists: xsync.NewMapOf[string, *persist.Persist](),
+		backends: xsync.NewMapOf[string, io.FileSystemBackend](),
 	}
 }
 
@@ -64,8 +66,9 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) error {
 			return errors.Wrap(err, "open cache persist")
 		}
 		m.persists.Store(volume, p)
-		backend = cache.NewCachedBackend(backend, cache.ConfigFromClient(m.cache), p)
+		backend = cache.NewCachedBackend(backend, cache.ConfigFromClient(m.cache), p, m.client.Fs(), volume)
 	}
+	m.backends.Store(volume, backend)
 	root := io.NewMountieRoot(backend)
 	mountOpts := createMountOptions(m.client.GetEndpoint(), volume, m.fuse, maxWrite)
 	entryTimeout := time.Second
@@ -112,6 +115,10 @@ func (m *SingleVolumeMounterImpl) Unmount(volume string) error {
 		return err
 	}
 	m.mounts.Delete(volume)
+	if be, ok := m.backends.Load(volume); ok {
+		_ = be.Close()
+		m.backends.Delete(volume)
+	}
 	if p, ok := m.persists.Load(volume); ok {
 		_ = p.Close()
 		m.persists.Delete(volume)

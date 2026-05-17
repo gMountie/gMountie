@@ -309,6 +309,50 @@ func (_c *MockFileSystemBackend_Chown_Call) RunAndReturn(run func(ctx context.Co
 	return _c
 }
 
+// Close provides a mock function for the type MockFileSystemBackend
+func (_mock *MockFileSystemBackend) Close() error {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Close")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func() error); ok {
+		r0 = returnFunc()
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockFileSystemBackend_Close_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Close'
+type MockFileSystemBackend_Close_Call struct {
+	*mock.Call
+}
+
+// Close is a helper method to define mock.On call
+func (_e *MockFileSystemBackend_Expecter) Close() *MockFileSystemBackend_Close_Call {
+	return &MockFileSystemBackend_Close_Call{Call: _e.mock.On("Close")}
+}
+
+func (_c *MockFileSystemBackend_Close_Call) Run(run func()) *MockFileSystemBackend_Close_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockFileSystemBackend_Close_Call) Return(err error) *MockFileSystemBackend_Close_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockFileSystemBackend_Close_Call) RunAndReturn(run func() error) *MockFileSystemBackend_Close_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Create provides a mock function for the type MockFileSystemBackend
 func (_mock *MockFileSystemBackend) Create(ctx context.Context, parent string, name string, flags uint32, mode uint32) (io.FileHandle, *io.Attr, fuse.Status) {
 	ret := _mock.Called(ctx, parent, name, flags, mode)
@@ -519,6 +563,86 @@ func (_c *MockFileSystemBackend_Fsync_Call) Return(status fuse.Status) *MockFile
 }
 
 func (_c *MockFileSystemBackend_Fsync_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, flags int64) fuse.Status) *MockFileSystemBackend_Fsync_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetAttrIfChanged provides a mock function for the type MockFileSystemBackend
+func (_mock *MockFileSystemBackend) GetAttrIfChanged(ctx context.Context, path string, knownVersion uint64) (*io.Attr, bool, fuse.Status) {
+	ret := _mock.Called(ctx, path, knownVersion)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetAttrIfChanged")
+	}
+
+	var r0 *io.Attr
+	var r1 bool
+	var r2 fuse.Status
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uint64) (*io.Attr, bool, fuse.Status)); ok {
+		return returnFunc(ctx, path, knownVersion)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uint64) *io.Attr); ok {
+		r0 = returnFunc(ctx, path, knownVersion)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*io.Attr)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, uint64) bool); ok {
+		r1 = returnFunc(ctx, path, knownVersion)
+	} else {
+		r1 = ret.Get(1).(bool)
+	}
+	if returnFunc, ok := ret.Get(2).(func(context.Context, string, uint64) fuse.Status); ok {
+		r2 = returnFunc(ctx, path, knownVersion)
+	} else {
+		r2 = ret.Get(2).(fuse.Status)
+	}
+	return r0, r1, r2
+}
+
+// MockFileSystemBackend_GetAttrIfChanged_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetAttrIfChanged'
+type MockFileSystemBackend_GetAttrIfChanged_Call struct {
+	*mock.Call
+}
+
+// GetAttrIfChanged is a helper method to define mock.On call
+//   - ctx context.Context
+//   - path string
+//   - knownVersion uint64
+func (_e *MockFileSystemBackend_Expecter) GetAttrIfChanged(ctx interface{}, path interface{}, knownVersion interface{}) *MockFileSystemBackend_GetAttrIfChanged_Call {
+	return &MockFileSystemBackend_GetAttrIfChanged_Call{Call: _e.mock.On("GetAttrIfChanged", ctx, path, knownVersion)}
+}
+
+func (_c *MockFileSystemBackend_GetAttrIfChanged_Call) Run(run func(ctx context.Context, path string, knownVersion uint64)) *MockFileSystemBackend_GetAttrIfChanged_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 uint64
+		if args[2] != nil {
+			arg2 = args[2].(uint64)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockFileSystemBackend_GetAttrIfChanged_Call) Return(attr *io.Attr, b bool, status fuse.Status) *MockFileSystemBackend_GetAttrIfChanged_Call {
+	_c.Call.Return(attr, b, status)
+	return _c
+}
+
+func (_c *MockFileSystemBackend_GetAttrIfChanged_Call) RunAndReturn(run func(ctx context.Context, path string, knownVersion uint64) (*io.Attr, bool, fuse.Status)) *MockFileSystemBackend_GetAttrIfChanged_Call {
 	_c.Call.Return(run)
 	return _c
 }

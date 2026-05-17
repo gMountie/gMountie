@@ -20,6 +20,8 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 )
 
 // readResult is the accumulated outcome of a single streaming Read attempt:
@@ -90,6 +92,7 @@ func attrFromProto(p *proto.Attr) *Attr {
 		Nlink:     p.Nlink,
 		Rdev:      p.Rdev,
 		Blksize:   p.Blksize,
+		Version:   p.Version,
 	}
 	// The legacy fs.go.GetAttr maps server-side ownership from Owner, not
 	// from the top-level Uid/Gid fields. Preserve that behaviour, falling
@@ -134,6 +137,34 @@ func (b *BackendClient) Stat(ctx context.Context, path string) (*Attr, fuse.Stat
 	}
 	return attrFromProto(res.GetAttributes()), fuse.Status(res.Status)
 }
+
+// GetAttrIfChanged issues the lightweight revalidation RPC. Returns
+// (nil, true, OK) on NotModified, (newAttr, false, OK) on version change,
+// (nil, false, ENOENT) if the path is gone, (nil, false, EIO) on error.
+func (b *BackendClient) GetAttrIfChanged(ctx context.Context, path string, knownVersion uint64) (*Attr, bool, fuse.Status) {
+	ctx2, cancel := withMetaTimeout(ctx, b.client.MetaTimeout())
+	defer cancel()
+	reply, err := b.client.Fs().GetAttrIfChanged(ctx2, &proto.GetAttrIfChangedRequest{
+		Volume:       b.volume,
+		Path:         path,
+		KnownVersion: knownVersion,
+	})
+	if err != nil {
+		if st, ok := grpcstatus.FromError(err); ok && st.Code() == codes.NotFound {
+			return nil, false, fuse.ENOENT
+		}
+		log.Log.Error("error in call: GetAttrIfChanged", zap.String("path", path), zap.Error(err))
+		return nil, false, fuse.EIO
+	}
+	if reply.GetNotModified() {
+		return nil, true, fuse.OK
+	}
+	return attrFromProto(reply.GetAttrs()), false, fuse.OK
+}
+
+// Close is a no-op for BackendClient: the gRPC connection lifetime is
+// managed by the caller (grpc.Client). Implements io.FileSystemBackend.
+func (b *BackendClient) Close() error { return nil }
 
 // Lookup resolves a child by name under parent. The server exposes no
 // dedicated Lookup RPC; this is implemented as GetAttr on the joined

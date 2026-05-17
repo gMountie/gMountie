@@ -29,6 +29,10 @@ type Attr struct {
 	Gid       uint32
 	Rdev      uint32
 	Blksize   uint32
+	// Version is the server-side version stamp (VersionFromAttr) used for
+	// lightweight revalidation via GetAttrIfChanged. Zero from servers that
+	// predate Sub-spec D.
+	Version uint64
 }
 
 // DirEntry mirrors a single directory listing entry.
@@ -76,6 +80,13 @@ type FileHandle interface {
 type FileSystemBackend interface {
 	// Stat returns the attributes of path. Used by Getattr.
 	Stat(ctx context.Context, path string) (*Attr, fuse.Status)
+
+	// GetAttrIfChanged is a lightweight revalidation check (Sub-spec D).
+	// Returns (nil, true, OK) when the server's current version matches
+	// knownVersion; (newAttr, false, OK) when version changed; (nil, false,
+	// ENOENT) when the path is gone. RPC errors return (nil, false, EIO) so
+	// callers fall through to a full Stat.
+	GetAttrIfChanged(ctx context.Context, path string, knownVersion uint64) (*Attr, bool, fuse.Status)
 	// Lookup resolves a child name under parent, returning attrs + inode.
 	Lookup(ctx context.Context, parent, name string) (*Attr, fuse.Status)
 	// ListDir returns the entries of a directory.
@@ -129,4 +140,10 @@ type FileSystemBackend interface {
 	Chmod(ctx context.Context, path string, mode uint32) fuse.Status
 	// Chown changes ownership.
 	Chown(ctx context.Context, path string, uid, gid uint32) fuse.Status
+
+	// Close releases resources held by the backend. For the gRPC backend
+	// this is a no-op (the connection is owned by the caller); for
+	// cachedBackend it stops the subscriber goroutine. Mount code must call
+	// Close before discarding a backend on Unmount.
+	Close() error
 }

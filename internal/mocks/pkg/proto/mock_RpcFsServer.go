@@ -9,6 +9,7 @@ import (
 	"gmountie/pkg/proto"
 
 	mock "github.com/stretchr/testify/mock"
+	"google.golang.org/grpc"
 )
 
 // NewMockRpcFsServer creates a new instance of MockRpcFsServer. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
@@ -374,6 +375,74 @@ func (_c *MockRpcFsServer_GetAttr_Call) Return(getAttrReply *proto.GetAttrReply,
 }
 
 func (_c *MockRpcFsServer_GetAttr_Call) RunAndReturn(run func(context1 context.Context, getAttrRequest *proto.GetAttrRequest) (*proto.GetAttrReply, error)) *MockRpcFsServer_GetAttr_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetAttrIfChanged provides a mock function for the type MockRpcFsServer
+func (_mock *MockRpcFsServer) GetAttrIfChanged(context1 context.Context, getAttrIfChangedRequest *proto.GetAttrIfChangedRequest) (*proto.GetAttrIfChangedReply, error) {
+	ret := _mock.Called(context1, getAttrIfChangedRequest)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetAttrIfChanged")
+	}
+
+	var r0 *proto.GetAttrIfChangedReply
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.GetAttrIfChangedRequest) (*proto.GetAttrIfChangedReply, error)); ok {
+		return returnFunc(context1, getAttrIfChangedRequest)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.GetAttrIfChangedRequest) *proto.GetAttrIfChangedReply); ok {
+		r0 = returnFunc(context1, getAttrIfChangedRequest)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proto.GetAttrIfChangedReply)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.GetAttrIfChangedRequest) error); ok {
+		r1 = returnFunc(context1, getAttrIfChangedRequest)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockRpcFsServer_GetAttrIfChanged_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetAttrIfChanged'
+type MockRpcFsServer_GetAttrIfChanged_Call struct {
+	*mock.Call
+}
+
+// GetAttrIfChanged is a helper method to define mock.On call
+//   - context1 context.Context
+//   - getAttrIfChangedRequest *proto.GetAttrIfChangedRequest
+func (_e *MockRpcFsServer_Expecter) GetAttrIfChanged(context1 interface{}, getAttrIfChangedRequest interface{}) *MockRpcFsServer_GetAttrIfChanged_Call {
+	return &MockRpcFsServer_GetAttrIfChanged_Call{Call: _e.mock.On("GetAttrIfChanged", context1, getAttrIfChangedRequest)}
+}
+
+func (_c *MockRpcFsServer_GetAttrIfChanged_Call) Run(run func(context1 context.Context, getAttrIfChangedRequest *proto.GetAttrIfChangedRequest)) *MockRpcFsServer_GetAttrIfChanged_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *proto.GetAttrIfChangedRequest
+		if args[1] != nil {
+			arg1 = args[1].(*proto.GetAttrIfChangedRequest)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFsServer_GetAttrIfChanged_Call) Return(getAttrIfChangedReply *proto.GetAttrIfChangedReply, err error) *MockRpcFsServer_GetAttrIfChanged_Call {
+	_c.Call.Return(getAttrIfChangedReply, err)
+	return _c
+}
+
+func (_c *MockRpcFsServer_GetAttrIfChanged_Call) RunAndReturn(run func(context1 context.Context, getAttrIfChangedRequest *proto.GetAttrIfChangedRequest) (*proto.GetAttrIfChangedReply, error)) *MockRpcFsServer_GetAttrIfChanged_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -782,6 +851,63 @@ func (_c *MockRpcFsServer_StatFs_Call) Return(statFsReply *proto.StatFsReply, er
 }
 
 func (_c *MockRpcFsServer_StatFs_Call) RunAndReturn(run func(context1 context.Context, statFsRequest *proto.StatFsRequest) (*proto.StatFsReply, error)) *MockRpcFsServer_StatFs_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Subscribe provides a mock function for the type MockRpcFsServer
+func (_mock *MockRpcFsServer) Subscribe(subscribeRequest *proto.SubscribeRequest, serverStreamingServer grpc.ServerStreamingServer[proto.SubscribeEvent]) error {
+	ret := _mock.Called(subscribeRequest, serverStreamingServer)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Subscribe")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(*proto.SubscribeRequest, grpc.ServerStreamingServer[proto.SubscribeEvent]) error); ok {
+		r0 = returnFunc(subscribeRequest, serverStreamingServer)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockRpcFsServer_Subscribe_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Subscribe'
+type MockRpcFsServer_Subscribe_Call struct {
+	*mock.Call
+}
+
+// Subscribe is a helper method to define mock.On call
+//   - subscribeRequest *proto.SubscribeRequest
+//   - serverStreamingServer grpc.ServerStreamingServer[proto.SubscribeEvent]
+func (_e *MockRpcFsServer_Expecter) Subscribe(subscribeRequest interface{}, serverStreamingServer interface{}) *MockRpcFsServer_Subscribe_Call {
+	return &MockRpcFsServer_Subscribe_Call{Call: _e.mock.On("Subscribe", subscribeRequest, serverStreamingServer)}
+}
+
+func (_c *MockRpcFsServer_Subscribe_Call) Run(run func(subscribeRequest *proto.SubscribeRequest, serverStreamingServer grpc.ServerStreamingServer[proto.SubscribeEvent])) *MockRpcFsServer_Subscribe_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 *proto.SubscribeRequest
+		if args[0] != nil {
+			arg0 = args[0].(*proto.SubscribeRequest)
+		}
+		var arg1 grpc.ServerStreamingServer[proto.SubscribeEvent]
+		if args[1] != nil {
+			arg1 = args[1].(grpc.ServerStreamingServer[proto.SubscribeEvent])
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFsServer_Subscribe_Call) Return(err error) *MockRpcFsServer_Subscribe_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockRpcFsServer_Subscribe_Call) RunAndReturn(run func(subscribeRequest *proto.SubscribeRequest, serverStreamingServer grpc.ServerStreamingServer[proto.SubscribeEvent]) error) *MockRpcFsServer_Subscribe_Call {
 	_c.Call.Return(run)
 	return _c
 }

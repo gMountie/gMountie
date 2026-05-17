@@ -30,7 +30,12 @@ func (s *CachedBackendTestSuite) SetupTest() {
 		AttrTTL:        5 * time.Second,
 		DirTTL:         5 * time.Second,
 		NegativeTTL:    2 * time.Second,
-	}, nil).(*cachedBackend)
+	}, nil, nil, "").(*cachedBackend)
+	// Mark the tracker as globally verified so the existing invalidation-table
+	// tests exercise pure cache hit/miss semantics without triggering the
+	// validity-gating path. Tests that specifically target gating
+	// (TestUnverified*) construct their own backend without this flip.
+	cb.validity.markGlobalVerified()
 	s.b = cb
 }
 
@@ -511,6 +516,69 @@ func (s *CachedBackendTestSuite) TestMutationFailureDoesNotInvalidate() {
 	_, hit, pos := s.b.attr.get("/f")
 	s.Require().True(hit)
 	s.Assert().True(pos)
+}
+
+// --- Validity-gating tests (Sub-spec D) ---
+
+// newUnverifiedBackend builds a cachedBackend in the default unverified state
+// (no subscriber, no markGlobalVerified) for gating-path tests.
+func newUnverifiedBackend(t *testing.T, inner *iomocks.MockFileSystemBackend) *cachedBackend {
+	t.Helper()
+	cb := NewCachedBackend(inner, Config{
+		MemoryMaxBytes: 1 << 20,
+		ChunkSizeBytes: 1 << 16,
+		AttrTTL:        time.Hour,
+		DirTTL:         time.Hour,
+		NegativeTTL:    time.Minute,
+	}, nil, nil, "").(*cachedBackend)
+	return cb
+}
+
+func (s *CachedBackendTestSuite) TestUnverifiedStateGatesStatViaGetAttrIfChanged() {
+	inner := iomocks.NewMockFileSystemBackend(s.T())
+	be := newUnverifiedBackend(s.T(), inner)
+
+	// First Stat: cache miss → inner.Stat called, entry populated.
+	inner.EXPECT().Stat(mock.Anything, "f").Return(&io.Attr{Ino: 7, Size: 11, Version: 42}, fuse.OK).Once()
+	_, st := be.Stat(context.Background(), "f")
+	s.Require().Equal(fuse.OK, st)
+
+	// Second Stat: cache hit but unverified → GetAttrIfChanged called.
+	inner.EXPECT().GetAttrIfChanged(mock.Anything, "f", uint64(42)).Return(nil, true, fuse.OK).Once()
+	a, st := be.Stat(context.Background(), "f")
+	s.Require().Equal(fuse.OK, st)
+	s.Assert().Equal(uint64(42), a.Version)
+}
+
+func (s *CachedBackendTestSuite) TestUnverifiedRevalidationOnVersionChangeInvalidatesAllThree() {
+	inner := iomocks.NewMockFileSystemBackend(s.T())
+	be := newUnverifiedBackend(s.T(), inner)
+
+	// Seed the cache.
+	inner.EXPECT().Stat(mock.Anything, "f").Return(&io.Attr{Version: 42}, fuse.OK).Once()
+	_, _ = be.Stat(context.Background(), "f")
+
+	// Version changed: server returns new attrs.
+	freshAttr := &io.Attr{Version: 99, Size: 200}
+	inner.EXPECT().GetAttrIfChanged(mock.Anything, "f", uint64(42)).Return(freshAttr, false, fuse.OK).Once()
+	a, st := be.Stat(context.Background(), "f")
+	s.Require().Equal(fuse.OK, st)
+	s.Assert().Equal(uint64(99), a.Version)
+	s.Assert().Equal(uint64(200), a.Size)
+}
+
+func (s *CachedBackendTestSuite) TestUnverifiedRevalidationENOENTReturnsNotFound() {
+	inner := iomocks.NewMockFileSystemBackend(s.T())
+	be := newUnverifiedBackend(s.T(), inner)
+
+	// Seed the cache.
+	inner.EXPECT().Stat(mock.Anything, "f").Return(&io.Attr{Version: 42}, fuse.OK).Once()
+	_, _ = be.Stat(context.Background(), "f")
+
+	// Path gone on server.
+	inner.EXPECT().GetAttrIfChanged(mock.Anything, "f", uint64(42)).Return(nil, false, fuse.ENOENT).Once()
+	_, st := be.Stat(context.Background(), "f")
+	s.Require().Equal(fuse.ENOENT, st)
 }
 
 func TestCachedBackendTestSuite(t *testing.T) {

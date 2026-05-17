@@ -13,6 +13,7 @@ import (
 	"gmountie/pkg/client/cache/persist"
 	"gmountie/pkg/client/io"
 	"gmountie/pkg/client/metrics"
+	"gmountie/pkg/proto"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
@@ -21,39 +22,138 @@ import (
 // sub-caches sharing one accountant. Construct via NewCachedBackend;
 // implements io.FileSystemBackend.
 type cachedBackend struct {
-	inner io.FileSystemBackend
-	cfg   Config
-	acct  *accountant
-	attr  *attrCache
-	dir   *dirCache
-	data  *dataCache
+	inner      io.FileSystemBackend
+	cfg        Config
+	acct       *accountant
+	attr       *attrCache
+	dir        *dirCache
+	data       *dataCache
+	validity   *validityTracker
+	subscriber *subscribeConsumer
+	subCancel  context.CancelFunc
 }
 
 // NewCachedBackend wraps inner. cfg.MemoryMaxBytes <= 0 disables byte-cap
 // eviction in the memory tier (entries live until invalidated or the process
 // dies; the disk tier still respects DiskMaxBytes independently). p may be
-// nil for memory-only operation.
-func NewCachedBackend(inner io.FileSystemBackend, cfg Config, p *persist.Persist) io.FileSystemBackend {
+// nil for memory-only operation. client and volume are used to start the
+// Subscribe-based invalidation goroutine; pass nil client to disable it.
+func NewCachedBackend(inner io.FileSystemBackend, cfg Config, p *persist.Persist, client proto.RpcFsClient, volume string) io.FileSystemBackend {
 	acct := newAccountant(cfg.MemoryMaxBytes)
-	return &cachedBackend{
-		inner: inner,
-		cfg:   cfg,
-		acct:  acct,
-		attr:  newAttrCacheWithPersist(acct, cfg.AttrTTL, cfg.NegativeTTL, nil, p),
-		dir:   newDirCacheWithPersist(acct, cfg.DirTTL, nil, p),
-		data:  newDataCacheWithPersist(acct, cfg.ChunkSizeBytes, p),
+	b := &cachedBackend{
+		inner:    inner,
+		cfg:      cfg,
+		acct:     acct,
+		attr:     newAttrCacheWithPersist(acct, cfg.AttrTTL, cfg.NegativeTTL, nil, p),
+		dir:      newDirCacheWithPersist(acct, cfg.DirTTL, nil, p),
+		data:     newDataCacheWithPersist(acct, cfg.ChunkSizeBytes, p),
+		validity: newValidityTracker(),
 	}
+	if client != nil && volume != "" {
+		ctx, cancel := context.WithCancel(context.Background())
+		b.subCancel = cancel
+		b.subscriber = newSubscribeConsumer(client, volume, &subscribeBackendAdapter{b}, b.validity)
+		go b.subscriber.run(ctx)
+	}
+	return b
+}
+
+// Close stops the subscriber goroutine (if running) and closes the inner
+// backend if it implements io.FileSystemBackend (e.g. a future closeable
+// wrapper). Mount code calls Close before discarding a backend on Unmount.
+func (b *cachedBackend) Close() error {
+	if b.subCancel != nil {
+		b.subCancel()
+	}
+	return b.inner.Close()
+}
+
+// subscribeBackendAdapter bridges cachedBackend to the subscribeBackendOps
+// interface consumed by subscribeConsumer. Kept as a thin wrapper so the
+// subscriber is independently testable without a full cachedBackend.
+type subscribeBackendAdapter struct{ b *cachedBackend }
+
+func (a *subscribeBackendAdapter) invalidateAttr(p string) { a.b.attr.invalidate(p) }
+func (a *subscribeBackendAdapter) invalidateData(p string) { a.b.data.invalidatePath(p) }
+func (a *subscribeBackendAdapter) invalidateDir(p string)  { a.b.dir.invalidate(p) }
+func (a *subscribeBackendAdapter) putNegative(p string)    { a.b.attr.putNegative(p) }
+
+// revalidateResult carries the outcome of a GetAttrIfChanged revalidation
+// call made by the gating logic in Stat/Lookup/ListDir/Read.
+type revalidateResult struct {
+	notModified bool      // server confirmed version unchanged
+	enoent      bool      // path is gone on the server
+	freshAttrs  *io.Attr  // new attrs when version changed
+	fallback    bool      // revalidation RPC itself failed; caller falls through to inner
+}
+
+// revalidate calls GetAttrIfChanged on inner and interprets the result,
+// updating the validity tracker and invalidating caches as appropriate.
+func (b *cachedBackend) revalidate(ctx context.Context, path string, cachedVersion uint64) revalidateResult {
+	attrs, notMod, st := b.inner.GetAttrIfChanged(ctx, path, cachedVersion)
+	if !st.Ok() && st != fuse.ENOENT {
+		return revalidateResult{fallback: true}
+	}
+	if notMod {
+		b.validity.markPathVerified(path)
+		return revalidateResult{notModified: true}
+	}
+	// Version changed or path gone: flush all three caches for this path.
+	b.attr.invalidate(path)
+	b.data.invalidatePath(path)
+	b.dir.invalidate(pathParent(path))
+	if st == fuse.ENOENT {
+		b.attr.putNegative(path)
+		return revalidateResult{enoent: true}
+	}
+	return revalidateResult{freshAttrs: attrs}
 }
 
 // --- Read path ---
 
+// GetAttrIfChanged passes through to inner; cachedBackend does not
+// intercept this call — it is the mechanism by which higher-level Stat
+// gating works, not a cacheable operation itself.
+func (b *cachedBackend) GetAttrIfChanged(ctx context.Context, p string, knownVersion uint64) (*io.Attr, bool, fuse.Status) {
+	return b.inner.GetAttrIfChanged(ctx, p, knownVersion)
+}
+
 func (b *cachedBackend) Stat(ctx context.Context, p string) (*io.Attr, fuse.Status) {
-	if a, hit, pos := b.attr.get(p); hit {
+	cached, hit, pos := b.attr.get(p)
+	if !hit {
+		return b.statFromInner(ctx, p)
+	}
+	// Fast path: globally verified or this path already revalidated this epoch.
+	if b.validity.globalState() == stateVerified || b.validity.isPathVerified(p) {
 		if pos {
-			return a, fuse.OK
+			return cached, fuse.OK
 		}
 		return nil, fuse.ENOENT
 	}
+	// Unverified: run lightweight revalidation.
+	knownVersion := uint64(0)
+	if cached != nil {
+		knownVersion = cached.Version
+	}
+	r := b.revalidate(ctx, p, knownVersion)
+	switch {
+	case r.notModified:
+		if pos {
+			return cached, fuse.OK
+		}
+		return nil, fuse.ENOENT
+	case r.enoent:
+		return nil, fuse.ENOENT
+	case r.freshAttrs != nil:
+		b.attr.putPositive(p, r.freshAttrs)
+		return r.freshAttrs, fuse.OK
+	default: // fallback: revalidation RPC itself failed
+		return b.statFromInner(ctx, p)
+	}
+}
+
+// statFromInner fetches attrs from inner and populates the attr cache.
+func (b *cachedBackend) statFromInner(ctx context.Context, p string) (*io.Attr, fuse.Status) {
 	metrics.CacheMiss("attr")
 	a, st := b.inner.Stat(ctx, p)
 	if st == fuse.OK && a != nil {
@@ -66,12 +166,39 @@ func (b *cachedBackend) Stat(ctx context.Context, p string) (*io.Attr, fuse.Stat
 
 func (b *cachedBackend) Lookup(ctx context.Context, parent, name string) (*io.Attr, fuse.Status) {
 	full := joinPath(parent, name)
-	if a, hit, pos := b.attr.get(full); hit {
+	cached, hit, pos := b.attr.get(full)
+	if !hit {
+		return b.lookupFromInner(ctx, parent, name, full)
+	}
+	if b.validity.globalState() == stateVerified || b.validity.isPathVerified(full) {
 		if pos {
-			return a, fuse.OK
+			return cached, fuse.OK
 		}
 		return nil, fuse.ENOENT
 	}
+	knownVersion := uint64(0)
+	if cached != nil {
+		knownVersion = cached.Version
+	}
+	r := b.revalidate(ctx, full, knownVersion)
+	switch {
+	case r.notModified:
+		if pos {
+			return cached, fuse.OK
+		}
+		return nil, fuse.ENOENT
+	case r.enoent:
+		return nil, fuse.ENOENT
+	case r.freshAttrs != nil:
+		b.attr.putPositive(full, r.freshAttrs)
+		return r.freshAttrs, fuse.OK
+	default:
+		return b.lookupFromInner(ctx, parent, name, full)
+	}
+}
+
+// lookupFromInner fetches from inner and populates the attr cache.
+func (b *cachedBackend) lookupFromInner(ctx context.Context, parent, name, full string) (*io.Attr, fuse.Status) {
 	metrics.CacheMiss("attr")
 	a, st := b.inner.Lookup(ctx, parent, name)
 	if st == fuse.OK && a != nil {
@@ -84,8 +211,44 @@ func (b *cachedBackend) Lookup(ctx context.Context, parent, name string) (*io.At
 
 func (b *cachedBackend) ListDir(ctx context.Context, p string) ([]io.DirEntry, fuse.Status) {
 	if entries, hit := b.dir.get(p); hit {
-		return entries, fuse.OK
+		// Gate on validity: revalidate the directory's own attr to check for
+		// freshness. Use the dir path as the revalidation key.
+		if b.validity.globalState() == stateVerified || b.validity.isPathVerified(p) {
+			return entries, fuse.OK
+		}
+		// Run revalidation on the directory itself.
+		cached, _, pos := b.attr.get(p)
+		if pos {
+			knownVersion := uint64(0)
+			if cached != nil {
+				knownVersion = cached.Version
+			}
+			r := b.revalidate(ctx, p, knownVersion)
+			switch {
+			case r.notModified:
+				// Directory attr unchanged; listing is still valid.
+				// Re-fetch from dir cache (revalidate may not have changed it).
+				if entries2, hit2 := b.dir.get(p); hit2 {
+					return entries2, fuse.OK
+				}
+				// Dir cache was evicted in the meantime; fall through to inner.
+			case r.enoent:
+				return nil, fuse.ENOENT
+			case r.freshAttrs != nil:
+				// Dir changed: revalidate flushed the dir cache; fall through to
+				// listDirFromInner to replace the stale listing.
+			default:
+				// Fallback: revalidation RPC error; serve cached listing.
+				return entries, fuse.OK
+			}
+		}
+		// Dir cached but attr unverified/changed: fall through to inner.
 	}
+	return b.listDirFromInner(ctx, p)
+}
+
+// listDirFromInner fetches from inner and populates the dir cache.
+func (b *cachedBackend) listDirFromInner(ctx context.Context, p string) ([]io.DirEntry, fuse.Status) {
 	metrics.CacheMiss("dir")
 	entries, st := b.inner.ListDir(ctx, p)
 	if st == fuse.OK {
@@ -98,6 +261,23 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 	ch, ok := fh.(*cachedHandle)
 	if !ok {
 		return b.inner.Read(ctx, fh, off, dest)
+	}
+	// Gate data reads on validity: if unverified, revalidate the file's attr
+	// first. A version change invalidates data chunks so the miss path below
+	// will refetch from inner.
+	if b.validity.globalState() != stateVerified && !b.validity.isPathVerified(ch.path) {
+		cached, _, _ := b.attr.get(ch.path)
+		knownVersion := uint64(0)
+		if cached != nil {
+			knownVersion = cached.Version
+		}
+		r := b.revalidate(ctx, ch.path, knownVersion)
+		if r.enoent {
+			return 0, fuse.ENOENT
+		}
+		// On freshAttrs: revalidate already invalidated data chunks; the chunk
+		// lookup below will miss and fall through to inner — correct.
+		// On notModified / fallback: continue to existing chunk-loop path.
 	}
 	chunkSize := int64(b.cfg.ChunkSizeBytes)
 	total := 0

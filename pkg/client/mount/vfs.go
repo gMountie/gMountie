@@ -48,6 +48,9 @@ type VFSVolumeMounterImpl struct {
 	server *fuse.Server
 	// volumes tracks the persistent child inode for each mounted volume
 	volumes *xsync.MapOf[string, *gofs.Inode]
+	// backends tracks the FileSystemBackend for each mounted volume so Close
+	// can be called on Unmount to stop subscriber goroutines.
+	backends *xsync.MapOf[string, io.FileSystemBackend]
 	// persists tracks the open persist handle for each mounted volume;
 	// only populated when cache.Enabled is true.
 	persists *xsync.MapOf[string, *persist.Persist]
@@ -70,6 +73,7 @@ func NewMultiVolumeMounter(client grpc.Client, path string, fuseCfg *config.FUSE
 	m := &VFSVolumeMounterImpl{
 		path:        path,
 		volumes:     xsync.NewMapOf[string, *gofs.Inode](),
+		backends:    xsync.NewMapOf[string, io.FileSystemBackend](),
 		persists:    xsync.NewMapOf[string, *persist.Persist](),
 		client:      client,
 		fuse:        fuseCfg,
@@ -111,8 +115,9 @@ func (m *VFSVolumeMounterImpl) Mount(volumeName string) error {
 			return pkgerrors.Wrap(err, "open cache persist")
 		}
 		m.persists.Store(volumeName, p)
-		backend = cache.NewCachedBackend(backend, cache.ConfigFromClient(m.cache), p)
+		backend = cache.NewCachedBackend(backend, cache.ConfigFromClient(m.cache), p, m.client.Fs(), volumeName)
 	}
+	m.backends.Store(volumeName, backend)
 	volRoot := io.NewMountieRoot(backend)
 	ctx := context.Background()
 	parent := &m.root.Inode
@@ -144,6 +149,10 @@ func (m *VFSVolumeMounterImpl) Unmount(volumeName string) error {
 	}
 	childInode.ForgetPersistent()
 	m.volumes.Delete(volumeName)
+	if be, ok := m.backends.Load(volumeName); ok {
+		_ = be.Close()
+		m.backends.Delete(volumeName)
+	}
 	if p, ok := m.persists.Load(volumeName); ok {
 		_ = p.Close()
 		m.persists.Delete(volumeName)

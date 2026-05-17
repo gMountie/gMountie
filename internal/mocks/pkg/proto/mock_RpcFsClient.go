@@ -474,6 +474,93 @@ func (_c *MockRpcFsClient_GetAttr_Call) RunAndReturn(run func(ctx context.Contex
 	return _c
 }
 
+// GetAttrIfChanged provides a mock function for the type MockRpcFsClient
+func (_mock *MockRpcFsClient) GetAttrIfChanged(ctx context.Context, in *proto.GetAttrIfChangedRequest, opts ...grpc.CallOption) (*proto.GetAttrIfChangedReply, error) {
+	// grpc.CallOption
+	_va := make([]interface{}, len(opts))
+	for _i := range opts {
+		_va[_i] = opts[_i]
+	}
+	var _ca []interface{}
+	_ca = append(_ca, ctx, in)
+	_ca = append(_ca, _va...)
+	ret := _mock.Called(_ca...)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetAttrIfChanged")
+	}
+
+	var r0 *proto.GetAttrIfChangedReply
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.GetAttrIfChangedRequest, ...grpc.CallOption) (*proto.GetAttrIfChangedReply, error)); ok {
+		return returnFunc(ctx, in, opts...)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.GetAttrIfChangedRequest, ...grpc.CallOption) *proto.GetAttrIfChangedReply); ok {
+		r0 = returnFunc(ctx, in, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proto.GetAttrIfChangedReply)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.GetAttrIfChangedRequest, ...grpc.CallOption) error); ok {
+		r1 = returnFunc(ctx, in, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockRpcFsClient_GetAttrIfChanged_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetAttrIfChanged'
+type MockRpcFsClient_GetAttrIfChanged_Call struct {
+	*mock.Call
+}
+
+// GetAttrIfChanged is a helper method to define mock.On call
+//   - ctx context.Context
+//   - in *proto.GetAttrIfChangedRequest
+//   - opts ...grpc.CallOption
+func (_e *MockRpcFsClient_Expecter) GetAttrIfChanged(ctx interface{}, in interface{}, opts ...interface{}) *MockRpcFsClient_GetAttrIfChanged_Call {
+	return &MockRpcFsClient_GetAttrIfChanged_Call{Call: _e.mock.On("GetAttrIfChanged",
+		append([]interface{}{ctx, in}, opts...)...)}
+}
+
+func (_c *MockRpcFsClient_GetAttrIfChanged_Call) Run(run func(ctx context.Context, in *proto.GetAttrIfChangedRequest, opts ...grpc.CallOption)) *MockRpcFsClient_GetAttrIfChanged_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *proto.GetAttrIfChangedRequest
+		if args[1] != nil {
+			arg1 = args[1].(*proto.GetAttrIfChangedRequest)
+		}
+		var arg2 []grpc.CallOption
+		variadicArgs := make([]grpc.CallOption, len(args)-2)
+		for i, a := range args[2:] {
+			if a != nil {
+				variadicArgs[i] = a.(grpc.CallOption)
+			}
+		}
+		arg2 = variadicArgs
+		run(
+			arg0,
+			arg1,
+			arg2...,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFsClient_GetAttrIfChanged_Call) Return(getAttrIfChangedReply *proto.GetAttrIfChangedReply, err error) *MockRpcFsClient_GetAttrIfChanged_Call {
+	_c.Call.Return(getAttrIfChangedReply, err)
+	return _c
+}
+
+func (_c *MockRpcFsClient_GetAttrIfChanged_Call) RunAndReturn(run func(ctx context.Context, in *proto.GetAttrIfChangedRequest, opts ...grpc.CallOption) (*proto.GetAttrIfChangedReply, error)) *MockRpcFsClient_GetAttrIfChanged_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetXAttr provides a mock function for the type MockRpcFsClient
 func (_mock *MockRpcFsClient) GetXAttr(ctx context.Context, in *proto.GetXAttrRequest, opts ...grpc.CallOption) (*proto.GetXAttrReply, error) {
 	// grpc.CallOption
@@ -992,6 +1079,93 @@ func (_c *MockRpcFsClient_StatFs_Call) Return(statFsReply *proto.StatFsReply, er
 }
 
 func (_c *MockRpcFsClient_StatFs_Call) RunAndReturn(run func(ctx context.Context, in *proto.StatFsRequest, opts ...grpc.CallOption) (*proto.StatFsReply, error)) *MockRpcFsClient_StatFs_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Subscribe provides a mock function for the type MockRpcFsClient
+func (_mock *MockRpcFsClient) Subscribe(ctx context.Context, in *proto.SubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[proto.SubscribeEvent], error) {
+	// grpc.CallOption
+	_va := make([]interface{}, len(opts))
+	for _i := range opts {
+		_va[_i] = opts[_i]
+	}
+	var _ca []interface{}
+	_ca = append(_ca, ctx, in)
+	_ca = append(_ca, _va...)
+	ret := _mock.Called(_ca...)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Subscribe")
+	}
+
+	var r0 grpc.ServerStreamingClient[proto.SubscribeEvent]
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.SubscribeRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[proto.SubscribeEvent], error)); ok {
+		return returnFunc(ctx, in, opts...)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.SubscribeRequest, ...grpc.CallOption) grpc.ServerStreamingClient[proto.SubscribeEvent]); ok {
+		r0 = returnFunc(ctx, in, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(grpc.ServerStreamingClient[proto.SubscribeEvent])
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.SubscribeRequest, ...grpc.CallOption) error); ok {
+		r1 = returnFunc(ctx, in, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockRpcFsClient_Subscribe_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Subscribe'
+type MockRpcFsClient_Subscribe_Call struct {
+	*mock.Call
+}
+
+// Subscribe is a helper method to define mock.On call
+//   - ctx context.Context
+//   - in *proto.SubscribeRequest
+//   - opts ...grpc.CallOption
+func (_e *MockRpcFsClient_Expecter) Subscribe(ctx interface{}, in interface{}, opts ...interface{}) *MockRpcFsClient_Subscribe_Call {
+	return &MockRpcFsClient_Subscribe_Call{Call: _e.mock.On("Subscribe",
+		append([]interface{}{ctx, in}, opts...)...)}
+}
+
+func (_c *MockRpcFsClient_Subscribe_Call) Run(run func(ctx context.Context, in *proto.SubscribeRequest, opts ...grpc.CallOption)) *MockRpcFsClient_Subscribe_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *proto.SubscribeRequest
+		if args[1] != nil {
+			arg1 = args[1].(*proto.SubscribeRequest)
+		}
+		var arg2 []grpc.CallOption
+		variadicArgs := make([]grpc.CallOption, len(args)-2)
+		for i, a := range args[2:] {
+			if a != nil {
+				variadicArgs[i] = a.(grpc.CallOption)
+			}
+		}
+		arg2 = variadicArgs
+		run(
+			arg0,
+			arg1,
+			arg2...,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFsClient_Subscribe_Call) Return(serverStreamingClient grpc.ServerStreamingClient[proto.SubscribeEvent], err error) *MockRpcFsClient_Subscribe_Call {
+	_c.Call.Return(serverStreamingClient, err)
+	return _c
+}
+
+func (_c *MockRpcFsClient_Subscribe_Call) RunAndReturn(run func(ctx context.Context, in *proto.SubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[proto.SubscribeEvent], error)) *MockRpcFsClient_Subscribe_Call {
 	_c.Call.Return(run)
 	return _c
 }
