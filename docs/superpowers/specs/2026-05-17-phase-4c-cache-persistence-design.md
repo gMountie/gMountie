@@ -23,7 +23,7 @@ Persist the client-side cache to disk so it survives `gMountie mount` restarts. 
 
 Sub-spec C is a backing-store change to Sub-spec B's stores, plus a new persistence package. The `cachedBackend` decorator, the `attrCache`/`dirCache`/`dataCache` types, the read-through/write-through policy, and the FileSystemBackend chain all stay. Two pieces change:
 
-1. **New `pkg/client/cache/persist/` package.** Owns the bbolt database, the chunks/ directory, the lock file, format versioning, startup reconciliation, and a `Store` interface that the in-memory stores compose over. Does not know what an `attrEntry` is — works in bytes.
+1. **New `pkg/client/cache/persist/` package.** Owns the bbolt database, the chunks/ directory, xxh3-128 chunk hashing, the lock file, format versioning, startup reconciliation, and a `Store` interface that the in-memory stores compose over. Does not know what an `attrEntry` is — works in bytes.
 
 2. **Memory tier above disk.** The existing memory `store` becomes a hot tier in front of `persist.Store`. `get` checks memory → falls through to disk → on disk hit, promotes to memory; `put` writes through to both. The Sub-spec B `accountant` continues to own the *memory* LRU and budget. A parallel `diskAccountant` owns the disk LRU and budget. The two are independent (see "Caps" below).
 
@@ -33,7 +33,7 @@ Sub-spec C is a backing-store change to Sub-spec B's stores, plus a new persiste
 
 | Package | Responsibility |
 |---|---|
-| `cache/persist` | bbolt schema, chunks/ layout, BLAKE3 hashing, atomic chunk writes via tmp+rename, refcount-based chunk unlinks, lock file, format_version, startup reconciliation. Untyped — `(bucket, key, value []byte)` + chunk file references. |
+| `cache/persist` | bbolt schema, chunks/ layout, xxh3-128 hashing, atomic chunk writes via tmp+rename, refcount-based chunk unlinks, lock file, format_version, startup reconciliation. Untyped — `(bucket, key, value []byte)` + chunk file references. |
 | `cache/attr.go`, `dir.go`, `data.go` | Typed serialization (gob) into/out of persist. Define their bucket names. Read-through + write-through composition. |
 | `cache/backend.go` | Unchanged. Policy (when to invalidate, when to populate, TTL clocks). |
 | `cache/store.go` | Extended: memory tier with fall-through to a `persist.Store`. Existing `accountant` integration unchanged. |
@@ -63,7 +63,7 @@ Per-volume directories under `cache.path`:
     ├── meta.db           bbolt database
     └── chunks/
         ├── 00/
-        │   └── 1f/<full-blake3-hex>     content-addressable chunk file
+        │   └── 1f/<full-xxh3-128-hex>   content-addressable chunk file
         └── ...
 ```
 
@@ -77,11 +77,11 @@ Chunk path: `chunks/<first-2-hex>/<next-2-hex>/<rest>` — 65,536 leaf directori
 
 ## Chunk addressing
 
-Content-addressable: chunk file path is determined by `blake3(chunk_bytes)`. Rename and copy of a file are essentially free in the cache (only the bbolt index entries change; chunk files stay put and pick up new references). Deduplication across files comes for free.
+Content-addressable: chunk file path is determined by `xxh3-128(chunk_bytes)`. Rename and copy of a file are essentially free in the cache (only the bbolt index entries change; chunk files stay put and pick up new references). Deduplication across files comes for free.
 
-Hashing happens on every cache populate (read-through completion). BLAKE3 throughput on commodity hardware is ~1 GB/s single-threaded; for a 1 MiB chunk that's ~1 ms. Acceptable on the read-through path.
+Hashing happens on every cache populate (read-through completion). xxh3 throughput on commodity hardware is ~30 GB/s single-threaded; for a 1 MiB chunk that's ~35 µs — effectively free on the read-through path. 128-bit output gives ~10^19 chunks before birthday-bound collision risk becomes interesting, plenty for a single-user cache.
 
-We're not using the hash for cryptographic strength — local disk is trusted. BLAKE3 is chosen for speed + widely-used in chunk-CAS systems (rclone-style designs); xxh3-128 would also work. BLAKE3 wins for audit-friendliness.
+We're not using the hash for cryptographic strength — local disk is trusted, so we pick raw speed over crypto-grade. Library: `github.com/zeebo/xxh3` (pure-Go xxh3, AVX-512/NEON paths).
 
 ## bbolt schema (`meta.db`)
 
@@ -91,7 +91,7 @@ We're not using the hash for cryptographic strength — local disk is trusted. B
 | `meta` | `created_at` | unix nanos |
 | `attr` | path bytes | gob `persistedAttr{Attr, Version, ExpiresAt, Negative}` |
 | `dir` | path bytes | gob `persistedDir{Entries []DirEntry, ExpiresAt time.Time}` |
-| `data_idx` | `path\x00uvarint(chunk_index)` | gob `persistedChunkRef{Hash [32]byte, Size uint32, Version uint64}` |
+| `data_idx` | `path\x00uvarint(chunk_index)` | gob `persistedChunkRef{Hash [16]byte, Size uint32, Version uint64}` |
 | `chunk_refs` | hash bytes | uvarint refcount |
 | `lru` | uvarint counter | bucket-qualified key (e.g. `data_idx/...`) |
 | `lru_pos` | bucket-qualified key | uvarint counter (reverse index for O(1) promote/remove) |
@@ -115,7 +115,7 @@ Attr and dir reads follow the same shape with simpler value handling.
 
 ## Write path (cache populate, not user write)
 
-1. Compute `hash := blake3(chunk)`.
+1. Compute `hash := xxh3.Hash128(chunk)` (16 bytes).
 2. If `chunks/aa/bb/<hash>` already exists → dedupe; skip the bytes write.
 3. Otherwise: write `chunks/aa/bb/.tmp-<rand>`, atomic-rename into final path. No fsync (best-effort durability — cache is reconstructible from the server).
 4. Single bbolt txn: insert `data_idx[path\x00idx] = {hash, size, version}`, increment `chunk_refs[hash]`, append LRU entry. If this push exceeds `disk_max_bytes`, the same txn evicts the oldest entries (drops index entries, decrements their refcounts, queues now-zero-ref chunk files for unlink which happens post-txn).
