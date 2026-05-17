@@ -735,6 +735,110 @@ func (b *BackendClient) Fsync(ctx context.Context, fh FileHandle, flags int64) f
 	return fuse.Status(res.Status)
 }
 
+// Allocate proxies fallocate(2) to the server. Mutating but not retried
+// — fallocate's idempotency is fuzzy across keep-size vs. extend modes,
+// and the legacy code never retried it either. No request_id stamp for
+// the same reason.
+func (b *BackendClient) Allocate(ctx context.Context, fh FileHandle, off, size uint64, mode uint32) fuse.Status {
+	h, ok := fh.(*grpcFileHandle)
+	if !ok {
+		return fuse.EBADF
+	}
+	ctx2, cancel := withIOTimeout(ctx, h.ioTimeout)
+	defer cancel()
+	res, err := h.fileClient.Allocate(ctx2, &proto.AllocateRequest{
+		Volume:    h.volume,
+		Caller:    callerFromCtx(ctx),
+		Fd:        h.fd,
+		Path:      h.path,
+		Off:       off,
+		Size:      size,
+		Mode:      mode,
+		SessionId: h.sessionID,
+	})
+	if err != nil {
+		log.Log.Error("error in call: Allocate", zap.String("path", h.path), zap.Error(err))
+		return fuse.EIO
+	}
+	return fuse.Status(res.Status)
+}
+
+// GetLk queries the lock state for a region of the file. No retry —
+// lock semantics get weird under replay (a server-side success the
+// client missed would leave us holding a phantom lock).
+func (b *BackendClient) GetLk(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) fuse.Status {
+	h, ok := fh.(*grpcFileHandle)
+	if !ok {
+		return fuse.EBADF
+	}
+	ctx2, cancel := withIOTimeout(ctx, h.ioTimeout)
+	defer cancel()
+	res, err := h.fileClient.GetLk(ctx2, &proto.GetLkRequest{
+		Volume:    h.volume,
+		Fd:        h.fd,
+		Owner:     owner,
+		Flags:     flags,
+		Lk:        &proto.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid},
+		SessionId: h.sessionID,
+	})
+	if err != nil {
+		log.Log.Error("error in call: GetLk", zap.String("path", h.path), zap.Error(err))
+		return fuse.EIO
+	}
+	if res.Lk != nil {
+		*out = fuse.FileLock{Start: res.Lk.Start, End: res.Lk.End, Typ: res.Lk.Typ, Pid: res.Lk.Pid}
+	}
+	return fuse.Status(res.Status)
+}
+
+// SetLk attempts a non-blocking lock acquisition (fcntl(F_SETLK)). No
+// retry — see GetLk.
+func (b *BackendClient) SetLk(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status {
+	h, ok := fh.(*grpcFileHandle)
+	if !ok {
+		return fuse.EBADF
+	}
+	ctx2, cancel := withIOTimeout(ctx, h.ioTimeout)
+	defer cancel()
+	res, err := h.fileClient.SetLk(ctx2, &proto.SetLkRequest{
+		Volume:    h.volume,
+		Fd:        h.fd,
+		Owner:     owner,
+		Flags:     flags,
+		Lk:        &proto.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid},
+		SessionId: h.sessionID,
+	})
+	if err != nil {
+		log.Log.Error("error in call: SetLk", zap.String("path", h.path), zap.Error(err))
+		return fuse.EIO
+	}
+	return fuse.Status(res.Status)
+}
+
+// SetLkw attempts a blocking lock acquisition (fcntl(F_SETLKW)). No
+// retry — see GetLk.
+func (b *BackendClient) SetLkw(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status {
+	h, ok := fh.(*grpcFileHandle)
+	if !ok {
+		return fuse.EBADF
+	}
+	ctx2, cancel := withIOTimeout(ctx, h.ioTimeout)
+	defer cancel()
+	res, err := h.fileClient.SetLkw(ctx2, &proto.SetLkwRequest{
+		Volume:    h.volume,
+		Fd:        h.fd,
+		Owner:     owner,
+		Flags:     flags,
+		Lk:        &proto.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid},
+		SessionId: h.sessionID,
+	})
+	if err != nil {
+		log.Log.Error("error in call: SetLkw", zap.String("path", h.path), zap.Error(err))
+		return fuse.EIO
+	}
+	return fuse.Status(res.Status)
+}
+
 // grpcFileHandle is the per-fd state returned by Open/Create. It mirrors
 // the legacy GrpcFile minus the nodefs.File embedding — the FUSE adapter
 // for the new go-fuse v2 fs.* node interface lives in node.go (Task 3).

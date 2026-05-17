@@ -598,6 +598,127 @@ func (s *BackendClientTestSuite) TestRead_BadHandleEBADF() {
 	s.Assert().Equal(fuse.EBADF, st)
 }
 
+// TestAllocate verifies fallocate(2) translates to an AllocateRequest
+// carrying volume/fd/path/off/size/mode/session_id.
+func (s *BackendClientTestSuite) TestAllocate() {
+	s.fileClient.EXPECT().Allocate(mock.Anything, mock.MatchedBy(func(req *proto.AllocateRequest) bool {
+		return req.Volume == "testVolume" && req.Fd == 1 && req.Path == "/test/path" &&
+			req.Off == 100 && req.Size == 4096 && req.Mode == 0 &&
+			req.SessionId == "test-session"
+	})).Return(&proto.AllocateReply{Status: int32(fuse.OK)}, nil)
+
+	h := s.newHandle(grpcclient.PerFileConfig{})
+	st := s.backend.Allocate(context.Background(), h, 100, 4096, 0)
+	s.Assert().Equal(fuse.OK, st)
+}
+
+func (s *BackendClientTestSuite) TestAllocate_Error() {
+	s.fileClient.EXPECT().Allocate(mock.Anything, mock.Anything).
+		Return(nil, context.DeadlineExceeded)
+
+	h := s.newHandle(grpcclient.PerFileConfig{})
+	st := s.backend.Allocate(context.Background(), h, 0, 4096, 0)
+	s.Assert().Equal(fuse.EIO, st)
+}
+
+func (s *BackendClientTestSuite) TestAllocate_BadHandleEBADF() {
+	st := s.backend.Allocate(context.Background(), badHandle{}, 0, 4096, 0)
+	s.Assert().Equal(fuse.EBADF, st)
+}
+
+// TestGetLk verifies the lock state query translates the inbound
+// fuse.FileLock to the proto and folds the reply back into *out.
+func (s *BackendClientTestSuite) TestGetLk() {
+	lk := &fuse.FileLock{Start: 0, End: 16, Typ: 1, Pid: 99}
+	s.fileClient.EXPECT().GetLk(mock.Anything, mock.MatchedBy(func(req *proto.GetLkRequest) bool {
+		return req.Volume == "testVolume" && req.Fd == 1 && req.Owner == 42 && req.Flags == 0 &&
+			req.SessionId == "test-session" && req.Lk != nil &&
+			req.Lk.Start == 0 && req.Lk.End == 16 && req.Lk.Typ == 1 && req.Lk.Pid == 99
+	})).Return(&proto.GetLkReply{
+		Status: int32(fuse.OK),
+		Lk:     &proto.FileLock{Start: 0, End: 16, Typ: 2, Pid: 1234},
+	}, nil)
+
+	h := s.newHandle(grpcclient.PerFileConfig{})
+	var out fuse.FileLock
+	st := s.backend.GetLk(context.Background(), h, 42, lk, 0, &out)
+	s.Require().Equal(fuse.OK, st)
+	s.Assert().Equal(uint64(0), out.Start)
+	s.Assert().Equal(uint64(16), out.End)
+	s.Assert().Equal(uint32(2), out.Typ)
+	s.Assert().Equal(uint32(1234), out.Pid)
+}
+
+func (s *BackendClientTestSuite) TestGetLk_Error() {
+	s.fileClient.EXPECT().GetLk(mock.Anything, mock.Anything).
+		Return(nil, context.DeadlineExceeded)
+
+	h := s.newHandle(grpcclient.PerFileConfig{})
+	var out fuse.FileLock
+	st := s.backend.GetLk(context.Background(), h, 0, &fuse.FileLock{}, 0, &out)
+	s.Assert().Equal(fuse.EIO, st)
+}
+
+func (s *BackendClientTestSuite) TestGetLk_BadHandleEBADF() {
+	var out fuse.FileLock
+	st := s.backend.GetLk(context.Background(), badHandle{}, 0, &fuse.FileLock{}, 0, &out)
+	s.Assert().Equal(fuse.EBADF, st)
+}
+
+func (s *BackendClientTestSuite) TestSetLk() {
+	lk := &fuse.FileLock{Start: 10, End: 20, Typ: 1, Pid: 5}
+	s.fileClient.EXPECT().SetLk(mock.Anything, mock.MatchedBy(func(req *proto.SetLkRequest) bool {
+		return req.Volume == "testVolume" && req.Fd == 1 && req.Owner == 7 && req.Flags == 0 &&
+			req.SessionId == "test-session" && req.Lk != nil &&
+			req.Lk.Start == 10 && req.Lk.End == 20 && req.Lk.Typ == 1 && req.Lk.Pid == 5
+	})).Return(&proto.SetLkReply{Status: int32(fuse.OK)}, nil)
+
+	h := s.newHandle(grpcclient.PerFileConfig{})
+	st := s.backend.SetLk(context.Background(), h, 7, lk, 0)
+	s.Assert().Equal(fuse.OK, st)
+}
+
+func (s *BackendClientTestSuite) TestSetLk_Error() {
+	s.fileClient.EXPECT().SetLk(mock.Anything, mock.Anything).
+		Return(nil, context.DeadlineExceeded)
+
+	h := s.newHandle(grpcclient.PerFileConfig{})
+	st := s.backend.SetLk(context.Background(), h, 0, &fuse.FileLock{}, 0)
+	s.Assert().Equal(fuse.EIO, st)
+}
+
+func (s *BackendClientTestSuite) TestSetLk_BadHandleEBADF() {
+	st := s.backend.SetLk(context.Background(), badHandle{}, 0, &fuse.FileLock{}, 0)
+	s.Assert().Equal(fuse.EBADF, st)
+}
+
+func (s *BackendClientTestSuite) TestSetLkw() {
+	lk := &fuse.FileLock{Start: 10, End: 20, Typ: 1, Pid: 5}
+	s.fileClient.EXPECT().SetLkw(mock.Anything, mock.MatchedBy(func(req *proto.SetLkwRequest) bool {
+		return req.Volume == "testVolume" && req.Fd == 1 && req.Owner == 7 && req.Flags == 0 &&
+			req.SessionId == "test-session" && req.Lk != nil &&
+			req.Lk.Start == 10 && req.Lk.End == 20 && req.Lk.Typ == 1 && req.Lk.Pid == 5
+	})).Return(&proto.SetLkwReply{Status: int32(fuse.OK)}, nil)
+
+	h := s.newHandle(grpcclient.PerFileConfig{})
+	st := s.backend.SetLkw(context.Background(), h, 7, lk, 0)
+	s.Assert().Equal(fuse.OK, st)
+}
+
+func (s *BackendClientTestSuite) TestSetLkw_Error() {
+	s.fileClient.EXPECT().SetLkw(mock.Anything, mock.Anything).
+		Return(nil, context.DeadlineExceeded)
+
+	h := s.newHandle(grpcclient.PerFileConfig{})
+	st := s.backend.SetLkw(context.Background(), h, 0, &fuse.FileLock{}, 0)
+	s.Assert().Equal(fuse.EIO, st)
+}
+
+func (s *BackendClientTestSuite) TestSetLkw_BadHandleEBADF() {
+	st := s.backend.SetLkw(context.Background(), badHandle{}, 0, &fuse.FileLock{}, 0)
+	s.Assert().Equal(fuse.EBADF, st)
+}
+
 // badHandle is a FileHandle implementation that is not a *grpcFileHandle,
 // used to exercise the type-assertion guard on fd-level ops.
 type badHandle struct{}

@@ -81,11 +81,15 @@ var (
 	_ fs.NodeAccesser   = (*gMountieNode)(nil)
 	_ fs.NodeGetxattrer = (*gMountieNode)(nil)
 
-	_ fs.FileReader   = (*gMountieFile)(nil)
-	_ fs.FileWriter   = (*gMountieFile)(nil)
-	_ fs.FileFlusher  = (*gMountieFile)(nil)
-	_ fs.FileFsyncer  = (*gMountieFile)(nil)
-	_ fs.FileReleaser = (*gMountieFile)(nil)
+	_ fs.FileReader    = (*gMountieFile)(nil)
+	_ fs.FileWriter    = (*gMountieFile)(nil)
+	_ fs.FileFlusher   = (*gMountieFile)(nil)
+	_ fs.FileFsyncer   = (*gMountieFile)(nil)
+	_ fs.FileReleaser  = (*gMountieFile)(nil)
+	_ fs.FileAllocater = (*gMountieFile)(nil)
+	_ fs.FileGetlker   = (*gMountieFile)(nil)
+	_ fs.FileSetlker   = (*gMountieFile)(nil)
+	_ fs.FileSetlkwer  = (*gMountieFile)(nil)
 )
 
 // setAttrFromBackend populates a fuse.Attr from a backend Attr. Used by
@@ -460,4 +464,20 @@ func (f *gMountieFile) Fsync(ctx context.Context, flags uint32) syscall.Errno {
 
 func (f *gMountieFile) Release(ctx context.Context) syscall.Errno {
 	return syscall.Errno(f.backend.Release(ctx, f.fh))
+}
+
+func (f *gMountieFile) Allocate(ctx context.Context, off, size uint64, mode uint32) syscall.Errno {
+	return syscall.Errno(f.backend.Allocate(ctx, f.fh, off, size, mode))
+}
+
+func (f *gMountieFile) Getlk(ctx context.Context, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) syscall.Errno {
+	return syscall.Errno(f.backend.GetLk(ctx, f.fh, owner, lk, flags, out))
+}
+
+func (f *gMountieFile) Setlk(ctx context.Context, owner uint64, lk *fuse.FileLock, flags uint32) syscall.Errno {
+	return syscall.Errno(f.backend.SetLk(ctx, f.fh, owner, lk, flags))
+}
+
+func (f *gMountieFile) Setlkw(ctx context.Context, owner uint64, lk *fuse.FileLock, flags uint32) syscall.Errno {
+	return syscall.Errno(f.backend.SetLkw(ctx, f.fh, owner, lk, flags))
 }

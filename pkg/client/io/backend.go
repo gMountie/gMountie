@@ -94,6 +94,18 @@ type FileSystemBackend interface {
 	Flush(ctx context.Context, fh FileHandle) fuse.Status
 	// Fsync sync()s the file.
 	Fsync(ctx context.Context, fh FileHandle, flags int64) fuse.Status
+	// Allocate preallocates space at off..off+size for future writes
+	// (fallocate(2)).
+	Allocate(ctx context.Context, fh FileHandle, off, size uint64, mode uint32) fuse.Status
+	// GetLk queries the lock state for a region of the file
+	// (fcntl(F_GETLK)).
+	GetLk(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) fuse.Status
+	// SetLk attempts to acquire a lock without blocking
+	// (fcntl(F_SETLK)).
+	SetLk(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status
+	// SetLkw attempts to acquire a lock, blocking until it can be
+	// granted (fcntl(F_SETLKW)).
+	SetLkw(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status
 
 	// Mkdir creates a directory.
 	Mkdir(ctx context.Context, path string, mode uint32) fuse.Status

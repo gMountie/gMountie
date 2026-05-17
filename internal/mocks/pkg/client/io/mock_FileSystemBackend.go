@@ -102,6 +102,81 @@ func (_c *MockFileSystemBackend_Access_Call) RunAndReturn(run func(ctx context.C
 	return _c
 }
 
+// Allocate provides a mock function for the type MockFileSystemBackend
+func (_mock *MockFileSystemBackend) Allocate(ctx context.Context, fh io.FileHandle, off uint64, size uint64, mode uint32) fuse.Status {
+	ret := _mock.Called(ctx, fh, off, size, mode)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Allocate")
+	}
+
+	var r0 fuse.Status
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, uint64, uint32) fuse.Status); ok {
+		r0 = returnFunc(ctx, fh, off, size, mode)
+	} else {
+		r0 = ret.Get(0).(fuse.Status)
+	}
+	return r0
+}
+
+// MockFileSystemBackend_Allocate_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Allocate'
+type MockFileSystemBackend_Allocate_Call struct {
+	*mock.Call
+}
+
+// Allocate is a helper method to define mock.On call
+//   - ctx context.Context
+//   - fh io.FileHandle
+//   - off uint64
+//   - size uint64
+//   - mode uint32
+func (_e *MockFileSystemBackend_Expecter) Allocate(ctx interface{}, fh interface{}, off interface{}, size interface{}, mode interface{}) *MockFileSystemBackend_Allocate_Call {
+	return &MockFileSystemBackend_Allocate_Call{Call: _e.mock.On("Allocate", ctx, fh, off, size, mode)}
+}
+
+func (_c *MockFileSystemBackend_Allocate_Call) Run(run func(ctx context.Context, fh io.FileHandle, off uint64, size uint64, mode uint32)) *MockFileSystemBackend_Allocate_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 io.FileHandle
+		if args[1] != nil {
+			arg1 = args[1].(io.FileHandle)
+		}
+		var arg2 uint64
+		if args[2] != nil {
+			arg2 = args[2].(uint64)
+		}
+		var arg3 uint64
+		if args[3] != nil {
+			arg3 = args[3].(uint64)
+		}
+		var arg4 uint32
+		if args[4] != nil {
+			arg4 = args[4].(uint32)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+			arg4,
+		)
+	})
+	return _c
+}
+
+func (_c *MockFileSystemBackend_Allocate_Call) Return(status fuse.Status) *MockFileSystemBackend_Allocate_Call {
+	_c.Call.Return(status)
+	return _c
+}
+
+func (_c *MockFileSystemBackend_Allocate_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, off uint64, size uint64, mode uint32) fuse.Status) *MockFileSystemBackend_Allocate_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Chmod provides a mock function for the type MockFileSystemBackend
 func (_mock *MockFileSystemBackend) Chmod(ctx context.Context, path string, mode uint32) fuse.Status {
 	ret := _mock.Called(ctx, path, mode)
@@ -444,6 +519,87 @@ func (_c *MockFileSystemBackend_Fsync_Call) Return(status fuse.Status) *MockFile
 }
 
 func (_c *MockFileSystemBackend_Fsync_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, flags int64) fuse.Status) *MockFileSystemBackend_Fsync_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetLk provides a mock function for the type MockFileSystemBackend
+func (_mock *MockFileSystemBackend) GetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) fuse.Status {
+	ret := _mock.Called(ctx, fh, owner, lk, flags, out)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetLk")
+	}
+
+	var r0 fuse.Status
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, *fuse.FileLock, uint32, *fuse.FileLock) fuse.Status); ok {
+		r0 = returnFunc(ctx, fh, owner, lk, flags, out)
+	} else {
+		r0 = ret.Get(0).(fuse.Status)
+	}
+	return r0
+}
+
+// MockFileSystemBackend_GetLk_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetLk'
+type MockFileSystemBackend_GetLk_Call struct {
+	*mock.Call
+}
+
+// GetLk is a helper method to define mock.On call
+//   - ctx context.Context
+//   - fh io.FileHandle
+//   - owner uint64
+//   - lk *fuse.FileLock
+//   - flags uint32
+//   - out *fuse.FileLock
+func (_e *MockFileSystemBackend_Expecter) GetLk(ctx interface{}, fh interface{}, owner interface{}, lk interface{}, flags interface{}, out interface{}) *MockFileSystemBackend_GetLk_Call {
+	return &MockFileSystemBackend_GetLk_Call{Call: _e.mock.On("GetLk", ctx, fh, owner, lk, flags, out)}
+}
+
+func (_c *MockFileSystemBackend_GetLk_Call) Run(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock)) *MockFileSystemBackend_GetLk_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 io.FileHandle
+		if args[1] != nil {
+			arg1 = args[1].(io.FileHandle)
+		}
+		var arg2 uint64
+		if args[2] != nil {
+			arg2 = args[2].(uint64)
+		}
+		var arg3 *fuse.FileLock
+		if args[3] != nil {
+			arg3 = args[3].(*fuse.FileLock)
+		}
+		var arg4 uint32
+		if args[4] != nil {
+			arg4 = args[4].(uint32)
+		}
+		var arg5 *fuse.FileLock
+		if args[5] != nil {
+			arg5 = args[5].(*fuse.FileLock)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+			arg4,
+			arg5,
+		)
+	})
+	return _c
+}
+
+func (_c *MockFileSystemBackend_GetLk_Call) Return(status fuse.Status) *MockFileSystemBackend_GetLk_Call {
+	_c.Call.Return(status)
+	return _c
+}
+
+func (_c *MockFileSystemBackend_GetLk_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) fuse.Status) *MockFileSystemBackend_GetLk_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -1052,6 +1208,156 @@ func (_c *MockFileSystemBackend_Rmdir_Call) Return(status fuse.Status) *MockFile
 }
 
 func (_c *MockFileSystemBackend_Rmdir_Call) RunAndReturn(run func(ctx context.Context, path string) fuse.Status) *MockFileSystemBackend_Rmdir_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SetLk provides a mock function for the type MockFileSystemBackend
+func (_mock *MockFileSystemBackend) SetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status {
+	ret := _mock.Called(ctx, fh, owner, lk, flags)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SetLk")
+	}
+
+	var r0 fuse.Status
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, *fuse.FileLock, uint32) fuse.Status); ok {
+		r0 = returnFunc(ctx, fh, owner, lk, flags)
+	} else {
+		r0 = ret.Get(0).(fuse.Status)
+	}
+	return r0
+}
+
+// MockFileSystemBackend_SetLk_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetLk'
+type MockFileSystemBackend_SetLk_Call struct {
+	*mock.Call
+}
+
+// SetLk is a helper method to define mock.On call
+//   - ctx context.Context
+//   - fh io.FileHandle
+//   - owner uint64
+//   - lk *fuse.FileLock
+//   - flags uint32
+func (_e *MockFileSystemBackend_Expecter) SetLk(ctx interface{}, fh interface{}, owner interface{}, lk interface{}, flags interface{}) *MockFileSystemBackend_SetLk_Call {
+	return &MockFileSystemBackend_SetLk_Call{Call: _e.mock.On("SetLk", ctx, fh, owner, lk, flags)}
+}
+
+func (_c *MockFileSystemBackend_SetLk_Call) Run(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32)) *MockFileSystemBackend_SetLk_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 io.FileHandle
+		if args[1] != nil {
+			arg1 = args[1].(io.FileHandle)
+		}
+		var arg2 uint64
+		if args[2] != nil {
+			arg2 = args[2].(uint64)
+		}
+		var arg3 *fuse.FileLock
+		if args[3] != nil {
+			arg3 = args[3].(*fuse.FileLock)
+		}
+		var arg4 uint32
+		if args[4] != nil {
+			arg4 = args[4].(uint32)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+			arg4,
+		)
+	})
+	return _c
+}
+
+func (_c *MockFileSystemBackend_SetLk_Call) Return(status fuse.Status) *MockFileSystemBackend_SetLk_Call {
+	_c.Call.Return(status)
+	return _c
+}
+
+func (_c *MockFileSystemBackend_SetLk_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status) *MockFileSystemBackend_SetLk_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SetLkw provides a mock function for the type MockFileSystemBackend
+func (_mock *MockFileSystemBackend) SetLkw(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status {
+	ret := _mock.Called(ctx, fh, owner, lk, flags)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SetLkw")
+	}
+
+	var r0 fuse.Status
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, *fuse.FileLock, uint32) fuse.Status); ok {
+		r0 = returnFunc(ctx, fh, owner, lk, flags)
+	} else {
+		r0 = ret.Get(0).(fuse.Status)
+	}
+	return r0
+}
+
+// MockFileSystemBackend_SetLkw_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetLkw'
+type MockFileSystemBackend_SetLkw_Call struct {
+	*mock.Call
+}
+
+// SetLkw is a helper method to define mock.On call
+//   - ctx context.Context
+//   - fh io.FileHandle
+//   - owner uint64
+//   - lk *fuse.FileLock
+//   - flags uint32
+func (_e *MockFileSystemBackend_Expecter) SetLkw(ctx interface{}, fh interface{}, owner interface{}, lk interface{}, flags interface{}) *MockFileSystemBackend_SetLkw_Call {
+	return &MockFileSystemBackend_SetLkw_Call{Call: _e.mock.On("SetLkw", ctx, fh, owner, lk, flags)}
+}
+
+func (_c *MockFileSystemBackend_SetLkw_Call) Run(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32)) *MockFileSystemBackend_SetLkw_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 io.FileHandle
+		if args[1] != nil {
+			arg1 = args[1].(io.FileHandle)
+		}
+		var arg2 uint64
+		if args[2] != nil {
+			arg2 = args[2].(uint64)
+		}
+		var arg3 *fuse.FileLock
+		if args[3] != nil {
+			arg3 = args[3].(*fuse.FileLock)
+		}
+		var arg4 uint32
+		if args[4] != nil {
+			arg4 = args[4].(uint32)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+			arg4,
+		)
+	})
+	return _c
+}
+
+func (_c *MockFileSystemBackend_SetLkw_Call) Return(status fuse.Status) *MockFileSystemBackend_SetLkw_Call {
+	_c.Call.Return(status)
+	return _c
+}
+
+func (_c *MockFileSystemBackend_SetLkw_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status) *MockFileSystemBackend_SetLkw_Call {
 	_c.Call.Return(run)
 	return _c
 }

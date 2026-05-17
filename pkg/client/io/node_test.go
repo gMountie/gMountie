@@ -372,6 +372,39 @@ func (s *NodeAdapterTestSuite) TestFileRelease() {
 	s.Assert().Equal(syscall.Errno(0), fh.(fs.FileReleaser).Release(context.Background()))
 }
 
+func (s *NodeAdapterTestSuite) TestFileAllocate() {
+	fh, mockFH := s.openFile()
+	s.backend.EXPECT().Allocate(mock.Anything, mockFH, uint64(0), uint64(4096), uint32(0)).Return(fuse.OK)
+	errno := fh.(fs.FileAllocater).Allocate(context.Background(), 0, 4096, 0)
+	s.Assert().Equal(syscall.Errno(0), errno)
+}
+
+func (s *NodeAdapterTestSuite) TestFileGetlk() {
+	fh, mockFH := s.openFile()
+	lk := &fuse.FileLock{Start: 0, End: 16, Typ: 1, Pid: 99}
+	s.backend.EXPECT().GetLk(mock.Anything, mockFH, uint64(42), lk, uint32(0), mock.AnythingOfType("*fuse.FileLock")).
+		Return(fuse.OK)
+	out := &fuse.FileLock{}
+	errno := fh.(fs.FileGetlker).Getlk(context.Background(), 42, lk, 0, out)
+	s.Assert().Equal(syscall.Errno(0), errno)
+}
+
+func (s *NodeAdapterTestSuite) TestFileSetlk() {
+	fh, mockFH := s.openFile()
+	lk := &fuse.FileLock{Start: 10, End: 20, Typ: 1, Pid: 5}
+	s.backend.EXPECT().SetLk(mock.Anything, mockFH, uint64(7), lk, uint32(0)).Return(fuse.OK)
+	errno := fh.(fs.FileSetlker).Setlk(context.Background(), 7, lk, 0)
+	s.Assert().Equal(syscall.Errno(0), errno)
+}
+
+func (s *NodeAdapterTestSuite) TestFileSetlkw() {
+	fh, mockFH := s.openFile()
+	lk := &fuse.FileLock{Start: 10, End: 20, Typ: 1, Pid: 5}
+	s.backend.EXPECT().SetLkw(mock.Anything, mockFH, uint64(7), lk, uint32(0)).Return(fuse.OK)
+	errno := fh.(fs.FileSetlkwer).Setlkw(context.Background(), 7, lk, 0)
+	s.Assert().Equal(syscall.Errno(0), errno)
+}
+
 func TestNodeAdapterTestSuite(t *testing.T) {
 	suite.Run(t, new(NodeAdapterTestSuite))
 }
