@@ -384,6 +384,94 @@ func (s *RpcServerTestSuite) TestUnlinkEmitsDeletedEvent() {
 	}
 }
 
+func (s *RpcServerTestSuite) TestGetAttrIfChanged_NotModified() {
+	// Setup.
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	ctx := context.Background()
+
+	// Mock GetAttr to return an attr with a specific version.
+	attr := &fuse.Attr{
+		Ino: 123, Size: 1024, Mode: 0644, Nlink: 1,
+		Owner: fuse.Owner{Uid: 0, Gid: 0},
+	}
+	mockFs.EXPECT().GetAttr("/existing.bin", mock.Anything).Return(attr, fuse.OK)
+
+	// First call GetAttr to learn the version.
+	getAttrReq := &proto.GetAttrRequest{
+		Volume: "testVolume",
+		Path:   "/existing.bin",
+		Caller: CreateCaller(0, 0, 0),
+	}
+	getAttrReply, err := s.server.GetAttr(ctx, getAttrReq)
+	s.Require().NoError(err)
+	s.Require().NotNil(getAttrReply.Attributes)
+	knownVersion := getAttrReply.Attributes.Version
+	s.Require().NotZero(knownVersion)
+
+	// Now call GetAttrIfChanged with that known version.
+	// We need another mock for the second GetAttr call in GetAttrIfChanged.
+	mockFs.EXPECT().GetAttr("/existing.bin", mock.Anything).Return(attr, fuse.OK)
+
+	request := &proto.GetAttrIfChangedRequest{
+		Volume:       "testVolume",
+		Path:         "/existing.bin",
+		KnownVersion: knownVersion,
+	}
+	reply, err := s.server.GetAttrIfChanged(ctx, request)
+	s.Require().NoError(err)
+	s.Assert().True(reply.NotModified)
+	s.Assert().Nil(reply.Attrs)
+}
+
+func (s *RpcServerTestSuite) TestGetAttrIfChanged_Changed() {
+	// Setup.
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	ctx := context.Background()
+
+	attr := &fuse.Attr{
+		Ino: 456, Size: 2048, Mode: 0644, Nlink: 1,
+		Owner: fuse.Owner{Uid: 0, Gid: 0},
+	}
+	mockFs.EXPECT().GetAttr("/existing.bin", mock.Anything).Return(attr, fuse.OK)
+
+	// Call with a version that does not match the current version.
+	request := &proto.GetAttrIfChangedRequest{
+		Volume:       "testVolume",
+		Path:         "/existing.bin",
+		KnownVersion: 999,
+	}
+	reply, err := s.server.GetAttrIfChanged(ctx, request)
+	s.Require().NoError(err)
+	s.Assert().False(reply.NotModified)
+	s.Require().NotNil(reply.Attrs)
+	s.Assert().NotZero(reply.Attrs.Version)
+	s.Assert().Equal(uint64(456), reply.Attrs.Ino)
+}
+
+func (s *RpcServerTestSuite) TestGetAttrIfChanged_ENOENT() {
+	// Setup.
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	ctx := context.Background()
+
+	mockFs.EXPECT().GetAttr("/no-such.bin", mock.Anything).Return((*fuse.Attr)(nil), fuse.ENOENT)
+
+	// Call with a non-existent path.
+	request := &proto.GetAttrIfChangedRequest{
+		Volume:       "testVolume",
+		Path:         "/no-such.bin",
+		KnownVersion: 0,
+	}
+	reply, err := s.server.GetAttrIfChanged(ctx, request)
+	s.Require().Error(err)
+	st, ok := status.FromError(err)
+	s.Require().True(ok)
+	s.Assert().Equal(codes.NotFound, st.Code())
+	_ = reply
+}
+
 func TestRpcServerTestSuite(t *testing.T) {
 	suite.Run(t, new(RpcServerTestSuite))
 }

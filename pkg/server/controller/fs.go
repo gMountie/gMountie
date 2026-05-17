@@ -291,7 +291,33 @@ func (r *RpcServerImpl) Compound(ctx context.Context, request *proto.CompoundReq
 }
 
 func (r *RpcServerImpl) GetAttrIfChanged(ctx context.Context, request *proto.GetAttrIfChangedRequest) (*proto.GetAttrIfChangedReply, error) {
-	return nil, status.Error(codes.Unimplemented, "GetAttrIfChanged not yet implemented (Sub-spec D Task 5)")
+	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
+	if err != nil {
+		return nil, err
+	}
+	attr, st := fs.GetAttr(request.Path, createContext(ctx, nil))
+	if !st.Ok() || attr == nil {
+		if st == fuse.ENOENT {
+			return nil, status.Error(codes.NotFound, "path not found")
+		}
+		return nil, status.Errorf(codes.Internal, "stat failed: %d", st)
+	}
+	v := serverio.VersionFromAttr(attr)
+	if v == request.KnownVersion {
+		return &proto.GetAttrIfChangedReply{NotModified: true}, nil
+	}
+	return &proto.GetAttrIfChangedReply{
+		NotModified: false,
+		Attrs: &proto.Attr{
+			Ino: attr.Ino, Size: attr.Size, Blocks: attr.Blocks,
+			Atime: attr.Atime, Mtime: attr.Mtime, Ctime: attr.Ctime,
+			Atimensec: attr.Atimensec, Mtimensec: attr.Mtimensec, Ctimensec: attr.Ctimensec,
+			Mode: attr.Mode, Nlink: attr.Nlink,
+			Owner:   &proto.Owner{Uid: attr.Owner.Uid, Gid: attr.Owner.Gid},
+			Rdev:    attr.Rdev, Blksize: attr.Blksize, Padding: attr.Padding,
+			Version: v,
+		},
+	}, nil
 }
 
 func (r *RpcServerImpl) Subscribe(request *proto.SubscribeRequest, stream proto.RpcFs_SubscribeServer) error {
