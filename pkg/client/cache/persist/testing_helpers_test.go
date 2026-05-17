@@ -2,6 +2,7 @@ package persist
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"testing"
 	"time"
 
@@ -27,3 +28,7 @@ func TestingForceFormatVersion(t *testing.T, dbPath string, version uint64) {
 		t.Fatalf("rewrite format_version: %v", err)
 	}
 }
+
+// TestingHashHex returns the hex form of a chunk hash. For test
+// assertion convenience.
+func TestingHashHex(hash [16]byte) string { return hex.EncodeToString(hash[:]) }
