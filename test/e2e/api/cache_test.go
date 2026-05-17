@@ -32,7 +32,8 @@ func (s *CacheEnabledFSSuite) SetupSuite() {
 		utils.WithRandomTestVolume(false),
 		utils.WithCache(clientconfig.CacheConfig{
 			Enabled:        true,
-			MaxSizeBytes:   1 << 28, // 256 MiB
+			MemoryMaxBytes: 1 << 30, // 1 GiB — large enough not to evict during tests
+			DiskMaxBytes:   1 << 30, // 1 GiB
 			ChunkSizeBytes: 1 << 20, // 1 MiB
 			AttrTTL:        5 * time.Second,
 			DirTTL:         5 * time.Second,

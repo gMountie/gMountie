@@ -136,8 +136,9 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 	// Default to the disabled-cache config; WithCache may override
 	// before NewAppContext is called below.
 	appCtx.cacheCfg = &clientConfig.CacheConfig{
-		Enabled:        clientConfig.DefaultCacheEnabled,
-		MaxSizeBytes:   clientConfig.DefaultCacheMaxSizeBytes,
+		Enabled:        false, // e2e default: disable cache; WithCache overrides
+		MemoryMaxBytes: clientConfig.DefaultCacheMemoryMaxBytes,
+		DiskMaxBytes:   clientConfig.DefaultCacheDiskMaxBytes,
 		ChunkSizeBytes: clientConfig.DefaultCacheChunkSizeBytes,
 		AttrTTL:        clientConfig.DefaultCacheAttrTTL,
 		DirTTL:         clientConfig.DefaultCacheDirTTL,

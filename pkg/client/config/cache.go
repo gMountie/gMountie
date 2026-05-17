@@ -1,60 +1,69 @@
 package config
 
 import (
+	"path/filepath"
 	"time"
 
+	"github.com/adrg/xdg"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 )
 
 const (
-	// DefaultCacheEnabled gates the cache decorator. Disabled by default in
-	// Phase 4 Sub-spec B; Sub-spec C flips the default once persistence
-	// proves the disk side of the story.
-	DefaultCacheEnabled = false
-	// DefaultCacheMaxSizeBytes is the total byte budget across all three
-	// sub-caches (attr + dir + data). Eviction is global LRU once this is
-	// exceeded. 1 GiB.
-	DefaultCacheMaxSizeBytes = 1 << 30
+	// DefaultCacheEnabled gates the cache decorator. Flipped to true
+	// in Sub-spec C now that persistence proves the disk side.
+	DefaultCacheEnabled = true
+	// DefaultCacheMemoryMaxBytes caps the in-memory tier across all
+	// three sub-caches. 256 MiB.
+	DefaultCacheMemoryMaxBytes = 256 << 20
+	// DefaultCacheDiskMaxBytes caps chunks/ + bbolt approx. 10 GiB.
+	DefaultCacheDiskMaxBytes = 10 << 30
 	// DefaultCacheChunkSizeBytes is the data cache's chunk granularity.
-	// Reads are split into chunk-sized requests against the inner backend
-	// on a miss. 1 MiB.
+	// 1 MiB.
 	DefaultCacheChunkSizeBytes = 1 << 20
-	// DefaultCacheAttrTTL is the per-entry lifetime for positive attribute
-	// cache hits.
+	// DefaultCacheAttrTTL is the per-entry lifetime for positive
+	// attribute cache hits.
 	DefaultCacheAttrTTL = 5 * time.Second
-	// DefaultCacheDirTTL is the per-entry lifetime for directory listing
-	// cache hits.
+	// DefaultCacheDirTTL is the per-entry lifetime for directory
+	// listing cache hits.
 	DefaultCacheDirTTL = 5 * time.Second
 	// DefaultCacheNegativeTTL is the per-entry lifetime for negative
-	// attribute cache entries (paths that returned ENOENT). Short by
-	// design so deletions elsewhere become visible quickly.
+	// attribute cache entries. Short by design so deletions elsewhere
+	// become visible quickly.
 	DefaultCacheNegativeTTL = 2 * time.Second
 )
 
-// CacheConfig governs the optional client-side in-memory cache layer that
-// decorates the gRPC FileSystemBackend. Disabled by default in Phase 4
-// Sub-spec B; Sub-spec C flips the default once persistence proves the
-// disk side.
+// defaultCachePath returns the XDG-default cache directory.
+func defaultCachePath() string {
+	return filepath.Join(xdg.CacheHome, "gmountie")
+}
+
+// CacheConfig governs the client-side cache. Sub-spec B introduced the
+// in-memory tier; Sub-spec C adds persistence under Path with two
+// independent byte caps. Disabled-by-default in B, enabled-by-default
+// in C.
 type CacheConfig struct {
 	// Enabled gates whether the cache decorator is inserted at mount time.
-	// false (the default) keeps the chain identical to Sub-spec A.
 	Enabled bool `mapstructure:"enabled"`
-	// MaxSizeBytes is the total byte budget across all three sub-caches
-	// (attr + dir + data). Eviction is global LRU once this is exceeded.
-	// Pinned to [0, 64 GiB].
-	MaxSizeBytes int `mapstructure:"max_size_bytes" validate:"min=0,max=68719476736"`
-	// ChunkSizeBytes is the data cache's chunk granularity. Reads are split
-	// into chunk-sized requests against the inner backend on a miss. Pinned
-	// to [4 KiB, 16 MiB].
+	// Path is the per-mount cache root. Each volume gets a per-volume
+	// subdirectory under it holding a flock-based LOCK file, the bbolt
+	// meta.db, and the chunks/ tree.
+	Path string `mapstructure:"path"`
+	// MemoryMaxBytes is the in-memory tier byte budget across attr+dir+
+	// data sub-caches. Pinned to [0, 64 GiB].
+	MemoryMaxBytes int `mapstructure:"memory_max_bytes" validate:"min=0,max=68719476736"`
+	// DiskMaxBytes is the on-disk chunks/ byte budget. 0 = unbounded.
+	DiskMaxBytes int `mapstructure:"disk_max_bytes" validate:"min=0"`
+	// ChunkSizeBytes is the data cache's chunk granularity. Reads are
+	// split into chunk-sized requests against the inner backend on a
+	// miss. Pinned to [4 KiB, 16 MiB].
 	ChunkSizeBytes int `mapstructure:"chunk_size_bytes" validate:"min=4096,max=16777216"`
 	// AttrTTL is the per-entry lifetime for positive attribute cache hits.
 	AttrTTL time.Duration `mapstructure:"attr_ttl"`
 	// DirTTL is the per-entry lifetime for directory listing cache hits.
 	DirTTL time.Duration `mapstructure:"dir_ttl"`
 	// NegativeTTL is the per-entry lifetime for negative attribute cache
-	// entries (paths that returned ENOENT). Short by design so deletions
-	// elsewhere become visible quickly.
+	// entries (paths that returned ENOENT). Short by design.
 	NegativeTTL time.Duration `mapstructure:"negative_ttl"`
 }
 
@@ -64,7 +73,9 @@ type CacheConfig struct {
 func NewCacheConfig(v *viper.Viper) (*CacheConfig, error) {
 	cfg := &CacheConfig{
 		Enabled:        DefaultCacheEnabled,
-		MaxSizeBytes:   DefaultCacheMaxSizeBytes,
+		Path:           defaultCachePath(),
+		MemoryMaxBytes: DefaultCacheMemoryMaxBytes,
+		DiskMaxBytes:   DefaultCacheDiskMaxBytes,
 		ChunkSizeBytes: DefaultCacheChunkSizeBytes,
 		AttrTTL:        DefaultCacheAttrTTL,
 		DirTTL:         DefaultCacheDirTTL,
@@ -74,7 +85,9 @@ func NewCacheConfig(v *viper.Viper) (*CacheConfig, error) {
 		return cfg, nil
 	}
 	v.SetDefault("enabled", DefaultCacheEnabled)
-	v.SetDefault("max_size_bytes", DefaultCacheMaxSizeBytes)
+	v.SetDefault("path", defaultCachePath())
+	v.SetDefault("memory_max_bytes", DefaultCacheMemoryMaxBytes)
+	v.SetDefault("disk_max_bytes", DefaultCacheDiskMaxBytes)
 	v.SetDefault("chunk_size_bytes", DefaultCacheChunkSizeBytes)
 	v.SetDefault("attr_ttl", DefaultCacheAttrTTL)
 	v.SetDefault("dir_ttl", DefaultCacheDirTTL)

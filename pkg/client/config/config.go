@@ -28,8 +28,8 @@ type Config struct {
 	// FUSE is the FUSE-kernel-side tuning configuration (mount options).
 	FUSE *FUSEConfig `validate:"required" yaml:"fuse,omitempty"`
 	// Cache is the client-side cache configuration. Sub-spec B of Phase 4
-	// adds an in-memory cache layer decorating FileSystemBackend; disabled
-	// by default.
+	// adds an in-memory cache layer; Sub-spec C adds persistence (Path,
+	// DiskMaxBytes) and flips the default to enabled.
 	Cache *CacheConfig `validate:"required" yaml:"cache,omitempty"`
 	// Log is the optional logger configuration. Nil keeps the
 	// init-time auto-detected defaults.
@@ -140,7 +140,9 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	// into the sub-tree before sub-unmarshal.
 	for _, key := range []string{
 		"cache.enabled",
-		"cache.max_size_bytes",
+		"cache.path",
+		"cache.memory_max_bytes",
+		"cache.disk_max_bytes",
 		"cache.chunk_size_bytes",
 		"cache.attr_ttl",
 		"cache.dir_ttl",
@@ -154,7 +156,9 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	}
 	for _, key := range []string{
 		"enabled",
-		"max_size_bytes",
+		"path",
+		"memory_max_bytes",
+		"disk_max_bytes",
 		"chunk_size_bytes",
 		"attr_ttl",
 		"dir_ttl",
