@@ -32,3 +32,10 @@ func TestingForceFormatVersion(t *testing.T, dbPath string, version uint64) {
 // TestingHashHex returns the hex form of a chunk hash. For test
 // assertion convenience.
 func TestingHashHex(hash [16]byte) string { return hex.EncodeToString(hash[:]) }
+
+// TestingChunkPath returns the absolute path where hash would live on
+// disk. Used by tests that assert presence/absence after refcount or
+// sweep operations.
+func TestingChunkPath(p *Persist, hash [16]byte) string {
+	return p.chunkPath(hash)
+}
