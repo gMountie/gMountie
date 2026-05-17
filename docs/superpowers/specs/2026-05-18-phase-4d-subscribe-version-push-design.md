@@ -431,3 +431,7 @@ After this lands, the TTL safety net becomes truly redundant for watched filesys
 For short disconnects (network blip), the server could keep a per-volume ring of recent events and replay missed events on reconnect. Removes the GetAttrIfChanged-per-cached-path cost during reconnection.
 
 Defer until profiling shows the revalidation cost matters. The fallback path already handles this case correctly, just at higher RPC count.
+
+### gMountie cache proxy / edge tier (Appendix D-1 of the roadmap)
+
+The Sub-spec D Subscribe protocol is deliberately shaped to support a future proxy / edge cache tier: an intermediate gMountie node in a cloud AZ that subscribes to the origin and re-broadcasts events to N downstream clients. The same `Attr.version`, `GetAttrIfChanged`, and `Subscribe` RPCs flow unchanged across all three tiers (origin → proxy → client); no protocol additions are required. See roadmap Appendix D item 1 for the full notes.

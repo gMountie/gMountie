@@ -434,3 +434,22 @@ These are design-level observations from the architecture review. They are not s
 - Commit messages: plain `type: subject`; no `Co-Authored-By:` / `Signed-off-by:` trailers for this repo.
 - "Reliable" and "works perfectly end-to-end" are measured by the criteria above. Add to that section if we discover new criteria; don't redefine it silently.
 - **Backwards compatibility is not a concern.** Wire protocol, config file shape, on-disk cache format, library API — we control both ends and have no external consumers. If a change is the right design, make it; release notes document the break; users re-install, re-edit the config, or wipe the cache. No additive-only proto rules, no deprecation cycles, no migration tooling, no shim code. (External contracts we don't own — the FUSE syscall surface, the gRPC framing protocol — still hold.)
+
+## Appendix D — Future capabilities (noted, not yet phased)
+
+Captured here before they slip. Each is a real product capability rather than incremental debt cleanup; promotion to a numbered phase happens when prioritisation calls for it.
+
+1. **gMountie cache proxy / edge tier.** Run a gMountie process in shared-cache mode in a cloud AZ (e.g. AWS) that sits between an on-prem origin server and N downstream gMountie mounts in the same AZ. The proxy is a gMountie *client* upstream (it mounts the origin volume through the same FileSystemBackend) and a gMountie *server* downstream (it exposes the same RPCs over a local network). Downstream clients hit the proxy; only the proxy reaches across the WAN to the origin.
+
+   Design hooks already in place after Phase 4:
+   - **Sub-spec C (persistence).** The proxy's local store IS the Sub-spec C persist tier, sized for the AZ's working set. No new storage subsystem.
+   - **Sub-spec D (Subscribe + version push).** The proxy subscribes to the origin's Subscribe stream and *re-broadcasts* events to its own downstream subscribers. Origin invalidation flows transitively through the proxy. The `Attr.version` token is the same value at every tier, so freshness comparisons across tiers are trivially correct.
+   - **Phase 1 session and idempotency primitives.** The proxy can survive origin reconnects without invalidating downstream sessions; downstream-to-proxy idempotency tokens are independent from proxy-to-origin ones.
+
+   Open design questions to revisit when promoting:
+   - **Auth pass-through vs proxy-local auth.** Does the origin trust the proxy as a single principal and let it carry forward downstream identities, or does each downstream re-auth against the origin?
+   - **Write semantics.** Read-only proxies (most CDN deployments) are simpler. Write-through proxies need ordering guarantees (proxy must serialise its downstream writes to the origin in a way that preserves the Subscribe event ordering downstream clients see).
+   - **Cache coherence across multiple proxies in the same AZ.** If we deploy two proxies for HA, they each have an independent persist tier and an independent Subscribe stream to the origin. Downstream clients pinned to different proxies may see slightly different invalidation timing — bounded by the heartbeat interval and acceptable.
+   - **Discovery.** Downstream clients need to know to connect to the proxy, not the origin. DNS, config, or service-mesh routing — out of scope for the gMountie binary; a deployment concern.
+
+   This is "Phase 9+" material. The Phase 4 protocol additions deliberately don't preclude it: the same `Attr.version`, `GetAttrIfChanged`, and `Subscribe` RPCs that today flow origin↔client will flow origin↔proxy↔client unchanged.
