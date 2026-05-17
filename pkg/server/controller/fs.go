@@ -320,6 +320,3 @@ func (r *RpcServerImpl) GetAttrIfChanged(ctx context.Context, request *proto.Get
 	}, nil
 }
 
-func (r *RpcServerImpl) Subscribe(request *proto.SubscribeRequest, stream proto.RpcFs_SubscribeServer) error {
-	return status.Error(codes.Unimplemented, "Subscribe not yet implemented (Sub-spec D Task 6)")
-}
