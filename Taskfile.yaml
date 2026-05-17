@@ -115,6 +115,21 @@ tasks:
         go test -run=^$ -bench=. -benchmem -count={{.COUNT}} -benchtime={{.BENCHTIME}} ./test/e2e/perf/ | tee {{.OUT}}
       - echo "wrote {{.OUT}}"
 
+  perf:bench:cache:
+    desc: 'Run perf benchmarks with the client-side cache enabled (GMOUNTIE_BENCH_CACHE=1). Same Vars as perf:bench; cache-off results from perf:bench are the natural baseline.'
+    vars:
+      OUT: '{{.OUT | default (printf "docs/perf/bench-cache-%s.txt" (now | date "2006-01-02T15-04-05"))}}'
+      COUNT: '{{.COUNT | default "5"}}'
+      BENCHTIME: '{{.BENCHTIME | default "10s"}}'
+    env:
+      GMOUNTIE_BENCH_CACHE: "1"
+    cmds:
+      - mkdir -p docs/perf
+      - |
+        set -o pipefail
+        go test -run=^$ -bench=. -benchmem -count={{.COUNT}} -benchtime={{.BENCHTIME}} ./test/e2e/perf/ | tee {{.OUT}}
+      - echo "wrote {{.OUT}}"
+
   perf:diff:
     desc: 'Compare two perf:bench outputs using benchstat. Vars: BEFORE, AFTER.'
     cmds:

@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	clientconfig "gmountie/pkg/client/config"
 	"gmountie/pkg/utils/log"
 	"gmountie/test/e2e/utils"
 )
@@ -65,6 +66,21 @@ func setupBenchEnv(b *testing.B) *benchEnv {
 	}
 	if os.Getenv("GMOUNTIE_BENCH_TCP") != "" {
 		opts = append(opts, utils.WithTCPTransport())
+	}
+	// GMOUNTIE_BENCH_CACHE=1 turns on the Sub-spec B client-side cache
+	// decorator with a moderate sizing profile (256 MiB cap, 1 MiB chunks,
+	// 5s/5s/2s TTLs). Mirrors the cache-on e2e suite configuration so the
+	// bench/api numbers are reading the same backend chain. The default
+	// (env unset) leaves the cache disabled, matching production.
+	if os.Getenv("GMOUNTIE_BENCH_CACHE") != "" {
+		opts = append(opts, utils.WithCache(clientconfig.CacheConfig{
+			Enabled:        true,
+			MaxSizeBytes:   1 << 28, // 256 MiB
+			ChunkSizeBytes: 1 << 20, // 1 MiB
+			AttrTTL:        5 * time.Second,
+			DirTTL:         5 * time.Second,
+			NegativeTTL:    2 * time.Second,
+		}))
 	}
 	ctx, err := utils.NewAppTestingContext(opts...)
 	if err != nil {

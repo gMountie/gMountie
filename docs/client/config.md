@@ -179,6 +179,52 @@ fuse:
   writeback_cache: false
 ```
 
+## Cache Options
+
+The `cache` section configures the optional client-side in-memory cache
+layer that decorates the gRPC backend. When enabled, the cache holds
+recent attribute lookups, directory listings, and file-data chunks in
+process memory; on a hit the FUSE op short-circuits without crossing
+the wire.
+
+Disabled by default. Sub-spec B is the in-memory layer only; Sub-spec C
+will add persistence and flip the default once the disk side is proven.
+
+| Key                     | Type     | Default  | Description                                                            |
+|-------------------------|----------|----------|------------------------------------------------------------------------|
+| enabled                 | boolean  | false    | Enable the client-side in-memory cache decorator                       |
+| max\_size\_bytes        | integer  | 1073741824 (1 GiB) | Total byte budget across the attr+dir+data sub-caches        |
+| chunk\_size\_bytes      | integer  | 1048576 (1 MiB)    | Granularity of the data cache; reads chunk-align against this |
+| attr\_ttl               | duration | 5s       | TTL for positive attribute cache entries                               |
+| dir\_ttl                | duration | 5s       | TTL for directory listing cache entries                                |
+| negative\_ttl           | duration | 2s       | TTL for negative attribute cache entries (ENOENT lookups)              |
+
+`max_size_bytes` is validated to the range [0, 68719476736] (0 to
+64 GiB). 0 disables the byte budget — entries still age out on TTL but
+nothing is force-evicted on size pressure.
+
+`chunk_size_bytes` is validated to the range [4096, 16777216] (4 KiB
+to 16 MiB). The data cache stores fixed-size chunks; a 1 MiB read at a
+non-aligned offset spans two chunks. The default mirrors the streaming
+frame size so chunk fetches map 1:1 to a single Read RPC.
+
+The three TTLs control coherence vs. RPC traffic. Short TTLs (the
+defaults) make file-system changes made by other clients visible
+quickly, at the cost of more frequent revalidation. Longer TTLs are
+safe only when this client is the sole writer.
+
+Example:
+
+```yaml
+cache:
+  enabled: true
+  max_size_bytes: 268435456  # 256 MiB
+  chunk_size_bytes: 1048576  # 1 MiB
+  attr_ttl: 5s
+  dir_ttl: 5s
+  negative_ttl: 2s
+```
+
 ## Authentication Options
 
 The `auth` section configures client authentication:

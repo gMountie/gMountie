@@ -1,0 +1,81 @@
+goos: linux
+goarch: amd64
+pkg: gmountie/test/e2e/perf
+cpu: Intel Core Processor (Broadwell, IBRS)
+BenchmarkOpenStatClose-4     	 4356895	      2770 ns/op	     256 B/op	       2 allocs/op
+BenchmarkOpenStatClose-4     	 4369724	      2909 ns/op	     256 B/op	       2 allocs/op
+BenchmarkOpenStatClose-4     	 4462188	      2657 ns/op	     256 B/op	       2 allocs/op
+BenchmarkOpenStatClose-4     	 4588849	      2719 ns/op	     256 B/op	       2 allocs/op
+BenchmarkOpenStatClose-4     	 4616290	      2699 ns/op	     256 B/op	       2 allocs/op
+BenchmarkReaddir100-4        	   17089	    722961 ns/op	   89954 B/op	    1943 allocs/op
+BenchmarkReaddir100-4        	   17191	    670928 ns/op	   91338 B/op	    1943 allocs/op
+BenchmarkReaddir100-4        	   16882	    604871 ns/op	   91210 B/op	    1943 allocs/op
+BenchmarkReaddir100-4        	   16338	    665658 ns/op	   90751 B/op	    1944 allocs/op
+BenchmarkReaddir100-4        	   19221	    657083 ns/op	   90555 B/op	    1942 allocs/op
+BenchmarkLookup-4            	 4282706	      2901 ns/op	     272 B/op	       2 allocs/op
+BenchmarkLookup-4            	 5569426	      2295 ns/op	     272 B/op	       2 allocs/op
+BenchmarkLookup-4            	 4559564	      2302 ns/op	     272 B/op	       2 allocs/op
+BenchmarkLookup-4            	 5022738	      2431 ns/op	     272 B/op	       2 allocs/op
+BenchmarkLookup-4            	 5771187	      2213 ns/op	     272 B/op	       2 allocs/op
+BenchmarkRandomRead4KiB-4    	 5526924	      2166 ns/op	1890.98 MB/s	      38 B/op	       0 allocs/op
+BenchmarkRandomRead4KiB-4    	 5767165	      1874 ns/op	2185.71 MB/s	      36 B/op	       0 allocs/op
+BenchmarkRandomRead4KiB-4    	 4844994	      2182 ns/op	1876.82 MB/s	      43 B/op	       0 allocs/op
+BenchmarkRandomRead4KiB-4    	 6323776	      2023 ns/op	2024.84 MB/s	      34 B/op	       0 allocs/op
+BenchmarkRandomRead4KiB-4    	 5005875	      2365 ns/op	1731.79 MB/s	      43 B/op	       0 allocs/op
+BenchmarkRandomWrite4KiB-4   	   14358	    803718 ns/op	   5.10 MB/s	   60661 B/op	     724 allocs/op
+BenchmarkRandomWrite4KiB-4   	   15187	    853559 ns/op	   4.80 MB/s	   61057 B/op	     723 allocs/op
+BenchmarkRandomWrite4KiB-4   	   16226	    663854 ns/op	   6.17 MB/s	   60779 B/op	     723 allocs/op
+BenchmarkRandomWrite4KiB-4   	   18792	    694068 ns/op	   5.90 MB/s	   60581 B/op	     723 allocs/op
+BenchmarkRandomWrite4KiB-4   	   16141	    712536 ns/op	   5.75 MB/s	   60555 B/op	     724 allocs/op
+BenchmarkSeqRead1MiB-4       	--- FAIL: BenchmarkSeqRead1MiB-4
+    seq_io_bench_test.go:63: close: close /tmp/gmountie-test-467081137/mount/seq_read.bin: input/output error
+BenchmarkSeqRead1MiB-4       	--- FAIL: BenchmarkSeqRead1MiB-4
+    seq_io_bench_test.go:63: close: close /tmp/gmountie-test-3989671445/mount/seq_read.bin: input/output error
+BenchmarkSeqRead1MiB-4       	--- FAIL: BenchmarkSeqRead1MiB-4
+    seq_io_bench_test.go:63: close: close /tmp/gmountie-test-3013646898/mount/seq_read.bin: input/output error
+BenchmarkSeqRead1MiB-4       	--- FAIL: BenchmarkSeqRead1MiB-4
+    seq_io_bench_test.go:63: close: close /tmp/gmountie-test-741027869/mount/seq_read.bin: input/output error
+BenchmarkSeqRead1MiB-4       	--- FAIL: BenchmarkSeqRead1MiB-4
+    seq_io_bench_test.go:63: close: close /tmp/gmountie-test-1101691054/mount/seq_read.bin: input/output error
+BenchmarkSeqRead16MiB-4      	--- FAIL: BenchmarkSeqRead16MiB-4
+    seq_io_bench_test.go:53: open: open /tmp/gmountie-test-3889472104/mount/seq_read.bin: input/output error
+BenchmarkSeqRead16MiB-4      	--- FAIL: BenchmarkSeqRead16MiB-4
+    seq_io_bench_test.go:53: open: open /tmp/gmountie-test-4026045717/mount/seq_read.bin: input/output error
+BenchmarkSeqRead16MiB-4      	--- FAIL: BenchmarkSeqRead16MiB-4
+    seq_io_bench_test.go:63: close: close /tmp/gmountie-test-2934614899/mount/seq_read.bin: input/output error
+BenchmarkSeqRead16MiB-4      	--- FAIL: BenchmarkSeqRead16MiB-4
+    seq_io_bench_test.go:53: open: open /tmp/gmountie-test-1171090754/mount/seq_read.bin: input/output error
+BenchmarkSeqRead16MiB-4      	     456	  26714278 ns/op	 628.02 MB/s	  453958 B/op	    2010 allocs/op
+BenchmarkSeqRead64MiB-4      	     115	 100694475 ns/op	 666.46 MB/s	 3854742 B/op	    4476 allocs/op
+BenchmarkSeqRead64MiB-4      	--- FAIL: BenchmarkSeqRead64MiB-4
+    seq_io_bench_test.go:53: open: open /tmp/gmountie-test-675777030/mount/seq_read.bin: input/output error
+BenchmarkSeqRead64MiB-4      	--- FAIL: BenchmarkSeqRead64MiB-4
+    seq_io_bench_test.go:63: close: close /tmp/gmountie-test-3433163908/mount/seq_read.bin: input/output error
+BenchmarkSeqRead64MiB-4      	     115	  90801314 ns/op	 739.07 MB/s	 3828625 B/op	    4439 allocs/op
+BenchmarkSeqRead64MiB-4      	--- FAIL: BenchmarkSeqRead64MiB-4
+    seq_io_bench_test.go:53: open: open /tmp/gmountie-test-1691622996/mount/seq_read.bin: input/output error
+BenchmarkSeqWrite1MiB-4      	--- FAIL: BenchmarkSeqWrite1MiB-4
+    seq_io_bench_test.go:107: close: close /tmp/gmountie-test-1917923781/mount/seq_write.bin: input/output error
+BenchmarkSeqWrite1MiB-4      	--- FAIL: BenchmarkSeqWrite1MiB-4
+    seq_io_bench_test.go:113: remove: remove /tmp/gmountie-test-1458723653/mount/seq_write.bin: input/output error
+BenchmarkSeqWrite1MiB-4      	--- FAIL: BenchmarkSeqWrite1MiB-4
+    seq_io_bench_test.go:113: remove: remove /tmp/gmountie-test-3512353750/mount/seq_write.bin: input/output error
+BenchmarkSeqWrite1MiB-4      	     685	  17047236 ns/op	  61.51 MB/s	 1365281 B/op	    3032 allocs/op
+BenchmarkSeqWrite1MiB-4      	--- FAIL: BenchmarkSeqWrite1MiB-4
+    seq_io_bench_test.go:107: close: close /tmp/gmountie-test-1746686567/mount/seq_write.bin: input/output error
+BenchmarkSeqWrite16MiB-4     	--- FAIL: BenchmarkSeqWrite16MiB-4
+    seq_io_bench_test.go:97: create: open /tmp/gmountie-test-3493777903/mount/seq_write.bin: input/output error
+BenchmarkSeqWrite16MiB-4     	      58	 237853544 ns/op	  70.54 MB/s	18596394 B/op	    9211 allocs/op
+BenchmarkSeqWrite16MiB-4     	      58	 220779101 ns/op	  75.99 MB/s	18495668 B/op	    8856 allocs/op
+BenchmarkSeqWrite16MiB-4     	      44	 238676226 ns/op	  70.29 MB/s	18607586 B/op	    8750 allocs/op
+BenchmarkSeqWrite16MiB-4     	--- FAIL: BenchmarkSeqWrite16MiB-4
+    seq_io_bench_test.go:97: create: open /tmp/gmountie-test-3211587978/mount/seq_write.bin: input/output error
+BenchmarkSeqWrite64MiB-4     	      13	 925761467 ns/op	  72.49 MB/s	73411606 B/op	   27561 allocs/op
+BenchmarkSeqWrite64MiB-4     	      12	 869993989 ns/op	  77.14 MB/s	73611624 B/op	   27863 allocs/op
+BenchmarkSeqWrite64MiB-4     	      15	 839407469 ns/op	  79.95 MB/s	73077696 B/op	   27299 allocs/op
+BenchmarkSeqWrite64MiB-4     	      13	 963050798 ns/op	  69.68 MB/s	73686006 B/op	   27465 allocs/op
+BenchmarkSeqWrite64MiB-4     	      13	 922446294 ns/op	  72.75 MB/s	73656150 B/op	   28278 allocs/op
+FAIL
+exit status 1
+FAIL	gmountie/test/e2e/perf	1234.857s
+FAIL
