@@ -27,11 +27,12 @@ func (s *PersistedCacheSuite) TestRestartReusesCachedAttr() {
 	s.Require().NoError(err)
 	inner := iomocks.NewMockFileSystemBackend(s.T())
 	cfg := cache.Config{
-		MemoryMaxBytes: 1 << 20,
-		ChunkSizeBytes: 1 << 16,
-		AttrTTL:        time.Hour,
-		DirTTL:         time.Hour,
-		NegativeTTL:    time.Minute,
+		SubscribeEnabled: true, // keep tracker unverified so gating path is exercised
+		MemoryMaxBytes:   1 << 20,
+		ChunkSizeBytes:   1 << 16,
+		AttrTTL:          time.Hour,
+		DirTTL:           time.Hour,
+		NegativeTTL:      time.Minute,
 	}
 	b1 := cache.NewCachedBackend(inner, cfg, p1, nil, "")
 

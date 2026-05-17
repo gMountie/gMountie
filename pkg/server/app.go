@@ -46,8 +46,8 @@ func NewServerAppContext(cfg *config.Config) *AppContext {
 	authService := service.NewAuthServiceFromConfig(cfg.Auth)
 	sessionMgr := service.NewSessionManager(service.SessionManagerOptions{Metrics: m})
 	bus := io.NewLocalEventBus(io.EventBusOptions{
-		BufferSize:        256,              // Sub-spec D Task 10 wires config.
-		HeartbeatInterval: 10 * time.Second, // Sub-spec D Task 10 wires config.
+		BufferSize:        cfg.Server.SubscribeBufferSize,
+		HeartbeatInterval: cfg.Server.SubscribeHeartbeatInterval,
 	})
 	return &AppContext{
 		Config:         cfg,

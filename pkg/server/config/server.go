@@ -40,6 +40,14 @@ const (
 	// no active RPCs. Required so an idle FUSE mount still detects a dead
 	// server.
 	DefaultKeepalivePermitWithoutStream = true
+	// DefaultServerSubscribeBufferSize is the per-subscriber channel
+	// depth in the event bus. 256 gives roughly 256 invalidation events
+	// of headroom before a slow client is considered lagging.
+	DefaultServerSubscribeBufferSize = 256
+	// DefaultServerSubscribeHeartbeatInterval is how often the event bus
+	// emits a HEARTBEAT frame to each subscriber so the client can
+	// distinguish an idle stream from a dead one.
+	DefaultServerSubscribeHeartbeatInterval = 10 * time.Second
 )
 
 // ServerKeepaliveConfig holds the gRPC server-side keepalive parameters
@@ -84,4 +92,13 @@ type ServerConfig struct {
 	MaxMessageBytes int `validate:"min=65536,max=67108864" mapstructure:"max_message_bytes"`
 	// Keepalive controls gRPC HTTP/2 keepalive pings and enforcement.
 	Keepalive ServerKeepaliveConfig `mapstructure:"keepalive"`
+	// SubscribeBufferSize is the per-subscriber channel depth in the
+	// event bus. Larger values tolerate bursty invalidation storms at
+	// the cost of memory; a slow subscriber that fills the buffer is
+	// dropped and must reconnect.
+	SubscribeBufferSize int `validate:"min=1" mapstructure:"subscribe_buffer_size"`
+	// SubscribeHeartbeatInterval controls how often the event bus emits
+	// a HEARTBEAT to each live subscriber. Clients use the absence of
+	// heartbeats to detect a stale stream and trigger reconnection.
+	SubscribeHeartbeatInterval time.Duration `mapstructure:"subscribe_heartbeat_interval"`
 }

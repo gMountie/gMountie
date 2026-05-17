@@ -59,6 +59,8 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		"server.keepalive.timeout",
 		"server.keepalive.min_time",
 		"server.keepalive.permit_without_stream",
+		"server.subscribe_buffer_size",
+		"server.subscribe_heartbeat_interval",
 		"auth.type",
 	} {
 		_ = v.BindEnv(key)
@@ -77,6 +79,8 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	v.SetDefault("server.keepalive.timeout", DefaultKeepaliveTimeout)
 	v.SetDefault("server.keepalive.min_time", DefaultKeepaliveMinTime)
 	v.SetDefault("server.keepalive.permit_without_stream", DefaultKeepalivePermitWithoutStream)
+	v.SetDefault("server.subscribe_buffer_size", DefaultServerSubscribeBufferSize)
+	v.SetDefault("server.subscribe_heartbeat_interval", DefaultServerSubscribeHeartbeatInterval)
 	result.Server = &ServerConfig{
 		Address:             v.GetString("server.address"),
 		Port:                v.GetUint("server.port"),
@@ -91,6 +95,8 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 			MinTime:             v.GetDuration("server.keepalive.min_time"),
 			PermitWithoutStream: v.GetBool("server.keepalive.permit_without_stream"),
 		},
+		SubscribeBufferSize:        v.GetInt("server.subscribe_buffer_size"),
+		SubscribeHeartbeatInterval: v.GetDuration("server.subscribe_heartbeat_interval"),
 	}
 
 	// Parse the auth configuration.

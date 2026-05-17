@@ -58,12 +58,18 @@ func (c *attrCache) get(path string) (*io.Attr, bool, bool) {
 		return nil, false, false
 	}
 	ae := e.value.(*attrEntry)
-	if c.now().After(ae.expiresAt) {
+	// TTL=0 means "never expire on time alone"; expiry is driven solely
+	// by Subscribe push invalidation or explicit cache ops.
+	if ae.negative {
+		if c.negativeTTL > 0 && c.now().After(ae.expiresAt) {
+			c.st.remove(path)
+			return nil, false, false
+		}
+		return nil, true, false
+	}
+	if c.attrTTL > 0 && c.now().After(ae.expiresAt) {
 		c.st.remove(path)
 		return nil, false, false
-	}
-	if ae.negative {
-		return nil, true, false
 	}
 	return ae.attr, true, true
 }

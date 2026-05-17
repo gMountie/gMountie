@@ -36,7 +36,9 @@ func (c *dirCache) get(path string) ([]io.DirEntry, bool) {
 		return nil, false
 	}
 	de := e.value.(*dirEntry)
-	if c.now().After(de.expiresAt) {
+	// dirTTL=0 means "never expire on time alone"; Subscribe push or
+	// explicit invalidation are the only eviction signals in that mode.
+	if c.dirTTL > 0 && c.now().After(de.expiresAt) {
 		c.st.remove(path)
 		return nil, false
 	}

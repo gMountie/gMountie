@@ -294,6 +294,58 @@ volumes:
 	s.Assert().False(cfg.Server.Keepalive.PermitWithoutStream)
 }
 
+func (s *ConfigTestSuite) TestSubscribeDefaultsFromConfig() {
+	cfg, err := LoadConfigFromString(`
+server:
+  address: "0.0.0.0"
+  port: 9449
+auth:
+  type: none
+volumes:
+  - name: test
+    path: /tmp
+`)
+	s.Require().NoError(err)
+	s.Assert().Equal(DefaultServerSubscribeBufferSize, cfg.Server.SubscribeBufferSize)
+	s.Assert().Equal(DefaultServerSubscribeHeartbeatInterval, cfg.Server.SubscribeHeartbeatInterval)
+}
+
+func (s *ConfigTestSuite) TestSubscribeOverrideYAML() {
+	cfg, err := LoadConfigFromString(`
+server:
+  address: "0.0.0.0"
+  port: 9449
+  subscribe_buffer_size: 512
+  subscribe_heartbeat_interval: 30s
+auth:
+  type: none
+volumes:
+  - name: test
+    path: /tmp
+`)
+	s.Require().NoError(err)
+	s.Assert().Equal(512, cfg.Server.SubscribeBufferSize)
+	s.Assert().Equal(30*time.Second, cfg.Server.SubscribeHeartbeatInterval)
+}
+
+func (s *ConfigTestSuite) TestSubscribeEnvOverride() {
+	s.T().Setenv("GMOUNTIE_SERVER_SUBSCRIBE_BUFFER_SIZE", "1024")
+	s.T().Setenv("GMOUNTIE_SERVER_SUBSCRIBE_HEARTBEAT_INTERVAL", "20s")
+	cfg, err := LoadConfigFromString(`
+server:
+  address: "0.0.0.0"
+  port: 9449
+auth:
+  type: none
+volumes:
+  - name: test
+    path: /tmp
+`)
+	s.Require().NoError(err)
+	s.Assert().Equal(1024, cfg.Server.SubscribeBufferSize)
+	s.Assert().Equal(20*time.Second, cfg.Server.SubscribeHeartbeatInterval)
+}
+
 func TestConfigTestSuite(t *testing.T) {
 	suite.Run(t, new(ConfigTestSuite))
 }

@@ -521,15 +521,20 @@ func (s *CachedBackendTestSuite) TestMutationFailureDoesNotInvalidate() {
 // --- Validity-gating tests (Sub-spec D) ---
 
 // newUnverifiedBackend builds a cachedBackend in the default unverified state
-// (no subscriber, no markGlobalVerified) for gating-path tests.
+// for gating-path tests. SubscribeEnabled=true with a nil client keeps the
+// validity tracker in stateUnverified (no subscriber starts, no
+// markGlobalVerified). This exercises the gating path where Subscribe is
+// the intended freshness mechanism but the stream hasn't delivered its
+// first HEARTBEAT yet.
 func newUnverifiedBackend(t *testing.T, inner *iomocks.MockFileSystemBackend) *cachedBackend {
 	t.Helper()
 	cb := NewCachedBackend(inner, Config{
-		MemoryMaxBytes: 1 << 20,
-		ChunkSizeBytes: 1 << 16,
-		AttrTTL:        time.Hour,
-		DirTTL:         time.Hour,
-		NegativeTTL:    time.Minute,
+		SubscribeEnabled: true,
+		MemoryMaxBytes:   1 << 20,
+		ChunkSizeBytes:   1 << 16,
+		AttrTTL:          time.Hour,
+		DirTTL:           time.Hour,
+		NegativeTTL:      time.Minute,
 	}, nil, nil, "").(*cachedBackend)
 	return cb
 }

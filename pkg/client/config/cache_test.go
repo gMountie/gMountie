@@ -3,6 +3,7 @@ package config_test
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"gmountie/pkg/client/config"
 
@@ -33,6 +34,28 @@ func (s *CacheConfigSuite) TestExplicitOverrides() {
 	s.Assert().Equal(12345, c.MemoryMaxBytes)
 	s.Assert().Equal(67890, c.DiskMaxBytes)
 	s.Assert().Equal(filepath.Clean("/tmp/x"), filepath.Clean(c.Path))
+}
+
+func (s *CacheConfigSuite) TestSubscribeEnabledDefaultTrue() {
+	c, err := config.NewCacheConfig(nil)
+	s.Require().NoError(err)
+	s.Assert().True(c.SubscribeEnabled)
+}
+
+func (s *CacheConfigSuite) TestTTLDefaultsAreRelaxed() {
+	c, err := config.NewCacheConfig(nil)
+	s.Require().NoError(err)
+	s.Assert().Equal(5*time.Minute, c.AttrTTL)
+	s.Assert().Equal(5*time.Minute, c.DirTTL)
+	s.Assert().Equal(30*time.Second, c.NegativeTTL)
+}
+
+func (s *CacheConfigSuite) TestZeroAttrTTLPreserved() {
+	v := viper.New()
+	v.Set("attr_ttl", "0s")
+	c, err := config.NewCacheConfig(v)
+	s.Require().NoError(err)
+	s.Assert().Equal(time.Duration(0), c.AttrTTL)
 }
 
 func TestCacheConfigSuite(t *testing.T) { suite.Run(t, new(CacheConfigSuite)) }

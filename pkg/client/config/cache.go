@@ -13,6 +13,13 @@ const (
 	// DefaultCacheEnabled gates the cache decorator. Flipped to true
 	// in Sub-spec C now that persistence proves the disk side.
 	DefaultCacheEnabled = true
+	// DefaultCacheSubscribeEnabled gates the Subscribe-based push
+	// invalidation path. When true the client opens a persistent
+	// Subscribe stream to receive server-pushed invalidation events,
+	// and the validity tracker starts in the verified state only after
+	// the first HEARTBEAT. When false, the cache marks itself globally
+	// verified at construction and TTL is the sole freshness signal.
+	DefaultCacheSubscribeEnabled = true
 	// DefaultCacheMemoryMaxBytes caps the in-memory tier across all
 	// three sub-caches. 256 MiB.
 	DefaultCacheMemoryMaxBytes = 256 << 20
@@ -22,15 +29,17 @@ const (
 	// 1 MiB.
 	DefaultCacheChunkSizeBytes = 1 << 20
 	// DefaultCacheAttrTTL is the per-entry lifetime for positive
-	// attribute cache hits.
-	DefaultCacheAttrTTL = 5 * time.Second
+	// attribute cache hits. Relaxed from 5s to 5min in Sub-spec D now
+	// that Subscribe push is the primary freshness signal.
+	DefaultCacheAttrTTL = 5 * time.Minute
 	// DefaultCacheDirTTL is the per-entry lifetime for directory
-	// listing cache hits.
-	DefaultCacheDirTTL = 5 * time.Second
+	// listing cache hits. Relaxed from 5s to 5min in Sub-spec D.
+	DefaultCacheDirTTL = 5 * time.Minute
 	// DefaultCacheNegativeTTL is the per-entry lifetime for negative
-	// attribute cache entries. Short by design so deletions elsewhere
-	// become visible quickly.
-	DefaultCacheNegativeTTL = 2 * time.Second
+	// attribute cache entries. Relaxed from 2s to 30s in Sub-spec D;
+	// Subscribe push invalidates on delete/rename so the TTL is the
+	// last line of defence, not the first.
+	DefaultCacheNegativeTTL = 30 * time.Second
 )
 
 // defaultCachePath returns the XDG-default cache directory.
@@ -41,10 +50,17 @@ func defaultCachePath() string {
 // CacheConfig governs the client-side cache. Sub-spec B introduced the
 // in-memory tier; Sub-spec C adds persistence under Path with two
 // independent byte caps. Disabled-by-default in B, enabled-by-default
-// in C.
+// in C. Sub-spec D adds Subscribe-based push invalidation.
 type CacheConfig struct {
 	// Enabled gates whether the cache decorator is inserted at mount time.
 	Enabled bool `mapstructure:"enabled"`
+	// SubscribeEnabled gates the Subscribe push-invalidation path. When
+	// true the client opens a persistent gRPC Subscribe stream; the
+	// validity tracker starts unverified and flips to verified on the
+	// first HEARTBEAT. When false the cache is marked globally verified
+	// at construction and TTL alone drives eviction — equivalent to
+	// Sub-spec C behaviour.
+	SubscribeEnabled bool `mapstructure:"subscribe_enabled"`
 	// Path is the per-mount cache root. Each volume gets a per-volume
 	// subdirectory under it holding a flock-based LOCK file, the bbolt
 	// meta.db, and the chunks/ tree.
@@ -59,11 +75,15 @@ type CacheConfig struct {
 	// miss. Pinned to [4 KiB, 16 MiB].
 	ChunkSizeBytes int `mapstructure:"chunk_size_bytes" validate:"min=4096,max=16777216"`
 	// AttrTTL is the per-entry lifetime for positive attribute cache hits.
+	// Zero disables time-based expiry for this tier (entries live until
+	// invalidated by Subscribe push or a mutating op).
 	AttrTTL time.Duration `mapstructure:"attr_ttl"`
 	// DirTTL is the per-entry lifetime for directory listing cache hits.
+	// Zero disables time-based expiry for this tier.
 	DirTTL time.Duration `mapstructure:"dir_ttl"`
 	// NegativeTTL is the per-entry lifetime for negative attribute cache
-	// entries (paths that returned ENOENT). Short by design.
+	// entries (paths that returned ENOENT). Zero disables time-based
+	// expiry for this tier.
 	NegativeTTL time.Duration `mapstructure:"negative_ttl"`
 }
 
@@ -72,19 +92,21 @@ type CacheConfig struct {
 // override.
 func NewCacheConfig(v *viper.Viper) (*CacheConfig, error) {
 	cfg := &CacheConfig{
-		Enabled:        DefaultCacheEnabled,
-		Path:           defaultCachePath(),
-		MemoryMaxBytes: DefaultCacheMemoryMaxBytes,
-		DiskMaxBytes:   DefaultCacheDiskMaxBytes,
-		ChunkSizeBytes: DefaultCacheChunkSizeBytes,
-		AttrTTL:        DefaultCacheAttrTTL,
-		DirTTL:         DefaultCacheDirTTL,
-		NegativeTTL:    DefaultCacheNegativeTTL,
+		Enabled:          DefaultCacheEnabled,
+		SubscribeEnabled: DefaultCacheSubscribeEnabled,
+		Path:             defaultCachePath(),
+		MemoryMaxBytes:   DefaultCacheMemoryMaxBytes,
+		DiskMaxBytes:     DefaultCacheDiskMaxBytes,
+		ChunkSizeBytes:   DefaultCacheChunkSizeBytes,
+		AttrTTL:          DefaultCacheAttrTTL,
+		DirTTL:           DefaultCacheDirTTL,
+		NegativeTTL:      DefaultCacheNegativeTTL,
 	}
 	if v == nil {
 		return cfg, nil
 	}
 	v.SetDefault("enabled", DefaultCacheEnabled)
+	v.SetDefault("subscribe_enabled", DefaultCacheSubscribeEnabled)
 	v.SetDefault("path", defaultCachePath())
 	v.SetDefault("memory_max_bytes", DefaultCacheMemoryMaxBytes)
 	v.SetDefault("disk_max_bytes", DefaultCacheDiskMaxBytes)

@@ -49,12 +49,23 @@ func NewCachedBackend(inner io.FileSystemBackend, cfg Config, p *persist.Persist
 		data:     newDataCacheWithPersist(acct, cfg.ChunkSizeBytes, p),
 		validity: newValidityTracker(),
 	}
-	if client != nil && volume != "" {
+	if !cfg.SubscribeEnabled {
+		// Subscribe disabled: freshness is TTL-driven only. Mark the
+		// cache globally verified at construction so reads never pay an
+		// extra GetAttrIfChanged RTT — the relaxed TTL is the sole
+		// eviction signal in this mode, matching Sub-spec C behaviour.
+		b.validity.markGlobalVerified()
+	} else if client != nil && volume != "" {
+		// Subscribe enabled and a real gRPC client is available: start
+		// the push-invalidation goroutine. The validity tracker stays
+		// unverified until the first HEARTBEAT arrives.
 		ctx, cancel := context.WithCancel(context.Background())
 		b.subCancel = cancel
 		b.subscriber = newSubscribeConsumer(client, volume, &subscribeBackendAdapter{b}, b.validity)
 		go b.subscriber.run(ctx)
 	}
+	// else: SubscribeEnabled=true but no client (test scenarios or future
+	// offline mode) — tracker stays unverified; gating logic applies.
 	return b
 }
 
