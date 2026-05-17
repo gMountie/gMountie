@@ -75,3 +75,56 @@ func (s *StoreTestSuite) TestConcurrentReadsRaceClean() {
 func TestStoreTestSuite(t *testing.T) {
 	suite.Run(t, new(StoreTestSuite))
 }
+
+// PersistedStoreSuite exercises the memory-tier-above-disk fallthrough
+// added by Sub-spec C. Memory hit returns immediately. Memory miss
+// falls through to disk via the configured Loader/Putter pair; a disk
+// hit promotes the value back into the memory tier so subsequent gets
+// short-circuit.
+type PersistedStoreSuite struct {
+	suite.Suite
+}
+
+func (s *PersistedStoreSuite) TestMemoryMissFallsThroughToLoader() {
+	loaderCalls := 0
+	loader := func(key string) (any, int, bool) {
+		loaderCalls++
+		if key == "k1" {
+			return "from-disk", 9, true
+		}
+		return nil, 0, false
+	}
+	acct := newAccountant(0)
+	st := newStoreWithLoader(acct, loader, func(string, any, int) {})
+
+	e := st.get("k1")
+	s.Require().NotNil(e)
+	s.Assert().Equal("from-disk", e.value)
+	s.Assert().Equal(1, loaderCalls)
+
+	e2 := st.get("k1")
+	s.Require().NotNil(e2)
+	s.Assert().Equal(1, loaderCalls, "loader must not be called for memory hit")
+}
+
+func (s *PersistedStoreSuite) TestPutAlsoWritesThrough() {
+	var putCalls int
+	loader := func(string) (any, int, bool) { return nil, 0, false }
+	putter := func(_ string, _ any, _ int) { putCalls++ }
+	st := newStoreWithLoader(newAccountant(0), loader, putter)
+	st.put("k", "v", 1)
+	s.Assert().Equal(1, putCalls, "write-through must call putter")
+}
+
+func (s *PersistedStoreSuite) TestRemoveForwardsToRemover() {
+	var removerCalls int
+	loader := func(string) (any, int, bool) { return nil, 0, false }
+	putter := func(string, any, int) {}
+	remover := func(string) { removerCalls++ }
+	st := newStoreWithPersist(newAccountant(0), loader, putter, remover)
+	st.put("k", "v", 1)
+	st.remove("k")
+	s.Assert().Equal(1, removerCalls)
+}
+
+func TestPersistedStoreSuite(t *testing.T) { suite.Run(t, new(PersistedStoreSuite)) }
