@@ -22,6 +22,20 @@ import (
 	"google.golang.org/grpc"
 )
 
+// readResult is the accumulated outcome of a single streaming Read attempt:
+// how many bytes landed in dest and the terminal FUSE status reported by the
+// server. The two are tracked together so retryableCall can replace them
+// wholesale on each attempt without partial-state bleed-through.
+type readResult struct {
+	written int
+	status  fuse.Status
+}
+
+// writeFrameSizeBytes bounds a single WriteFrame's data slice. Hardcoded
+// here for now; Task 7 of the Phase 3 plan negotiates this value with the
+// server. 1 MiB matches the server's default FrameSizeBytes.
+const writeFrameSizeBytes = 1 << 20
+
 // BackendClient implements FileSystemBackend against the gRPC layer.
 // Per-fd state lives on grpcFileHandle, returned by Open/Create and
 // passed back into Read/Write/Flush/Fsync/Release.
