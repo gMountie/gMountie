@@ -16,6 +16,10 @@ func (r *RpcServerImpl) Subscribe(request *proto.SubscribeRequest, stream proto.
 	if _, err := r.fsService.GetVolumeFileSystem(request.Volume); err != nil {
 		return err
 	}
+	if r.metrics != nil {
+		r.metrics.SubscribeSubscribersInc(request.Volume)
+		defer r.metrics.SubscribeSubscribersDec(request.Volume)
+	}
 	events, cancel := r.bus.Subscribe(request.Volume)
 	defer cancel()
 	for {

@@ -103,10 +103,12 @@ type revalidateResult struct {
 func (b *cachedBackend) revalidate(ctx context.Context, path string, cachedVersion uint64) revalidateResult {
 	attrs, notMod, st := b.inner.GetAttrIfChanged(ctx, path, cachedVersion)
 	if !st.Ok() && st != fuse.ENOENT {
+		metrics.CacheRevalidation("error")
 		return revalidateResult{fallback: true}
 	}
 	if notMod {
 		b.validity.markPathVerified(path)
+		metrics.CacheRevalidation("not_modified")
 		return revalidateResult{notModified: true}
 	}
 	// Version changed or path gone: flush all three caches for this path.
@@ -115,8 +117,10 @@ func (b *cachedBackend) revalidate(ctx context.Context, path string, cachedVersi
 	b.dir.invalidate(pathParent(path))
 	if st == fuse.ENOENT {
 		b.attr.putNegative(path)
+		metrics.CacheRevalidation("enoent")
 		return revalidateResult{enoent: true}
 	}
+	metrics.CacheRevalidation("changed")
 	return revalidateResult{freshAttrs: attrs}
 }
 

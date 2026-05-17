@@ -11,6 +11,11 @@ type Metrics struct {
 	RpcErrors       *prometheus.CounterVec
 	RequestDuration *prometheus.HistogramVec
 	SessionsActive  prometheus.Gauge
+
+	// Subscribe counters (Sub-spec D).
+	SubscribeEventsEmitted *prometheus.CounterVec
+	SubscribeSubscribers   *prometheus.GaugeVec
+	SubscribeDroppedSlow   *prometheus.CounterVec
 }
 
 // NewMetrics constructs the set of server collectors. They are NOT
@@ -38,19 +43,38 @@ func NewMetrics() *Metrics {
 			Name: "gmountie_server_sessions_active",
 			Help: "Number of active sessions (created and not yet reaped).",
 		}),
+		SubscribeEventsEmitted: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gmountie_subscribe_events_emitted_total",
+			Help: "Subscribe events emitted to subscribers per kind.",
+		}, []string{"kind"}),
+		SubscribeSubscribers: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gmountie_subscribe_subscribers",
+			Help: "Number of active Subscribe stream clients per volume.",
+		}, []string{"volume"}),
+		SubscribeDroppedSlow: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gmountie_subscribe_dropped_slow_total",
+			Help: "Subscribe events dropped due to slow consumers per volume.",
+		}, []string{"volume"}),
 	}
 }
 
 // MustRegister registers all collectors with r. Panics on registration error.
 func (m *Metrics) MustRegister(r prometheus.Registerer) {
-	r.MustRegister(m.OpenFiles, m.Bytes, m.RpcErrors, m.RequestDuration, m.SessionsActive)
+	r.MustRegister(
+		m.OpenFiles, m.Bytes, m.RpcErrors, m.RequestDuration, m.SessionsActive,
+		m.SubscribeEventsEmitted, m.SubscribeSubscribers, m.SubscribeDroppedSlow,
+	)
 }
 
 // Register registers all collectors with r. Already-registered collectors
 // are tolerated (useful when the same default registerer is reused across
 // `go test -count=N` runs).
 func (m *Metrics) Register(r prometheus.Registerer) error {
-	for _, c := range []prometheus.Collector{m.OpenFiles, m.Bytes, m.RpcErrors, m.RequestDuration, m.SessionsActive} {
+	all := []prometheus.Collector{
+		m.OpenFiles, m.Bytes, m.RpcErrors, m.RequestDuration, m.SessionsActive,
+		m.SubscribeEventsEmitted, m.SubscribeSubscribers, m.SubscribeDroppedSlow,
+	}
+	for _, c := range all {
 		if err := r.Register(c); err != nil {
 			are, ok := err.(prometheus.AlreadyRegisteredError)
 			if !ok {
@@ -60,14 +84,22 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 			// hit the same instance.
 			switch existing := are.ExistingCollector.(type) {
 			case *prometheus.GaugeVec:
-				if c == prometheus.Collector(m.OpenFiles) {
+				switch c {
+				case prometheus.Collector(m.OpenFiles):
 					m.OpenFiles = existing
+				case prometheus.Collector(m.SubscribeSubscribers):
+					m.SubscribeSubscribers = existing
 				}
 			case *prometheus.CounterVec:
-				if c == prometheus.Collector(m.Bytes) {
+				switch c {
+				case prometheus.Collector(m.Bytes):
 					m.Bytes = existing
-				} else if c == prometheus.Collector(m.RpcErrors) {
+				case prometheus.Collector(m.RpcErrors):
 					m.RpcErrors = existing
+				case prometheus.Collector(m.SubscribeEventsEmitted):
+					m.SubscribeEventsEmitted = existing
+				case prometheus.Collector(m.SubscribeDroppedSlow):
+					m.SubscribeDroppedSlow = existing
 				}
 			case *prometheus.HistogramVec:
 				m.RequestDuration = existing
@@ -101,3 +133,23 @@ func (m *Metrics) RequestDurationObserve(volume, op string, seconds float64) {
 
 func (m *Metrics) SessionsActiveInc() { m.SessionsActive.Inc() }
 func (m *Metrics) SessionsActiveDec() { m.SessionsActive.Dec() }
+
+// SubscribeEventEmittedInc bumps the emitted-events counter for the given kind.
+func (m *Metrics) SubscribeEventEmittedInc(kind string) {
+	m.SubscribeEventsEmitted.WithLabelValues(kind).Inc()
+}
+
+// SubscribeSubscribersInc increments the active-subscribers gauge for volume.
+func (m *Metrics) SubscribeSubscribersInc(volume string) {
+	m.SubscribeSubscribers.WithLabelValues(volume).Inc()
+}
+
+// SubscribeSubscribersDec decrements the active-subscribers gauge for volume.
+func (m *Metrics) SubscribeSubscribersDec(volume string) {
+	m.SubscribeSubscribers.WithLabelValues(volume).Dec()
+}
+
+// SubscribeDroppedSlowInc bumps the dropped-slow counter for volume.
+func (m *Metrics) SubscribeDroppedSlowInc(volume string) {
+	m.SubscribeDroppedSlow.WithLabelValues(volume).Inc()
+}

@@ -6,6 +6,7 @@ import (
 	"path"
 	"time"
 
+	"gmountie/pkg/client/metrics"
 	"gmountie/pkg/proto"
 	"gmountie/pkg/utils/log"
 
@@ -34,11 +35,12 @@ type subscribeStream interface {
 // flips the validityTracker. On stream error it sleeps with
 // exponential backoff (1s → 30s) and reconnects.
 type subscribeConsumer struct {
-	client   proto.RpcFsClient
-	volume   string
-	cache    subscribeBackendOps
-	validity *validityTracker
-	open     func(ctx context.Context) (subscribeStream, error)
+	client          proto.RpcFsClient
+	volume          string
+	cache           subscribeBackendOps
+	validity        *validityTracker
+	open            func(ctx context.Context) (subscribeStream, error)
+	unverifiedSince time.Time // zero when currently verified
 }
 
 func newSubscribeConsumer(client proto.RpcFsClient, volume string, cache subscribeBackendOps, validity *validityTracker) *subscribeConsumer {
@@ -50,6 +52,10 @@ func newSubscribeConsumer(client proto.RpcFsClient, volume string, cache subscri
 }
 
 func (c *subscribeConsumer) run(ctx context.Context) {
+	// Consumer starts unverified; signal metrics.
+	c.unverifiedSince = time.Now()
+	metrics.SubscribeStreamStateChanged(false)
+
 	backoff := time.Second
 	for ctx.Err() == nil {
 		err := c.runOnce(ctx)
@@ -59,7 +65,12 @@ func (c *subscribeConsumer) run(ctx context.Context) {
 				zap.Error(err),
 			)
 		}
+		// Stream is down: mark unverified and record the transition time.
 		c.validity.markGlobalUnverified()
+		metrics.SubscribeStreamStateChanged(false)
+		if c.unverifiedSince.IsZero() {
+			c.unverifiedSince = time.Now()
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -92,6 +103,12 @@ func (c *subscribeConsumer) runOnce(ctx context.Context) error {
 		if !sawHeartbeat && ev.Kind == proto.SubscribeEvent_HEARTBEAT {
 			c.validity.markGlobalVerified()
 			sawHeartbeat = true
+			// Record time spent unverified before this first heartbeat.
+			if !c.unverifiedSince.IsZero() {
+				metrics.CacheUnverifiedElapsed(time.Since(c.unverifiedSince).Seconds())
+				c.unverifiedSince = time.Time{}
+			}
+			metrics.SubscribeStreamStateChanged(true)
 		}
 	}
 }
@@ -110,15 +127,18 @@ func subscribePathParent(p string) string {
 func (c *subscribeConsumer) handle(ev *proto.SubscribeEvent) {
 	switch ev.Kind {
 	case proto.SubscribeEvent_MUTATED:
+		metrics.SubscribeEventReceived("mutated")
 		c.cache.invalidateAttr(ev.Path)
 		c.cache.invalidateData(ev.Path)
 		c.cache.invalidateDir(subscribePathParent(ev.Path))
 	case proto.SubscribeEvent_DELETED:
+		metrics.SubscribeEventReceived("deleted")
 		c.cache.invalidateAttr(ev.Path)
 		c.cache.invalidateData(ev.Path)
 		c.cache.invalidateDir(subscribePathParent(ev.Path))
 		c.cache.putNegative(ev.Path)
 	case proto.SubscribeEvent_RENAMED:
+		metrics.SubscribeEventReceived("renamed")
 		for _, p := range []string{ev.Path, ev.NewPath} {
 			c.cache.invalidateAttr(p)
 			c.cache.invalidateData(p)
@@ -126,6 +146,7 @@ func (c *subscribeConsumer) handle(ev *proto.SubscribeEvent) {
 		}
 		c.cache.putNegative(ev.Path)
 	case proto.SubscribeEvent_HEARTBEAT:
-		// no-op; flip handled by runOnce after first heartbeat is seen
+		metrics.SubscribeEventReceived("heartbeat")
+		// verified-state flip is handled by runOnce after the first heartbeat
 	}
 }

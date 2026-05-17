@@ -64,6 +64,10 @@ func NewClientFromConfig(cfg *config.Config) (Client, error) {
 	metrics.SetCacheHitHook(m.CacheHitInc)
 	metrics.SetCacheMissHook(m.CacheMissInc)
 	metrics.SetCacheDedupeHitHook(m.CacheDedupeHitInc)
+	metrics.SetCacheRevalidationHook(m.CacheRevalidationInc)
+	metrics.SetSubscribeEventReceivedHook(m.SubscribeEventReceivedInc)
+	metrics.SetSubscribeStreamStateHook(m.SubscribeStreamStateSet)
+	metrics.SetCacheUnverifiedHook(m.CacheUnverifiedAdd)
 	opts = append(opts, WithUnaryInterceptors(UnaryClientInFlightInterceptor(m)))
 
 	switch c := authConfig.(type) {

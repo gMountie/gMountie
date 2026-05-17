@@ -4,6 +4,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"gmountie/pkg/server/metrics"
 )
 
 // EventKind classifies what changed.
@@ -19,8 +21,8 @@ const (
 // Event is the unit delivered to subscribers.
 type Event struct {
 	Path       string
-	NewPath    string    // KindRenamed only
-	NewVersion uint64    // 0 for KindDeleted / KindHeartbeat
+	NewPath    string // KindRenamed only
+	NewVersion uint64 // 0 for KindDeleted / KindHeartbeat
 	Kind       EventKind
 }
 
@@ -43,6 +45,8 @@ type EventBusOptions struct {
 	// HeartbeatInterval is the per-volume heartbeat tick. Zero disables
 	// heartbeats (test-only mode).
 	HeartbeatInterval time.Duration
+	// Metrics is optional; if non-nil, subscribe counters are bumped.
+	Metrics *metrics.Metrics
 }
 
 type subscriber struct {
@@ -134,12 +138,33 @@ func (b *localEventBus) Close() {
 	b.subscribers = nil
 }
 
+// eventKindString returns the Prometheus label string for an EventKind.
+func eventKindString(kind EventKind) string {
+	switch kind {
+	case KindMutated:
+		return "mutated"
+	case KindDeleted:
+		return "deleted"
+	case KindRenamed:
+		return "renamed"
+	case KindHeartbeat:
+		return "heartbeat"
+	default:
+		return "unknown"
+	}
+}
+
 func (b *localEventBus) fanout(volume string, ev Event) {
 	b.mu.RLock()
 	subs := append([]*subscriber(nil), b.subscribers[volume]...)
 	b.mu.RUnlock()
+	if b.opts.Metrics != nil && len(subs) > 0 {
+		b.opts.Metrics.SubscribeEventEmittedInc(eventKindString(ev.Kind))
+	}
 	for _, s := range subs {
-		_ = s.trySend(ev)
+		if !s.trySend(ev) && b.opts.Metrics != nil {
+			b.opts.Metrics.SubscribeDroppedSlowInc(volume)
+		}
 	}
 }
 

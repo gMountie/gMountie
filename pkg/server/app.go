@@ -48,6 +48,7 @@ func NewServerAppContext(cfg *config.Config) *AppContext {
 	bus := io.NewLocalEventBus(io.EventBusOptions{
 		BufferSize:        cfg.Server.SubscribeBufferSize,
 		HeartbeatInterval: cfg.Server.SubscribeHeartbeatInterval,
+		Metrics:           m,
 	})
 	return &AppContext{
 		Config:         cfg,
@@ -62,7 +63,7 @@ func NewServerAppContext(cfg *config.Config) *AppContext {
 // GetGrpcServices returns the gRPC services.
 func (c *AppContext) GetGrpcServices() []grpc.ServiceRegistrar {
 	return []grpc.ServiceRegistrar{
-		controller.NewGrpcServer(c.VolumeService, c.SessionManager, c.Config.Server.CompoundMaxParallel, c.Bus),
+		controller.NewGrpcServer(c.VolumeService, c.SessionManager, c.Config.Server.CompoundMaxParallel, c.Bus, c.Metrics),
 		controller.NewRpcFileServer(c.VolumeService, c.SessionManager, c.Metrics, c.Config.Server.FrameSizeBytes, c.Bus),
 		controller.NewVolumeService(c.VolumeService),
 		controller.NewSessionController(c.SessionManager),

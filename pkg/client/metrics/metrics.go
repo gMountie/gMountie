@@ -14,6 +14,12 @@ type Metrics struct {
 	CacheHits       *prometheus.CounterVec
 	CacheMisses     *prometheus.CounterVec
 	CacheDedupeHits prometheus.Counter
+
+	// Subscribe / revalidation counters (Sub-spec D).
+	CacheRevalidations            *prometheus.CounterVec
+	SubscribeEventsReceived       *prometheus.CounterVec
+	SubscribeStreamState          prometheus.Gauge
+	CacheUnverifiedDurationSecs   prometheus.Counter
 }
 
 // NewMetrics constructs the set of client collectors. They are NOT
@@ -40,12 +46,32 @@ func NewMetrics() *Metrics {
 			Name: "gmountie_cache_dedupe_hits_total",
 			Help: "Content-addressable chunks whose hash already existed on disk when WriteChunk ran.",
 		}),
+		CacheRevalidations: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gmountie_cache_revalidations_total",
+			Help: "GetAttrIfChanged outcomes from the cache revalidation path.",
+		}, []string{"result"}),
+		SubscribeEventsReceived: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gmountie_subscribe_events_received_total",
+			Help: "Subscribe events received and applied to the local cache.",
+		}, []string{"kind"}),
+		SubscribeStreamState: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "gmountie_subscribe_stream_state",
+			Help: "1 = stream up and verified; 0 = down or unverified.",
+		}),
+		CacheUnverifiedDurationSecs: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gmountie_cache_unverified_duration_seconds_total",
+			Help: "Cumulative time the cache spent in unverified mode.",
+		}),
 	}
 }
 
 // MustRegister registers all collectors with r. Panics on registration error.
 func (m *Metrics) MustRegister(r prometheus.Registerer) {
-	r.MustRegister(m.RetryTotal, m.InFlight, m.CacheHits, m.CacheMisses, m.CacheDedupeHits)
+	r.MustRegister(
+		m.RetryTotal, m.InFlight, m.CacheHits, m.CacheMisses, m.CacheDedupeHits,
+		m.CacheRevalidations, m.SubscribeEventsReceived, m.SubscribeStreamState,
+		m.CacheUnverifiedDurationSecs,
+	)
 }
 
 // Register tolerates AlreadyRegisteredError by adopting the existing
@@ -55,6 +81,8 @@ func (m *Metrics) MustRegister(r prometheus.Registerer) {
 func (m *Metrics) Register(r prometheus.Registerer) error {
 	collectors := []prometheus.Collector{
 		m.RetryTotal, m.InFlight, m.CacheHits, m.CacheMisses, m.CacheDedupeHits,
+		m.CacheRevalidations, m.SubscribeEventsReceived, m.SubscribeStreamState,
+		m.CacheUnverifiedDurationSecs,
 	}
 	for _, c := range collectors {
 		if err := r.Register(c); err != nil {
@@ -73,14 +101,25 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 					m.CacheHits = existing
 				case prometheus.Collector(m.CacheMisses):
 					m.CacheMisses = existing
+				case prometheus.Collector(m.CacheRevalidations):
+					m.CacheRevalidations = existing
+				case prometheus.Collector(m.SubscribeEventsReceived):
+					m.SubscribeEventsReceived = existing
 				}
 			case prometheus.Counter:
-				if c == prometheus.Collector(m.CacheDedupeHits) {
+				switch c {
+				case prometheus.Collector(m.CacheDedupeHits):
 					m.CacheDedupeHits = existing
+				case prometheus.Collector(m.CacheUnverifiedDurationSecs):
+					m.CacheUnverifiedDurationSecs = existing
 				}
 			case *prometheus.GaugeVec:
 				if c == prometheus.Collector(m.InFlight) {
 					m.InFlight = existing
+				}
+			case prometheus.Gauge:
+				if c == prometheus.Collector(m.SubscribeStreamState) {
+					m.SubscribeStreamState = existing
 				}
 			}
 		}
@@ -104,6 +143,33 @@ func (m *Metrics) CacheMissInc(cacheType string) {
 
 // CacheDedupeHitInc bumps the dedupe-hits counter.
 func (m *Metrics) CacheDedupeHitInc() { m.CacheDedupeHits.Inc() }
+
+// CacheRevalidationInc bumps the revalidation counter for the given result label.
+// result is one of: "not_modified", "changed", "enoent", "error".
+func (m *Metrics) CacheRevalidationInc(result string) {
+	m.CacheRevalidations.WithLabelValues(result).Inc()
+}
+
+// SubscribeEventReceivedInc bumps the subscribe-events-received counter for
+// the given kind label. kind is one of: "mutated", "deleted", "renamed", "heartbeat".
+func (m *Metrics) SubscribeEventReceivedInc(kind string) {
+	m.SubscribeEventsReceived.WithLabelValues(kind).Inc()
+}
+
+// SubscribeStreamStateSet sets the stream-state gauge: 1 when up+verified, 0 when down/unverified.
+func (m *Metrics) SubscribeStreamStateSet(up bool) {
+	if up {
+		m.SubscribeStreamState.Set(1)
+	} else {
+		m.SubscribeStreamState.Set(0)
+	}
+}
+
+// CacheUnverifiedAdd accumulates the given number of seconds into the
+// unverified-duration counter.
+func (m *Metrics) CacheUnverifiedAdd(seconds float64) {
+	m.CacheUnverifiedDurationSecs.Add(seconds)
+}
 
 // --- Retry hook ---
 
@@ -169,5 +235,62 @@ func CacheMiss(cacheType string) {
 func CacheDedupeHit() {
 	if cacheDedupeHitHook != nil {
 		cacheDedupeHitHook()
+	}
+}
+
+// --- Subscribe / revalidation hooks ---
+// Global callbacks wired at client startup by pkg/client/grpc/factory.go.
+// Safe to call when unset (no-op).
+
+var (
+	cacheRevalidationHook      func(result string)
+	subscribeEventReceivedHook func(kind string)
+	subscribeStreamStateHook   func(up bool)
+	cacheUnverifiedHook        func(seconds float64)
+)
+
+// SetCacheRevalidationHook installs a callback invoked on each revalidation outcome.
+func SetCacheRevalidationHook(fn func(result string)) { cacheRevalidationHook = fn }
+
+// SetSubscribeEventReceivedHook installs a callback invoked for each Subscribe event handled.
+func SetSubscribeEventReceivedHook(fn func(kind string)) { subscribeEventReceivedHook = fn }
+
+// SetSubscribeStreamStateHook installs a callback invoked when the Subscribe stream
+// transitions between up (true) and down/unverified (false).
+func SetSubscribeStreamStateHook(fn func(up bool)) { subscribeStreamStateHook = fn }
+
+// SetCacheUnverifiedHook installs a callback invoked with the number of seconds
+// spent in unverified mode when the stream transitions back to verified.
+func SetCacheUnverifiedHook(fn func(seconds float64)) { cacheUnverifiedHook = fn }
+
+// CacheRevalidation fires the revalidation hook for the given result.
+// Safe to call when no hook is installed.
+func CacheRevalidation(result string) {
+	if cacheRevalidationHook != nil {
+		cacheRevalidationHook(result)
+	}
+}
+
+// SubscribeEventReceived fires the subscribe-event-received hook for the given kind.
+// Safe to call when no hook is installed.
+func SubscribeEventReceived(kind string) {
+	if subscribeEventReceivedHook != nil {
+		subscribeEventReceivedHook(kind)
+	}
+}
+
+// SubscribeStreamStateChanged fires the stream-state hook.
+// Safe to call when no hook is installed.
+func SubscribeStreamStateChanged(up bool) {
+	if subscribeStreamStateHook != nil {
+		subscribeStreamStateHook(up)
+	}
+}
+
+// CacheUnverifiedElapsed fires the unverified-duration hook with elapsed seconds.
+// Safe to call when no hook is installed.
+func CacheUnverifiedElapsed(seconds float64) {
+	if cacheUnverifiedHook != nil {
+		cacheUnverifiedHook(seconds)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"gmountie/pkg/proto"
 	serverio "gmountie/pkg/server/io"
+	"gmountie/pkg/server/metrics"
 	"gmountie/pkg/server/service"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -18,6 +19,7 @@ type RpcServerImpl struct {
 	sessions  service.SessionManager
 	compound  *service.CompoundDispatcher
 	bus       serverio.EventBus
+	metrics   *metrics.Metrics
 	proto.UnimplementedRpcFsServer
 }
 
@@ -27,11 +29,13 @@ var _ proto.RpcFsServer = (*RpcServerImpl)(nil)
 // NewGrpcServer creates a new gRPC server. The CompoundDispatcher is built
 // here so it can reference the RpcServerImpl as its FsHandlers — avoids
 // exposing a post-construction setter just for the back-reference.
-func NewGrpcServer(fsService service.VolumeService, sessions service.SessionManager, compoundMaxParallel int, bus serverio.EventBus) *RpcServerImpl {
+// m may be nil; subscribe metrics are no-ops when unset.
+func NewGrpcServer(fsService service.VolumeService, sessions service.SessionManager, compoundMaxParallel int, bus serverio.EventBus, m *metrics.Metrics) *RpcServerImpl {
 	srv := &RpcServerImpl{
 		fsService: fsService,
 		sessions:  sessions,
 		bus:       bus,
+		metrics:   m,
 	}
 	srv.compound = service.NewCompoundDispatcher(srv, compoundMaxParallel)
 	return srv

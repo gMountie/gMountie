@@ -35,7 +35,7 @@ func (s *RpcServerTestSuite) SetupTest() {
 	s.Require().NoError(err)
 	s.sessionID = sid
 	s.bus = serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
-	s.server = NewGrpcServer(s.fsService, s.sessionMgr, 0, s.bus)
+	s.server = NewGrpcServer(s.fsService, s.sessionMgr, 0, s.bus, nil)
 }
 
 func (s *RpcServerTestSuite) TearDownTest() {

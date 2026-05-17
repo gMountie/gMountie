@@ -50,7 +50,7 @@ func newRpcServerWithBus(t *testing.T, bus serverio.EventBus) *RpcServerImpl {
 	fsService.On("GetVolumeFileSystem", "vol-test").Return(mockFs, nil).Maybe()
 	fsService.On("GetVolumeFileSystem", "v").Return(mockFs, nil).Maybe()
 	sessionMgr := service.NewSessionManager(service.SessionManagerOptions{})
-	return NewGrpcServer(fsService, sessionMgr, 0, bus)
+	return NewGrpcServer(fsService, sessionMgr, 0, bus, nil)
 }
 
 type SubscribeStreamSuite struct {
