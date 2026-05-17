@@ -279,13 +279,17 @@ func createAt(ctx context.Context, parentInode *fs.Inode, backend FileSystemBack
 	}
 	full := childPath(parent, name)
 	// Today proto.CreateReply doesn't carry Attr; fall back to Stat so
-	// the kernel gets a populated EntryOut. If Stat fails, still return
-	// the handle — kernel will retry the stat on next access.
+	// the kernel gets a populated EntryOut. If Stat fails, surface the
+	// error rather than returning a zero EntryOut — the kernel would
+	// otherwise cache the zero (Mode=0, Size=0) for EntryTimeout (~1s
+	// per single.go) and poison subsequent stat ops. The server-side
+	// Create already succeeded; this leaks a temporary fd until
+	// Release-on-close fires, but that's bounded and cleaner than a
+	// poisoned dentry cache.
 	if attr == nil {
 		a, sst := backend.Stat(ctx, full)
 		if !sst.Ok() {
-			return parentInode.NewInode(ctx, &gMountieNode{backend: backend, relPath: full}, fs.StableAttr{Mode: mode}),
-				&gMountieFile{backend: backend, fh: handle}, 0, 0
+			return nil, nil, 0, syscall.Errno(sst)
 		}
 		attr = a
 	}

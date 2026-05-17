@@ -57,6 +57,14 @@ type FileHandle interface {
 	// Path returns the path the handle was opened against. Mainly for
 	// logging and the read/write retry diagnostics.
 	Path() string
+	// Unwrap returns the next FileHandle in a decorator chain, or the
+	// receiver itself for a leaf handle. A FileSystemBackend that needs
+	// to type-assert to a concrete handle (BackendClient -> *grpcFileHandle)
+	// walks the Unwrap chain to reach the leaf — this lets Sub-spec B+
+	// wrap handles (cache decorator etc.) without confusing the gRPC
+	// backend. Leaf handles return themselves; the walk terminates when
+	// cur.Unwrap() == cur.
+	Unwrap() FileHandle
 }
 
 // FileSystemBackend is the seam between the go-fuse adapter (node.go) and

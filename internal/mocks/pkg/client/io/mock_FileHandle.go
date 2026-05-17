@@ -5,6 +5,8 @@
 package io
 
 import (
+	"gmountie/pkg/client/io"
+
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -75,6 +77,52 @@ func (_c *MockFileHandle_Path_Call) Return(s string) *MockFileHandle_Path_Call {
 }
 
 func (_c *MockFileHandle_Path_Call) RunAndReturn(run func() string) *MockFileHandle_Path_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Unwrap provides a mock function for the type MockFileHandle
+func (_mock *MockFileHandle) Unwrap() io.FileHandle {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Unwrap")
+	}
+
+	var r0 io.FileHandle
+	if returnFunc, ok := ret.Get(0).(func() io.FileHandle); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(io.FileHandle)
+		}
+	}
+	return r0
+}
+
+// MockFileHandle_Unwrap_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Unwrap'
+type MockFileHandle_Unwrap_Call struct {
+	*mock.Call
+}
+
+// Unwrap is a helper method to define mock.On call
+func (_e *MockFileHandle_Expecter) Unwrap() *MockFileHandle_Unwrap_Call {
+	return &MockFileHandle_Unwrap_Call{Call: _e.mock.On("Unwrap")}
+}
+
+func (_c *MockFileHandle_Unwrap_Call) Run(run func()) *MockFileHandle_Unwrap_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockFileHandle_Unwrap_Call) Return(fileHandle io.FileHandle) *MockFileHandle_Unwrap_Call {
+	_c.Call.Return(fileHandle)
+	return _c
+}
+
+func (_c *MockFileHandle_Unwrap_Call) RunAndReturn(run func() io.FileHandle) *MockFileHandle_Unwrap_Call {
 	_c.Call.Return(run)
 	return _c
 }

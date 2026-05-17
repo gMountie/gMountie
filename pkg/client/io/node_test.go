@@ -152,6 +152,26 @@ func (s *NodeAdapterTestSuite) TestRootCreate_Error() {
 	s.Assert().Nil(file)
 }
 
+// TestRootCreate_StatFailureSurfacesError verifies that when Create
+// succeeds but the post-Create Stat fails (proto.CreateReply carries no
+// Attr today, so node.go falls back to Stat), the error is surfaced
+// rather than swallowed. Returning the handle with a zero EntryOut
+// would poison the kernel dentry cache for EntryTimeout seconds.
+func (s *NodeAdapterTestSuite) TestRootCreate_StatFailureSurfacesError() {
+	fh := iomocks.NewMockFileHandle(s.T())
+	s.backend.EXPECT().Create(mock.Anything, "", "new.txt", uint32(0), uint32(0o644)).
+		Return(fh, nil, fuse.OK)
+	s.backend.EXPECT().Stat(mock.Anything, "new.txt").Return(nil, fuse.ENOENT)
+	out := &fuse.EntryOut{}
+	inode, file, _, errno := rootAs[fs.NodeCreater](s).Create(context.Background(), "new.txt", 0, 0o644, out)
+	s.Require().Equal(syscall.Errno(fuse.ENOENT), errno)
+	s.Assert().Nil(inode)
+	s.Assert().Nil(file)
+	// The kernel dentry cache must not be poisoned with a zero EntryOut.
+	s.Assert().Equal(uint64(0), out.Attr.Size)
+	s.Assert().Equal(uint32(0), out.Attr.Mode)
+}
+
 // --- Getattr ---
 
 func (s *NodeAdapterTestSuite) TestRootGetattr_DelegatesToStat() {

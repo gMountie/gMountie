@@ -49,12 +49,25 @@ func NewBackendClient(client grpcclient.Client, volume string) *BackendClient {
 	return &BackendClient{client: client, volume: volume}
 }
 
-// callerFromCtx returns a proto.Caller for the request. Task 2 has no
-// general fuse.Context-from-ctx plumbing — Task 3's node adapter is
-// responsible for propagating the real Caller via the request ctx. Until
-// that lands, every request is stamped with a zero Caller.
-func callerFromCtx(_ context.Context) *proto.Caller {
-	return &proto.Caller{Owner: &proto.Owner{Uid: 0, Gid: 0}, Pid: 0}
+// callerFromCtx returns a proto.Caller for the request, pulled from the
+// per-op ctx that go-fuse populates with the kernel-reported caller
+// (uid/gid/pid of the syscalling process). Stamping this correctly is
+// load-bearing: the server's AssumeUserMiddleware runs setfsuid /
+// setfsgid from these fields on every op, so a zero Caller would have
+// the server side run as root.
+//
+// The zero-Caller fallback covers the rare case where no Caller is in
+// ctx — typically unit tests with a bare context.Background(). It must
+// not fire in production; if it does, that's a bug in the node adapter
+// (not propagating the FUSE ctx through to the backend).
+func callerFromCtx(ctx context.Context) *proto.Caller {
+	if c, ok := fuse.FromContext(ctx); ok {
+		return &proto.Caller{
+			Owner: &proto.Owner{Uid: c.Uid, Gid: c.Gid},
+			Pid:   c.Pid,
+		}
+	}
+	return &proto.Caller{Owner: &proto.Owner{}}
 }
 
 // attrFromProto maps a proto.Attr (server wire type) to the package-local
@@ -436,8 +449,8 @@ func (b *BackendClient) Create(ctx context.Context, parent, name string, flags, 
 //
 // Idempotent: each retry attempt opens a fresh stream; no request_id.
 func (b *BackendClient) Read(ctx context.Context, fh FileHandle, off int64, dest []byte) (int, fuse.Status) {
-	h, ok := fh.(*grpcFileHandle)
-	if !ok {
+	h := resolveHandle(fh)
+	if h == nil {
 		return 0, fuse.EBADF
 	}
 	if h.readahead != nil {
@@ -613,8 +626,8 @@ func (b *BackendClient) streamingWrite(h *grpcFileHandle, data []byte, off int64
 // established on Flush. Big writes (len(data) >= threshold) bypass the
 // coalescer: pending bytes are drained first to preserve on-disk order.
 func (b *BackendClient) Write(ctx context.Context, fh FileHandle, off int64, data []byte) (uint32, fuse.Status) {
-	h, ok := fh.(*grpcFileHandle)
-	if !ok {
+	h := resolveHandle(fh)
+	if h == nil {
 		return 0, fuse.EBADF
 	}
 	// Coalescing disabled: pass through to the streaming Write directly.
@@ -662,8 +675,8 @@ func (b *BackendClient) drainCoalescer(h *grpcFileHandle) fuse.Status {
 // then issues the server-side Release RPC. Always proceeds to the
 // server-side Release even if drain fails.
 func (b *BackendClient) Release(ctx context.Context, fh FileHandle) fuse.Status {
-	h, ok := fh.(*grpcFileHandle)
-	if !ok {
+	h := resolveHandle(fh)
+	if h == nil {
 		return fuse.EBADF
 	}
 	if h.lifeCancel != nil {
@@ -690,8 +703,8 @@ func (b *BackendClient) Release(ctx context.Context, fh FileHandle) fuse.Status 
 // Flush drains coalesced writes then issues the server-side Flush RPC.
 // If the drain fails, returns EIO and skips the server-side Flush.
 func (b *BackendClient) Flush(ctx context.Context, fh FileHandle) fuse.Status {
-	h, ok := fh.(*grpcFileHandle)
-	if !ok {
+	h := resolveHandle(fh)
+	if h == nil {
 		return fuse.EBADF
 	}
 	if st := b.drainCoalescer(h); !st.Ok() {
@@ -713,8 +726,8 @@ func (b *BackendClient) Flush(ctx context.Context, fh FileHandle) fuse.Status {
 
 // Fsync drains coalesced writes then issues the server-side Fsync RPC.
 func (b *BackendClient) Fsync(ctx context.Context, fh FileHandle, flags int64) fuse.Status {
-	h, ok := fh.(*grpcFileHandle)
-	if !ok {
+	h := resolveHandle(fh)
+	if h == nil {
 		return fuse.EBADF
 	}
 	if st := b.drainCoalescer(h); !st.Ok() {
@@ -740,8 +753,8 @@ func (b *BackendClient) Fsync(ctx context.Context, fh FileHandle, flags int64) f
 // and the legacy code never retried it either. No request_id stamp for
 // the same reason.
 func (b *BackendClient) Allocate(ctx context.Context, fh FileHandle, off, size uint64, mode uint32) fuse.Status {
-	h, ok := fh.(*grpcFileHandle)
-	if !ok {
+	h := resolveHandle(fh)
+	if h == nil {
 		return fuse.EBADF
 	}
 	ctx2, cancel := withIOTimeout(ctx, h.ioTimeout)
@@ -767,8 +780,8 @@ func (b *BackendClient) Allocate(ctx context.Context, fh FileHandle, off, size u
 // lock semantics get weird under replay (a server-side success the
 // client missed would leave us holding a phantom lock).
 func (b *BackendClient) GetLk(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) fuse.Status {
-	h, ok := fh.(*grpcFileHandle)
-	if !ok {
+	h := resolveHandle(fh)
+	if h == nil {
 		return fuse.EBADF
 	}
 	ctx2, cancel := withIOTimeout(ctx, h.ioTimeout)
@@ -794,8 +807,8 @@ func (b *BackendClient) GetLk(ctx context.Context, fh FileHandle, owner uint64, 
 // SetLk attempts a non-blocking lock acquisition (fcntl(F_SETLK)). No
 // retry — see GetLk.
 func (b *BackendClient) SetLk(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status {
-	h, ok := fh.(*grpcFileHandle)
-	if !ok {
+	h := resolveHandle(fh)
+	if h == nil {
 		return fuse.EBADF
 	}
 	ctx2, cancel := withIOTimeout(ctx, h.ioTimeout)
@@ -818,8 +831,8 @@ func (b *BackendClient) SetLk(ctx context.Context, fh FileHandle, owner uint64, 
 // SetLkw attempts a blocking lock acquisition (fcntl(F_SETLKW)). No
 // retry — see GetLk.
 func (b *BackendClient) SetLkw(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status {
-	h, ok := fh.(*grpcFileHandle)
-	if !ok {
+	h := resolveHandle(fh)
+	if h == nil {
 		return fuse.EBADF
 	}
 	ctx2, cancel := withIOTimeout(ctx, h.ioTimeout)
@@ -865,6 +878,32 @@ type grpcFileHandle struct {
 
 // Path returns the path this handle was opened against.
 func (h *grpcFileHandle) Path() string { return h.path }
+
+// Unwrap returns the receiver: *grpcFileHandle is the leaf in any
+// FileHandle decorator chain. resolveHandle relies on the self-unwrap
+// invariant to terminate its walk.
+func (h *grpcFileHandle) Unwrap() FileHandle { return h }
+
+// resolveHandle walks the FileHandle.Unwrap chain looking for the
+// *grpcFileHandle leaf. Returns nil if no such leaf exists in the chain
+// (the per-fd op then fails fast with EBADF). The walk terminates when
+// a handle returns itself from Unwrap (leaf marker).
+func resolveHandle(fh FileHandle) *grpcFileHandle {
+	cur := fh
+	for cur != nil {
+		if h, ok := cur.(*grpcFileHandle); ok {
+			return h
+		}
+		next := cur.Unwrap()
+		if next == cur {
+			// Self-unwrap on a non-*grpcFileHandle: leaf with no gRPC
+			// handle behind it. Nothing more we can do.
+			return nil
+		}
+		cur = next
+	}
+	return nil
+}
 
 // newGrpcFileHandle constructs a grpcFileHandle bound to fd on the named
 // volume. cfg bundles the per-file knobs: ReadaheadChunkBytes of 0

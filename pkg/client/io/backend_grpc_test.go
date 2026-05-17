@@ -719,11 +719,102 @@ func (s *BackendClientTestSuite) TestSetLkw_BadHandleEBADF() {
 	s.Assert().Equal(fuse.EBADF, st)
 }
 
+// TestStat_PropagatesCallerFromCtx is the load-bearing assertion for the
+// FUSE-caller plumbing: callerFromCtx must pull uid/gid/pid out of the
+// per-op ctx (the same ctx that go-fuse populates via fuse.NewContext
+// on each request) and stamp them onto the outbound proto.Caller. A
+// regression here causes every server-side op to run as the wrong user
+// (UID 0 if AssumeUserMiddleware is active server-side).
+func (s *BackendClientTestSuite) TestStat_PropagatesCallerFromCtx() {
+	wantUID, wantGID, wantPID := uint32(1234), uint32(5678), uint32(99)
+	ctx := fuse.NewContext(context.Background(), &fuse.Caller{
+		Owner: fuse.Owner{Uid: wantUID, Gid: wantGID},
+		Pid:   wantPID,
+	})
+	s.fsClient.EXPECT().GetAttr(mock.Anything, mock.MatchedBy(func(req *proto.GetAttrRequest) bool {
+		return req.Caller != nil && req.Caller.Owner != nil &&
+			req.Caller.Owner.Uid == wantUID && req.Caller.Owner.Gid == wantGID &&
+			req.Caller.Pid == wantPID
+	})).Return(&proto.GetAttrReply{
+		Status:     int32(fuse.OK),
+		Attributes: &proto.Attr{Mode: 0o644, Owner: &proto.Owner{Uid: wantUID, Gid: wantGID}},
+	}, nil)
+
+	_, st := s.backend.Stat(ctx, "/path")
+	s.Require().Equal(fuse.OK, st)
+}
+
+// TestStat_BareCtxStampsZeroCaller verifies the fallback path: a ctx
+// with no fuse.Caller in it (typically a unit test using
+// context.Background()) yields a non-nil zero Caller rather than nil.
+// This is the only acceptable code path for the zero Caller; in
+// production the node adapter always supplies the FUSE ctx so this
+// fallback should never fire.
+func (s *BackendClientTestSuite) TestStat_BareCtxStampsZeroCaller() {
+	s.fsClient.EXPECT().GetAttr(mock.Anything, mock.MatchedBy(func(req *proto.GetAttrRequest) bool {
+		return req.Caller != nil && req.Caller.Owner != nil &&
+			req.Caller.Owner.Uid == 0 && req.Caller.Owner.Gid == 0 && req.Caller.Pid == 0
+	})).Return(&proto.GetAttrReply{
+		Status:     int32(fuse.OK),
+		Attributes: &proto.Attr{Mode: 0o644, Owner: &proto.Owner{}},
+	}, nil)
+
+	_, st := s.backend.Stat(context.Background(), "/path")
+	s.Require().Equal(fuse.OK, st)
+}
+
+// fakeDecorator models a Sub-spec B-style FileHandle wrapper: it holds
+// an inner FileHandle (typically the leaf *grpcFileHandle) and proxies
+// Path. Unwrap returns the inner handle so resolveHandle can find the
+// leaf.
+type fakeDecorator struct {
+	inner FileHandle
+}
+
+func (d *fakeDecorator) Path() string       { return d.inner.Path() }
+func (d *fakeDecorator) Unwrap() FileHandle { return d.inner }
+
+// TestResolveHandle_UnwrapsDecorator is the load-bearing test for
+// Sub-spec B compatibility: a fakeDecorator wrapping a leaf
+// *grpcFileHandle must resolve back to the leaf, so per-fd backend ops
+// can reach the gRPC state (fd, sessionID, etc.) regardless of how
+// many decorator layers sit on top.
+func (s *BackendClientTestSuite) TestResolveHandle_UnwrapsDecorator() {
+	leaf := s.newHandle(grpcclient.PerFileConfig{})
+	wrapped := &fakeDecorator{inner: leaf}
+	got := resolveHandle(wrapped)
+	s.Require().NotNil(got)
+	s.Assert().Same(leaf, got)
+	// Triple-wrapped should still resolve.
+	tripled := &fakeDecorator{inner: &fakeDecorator{inner: &fakeDecorator{inner: leaf}}}
+	gotTripled := resolveHandle(tripled)
+	s.Require().NotNil(gotTripled)
+	s.Assert().Same(leaf, gotTripled)
+}
+
+// TestResolveHandle_ForeignLeafReturnsNil verifies that a foreign
+// FileHandle whose Unwrap returns itself (leaf marker, no gRPC
+// handle behind it) resolves to nil — the per-fd op then returns
+// EBADF rather than panicking.
+func (s *BackendClientTestSuite) TestResolveHandle_ForeignLeafReturnsNil() {
+	got := resolveHandle(badHandle{})
+	s.Assert().Nil(got)
+}
+
+// TestResolveHandle_NilReturnsNil verifies the nil-safe behaviour.
+func (s *BackendClientTestSuite) TestResolveHandle_NilReturnsNil() {
+	s.Assert().Nil(resolveHandle(nil))
+}
+
 // badHandle is a FileHandle implementation that is not a *grpcFileHandle,
-// used to exercise the type-assertion guard on fd-level ops.
+// used to exercise the type-assertion guard on fd-level ops. Unwrap
+// returns the receiver (leaf marker) so resolveHandle's walk terminates
+// and yields nil — modelling a foreign leaf handle the backend can't
+// reach into.
 type badHandle struct{}
 
-func (badHandle) Path() string { return "/bad" }
+func (b badHandle) Path() string         { return "/bad" }
+func (b badHandle) Unwrap() FileHandle   { return b }
 
 func TestBackendClientTestSuite(t *testing.T) {
 	suite.Run(t, new(BackendClientTestSuite))
