@@ -54,6 +54,7 @@ func (p *Persist) WriteChunk(data []byte) (hash [16]byte, dedup bool, err error)
 		_ = os.Remove(tmp)
 		return hash, false, errors.Wrap(err, "rename chunk")
 	}
+	p.disk.add(int64(len(data)))
 	return hash, false, nil
 }
 
@@ -68,14 +69,53 @@ func (p *Persist) ReadChunk(hash [16]byte) ([]byte, error) {
 }
 
 // unlinkChunk removes the on-disk file backing hash. Idempotent.
-// Called by decRef when the refcount hits zero (added in task 3).
+// Stats the file first to debit the disk accountant accurately.
 func (p *Persist) unlinkChunk(hash [16]byte) error {
-	err := os.Remove(p.chunkPath(hash))
-	if err != nil && !os.IsNotExist(err) {
+	path := p.chunkPath(hash)
+	st, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return errors.Wrap(err, "stat chunk for unlink")
+	}
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return errors.Wrap(err, "unlink chunk")
 	}
+	p.disk.add(-st.Size())
 	return nil
 }
+
+// seedDiskBytes walks chunks/ and sums file sizes into the disk
+// accountant. Called on Open after the directory layout is in place.
+func (p *Persist) seedDiskBytes() error {
+	var total int64
+	err := filepath.WalkDir(filepath.Join(p.root, "chunks"), func(_ string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		total += info.Size()
+		return nil
+	})
+	if err != nil {
+		return errors.Wrap(err, "seed disk bytes")
+	}
+	p.disk.add(total)
+	return nil
+}
+
+// DiskBytesUsed returns the currently accounted bytes in chunks/.
+func (p *Persist) DiskBytesUsed() int64 { return p.disk.Used() }
 
 func (p *Persist) chunkPath(hash [16]byte) string {
 	hx := hex.EncodeToString(hash[:])

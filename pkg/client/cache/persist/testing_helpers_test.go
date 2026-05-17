@@ -39,3 +39,23 @@ func TestingHashHex(hash [16]byte) string { return hex.EncodeToString(hash[:]) }
 func TestingChunkPath(p *Persist, hash [16]byte) string {
 	return p.chunkPath(hash)
 }
+
+// TestingRunOrphanSweep runs the orphan sweep synchronously with no
+// minimum-age filter, so freshly injected orphan files are removed.
+// Use in tests that pre-seed disk state and then assert the sweep
+// cleaned it.
+func TestingRunOrphanSweep(t *testing.T, p *Persist) {
+	t.Helper()
+	if err := p.runOrphanSweep(0); err != nil {
+		t.Fatalf("orphan sweep: %v", err)
+	}
+}
+
+// TestingRunGhostSweep runs the ghost sweep synchronously at the given
+// sample fraction.
+func TestingRunGhostSweep(t *testing.T, p *Persist, fraction float64) {
+	t.Helper()
+	if err := p.runGhostSweep(fraction); err != nil {
+		t.Fatalf("ghost sweep: %v", err)
+	}
+}

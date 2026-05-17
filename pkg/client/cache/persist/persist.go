@@ -22,6 +22,8 @@ var ErrCacheLocked = errors.New("cache directory is locked by another process")
 type Options struct {
 	// Root is the per-volume cache directory. Created if missing.
 	Root string
+	// DiskMaxBytes is the advisory byte budget for chunks/. 0 = unbounded.
+	DiskMaxBytes int64
 }
 
 // Persist owns the bbolt handle, chunks/ tree, and LOCK file for one
@@ -31,6 +33,7 @@ type Persist struct {
 	root string
 	db   *bolt.DB
 	lock *lockHandle
+	disk *diskAccountant
 }
 
 // Open acquires the LOCK file, opens (or creates) meta.db, ensures
@@ -68,7 +71,14 @@ func Open(opts Options) (*Persist, error) {
 			return nil, err
 		}
 	}
-	return &Persist{root: opts.Root, db: db, lock: lock}, nil
+	p := &Persist{root: opts.Root, db: db, lock: lock, disk: newDiskAccountant(opts.DiskMaxBytes)}
+	if err := p.seedDiskBytes(); err != nil {
+		_ = db.Close()
+		lock.release()
+		return nil, err
+	}
+	p.startBackgroundSweeps()
+	return p, nil
 }
 
 // Close flushes bbolt, releases the lock file, and frees OS resources.
