@@ -109,7 +109,9 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 		cached := b.data.get(ch.path, chunkIndex)
 		if cached != nil {
 			if insideOff >= len(cached) {
-				// EOF mid-stream
+				// EOF mid-stream: insideOff is past the cached chunk's end
+				// even though dest still has room. The chunk we have is the
+				// last one and it's short, so the file ends here.
 				return total, fuse.OK
 			}
 			avail := len(cached) - insideOff
@@ -118,8 +120,10 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 			}
 			n := copy(dest[total:total+want], cached[insideOff:insideOff+want])
 			total += n
-			if insideOff+n >= len(cached) {
-				// Short chunk indicates EOF.
+			// A short chunk (< chunkSize) is the file's last chunk; nothing
+			// more to read from the backend regardless of dest's remaining
+			// capacity. A full chunk just means advance to the next chunk.
+			if int64(len(cached)) < chunkSize {
 				return total, fuse.OK
 			}
 			continue
@@ -145,7 +149,8 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 		}
 		copied := copy(dest[total:total+want], filled[insideOff:insideOff+want])
 		total += copied
-		if insideOff+copied >= n {
+		// Short chunk = last chunk of file; otherwise continue to next chunk.
+		if int64(n) < chunkSize {
 			return total, fuse.OK
 		}
 	}

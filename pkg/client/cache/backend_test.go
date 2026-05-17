@@ -178,6 +178,61 @@ func (s *CachedBackendTestSuite) TestReadHandlesEOFMidStream() {
 	s.Assert().Equal(500, n2)
 }
 
+func (s *CachedBackendTestSuite) TestReadAcrossChunkBoundaryFromCache() {
+	// Regression: a Read whose destination spans more than one chunk must
+	// continue past the chunk boundary when the chunk is full-sized. The
+	// earlier early-return on "filled this chunk" treated a full chunk as
+	// EOF, truncating reads of multi-chunk files to a single chunk.
+	chunk0 := make([]byte, 1024)
+	chunk1 := make([]byte, 1024)
+	for i := range chunk0 {
+		chunk0[i] = byte(i % 251)
+		chunk1[i] = byte((i + 100) % 251)
+	}
+	s.b.data.put("/f", 0, chunk0)
+	s.b.data.put("/f", 1, chunk1)
+	h, _ := s.openCachedHandle("/f")
+
+	dest := make([]byte, 2048)
+	n, st := s.b.Read(context.Background(), h, 0, dest)
+	s.Require().Equal(fuse.OK, st)
+	s.Assert().Equal(2048, n, "Read spanning two full chunks must return both")
+	s.Assert().Equal(chunk0, dest[:1024])
+	s.Assert().Equal(chunk1, dest[1024:])
+}
+
+func (s *CachedBackendTestSuite) TestReadAcrossChunkBoundaryOnMiss() {
+	// Same regression on the miss path: when inner.Read returns a full
+	// chunk-sized response, we must NOT treat that as EOF; we must
+	// continue to the next chunk to satisfy the rest of dest.
+	h, innerH := s.openCachedHandle("/f")
+	s.inner.EXPECT().Read(mock.Anything, innerH, int64(0), mock.MatchedBy(func(b []byte) bool { return len(b) == 1024 })).
+		RunAndReturn(func(_ context.Context, _ io.FileHandle, _ int64, buf []byte) (int, fuse.Status) {
+			for i := range buf {
+				buf[i] = 0xAA
+			}
+			return 1024, fuse.OK
+		}).Once()
+	s.inner.EXPECT().Read(mock.Anything, innerH, int64(1024), mock.MatchedBy(func(b []byte) bool { return len(b) == 1024 })).
+		RunAndReturn(func(_ context.Context, _ io.FileHandle, _ int64, buf []byte) (int, fuse.Status) {
+			for i := range buf {
+				buf[i] = 0xBB
+			}
+			return 1024, fuse.OK
+		}).Once()
+
+	dest := make([]byte, 2048)
+	n, st := s.b.Read(context.Background(), h, 0, dest)
+	s.Require().Equal(fuse.OK, st)
+	s.Assert().Equal(2048, n, "Read spanning two chunks on miss must fetch both")
+	for i := 0; i < 1024; i++ {
+		s.Require().Equal(byte(0xAA), dest[i])
+	}
+	for i := 1024; i < 2048; i++ {
+		s.Require().Equal(byte(0xBB), dest[i])
+	}
+}
+
 // --- Invalidation table ---
 
 func (s *CachedBackendTestSuite) TestWriteInvalidatesDataAndAttr() {
