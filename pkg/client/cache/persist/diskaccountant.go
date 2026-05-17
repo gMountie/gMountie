@@ -4,10 +4,8 @@ import "sync/atomic"
 
 // diskAccountant tracks the byte total of chunks/ files. Updated by
 // WriteChunk / unlinkChunk and seeded on Open by walking chunks/.
-// The budget is advisory — eviction is driven by the persist-package
-// LRU, not the accountant; the accountant exposes Used for
-// observability and provides Over() as the eviction loop's stopping
-// condition.
+// WriteChunk calls enforceDiskBudget after crediting bytes; Over() is
+// the stopping condition for that eviction loop.
 type diskAccountant struct {
 	used   int64 // atomic
 	budget int64

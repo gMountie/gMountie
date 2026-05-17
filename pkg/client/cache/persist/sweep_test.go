@@ -60,4 +60,24 @@ func (s *SweepSuite) TestDiskAccountantTracksChunkBytes() {
 	s.Require().NoError(p.Close())
 }
 
+func (s *SweepSuite) TestWriteChunkEvictsUnderDiskCap() {
+	p, err := persist.Open(persist.Options{Root: s.dir, DiskMaxBytes: 64})
+	s.Require().NoError(err)
+	defer p.Close()
+
+	// Write 8 chunks of 16 bytes each = 128 bytes total against a 64-byte cap.
+	// Each chunk is referenced once via PutChunkRef so it is eligible for eviction.
+	for i := 0; i < 8; i++ {
+		data := make([]byte, 16)
+		data[0] = byte(i) // ensure distinct hashes so dedup does not short-circuit
+		hash, _, err := p.WriteChunk(data)
+		s.Require().NoError(err)
+		s.Require().NoError(p.PutChunkRef("f", i, persist.ChunkRef{Hash: hash, Size: uint32(len(data))}))
+	}
+
+	// After all writes, on-disk total must be at or under the cap.
+	// 16-byte chunks vs 64-byte cap means at most 4 chunks should remain.
+	s.Assert().LessOrEqual(p.DiskBytesUsed(), int64(64), "disk cap must hold after eviction")
+}
+
 func TestSweepSuite(t *testing.T) { suite.Run(t, new(SweepSuite)) }

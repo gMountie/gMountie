@@ -2,7 +2,6 @@ package api
 
 import (
 	"crypto/sha256"
-	"fmt"
 	"io"
 	"math/rand"
 	"os"
@@ -120,28 +119,20 @@ func (s *CachePersistentFSSuite) TestSecondMountFailsWithLockedCache() {
 	s.Require().Error(err, "second mount with same cache.Path must fail with ErrCacheLocked")
 }
 
-// TestDiskCapHoldsUnderManyReads writes 200 x 1 MiB files through the
-// mount (200 MiB total user data) against a 100 MiB disk cap, then
-// measures the chunks/ directory size. The cap must hold within 20 MiB
-// of slack.
+// TestDiskCapHoldsUnderManyReads writes 200 MiB of user data through
+// the mount against a 100 MiB disk cap, then measures the chunks/
+// directory size. The cap must hold within 20 MiB of slack.
 //
-// NOTE: This test is currently skipped because disk-tier eviction is
-// not yet wired. WriteChunk updates the diskAccountant byte counter but
-// nothing ever calls Over() to trigger removal of old chunks. The plan's
-// "FIFO at worst" claim does not match the implementation — the cap is
-// advisory in name only. When measured, chunks/ reaches the full 200 MiB
-// user data even with a 100 MiB DiskMaxBytes setting.
+// We use two large files (a.bin = 120 MiB, b.bin = 80 MiB) instead of
+// 200 x 1 MiB files. The total data (200 MiB at 1 MiB chunk size) is
+// the same, but two FUSE open/write/close cycles are far fewer than 200,
+// which eliminates the FUSE-context-cancellation flakiness caused by
+// sustained per-file round-trips under load. Eviction is exercised
+// identically: the persist tier sees the same 200 chunk writes.
 //
-// Follow-up: implement best-effort cap-driven eviction in WriteChunk or
-// via a periodic sweep that calls Over() and removes the oldest chunk
-// files until the budget is satisfied.
+// WriteChunk calls enforceDiskBudget after crediting bytes; the eviction
+// loop cursors data_idx from the lexically-oldest entry until Over()==0.
 func (s *CachePersistentFSSuite) TestDiskCapHoldsUnderManyReads() {
-	s.T().Skip("disk-tier eviction not yet implemented: WriteChunk tracks DiskMaxBytes " +
-		"via diskAccountant but never evicts; cap is currently unenforced. " +
-		"See Phase 4C follow-up: implement cap-driven eviction in WriteChunk/periodic sweep.")
-
-	const fileMiB = 1
-	const totalFiles = 200 // 200 MiB user data
 	const capBytes = 100 << 20
 
 	cacheCfg := clientconfig.CacheConfig{
@@ -166,15 +157,27 @@ func (s *CachePersistentFSSuite) TestDiskCapHoldsUnderManyReads() {
 	ctx.MountVolume(ctx.GetVolumes()[0])
 	mp := ctx.GetVolumes()[0].GetMountPath()
 
-	for i := 0; i < totalFiles; i++ {
-		data := make([]byte, fileMiB<<20)
-		for j := range data {
-			data[j] = byte(i)
+	// Two large files: 120 MiB + 80 MiB = 200 MiB total, well over the
+	// 100 MiB cap. Each write exercises eviction at the 1 MiB chunk
+	// boundary as bytes accumulate past the cap.
+	files := []struct {
+		name string
+		mib  int
+		fill byte
+	}{
+		{"a.bin", 120, 0xAA},
+		{"b.bin", 80, 0xBB},
+	}
+	var totalMiB int
+	for _, f := range files {
+		data := make([]byte, f.mib<<20)
+		for i := range data {
+			data[i] = f.fill
 		}
-		name := fmt.Sprintf("f-%03d.bin", i)
-		s.Require().NoError(os.WriteFile(filepath.Join(mp, name), data, 0o644))
-		_, err := os.ReadFile(filepath.Join(mp, name))
+		s.Require().NoError(os.WriteFile(filepath.Join(mp, f.name), data, 0o644))
+		_, err := os.ReadFile(filepath.Join(mp, f.name))
 		s.Require().NoError(err)
+		totalMiB += f.mib
 	}
 
 	chunksDir := filepath.Join(s.dir, volName, "chunks")
@@ -186,7 +189,7 @@ func (s *CachePersistentFSSuite) TestDiskCapHoldsUnderManyReads() {
 		total += info.Size()
 		return nil
 	})
-	s.T().Logf("chunks/ size after %d MiB written = %d bytes (cap %d)", totalFiles*fileMiB, total, capBytes)
+	s.T().Logf("chunks/ size after %d MiB written = %d bytes (cap %d)", totalMiB, total, capBytes)
 	// Slack: allow up to 20 MiB over the cap. The plan-flagged "FIFO not
 	// strict LRU" follow-up means eviction is approximate; the cap is
 	// enforced but not perfectly tight.

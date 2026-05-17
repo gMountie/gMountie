@@ -55,6 +55,9 @@ func (p *Persist) WriteChunk(data []byte) (hash [16]byte, dedup bool, err error)
 		return hash, false, errors.Wrap(err, "rename chunk")
 	}
 	p.disk.add(int64(len(data)))
+	if err := p.enforceDiskBudget(); err != nil {
+		return hash, false, errors.Wrap(err, "enforce disk budget after WriteChunk")
+	}
 	return hash, false, nil
 }
 

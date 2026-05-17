@@ -132,3 +132,74 @@ func (p *Persist) startBackgroundSweeps() {
 	go func() { _ = p.runGhostSweep(0.01) }()
 	go func() { _ = p.runOrphanSweep(orphanSweepBgAge) }()
 }
+
+// enforceDiskBudget evicts the lexically-oldest data_idx entries until
+// disk usage falls under the budget. On each iteration it reads the
+// first key from the data_idx cursor (bbolt keeps keys sorted, so
+// First() gives the lexically-earliest composite path\x00idx key),
+// deletes that entry, decrements the chunk_refs refcount, and unlinks
+// the chunk file when the count reaches zero — which debits the disk
+// accountant via unlinkChunk.
+//
+// FIFO-of-path semantics (lexical ordering, not strict access LRU).
+// A future task may add proper access-time ordering via the lru /
+// lru_pos buckets that schema.go already provisions.
+//
+// The loop terminates when Over()==0 or data_idx is empty (any
+// remaining over-budget bytes must be orphans reachable only via the
+// background orphan sweep).
+func (p *Persist) enforceDiskBudget() error {
+	if p.disk.Over() == 0 {
+		return nil
+	}
+	for p.disk.Over() > 0 {
+		var key []byte
+		var ref ChunkRef
+		err := p.db.View(func(tx *bolt.Tx) error {
+			c := tx.Bucket(bucketDataIdx).Cursor()
+			k, v := c.First()
+			if k == nil {
+				return nil
+			}
+			r, derr := decodeChunkRef(v)
+			if derr != nil {
+				return derr
+			}
+			key = make([]byte, len(k))
+			copy(key, k)
+			ref = r
+			return nil
+		})
+		if err != nil {
+			return errors.Wrap(err, "evict scan")
+		}
+		if key == nil {
+			// data_idx is empty but budget is still over — any remaining
+			// bytes are orphan chunks that only the background sweep can
+			// reach. Stop here to avoid spinning.
+			return nil
+		}
+		var shouldUnlink bool
+		err = p.db.Update(func(tx *bolt.Tx) error {
+			idx := tx.Bucket(bucketDataIdx)
+			if derr := idx.Delete(key); derr != nil {
+				return derr
+			}
+			remaining, derr := decRefTx(tx, ref.Hash)
+			if derr != nil {
+				return derr
+			}
+			shouldUnlink = (remaining == 0)
+			return nil
+		})
+		if err != nil {
+			return errors.Wrap(err, "evict delete")
+		}
+		if shouldUnlink {
+			if err := p.unlinkChunk(ref.Hash); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
