@@ -14,9 +14,10 @@ import (
 // invalidated by a Write/Truncate/Unlink/Rename on the path, or
 // evicted under the global byte cap.
 type dataCache struct {
-	st             *store
-	chunkSizeBytes int
-	persistCleaner func(path string)
+	st                  *store
+	chunkSizeBytes      int
+	persistCleaner      func(path string)
+	persistRangeCleaner func(path string, firstIdx, lastIdx int)
 }
 
 func newDataCache(acct *accountant, chunkSizeBytes int) *dataCache {
@@ -76,6 +77,9 @@ func (c *dataCache) invalidateRange(path string, off, size int64) {
 	for i := first; i <= last; i++ {
 		c.st.remove(chunkKey(path, i))
 	}
+	if c.persistRangeCleaner != nil {
+		c.persistRangeCleaner(path, first, last)
+	}
 }
 
 // newDataCacheWithPersist constructs a dataCache that fronts persist's
@@ -120,11 +124,14 @@ func newDataCacheWithPersist(acct *accountant, chunkSizeBytes int, p *persist.Pe
 		}
 		_ = p.PutChunkRef(path, idx, persist.ChunkRef{Hash: hash, Size: uint32(len(data))})
 	}
-	// Per-key Remover is a no-op for data: the bulk persistCleaner
-	// drives index+refcount invalidation in one cursor walk. The
-	// memory tier's per-key remove is still cheap (map delete).
+	// Per-key Remover is a no-op for data: the bulk persistCleaner and
+	// persistRangeCleaner drive index+refcount invalidation efficiently.
+	// The memory tier's per-key remove is still cheap (map delete).
 	c.st = newStoreWithPersist(acct, loader, putter, func(string) {}, "data")
 	c.persistCleaner = func(path string) { _ = p.InvalidatePathChunks(path) }
+	c.persistRangeCleaner = func(path string, firstIdx, lastIdx int) {
+		_ = p.InvalidateChunkRange(path, firstIdx, lastIdx)
+	}
 	return c
 }
 

@@ -1,6 +1,7 @@
 package persist_test
 
 import (
+	"os"
 	"testing"
 
 	"gmountie/pkg/client/cache/persist"
@@ -67,6 +68,51 @@ func (s *DataIdxSuite) TestPutAndInvalidateUpdateRefcounts() {
 	count, err = s.p.ChunkRefCount(hash)
 	s.Require().NoError(err)
 	s.Assert().Equal(uint64(0), count, "InvalidatePathChunks must DecRef")
+}
+
+func (s *DataIdxSuite) TestInvalidateChunkRangeDecRefsAndUnlinks() {
+	data := []byte("range-cleanup")
+	hash, _, err := s.p.WriteChunk(data)
+	s.Require().NoError(err)
+	s.Require().NoError(s.p.PutChunkRef("path", 0, persist.ChunkRef{Hash: hash, Size: uint32(len(data))}))
+	s.Require().NoError(s.p.PutChunkRef("path", 1, persist.ChunkRef{Hash: hash, Size: uint32(len(data))}))
+
+	// Refcount = 2.
+	count, err := s.p.ChunkRefCount(hash)
+	s.Require().NoError(err)
+	s.Assert().Equal(uint64(2), count)
+
+	// Invalidate range [0, 0] — drops one of the two refs.
+	s.Require().NoError(s.p.InvalidateChunkRange("path", 0, 0))
+	_, ok, err := s.p.GetChunkRef("path", 0)
+	s.Require().NoError(err)
+	s.Assert().False(ok)
+	count, err = s.p.ChunkRefCount(hash)
+	s.Require().NoError(err)
+	s.Assert().Equal(uint64(1), count)
+
+	// Range [0, 1] would now only catch index 1 (0 already gone).
+	s.Require().NoError(s.p.InvalidateChunkRange("path", 0, 1))
+	count, err = s.p.ChunkRefCount(hash)
+	s.Require().NoError(err)
+	s.Assert().Equal(uint64(0), count)
+}
+
+func (s *DataIdxSuite) TestPutChunkRefUnlinksOverwrittenChunk() {
+	d1 := []byte("first")
+	d2 := []byte("second")
+	h1, _, err := s.p.WriteChunk(d1)
+	s.Require().NoError(err)
+	h2, _, err := s.p.WriteChunk(d2)
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.p.PutChunkRef("p", 0, persist.ChunkRef{Hash: h1, Size: uint32(len(d1))}))
+	// Overwrite — h1's refcount should hit zero and the file should be unlinked.
+	s.Require().NoError(s.p.PutChunkRef("p", 0, persist.ChunkRef{Hash: h2, Size: uint32(len(d2))}))
+
+	// h1's chunk file must be gone.
+	_, err = os.Stat(persist.TestingChunkPath(s.p, h1))
+	s.Assert().True(os.IsNotExist(err), "overwritten chunk file must be unlinked")
 }
 
 func TestDataIdxSuite(t *testing.T) { suite.Run(t, new(DataIdxSuite)) }

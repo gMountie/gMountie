@@ -196,6 +196,75 @@ func (s *CachePersistentFSSuite) TestDiskCapHoldsUnderManyReads() {
 	s.Assert().LessOrEqual(total, int64(capBytes+(20<<20)), "disk cap (100 MiB) must hold within 20 MiB slack")
 }
 
+// TestWriteThenRestartReadReturnsNewBytes is a regression test for C1:
+// dataCache.invalidateRange must invalidate the persist tier, not just
+// the memory tier. Without the fix, a Write at offset 0 (which routes
+// through invalidateRange, not invalidatePath) leaves the persist index
+// pointing at the old chunk; a restart reads the pre-write bytes.
+//
+// The test uses os.OpenFile + WriteAt (no O_TRUNC) to explicitly
+// exercise the invalidateRange path. os.WriteFile opens O_TRUNC which
+// routes through Truncate → invalidatePath, bypassing the bug.
+func (s *CachePersistentFSSuite) TestWriteThenRestartReadReturnsNewBytes() {
+	serverDataDir := s.T().TempDir()
+	const volName = "persist-write-restart"
+
+	// First boot: write v1, read back to populate cache, then overwrite
+	// with v2 via WriteAt to trigger invalidateRange.
+	ctx, err := utils.NewAppTestingContext(
+		utils.WithBasicAuth("test", "test"),
+		utils.WithExistingVolume(volName, serverDataDir),
+		utils.WithCache(s.cacheCfg(1<<30)),
+	)
+	s.Require().NoError(err)
+	s.Require().NoError(ctx.Start())
+	ctx.MountVolume(ctx.GetVolumes()[0])
+	mp := ctx.GetVolumes()[0].GetMountPath()
+	path := filepath.Join(mp, "modify.bin")
+
+	// v1 and v2 must be the same length so WriteAt replaces every byte
+	// at the same chunk indices (no partial tail confusion).
+	v1 := []byte("first-content-xx")
+	v2 := []byte("second-content-yy")
+	if len(v1) != len(v2) {
+		// Safety — keep lengths equal to avoid tail-byte confusion.
+		v2 = v2[:len(v1)]
+	}
+
+	// Write v1 and populate the cache with a read.
+	s.Require().NoError(os.WriteFile(path, v1, 0o644))
+	got, err := os.ReadFile(path)
+	s.Require().NoError(err)
+	s.Require().Equal(v1, got)
+
+	// Overwrite with v2 using WriteAt — no O_TRUNC, so the kernel sends
+	// a Write syscall → backend.Write → invalidateRange (not invalidatePath).
+	f, err := os.OpenFile(path, os.O_WRONLY, 0o644)
+	s.Require().NoError(err)
+	_, err = f.WriteAt(v2, 0)
+	s.Require().NoError(err)
+	s.Require().NoError(f.Close())
+
+	s.Require().NoError(ctx.Close())
+
+	// Second boot: same cache.Path + same server data dir + same volume name.
+	// Memory tier is cold; persist tier must return v2, not v1.
+	ctx2, err := utils.NewAppTestingContext(
+		utils.WithBasicAuth("test", "test"),
+		utils.WithExistingVolume(volName, serverDataDir),
+		utils.WithCache(s.cacheCfg(1<<30)),
+	)
+	s.Require().NoError(err)
+	s.Require().NoError(ctx2.Start())
+	ctx2.MountVolume(ctx2.GetVolumes()[0])
+	defer ctx2.Close() //nolint:errcheck
+
+	mp2 := ctx2.GetVolumes()[0].GetMountPath()
+	got2, err := os.ReadFile(filepath.Join(mp2, "modify.bin"))
+	s.Require().NoError(err)
+	s.Assert().Equal(v2, got2, "after Write+restart, must return new bytes (not the cached old chunk)")
+}
+
 func TestCachePersistentFSSuite(t *testing.T) {
 	suite.Run(t, new(CachePersistentFSSuite))
 }

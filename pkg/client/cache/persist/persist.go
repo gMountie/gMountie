@@ -77,6 +77,11 @@ func Open(opts Options) (*Persist, error) {
 		lock.release()
 		return nil, err
 	}
+	if err := p.enforceDiskBudget(); err != nil {
+		_ = db.Close()
+		lock.release()
+		return nil, err
+	}
 	p.startBackgroundSweeps()
 	return p, nil
 }

@@ -38,9 +38,12 @@ func dataIdxPathPrefix(path string) []byte {
 
 // PutChunkRef writes ref under (path, chunkIndex) AND increments the
 // refcount for ref.Hash, atomically in one txn. Overwriting an
-// existing entry decrements the old ref's count first.
+// existing entry decrements the old ref's count first; if the old
+// count reaches zero the prior chunk file is unlinked after the txn.
 func (p *Persist) PutChunkRef(path string, chunkIndex int, ref ChunkRef) error {
-	return p.db.Update(func(tx *bolt.Tx) error {
+	var priorHash [16]byte
+	var unlinkPrior bool
+	err := p.db.Update(func(tx *bolt.Tx) error {
 		idx := tx.Bucket(bucketDataIdx)
 		key := dataIdxKey(path, chunkIndex)
 		if prior := idx.Get(key); prior != nil {
@@ -48,8 +51,13 @@ func (p *Persist) PutChunkRef(path string, chunkIndex int, ref ChunkRef) error {
 			if err != nil {
 				return err
 			}
-			if _, err := decRefTx(tx, old.Hash); err != nil {
+			remaining, err := decRefTx(tx, old.Hash)
+			if err != nil {
 				return err
+			}
+			if remaining == 0 {
+				priorHash = old.Hash
+				unlinkPrior = true
 			}
 		}
 		enc, err := encodeChunkRef(ref)
@@ -61,6 +69,15 @@ func (p *Persist) PutChunkRef(path string, chunkIndex int, ref ChunkRef) error {
 		}
 		return incRefTx(tx, ref.Hash)
 	})
+	if err != nil {
+		return err
+	}
+	if unlinkPrior {
+		if err := p.unlinkChunk(priorHash); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetChunkRef returns the ref at (path, chunkIndex). ok=false on
@@ -115,6 +132,47 @@ func (p *Persist) InvalidatePathChunks(path string) error {
 			}
 			if remaining == 0 {
 				toUnlink = append(toUnlink, refs[i].Hash)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for _, h := range toUnlink {
+		if err := p.unlinkChunk(h); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// InvalidateChunkRange removes data_idx entries for path at chunk
+// indices [firstIdx, lastIdx]. Decrements each removed entry's
+// refcount and unlinks chunk files whose count hits zero (post-commit).
+func (p *Persist) InvalidateChunkRange(path string, firstIdx, lastIdx int) error {
+	var toUnlink [][16]byte
+	err := p.db.Update(func(tx *bolt.Tx) error {
+		idx := tx.Bucket(bucketDataIdx)
+		for i := firstIdx; i <= lastIdx; i++ {
+			key := dataIdxKey(path, i)
+			v := idx.Get(key)
+			if v == nil {
+				continue
+			}
+			ref, err := decodeChunkRef(v)
+			if err != nil {
+				return err
+			}
+			if err := idx.Delete(key); err != nil {
+				return err
+			}
+			remaining, err := decRefTx(tx, ref.Hash)
+			if err != nil {
+				return err
+			}
+			if remaining == 0 {
+				toUnlink = append(toUnlink, ref.Hash)
 			}
 		}
 		return nil
