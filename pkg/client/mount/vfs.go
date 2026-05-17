@@ -1,18 +1,19 @@
 package mount
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"time"
+
 	"gmountie/pkg/client/config"
 	"gmountie/pkg/client/grpc"
 	"gmountie/pkg/client/io"
 	"gmountie/pkg/utils/log"
-	"time"
 
 	"github.com/avast/retry-go/v4"
+	gofs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/hanwen/go-fuse/v2/fuse/nodefs"
-	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	"github.com/puzpuzpuz/xsync/v3"
 	"go.uber.org/zap"
 )
@@ -23,19 +24,26 @@ type VFSVolumeMounter interface {
 	Mounter
 }
 
+// vfsRoot is the in-memory parent inode of all volume subdirs. It has
+// no methods of its own: the go-fuse fs framework drives Lookup/Readdir
+// directly off the persistent children added via AddChild. Each child
+// is a gMountieRoot wrapping a BackendClient for that volume.
+type vfsRoot struct {
+	gofs.Inode
+}
+
 // VFSVolumeMounterImpl is the interface for the root filesystem that supports multiple volumes
-// It mounts a MemFS then it attaches the volumes to the MemFS
+// It mounts an in-memory parent inode then attaches per-volume subdirs
+// as persistent children.
 type VFSVolumeMounterImpl struct {
-	// path is the path where the MemFS will be mounted
+	// path is the path where the in-memory root will be mounted
 	path string
-	// root is the root of the MemFS
-	root nodefs.Node
-	// connector is the connector of the MemFS
-	connector *nodefs.FileSystemConnector
-	// server is the server of the MemFS
+	// root is the in-memory parent inode (children are per-volume gMountieRoots)
+	root *vfsRoot
+	// server is the FUSE server for the mounted parent
 	server *fuse.Server
-	// volumes is the map of volumes mounted
-	volumes *xsync.MapOf[string, *pathfs.PathNodeFs]
+	// volumes tracks the persistent child inode for each mounted volume
+	volumes *xsync.MapOf[string, *gofs.Inode]
 	// client is the grpc client
 	client grpc.Client
 	// fuse is the FUSE-kernel-side tuning config.
@@ -50,7 +58,7 @@ type VFSVolumeMounterImpl struct {
 func NewMultiVolumeMounter(client grpc.Client, path string, fuseCfg *config.FUSEConfig) VFSVolumeMounter {
 	m := &VFSVolumeMounterImpl{
 		path:        path,
-		volumes:     xsync.NewMapOf[string, *pathfs.PathNodeFs](),
+		volumes:     xsync.NewMapOf[string, *gofs.Inode](),
 		client:      client,
 		fuse:        fuseCfg,
 		initialized: false,
@@ -78,21 +86,21 @@ func (m *VFSVolumeMounterImpl) Mount(volumeName string) error {
 	if _, ok := m.volumes.Load(volumeName); ok {
 		return fmt.Errorf("volume %s is already mounted", volumeName)
 	}
-	// Create the remote filesystem.
-	fs := io.NewLocalFileSystem(m.client, volumeName)
-	nFs := pathfs.NewPathNodeFs(fs, createFsOptions())
-
-	// Mount the remote filesystem to the root filesystem
-	status := m.connector.Mount(m.root.Inode(), volumeName, nFs.Root(), nil)
-	if status != fuse.OK {
-		log.Log.Error(
-			"mounting the volume failed",
-			zap.String("volume", volumeName),
-			zap.String("status", status.String()),
-		)
-		return fmt.Errorf("mounting the volume failed: %s", status.String())
+	// Build a per-volume BackendClient + gMountieRoot and attach it as
+	// a persistent child of the in-memory parent. NewPersistentInode
+	// keeps the child alive across kernel forgets so the subtree
+	// survives until we explicitly RmChild it.
+	backend := io.NewBackendClient(m.client, volumeName)
+	volRoot := io.NewMountieRoot(backend)
+	ctx := context.Background()
+	parent := &m.root.Inode
+	childInode := parent.NewPersistentInode(ctx, volRoot, gofs.StableAttr{Mode: fuse.S_IFDIR})
+	if !parent.AddChild(volumeName, childInode, true) {
+		childInode.ForgetPersistent()
+		log.Log.Error("attaching the volume failed", zap.String("volume", volumeName))
+		return fmt.Errorf("attaching the volume failed: %s", volumeName)
 	}
-	m.volumes.Store(volumeName, nFs)
+	m.volumes.Store(volumeName, childInode)
 	log.Log.Info("volume mounted", zap.String("volume", volumeName))
 	return nil
 }
@@ -100,20 +108,19 @@ func (m *VFSVolumeMounterImpl) Mount(volumeName string) error {
 // Unmount unmounts the volume from the root filesystem
 func (m *VFSVolumeMounterImpl) Unmount(volumeName string) error {
 	// Check if the volume is already mounted
-	nFS, ok := m.volumes.Load(volumeName)
+	childInode, ok := m.volumes.Load(volumeName)
 	if !ok {
 		return fmt.Errorf("volume %s is not mounted", volumeName)
 	}
-
-	status := m.connector.Unmount(nFS.Root().Inode())
-	if status != fuse.OK {
+	parent := &m.root.Inode
+	if success, _ := parent.RmChild(volumeName); !success {
 		log.Log.Error(
 			"unmounting the volume failed",
 			zap.String("volume", volumeName),
-			zap.String("status", status.String()),
 		)
-		return fmt.Errorf("unmounting the volume failed: %s", status.String())
+		return fmt.Errorf("unmounting the volume failed: %s", volumeName)
 	}
+	childInode.ForgetPersistent()
 	m.volumes.Delete(volumeName)
 	log.Log.Info("volume unmounted", zap.String("volume", volumeName))
 	return nil
@@ -122,7 +129,7 @@ func (m *VFSVolumeMounterImpl) Unmount(volumeName string) error {
 // UnmountAll unmounts all volumes from the root filesystem
 func (m *VFSVolumeMounterImpl) UnmountAll() error {
 	var errs = make([]error, 0)
-	m.volumes.Range(func(key string, value *pathfs.PathNodeFs) bool {
+	m.volumes.Range(func(key string, _ *gofs.Inode) bool {
 		if err := m.Unmount(key); err != nil {
 			log.Log.Error(
 				"unmounting the volume failed",
@@ -162,28 +169,28 @@ func (m *VFSVolumeMounterImpl) Close() error {
 	return nil
 }
 
-// mountMemFS mounts a MemFS to the path
+// mountMemFS mounts the in-memory parent inode to the path. gofs.Mount
+// handles raw-FS construction, the Serve goroutine, and WaitMount in
+// one call.
 func (m *VFSVolumeMounterImpl) mountMemFS(path string) error {
-	// create a new MemFS
-	m.root = nodefs.NewDefaultNode()
-	// create a new FileSystemConnector
-	m.connector = nodefs.NewFileSystemConnector(m.root, createConnectorOptions())
+	m.root = &vfsRoot{}
 	// Negotiate the FUSE frame ceiling with the server up-front. A failed
 	// handshake falls back to the configured value — never gate the mount.
 	maxWrite := negotiateMaxWriteBytes(m.client, m.fuse)
-	// create a new server
-	var err error
-	m.server, err = fuse.NewServer(m.connector.RawFS(), path, createMountOptions(m.client.GetEndpoint(), "", m.fuse, maxWrite))
-	if err != nil {
-		return err
+	mountOpts := createMountOptions(m.client.GetEndpoint(), "", m.fuse, maxWrite)
+	entryTimeout := time.Second
+	attrTimeout := time.Second
+	fsOpts := &gofs.Options{
+		MountOptions: *mountOpts,
+		EntryTimeout: &entryTimeout,
+		AttrTimeout:  &attrTimeout,
 	}
-	// start the server
-	go m.server.Serve()
-
-	if err = m.server.WaitMount(); err != nil {
+	server, err := gofs.Mount(path, m.root, fsOpts)
+	if err != nil {
 		log.Log.Error("mounting the root filesystem failed", zap.Error(err))
 		return err
 	}
+	m.server = server
 	log.Log.Info("root filesystem mounted", zap.String("path", path))
 	return nil
 }

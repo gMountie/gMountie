@@ -12,8 +12,6 @@ import (
 
 	"github.com/avast/retry-go/v4"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/hanwen/go-fuse/v2/fuse/nodefs"
-	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	"go.uber.org/zap"
 )
 
@@ -109,26 +107,6 @@ func negotiateMaxWriteBytes(client clientgrpc.Client, cfg *config.FUSEConfig) in
 		zap.Int("server_frame_size_bytes", serverFrame),
 	)
 	return serverFrame
-}
-
-// createConnectorOptions returns the connector options
-func createConnectorOptions() *nodefs.Options {
-	sec := time.Second
-	return &nodefs.Options{
-		EntryTimeout:        sec,
-		AttrTimeout:         sec,
-		NegativeTimeout:     0.0,
-		Debug:               debug,
-		LookupKnownChildren: true,
-	}
-}
-
-// createFsOptions returns the filesystem options
-func createFsOptions() *pathfs.PathNodeFsOptions {
-	return &pathfs.PathNodeFsOptions{
-		ClientInodes: false,
-		Debug:        debug,
-	}
 }
 
 // stopServer requests the FUSE kernel to detach the mount, then blocks

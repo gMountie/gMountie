@@ -1,14 +1,15 @@
 package mount
 
 import (
+	"time"
+
 	"gmountie/pkg/client/config"
 	"gmountie/pkg/client/grpc"
 	"gmountie/pkg/client/io"
 	"gmountie/pkg/utils/log"
 
+	gofs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/hanwen/go-fuse/v2/fuse/nodefs"
-	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	"github.com/pkg/errors"
 	"github.com/puzpuzpuz/xsync/v3"
 	"go.uber.org/zap"
@@ -39,7 +40,7 @@ func NewSingleVolumeMounter(client grpc.Client, fuseCfg *config.FUSEConfig) Sing
 }
 
 // Mount mounts a volume
-func (m *SingleVolumeMounterImpl) Mount(volume, path string) error {
+func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) error {
 	// Check if the volume is already mounted
 	if m.IsVolumeMounted(volume) {
 		return errors.Errorf("volume %s is already mounted", volume)
@@ -47,19 +48,22 @@ func (m *SingleVolumeMounterImpl) Mount(volume, path string) error {
 
 	maxWrite := negotiateMaxWriteBytes(m.client, m.fuse)
 
-	fs := io.NewLocalFileSystem(m.client, volume)
-	nodeFS := pathfs.NewPathNodeFs(fs, createFsOptions())
-	connector := nodefs.NewFileSystemConnector(nodeFS.Root(), createConnectorOptions())
-	server, err := fuse.NewServer(connector.RawFS(), path, createMountOptions(m.client.GetEndpoint(), volume, m.fuse, maxWrite))
+	backend := io.NewBackendClient(m.client, volume)
+	root := io.NewMountieRoot(backend)
+	mountOpts := createMountOptions(m.client.GetEndpoint(), volume, m.fuse, maxWrite)
+	entryTimeout := time.Second
+	attrTimeout := time.Second
+	fsOpts := &gofs.Options{
+		MountOptions: *mountOpts,
+		EntryTimeout: &entryTimeout,
+		AttrTimeout:  &attrTimeout,
+	}
+	// gofs.Mount is self-contained: it constructs the raw FS via
+	// NewNodeFS, spawns the Serve goroutine, and blocks on WaitMount
+	// before returning. No explicit go server.Serve()/WaitMount needed.
+	server, err := gofs.Mount(mountPath, root, fsOpts)
 	if err != nil {
 		return errors.Wrap(err, "mount fail")
-	}
-
-	// Create the mount
-	go server.Serve()
-	err = server.WaitMount()
-	if err != nil {
-		return err
 	}
 	m.mounts.Store(volume, server)
 	return nil
