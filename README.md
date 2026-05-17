@@ -1,6 +1,6 @@
 <div align="center">
-  <img class="logo" src="assets/logo-full-cropped.png" alt="gMountie Logo" width="300"/>
-  <h1>gMountie: Your Filesystem's Best Friend 🤠</h1>
+  <img class="logo" src="assets/wordmark.png" alt="gMountie" width="360"/>
+  <h3>Your Filesystem's Best Friend</h3>
   <p><i>Because remote filesystems shouldn't feel so... remote</i></p>
 </div>
 
