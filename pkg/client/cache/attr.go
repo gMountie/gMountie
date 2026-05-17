@@ -1,8 +1,11 @@
 package cache
 
 import (
+	"bytes"
+	"encoding/gob"
 	"time"
 
+	"gmountie/pkg/client/cache/persist"
 	"gmountie/pkg/client/io"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -100,4 +103,59 @@ func attrStatus(positive bool) fuse.Status {
 		return fuse.OK
 	}
 	return fuse.ENOENT
+}
+
+// persistedAttr is the on-disk shape. Negative entries persist false
+// for attr; gob-zero for missing fields is fine.
+type persistedAttr struct {
+	Attr      *io.Attr
+	Negative  bool
+	ExpiresAt int64 // unix nanos
+	Version   uint64
+}
+
+// newAttrCacheWithPersist constructs an attrCache that fronts the
+// persist tier when p is non-nil. Loader gob-decodes attr bytes from
+// the attr bucket; Putter gob-encodes and writes through; Remover
+// deletes. nil p falls back to newAttrCache (memory-only).
+func newAttrCacheWithPersist(acct *accountant, attrTTL, negativeTTL time.Duration, now func() time.Time, p *persist.Persist) *attrCache {
+	if now == nil {
+		now = time.Now
+	}
+	if p == nil {
+		return newAttrCache(acct, attrTTL, negativeTTL, now)
+	}
+	c := &attrCache{
+		now:         now,
+		attrTTL:     attrTTL,
+		negativeTTL: negativeTTL,
+	}
+	loader := func(key string) (any, int, bool) {
+		raw, ok, err := p.GetAttrBytes(key)
+		if err != nil || !ok {
+			return nil, 0, false
+		}
+		var pa persistedAttr
+		if err := gob.NewDecoder(bytes.NewReader(raw)).Decode(&pa); err != nil {
+			return nil, 0, false
+		}
+		ae := &attrEntry{
+			attr:      pa.Attr,
+			negative:  pa.Negative,
+			expiresAt: time.Unix(0, pa.ExpiresAt),
+		}
+		return ae, attrEntrySize(ae), true
+	}
+	putter := func(key string, value any, _ int) {
+		ae := value.(*attrEntry)
+		pa := persistedAttr{Attr: ae.attr, Negative: ae.negative, ExpiresAt: ae.expiresAt.UnixNano()}
+		var buf bytes.Buffer
+		if err := gob.NewEncoder(&buf).Encode(pa); err != nil {
+			return
+		}
+		_ = p.PutAttrBytes(key, buf.Bytes())
+	}
+	remover := func(key string) { _ = p.DeleteAttrBytes(key) }
+	c.st = newStoreWithPersist(acct, loader, putter, remover)
+	return c
 }

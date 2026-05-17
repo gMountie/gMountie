@@ -98,7 +98,7 @@ func (m *VFSVolumeMounterImpl) Mount(volumeName string) error {
 	// survives until we explicitly RmChild it.
 	var backend io.FileSystemBackend = io.NewBackendClient(m.client, volumeName)
 	if m.cache.Enabled {
-		backend = cache.NewCachedBackend(backend, cache.ConfigFromClient(m.cache))
+		backend = cache.NewCachedBackend(backend, cache.ConfigFromClient(m.cache), nil)
 	}
 	volRoot := io.NewMountieRoot(backend)
 	ctx := context.Background()

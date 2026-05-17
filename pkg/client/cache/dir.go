@@ -1,8 +1,11 @@
 package cache
 
 import (
+	"bytes"
+	"encoding/gob"
 	"time"
 
+	"gmountie/pkg/client/cache/persist"
 	"gmountie/pkg/client/io"
 )
 
@@ -55,3 +58,45 @@ func (c *dirCache) invalidate(path string) { c.st.remove(path) }
 // 64 bytes overhead per DirEntry is a generous round figure that
 // covers the struct + name string header.
 func dirEntrySize(de *dirEntry) int { return 32 + 64*len(de.entries) }
+
+// persistedDir is the on-disk shape of a cached listing.
+type persistedDir struct {
+	Entries   []io.DirEntry
+	ExpiresAt int64 // unix nanos
+}
+
+// newDirCacheWithPersist constructs a dirCache that fronts the persist
+// tier when p is non-nil. nil p falls back to newDirCache.
+func newDirCacheWithPersist(acct *accountant, dirTTL time.Duration, now func() time.Time, p *persist.Persist) *dirCache {
+	if now == nil {
+		now = time.Now
+	}
+	if p == nil {
+		return newDirCache(acct, dirTTL, now)
+	}
+	c := &dirCache{now: now, dirTTL: dirTTL}
+	loader := func(key string) (any, int, bool) {
+		raw, ok, err := p.GetDirBytes(key)
+		if err != nil || !ok {
+			return nil, 0, false
+		}
+		var pd persistedDir
+		if err := gob.NewDecoder(bytes.NewReader(raw)).Decode(&pd); err != nil {
+			return nil, 0, false
+		}
+		de := &dirEntry{entries: pd.Entries, expiresAt: time.Unix(0, pd.ExpiresAt)}
+		return de, dirEntrySize(de), true
+	}
+	putter := func(key string, value any, _ int) {
+		de := value.(*dirEntry)
+		pd := persistedDir{Entries: de.entries, ExpiresAt: de.expiresAt.UnixNano()}
+		var buf bytes.Buffer
+		if err := gob.NewEncoder(&buf).Encode(pd); err != nil {
+			return
+		}
+		_ = p.PutDirBytes(key, buf.Bytes())
+	}
+	remover := func(key string) { _ = p.DeleteDirBytes(key) }
+	c.st = newStoreWithPersist(acct, loader, putter, remover)
+	return c
+}

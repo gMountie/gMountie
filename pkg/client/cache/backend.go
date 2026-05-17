@@ -10,6 +10,7 @@ import (
 	"path"
 	"strings"
 
+	"gmountie/pkg/client/cache/persist"
 	"gmountie/pkg/client/io"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -27,18 +28,19 @@ type cachedBackend struct {
 	data  *dataCache
 }
 
-// NewCachedBackend wraps inner. cfg.MaxSizeBytes <= 0 disables byte-cap
-// eviction (entries live until invalidated or the process dies). Mount
-// code constructs this conditionally on CacheConfig.Enabled.
-func NewCachedBackend(inner io.FileSystemBackend, cfg Config) io.FileSystemBackend {
-	acct := newAccountant(cfg.MaxSizeBytes)
+// NewCachedBackend wraps inner. cfg.MemoryMaxBytes <= 0 disables byte-cap
+// eviction in the memory tier (entries live until invalidated or the process
+// dies; the disk tier still respects DiskMaxBytes independently). p may be
+// nil for memory-only operation.
+func NewCachedBackend(inner io.FileSystemBackend, cfg Config, p *persist.Persist) io.FileSystemBackend {
+	acct := newAccountant(cfg.MemoryMaxBytes)
 	return &cachedBackend{
 		inner: inner,
 		cfg:   cfg,
 		acct:  acct,
-		attr:  newAttrCache(acct, cfg.AttrTTL, cfg.NegativeTTL, nil),
-		dir:   newDirCache(acct, cfg.DirTTL, nil),
-		data:  newDataCache(acct, cfg.ChunkSizeBytes),
+		attr:  newAttrCacheWithPersist(acct, cfg.AttrTTL, cfg.NegativeTTL, nil, p),
+		dir:   newDirCacheWithPersist(acct, cfg.DirTTL, nil, p),
+		data:  newDataCacheWithPersist(acct, cfg.ChunkSizeBytes, p),
 	}
 }
 

@@ -2,7 +2,10 @@ package cache
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+
+	"gmountie/pkg/client/cache/persist"
 )
 
 // dataCache stores file content as fixed-size chunks keyed by
@@ -12,6 +15,7 @@ import (
 type dataCache struct {
 	st             *store
 	chunkSizeBytes int
+	persistCleaner func(path string)
 }
 
 func newDataCache(acct *accountant, chunkSizeBytes int) *dataCache {
@@ -54,6 +58,9 @@ func (c *dataCache) invalidatePath(path string) {
 	c.st.removeMatching(func(k string) bool {
 		return strings.HasPrefix(k, prefix)
 	})
+	if c.persistCleaner != nil {
+		c.persistCleaner(path)
+	}
 }
 
 // invalidateRange removes chunks overlapping [off, off+size) for path.
@@ -68,4 +75,65 @@ func (c *dataCache) invalidateRange(path string, off, size int64) {
 	for i := first; i <= last; i++ {
 		c.st.remove(chunkKey(path, i))
 	}
+}
+
+// newDataCacheWithPersist constructs a dataCache that fronts persist's
+// content-addressable chunk store. nil p falls back to newDataCache.
+//
+// Chunks go through WriteChunk/ReadChunk for bytes and
+// PutChunkRef/GetChunkRef for index. invalidatePath uses the bulk
+// persist.InvalidatePathChunks path rather than the per-key Remover
+// (one bbolt cursor walk vs one txn per chunk).
+func newDataCacheWithPersist(acct *accountant, chunkSizeBytes int, p *persist.Persist) *dataCache {
+	if p == nil {
+		return newDataCache(acct, chunkSizeBytes)
+	}
+	c := &dataCache{chunkSizeBytes: chunkSizeBytes}
+	loader := func(key string) (any, int, bool) {
+		path, idx, ok := parseChunkKey(key)
+		if !ok {
+			return nil, 0, false
+		}
+		ref, ok, err := p.GetChunkRef(path, idx)
+		if err != nil || !ok {
+			return nil, 0, false
+		}
+		data, err := p.ReadChunk(ref.Hash)
+		if err != nil {
+			return nil, 0, false
+		}
+		return data, len(data), true
+	}
+	putter := func(key string, value any, _ int) {
+		path, idx, ok := parseChunkKey(key)
+		if !ok {
+			return
+		}
+		data := value.([]byte)
+		hash, _, err := p.WriteChunk(data)
+		if err != nil {
+			return
+		}
+		_ = p.PutChunkRef(path, idx, persist.ChunkRef{Hash: hash, Size: uint32(len(data))})
+	}
+	// Per-key Remover is a no-op for data: the bulk persistCleaner
+	// drives index+refcount invalidation in one cursor walk. The
+	// memory tier's per-key remove is still cheap (map delete).
+	c.st = newStoreWithPersist(acct, loader, putter, func(string) {})
+	c.persistCleaner = func(path string) { _ = p.InvalidatePathChunks(path) }
+	return c
+}
+
+// parseChunkKey is the inverse of chunkKey: splits "path\x00idx" back
+// into (path, idx). Returns ok=false on malformed keys.
+func parseChunkKey(key string) (string, int, bool) {
+	i := strings.IndexByte(key, 0)
+	if i < 0 {
+		return "", 0, false
+	}
+	idx, err := strconv.Atoi(key[i+1:])
+	if err != nil {
+		return "", 0, false
+	}
+	return key[:i], idx, true
 }

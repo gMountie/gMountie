@@ -54,7 +54,7 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) error {
 
 	var backend io.FileSystemBackend = io.NewBackendClient(m.client, volume)
 	if m.cache.Enabled {
-		backend = cache.NewCachedBackend(backend, cache.ConfigFromClient(m.cache))
+		backend = cache.NewCachedBackend(backend, cache.ConfigFromClient(m.cache), nil)
 	}
 	root := io.NewMountieRoot(backend)
 	mountOpts := createMountOptions(m.client.GetEndpoint(), volume, m.fuse, maxWrite)

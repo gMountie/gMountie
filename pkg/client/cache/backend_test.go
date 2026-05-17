@@ -25,12 +25,12 @@ type CachedBackendTestSuite struct {
 func (s *CachedBackendTestSuite) SetupTest() {
 	s.inner = iomocks.NewMockFileSystemBackend(s.T())
 	cb := NewCachedBackend(s.inner, Config{
-		MaxSizeBytes:   0, // no cap for these tests
+		MemoryMaxBytes: 0, // no cap for these tests
 		ChunkSizeBytes: 1024,
 		AttrTTL:        5 * time.Second,
 		DirTTL:         5 * time.Second,
 		NegativeTTL:    2 * time.Second,
-	}).(*cachedBackend)
+	}, nil).(*cachedBackend)
 	s.b = cb
 }
 
