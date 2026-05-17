@@ -1,0 +1,83 @@
+docs/perf/baseline-2026-05-15-slow30ms.txt:8: parsing iteration count: invalid syntax
+docs/perf/baseline-2026-05-15-slow30ms.txt:11: parsing iteration count: invalid syntax
+docs/perf/baseline-2026-05-15-slow30ms.txt:17: parsing iteration count: invalid syntax
+docs/perf/baseline-2026-05-15-slow30ms.txt:28: parsing iteration count: invalid syntax
+docs/perf/baseline-2026-05-15-slow30ms.txt:33: parsing iteration count: invalid syntax
+docs/perf/baseline-2026-05-15-slow30ms.txt:35: parsing iteration count: invalid syntax
+docs/perf/baseline-2026-05-15-slow30ms.txt:37: parsing iteration count: invalid syntax
+docs/perf/phase4a-2026-05-17-tcp.txt:33: parsing iteration count: invalid syntax
+docs/perf/phase4a-2026-05-17-tcp.txt:35: parsing iteration count: invalid syntax
+docs/perf/phase4a-2026-05-17-tcp.txt:47: parsing iteration count: invalid syntax
+docs/perf/phase4a-2026-05-17-tcp.txt:50: parsing iteration count: invalid syntax
+docs/perf/phase4a-2026-05-17-tcp.txt:53: parsing iteration count: invalid syntax
+docs/perf/phase4a-2026-05-17-tcp.txt:57: parsing iteration count: invalid syntax
+goos: linux
+goarch: amd64
+pkg: gmountie/test/e2e/perf
+cpu: Intel Core Processor (Broadwell, IBRS)
+                  │ docs/perf/baseline-2026-05-15-slow30ms.txt │   docs/perf/phase4a-2026-05-17-tcp.txt    │
+                  │                   sec/op                   │     sec/op      vs base                   │
+OpenStatClose-4                                   3.118µ ± ∞ ¹     3.193µ ± ∞ ¹        ~ (p=0.571 n=3+5)
+Readdir100-4                                      27.18m ± ∞ ¹     35.50m ± ∞ ¹        ~ (p=0.333 n=1+5)
+Lookup-4                                          3.142µ ± ∞ ¹     3.105µ ± ∞ ¹        ~ (p=0.536 n=3+5)
+RandomRead4KiB-4                                  2.021µ ± ∞ ¹   381.483µ ± ∞ ¹        ~ (p=0.095 n=2+5)
+RandomWrite4KiB-4                                 671.8µ ± ∞ ¹     862.3µ ± ∞ ¹  +28.37% (p=0.036 n=3+5)
+SeqRead1MiB-4                                     8.405m ± ∞ ¹    12.959m ± ∞ ¹        ~ (p=0.100 n=3)   ²
+SeqRead16MiB-4                                    109.7m ± ∞ ¹     163.5m ± ∞ ¹        ~ (p=0.095 n=2+5)
+SeqRead64MiB-4                                    411.6m ± ∞ ¹     710.6m ± ∞ ¹  +72.63% (p=0.036 n=3+5)
+SeqWrite16MiB-4                                   318.7m ± ∞ ¹     234.2m ± ∞ ¹        ~ (p=0.057 n=3+4)
+SeqWrite64MiB-4                                  1276.7m ± ∞ ¹     949.8m ± ∞ ¹  -25.61% (p=0.036 n=3+5)
+SeqWrite1MiB-4                                                     19.20m ± ∞ ¹
+geomean                                           2.983m           6.405m        +92.39%
+¹ need >= 6 samples for confidence interval at level 0.95
+² need >= 4 samples to detect a difference at alpha level 0.05
+
+                  │ docs/perf/baseline-2026-05-15-slow30ms.txt │    docs/perf/phase4a-2026-05-17-tcp.txt     │
+                  │                    B/op                    │      B/op        vs base                    │
+OpenStatClose-4                                    256.0 ± ∞ ¹       258.0 ± ∞ ¹    +0.78% (p=0.036 n=3+5)
+Readdir100-4                                     3.053Mi ± ∞ ¹     3.663Mi ± ∞ ¹         ~ (p=0.333 n=1+5)
+Lookup-4                                           272.0 ± ∞ ¹       274.0 ± ∞ ¹    +0.74% (p=0.036 n=3+5)
+RandomRead4KiB-4                                   55.00 ± ∞ ¹   554123.00 ± ∞ ¹         ~ (p=0.095 n=2+5)
+RandomWrite4KiB-4                                65.36Ki ± ∞ ¹     61.74Ki ± ∞ ¹    -5.54% (p=0.036 n=3+5)
+SeqRead1MiB-4                                    2.634Mi ± ∞ ¹    16.516Mi ± ∞ ¹         ~ (p=0.100 n=3)   ²
+SeqRead16MiB-4                                   39.23Mi ± ∞ ¹    195.05Mi ± ∞ ¹         ~ (p=0.095 n=2+5)
+SeqRead64MiB-4                                   156.2Mi ± ∞ ¹     768.9Mi ± ∞ ¹  +392.40% (p=0.036 n=3+5)
+SeqWrite16MiB-4                                  21.46Mi ± ∞ ¹     17.13Mi ± ∞ ¹         ~ (p=0.057 n=3+4)
+SeqWrite64MiB-4                                  81.93Mi ± ∞ ¹     69.07Mi ± ∞ ¹   -15.70% (p=0.036 n=3+5)
+SeqWrite1MiB-4                                                     1.284Mi ± ∞ ¹
+geomean                                          344.1Ki           1.355Mi        +305.33%
+¹ need >= 6 samples for confidence interval at level 0.95
+² need >= 4 samples to detect a difference at alpha level 0.05
+
+                  │ docs/perf/baseline-2026-05-15-slow30ms.txt │  docs/perf/phase4a-2026-05-17-tcp.txt   │
+                  │                 allocs/op                  │  allocs/op    vs base                   │
+OpenStatClose-4                                    2.000 ± ∞ ¹    2.000 ± ∞ ¹        ~ (p=1.000 n=3+5) ²
+Readdir100-4                                      44.30k ± ∞ ¹   46.07k ± ∞ ¹        ~ (p=0.333 n=1+5)
+Lookup-4                                           2.000 ± ∞ ¹    2.000 ± ∞ ¹        ~ (p=1.000 n=3+5) ²
+RandomRead4KiB-4                                     0.0 ± ∞ ¹    137.0 ± ∞ ¹        ~ (p=0.095 n=2+5)
+RandomWrite4KiB-4                                  888.0 ± ∞ ¹    729.0 ± ∞ ¹        ~ (p=0.357 n=3+5)
+SeqRead1MiB-4                                     6.524k ± ∞ ¹   5.321k ± ∞ ¹        ~ (p=0.100 n=3)   ³
+SeqRead16MiB-4                                    63.91k ± ∞ ¹   48.39k ± ∞ ¹        ~ (p=0.095 n=2+5)
+SeqRead64MiB-4                                    247.5k ± ∞ ¹   187.8k ± ∞ ¹  -24.13% (p=0.036 n=3+5)
+SeqWrite16MiB-4                                  65.467k ± ∞ ¹   9.229k ± ∞ ¹        ~ (p=0.057 n=3+4)
+SeqWrite64MiB-4                                  253.06k ± ∞ ¹   28.15k ± ∞ ¹  -88.88% (p=0.036 n=3+5)
+SeqWrite1MiB-4                                                   3.442k ± ∞ ¹
+geomean                                                      ⁴   1.835k        ?
+¹ need >= 6 samples for confidence interval at level 0.95
+² all samples are equal
+³ need >= 4 samples to detect a difference at alpha level 0.05
+⁴ summaries must be >0 to compute geomean
+
+                  │ docs/perf/baseline-2026-05-15-slow30ms.txt │   docs/perf/phase4a-2026-05-17-tcp.txt   │
+                  │                    B/s                     │      B/s       vs base                   │
+RandomRead4KiB-4                               1936.99Mi ± ∞ ¹   10.24Mi ± ∞ ¹        ~ (p=0.095 n=2+5)
+RandomWrite4KiB-4                                5.817Mi ± ∞ ¹   4.530Mi ± ∞ ¹  -22.13% (p=0.036 n=3+5)
+SeqRead1MiB-4                                   118.97Mi ± ∞ ¹   77.16Mi ± ∞ ¹        ~ (p=0.100 n=3)   ²
+SeqRead16MiB-4                                  146.06Mi ± ∞ ¹   97.88Mi ± ∞ ¹        ~ (p=0.095 n=2+5)
+SeqRead64MiB-4                                  155.48Mi ± ∞ ¹   90.07Mi ± ∞ ¹  -42.07% (p=0.036 n=3+5)
+SeqWrite16MiB-4                                  50.21Mi ± ∞ ¹   68.39Mi ± ∞ ¹        ~ (p=0.057 n=3+4)
+SeqWrite64MiB-4                                  50.13Mi ± ∞ ¹   67.39Mi ± ∞ ¹  +34.44% (p=0.036 n=3+5)
+SeqWrite1MiB-4                                                   52.10Mi ± ∞ ¹
+geomean                                          96.27Mi         40.73Mi        -59.15%
+¹ need >= 6 samples for confidence interval at level 0.95
+² need >= 4 samples to detect a difference at alpha level 0.05
