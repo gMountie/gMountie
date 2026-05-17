@@ -40,12 +40,18 @@ func (s *store) get(key string) *entry {
 // it is removed from the accountant first (so bytes don't double-count).
 func (s *store) put(key string, value any, size int) {
 	e := &entry{key: key, value: value, size: size, remove: s.removeKey}
+	// Snapshot any prior entry under the store lock, but release the
+	// store lock BEFORE touching the accountant. accountant.evictLocked
+	// invokes the eviction callback (store.removeKey) while holding
+	// accountant.mu; if we still held store.mu here we'd hit a
+	// lock-order inversion with that path and deadlock.
 	s.mu.Lock()
-	if prior, ok := s.entries[key]; ok {
-		s.acct.remove(prior)
-	}
+	prior, hadPrior := s.entries[key]
 	s.entries[key] = e
 	s.mu.Unlock()
+	if hadPrior {
+		s.acct.remove(prior)
+	}
 	s.acct.insert(e)
 }
 
