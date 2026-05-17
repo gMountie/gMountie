@@ -1,0 +1,1391 @@
+<!doctype html>
+<html lang="en" data-theme="">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<title>gMountie — Brand Style Guide</title>
+<link rel="stylesheet" href="tokens.css" />
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23F4ECD8'/><path d='M3 21h26' stroke='%23C5722A' stroke-width='2.4' stroke-linecap='round'/><path d='M8 21c0-3.5 3.6-6 8-6s8 2.5 8 6' fill='%231E1812'/><path d='M16 8l3 3-3 3-3-3z' fill='%231E1812'/><circle cx='16' cy='14' r='0.9' fill='%23F4ECD8'/></svg>" />
+
+<style>
+/* ============================================================
+   style-guide.html — page-specific
+   ============================================================ */
+
+main { padding-bottom: var(--s-9); }
+
+/* ---------- Page hero ---------- */
+.guide-hero {
+  padding-top: var(--s-9);
+  padding-bottom: var(--s-7);
+  border-bottom: 1px solid var(--paper-edge);
+  margin-bottom: var(--s-8);
+}
+.guide-hero h1 {
+  font-size: clamp(2.6rem, 6vw, var(--t-5xl));
+  letter-spacing: -0.035em;
+  margin: var(--s-3) 0 var(--s-4);
+  max-width: 22ch;
+}
+.guide-hero h1 em {
+  font-style: italic;
+  color: var(--ember-deep);
+  font-variation-settings: "opsz" 144, "SOFT" 60, "wght" 360;
+}
+.guide-hero__credits {
+  display: flex;
+  gap: var(--s-6);
+  flex-wrap: wrap;
+  margin-top: var(--s-5);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  color: var(--ink-faint);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.guide-hero__credits div b {
+  display: block;
+  color: var(--ink-deep);
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--font-sans);
+  font-size: var(--t-sm);
+  margin-top: 4px;
+}
+
+/* ---------- Section layout (left rail of meta, right of content) ---------- */
+section.chapter { padding: var(--s-7) 0; border-top: 1px solid var(--paper-edge); }
+section.chapter:first-of-type { border-top: 0; padding-top: 0; }
+.chapter__grid {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: var(--s-7);
+  align-items: start;
+}
+@media (max-width: 800px) {
+  .chapter__grid { grid-template-columns: 1fr; gap: var(--s-4); }
+}
+.chapter__rail {
+  position: sticky;
+  top: 88px;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.chapter__rail b {
+  display: block;
+  color: var(--ember-deep);
+  font-weight: 500;
+  margin-bottom: var(--s-2);
+}
+.chapter__rail .roman {
+  font-family: var(--font-display);
+  font-size: var(--t-4xl);
+  color: var(--ember);
+  font-style: italic;
+  letter-spacing: 0;
+  margin-bottom: var(--s-2);
+  display: block;
+  line-height: 1;
+  font-variation-settings: "opsz" 144, "SOFT" 60, "wght" 380;
+}
+.chapter__content h2 {
+  font-size: clamp(1.6rem, 3vw, var(--t-2xl));
+  margin-bottom: var(--s-3);
+  letter-spacing: -0.025em;
+}
+.chapter__content > .lede:first-of-type { margin-bottom: var(--s-6); }
+
+/* ---------- Voice cards ---------- */
+.voice {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--s-5);
+}
+.voice__card {
+  border: 1px solid var(--paper-edge);
+  border-radius: var(--r-md);
+  background: var(--paper-soft);
+  padding: var(--s-5);
+}
+.voice__card h3 {
+  display: flex; align-items: baseline; gap: var(--s-3);
+  font-size: var(--t-lg);
+  margin-bottom: var(--s-3);
+}
+.voice__card h3 .roman {
+  font-family: var(--font-display);
+  font-variation-settings: "opsz" 96, "SOFT" 80, "wght" 380;
+  color: var(--ember-deep);
+  font-style: italic;
+  font-size: var(--t-2xl);
+  line-height: 0.8;
+}
+.voice__examples { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-4); margin-top: var(--s-4); }
+@media (max-width: 680px) { .voice__examples { grid-template-columns: 1fr; } }
+.voice__example {
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--r-sm);
+  background: var(--paper-base);
+  border: 1px dashed var(--paper-grain);
+  font-family: var(--font-sans);
+}
+.voice__example__tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-2);
+}
+.voice__example--bad  .voice__example__tag { color: var(--terra); }
+.voice__example--good .voice__example__tag { color: var(--moss-deep); }
+.voice__example--bad  .voice__example__tag::before { content: "✗"; font-size: 14px; }
+.voice__example--good .voice__example__tag::before { content: "✓"; font-size: 14px; }
+.voice__example__copy { font-size: var(--t-sm); color: var(--ink-deep); line-height: 1.5; }
+.voice__example--bad .voice__example__copy { text-decoration: line-through; text-decoration-color: var(--terra); text-decoration-thickness: 1px; opacity: 0.75; }
+
+/* ---------- Color swatches ---------- */
+.swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--s-3);
+}
+.swatch {
+  border: 1px solid var(--paper-edge);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: var(--paper-soft);
+  display: flex; flex-direction: column;
+}
+.swatch__chip {
+  height: 96px;
+  position: relative;
+  border-bottom: 1px solid var(--paper-edge);
+}
+.swatch__chip::after {
+  content: attr(data-hex);
+  position: absolute;
+  bottom: 8px; left: 10px;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  letter-spacing: 0.06em;
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  background: rgba(244, 236, 216, 0.9);
+  color: #1E1812;
+}
+.swatch__chip--dark::after { background: rgba(20, 17, 13, 0.86); color: #F2E8D2; }
+.swatch__meta {
+  padding: var(--s-3) var(--s-4) var(--s-4);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.swatch__name { font-weight: 500; font-size: var(--t-sm); color: var(--ink-deep); }
+.swatch__var  { font-family: var(--font-mono); font-size: var(--t-xs); color: var(--ink-faint); }
+
+.swatches-section + .swatches-section { margin-top: var(--s-6); }
+.swatches-section h4 {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ember-deep);
+  margin-bottom: var(--s-3);
+}
+
+/* ---------- Typography spec ---------- */
+.font-card {
+  border: 1px solid var(--paper-edge);
+  border-radius: var(--r-md);
+  background: var(--paper-soft);
+  padding: var(--s-5);
+  margin-bottom: var(--s-4);
+}
+.font-card__head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: var(--s-3);
+  flex-wrap: wrap;
+  gap: var(--s-3);
+}
+.font-card__name {
+  font-size: var(--t-lg);
+  font-weight: 500;
+}
+.font-card__use {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--ember-deep);
+}
+.font-card__big {
+  font-size: clamp(2.4rem, 5vw, 4rem);
+  line-height: 1;
+  letter-spacing: -0.02em;
+  margin: var(--s-4) 0 var(--s-3);
+}
+.font-card__pangram {
+  font-size: var(--t-md);
+  line-height: 1.5;
+  color: var(--ink-mid);
+  margin-bottom: var(--s-3);
+}
+.font-card__weights {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  color: var(--ink-faint);
+  letter-spacing: 0.08em;
+}
+
+.type-card-display .font-card__big { font-family: var(--font-display); font-variation-settings: "opsz" 144, "SOFT" 40, "wght" 380; }
+.type-card-display .font-card__pangram { font-family: var(--font-display); font-style: italic; font-variation-settings: "opsz" 28, "SOFT" 60, "wght" 360; }
+.type-card-sans    .font-card__big { font-family: var(--font-sans); font-weight: 600; }
+.type-card-sans    .font-card__pangram { font-family: var(--font-sans); }
+.type-card-mono    .font-card__big { font-family: var(--font-mono); font-weight: 500; }
+.type-card-mono    .font-card__pangram { font-family: var(--font-mono); }
+
+/* ---------- Type scale ladder ---------- */
+.type-scale {
+  border: 1px solid var(--paper-edge);
+  border-radius: var(--r-md);
+  background: var(--paper-soft);
+  padding: var(--s-5);
+  display: flex; flex-direction: column; gap: var(--s-3);
+}
+.type-step {
+  display: grid;
+  grid-template-columns: 120px 80px 1fr;
+  align-items: baseline;
+  gap: var(--s-4);
+  padding-bottom: var(--s-3);
+  border-bottom: 1px dashed var(--paper-grain);
+}
+.type-step:last-child { border-bottom: 0; padding-bottom: 0; }
+.type-step__token {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  color: var(--ember-deep);
+  letter-spacing: 0.08em;
+}
+.type-step__size {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  color: var(--ink-faint);
+}
+.type-step__sample { font-family: var(--font-display); color: var(--ink-deep); line-height: 1.1; letter-spacing: -0.02em; }
+.type-step--xs    .type-step__sample { font-size: 0.75rem; }
+.type-step--sm    .type-step__sample { font-size: 0.875rem; }
+.type-step--base  .type-step__sample { font-size: 1rem; }
+.type-step--md    .type-step__sample { font-size: 1.125rem; }
+.type-step--lg    .type-step__sample { font-size: 1.375rem; }
+.type-step--xl    .type-step__sample { font-size: 1.75rem; }
+.type-step--2xl   .type-step__sample { font-size: 2.25rem; }
+.type-step--3xl   .type-step__sample { font-size: 3rem; font-variation-settings: "opsz" 96; }
+.type-step--4xl   .type-step__sample { font-size: 4rem; font-variation-settings: "opsz" 144; }
+
+/* ---------- Spacing ladder ---------- */
+.space-row {
+  display: grid;
+  grid-template-columns: 100px 80px 1fr;
+  gap: var(--s-4);
+  align-items: center;
+  padding: var(--s-2) 0;
+}
+.space-row + .space-row { border-top: 1px dashed var(--paper-grain); }
+.space-row__token { font-family: var(--font-mono); font-size: var(--t-xs); color: var(--ember-deep); }
+.space-row__val   { font-family: var(--font-mono); font-size: var(--t-xs); color: var(--ink-faint); }
+.space-bar {
+  height: 14px;
+  background: var(--ember);
+  border-radius: 2px;
+  opacity: 0.85;
+}
+
+/* ---------- Iconography ---------- */
+.icon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: var(--s-3);
+}
+.icon-cell {
+  background: var(--paper-soft);
+  border: 1px solid var(--paper-edge);
+  border-radius: var(--r-md);
+  padding: var(--s-4) var(--s-3);
+  display: flex; flex-direction: column; align-items: center;
+  gap: var(--s-2);
+  color: var(--ink-deep);
+}
+.icon-cell svg { width: 36px; height: 36px; }
+.icon-cell span {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  color: var(--ink-faint);
+  letter-spacing: 0.06em;
+}
+.icon-rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--s-4); margin-top: var(--s-5); }
+.icon-rule {
+  padding: var(--s-3) 0;
+  border-top: 1px solid var(--paper-grain);
+}
+.icon-rule b { display: block; font-size: var(--t-sm); color: var(--ink-deep); margin-bottom: 4px; }
+.icon-rule p { font-size: var(--t-sm); color: var(--ink-mid); margin: 0; }
+
+/* ---------- Wordmark exhibit ---------- */
+.wordmark-stage {
+  background: var(--paper-soft);
+  border: 1px solid var(--paper-edge);
+  border-radius: var(--r-md);
+  padding: var(--s-7) var(--s-6);
+  text-align: center;
+  position: relative;
+}
+.wordmark-stage::before, .wordmark-stage::after {
+  content: ""; position: absolute;
+  width: 28px; height: 28px;
+  border: 1.4px solid var(--paper-grain);
+}
+.wordmark-stage::before { top: 14px; left: 14px; border-right: 0; border-bottom: 0; }
+.wordmark-stage::after  { bottom: 14px; right: 14px; border-left: 0; border-top: 0; }
+.wordmark-stage .wordmark { font-size: clamp(2.6rem, 7vw, 6rem); }
+
+.wm-spec-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--s-4);
+  margin-top: var(--s-5);
+}
+.wm-spec {
+  border: 1px solid var(--paper-edge);
+  border-radius: var(--r-md);
+  padding: var(--s-4);
+  background: var(--paper-soft);
+}
+.wm-spec b { display: block; font-size: var(--t-sm); color: var(--ink-deep); margin-bottom: var(--s-2); }
+.wm-spec p { margin: 0; color: var(--ink-mid); font-size: var(--t-sm); }
+.wm-spec code { font-size: 12px; }
+
+.wm-do-dont {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-4);
+  margin-top: var(--s-5);
+}
+@media (max-width: 600px) { .wm-do-dont { grid-template-columns: 1fr; } }
+.wm-do, .wm-dont {
+  border-radius: var(--r-md);
+  padding: var(--s-4);
+  background: var(--paper-soft);
+  border: 1px solid var(--paper-edge);
+  display: flex; flex-direction: column; gap: var(--s-3);
+}
+.wm-tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.wm-do .wm-tag   { color: var(--moss-deep); }
+.wm-dont .wm-tag { color: var(--terra); }
+.wm-do .wm-tag::before  { content: "✓ "; }
+.wm-dont .wm-tag::before { content: "✗ "; }
+.wm-sample {
+  background: var(--paper-base);
+  border: 1px dashed var(--paper-grain);
+  padding: var(--s-4);
+  text-align: center;
+  border-radius: var(--r-sm);
+}
+
+/* ---------- Monogram ---------- */
+.monogram-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--s-3);
+  align-items: end;
+}
+.monogram-cell {
+  background: var(--paper-soft);
+  border: 1px solid var(--paper-edge);
+  border-radius: var(--r-md);
+  padding: var(--s-4);
+  display: flex; flex-direction: column; align-items: center; gap: var(--s-2);
+}
+.monogram-cell span {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  color: var(--ink-faint);
+  letter-spacing: 0.06em;
+}
+.monogram-128 { width: 128px; height: 128px; }
+.monogram-64  { width: 64px;  height: 64px; }
+.monogram-32  { width: 32px;  height: 32px; }
+.monogram-16  { width: 16px;  height: 16px; }
+
+/* ---------- CLI banner ---------- */
+.cli-banner {
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  white-space: pre;
+  background: var(--ink-deep);
+  color: #E8DCC0;
+  padding: var(--s-5) var(--s-5);
+  border-radius: var(--r-md);
+  overflow-x: auto;
+  line-height: 1.5;
+  box-shadow: var(--shadow-3);
+  border: 1px solid color-mix(in oklab, var(--ink-deep) 80%, var(--paper-grain) 20%);
+}
+.cli-banner .b-ember { color: #E29455; }
+.cli-banner .b-moss  { color: #B3C098; }
+.cli-banner .b-faint { color: #8B7E68; font-style: italic; }
+.cli-banner .b-cream { color: #F2E8D2; font-weight: 500; }
+
+/* ---------- Illustration direction ---------- */
+.illo-grid {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: var(--s-6);
+  align-items: stretch;
+}
+@media (max-width: 800px) { .illo-grid { grid-template-columns: 1fr; } }
+.illo-sketch {
+  background: var(--paper-soft);
+  border: 1px solid var(--paper-edge);
+  border-radius: var(--r-md);
+  padding: var(--s-4);
+  position: relative;
+}
+.illo-sketch::before {
+  content: "SKETCH · MARMOT, FIELD CAP, SADDLEBAG";
+  position: absolute; top: -10px; left: var(--s-4);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: var(--ember-deep);
+  background: var(--paper-base);
+  padding: 0 6px;
+}
+.illo-rules { display: flex; flex-direction: column; gap: var(--s-3); }
+.illo-rule {
+  background: var(--paper-soft);
+  border: 1px solid var(--paper-edge);
+  border-radius: var(--r-md);
+  padding: var(--s-4);
+}
+.illo-rule b {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  letter-spacing: 0.18em;
+  color: var(--ember-deep);
+  text-transform: uppercase;
+  display: block;
+  margin-bottom: var(--s-2);
+}
+.illo-rule p { margin: 0; font-size: var(--t-sm); line-height: 1.55; color: var(--ink-mid); }
+
+/* ---------- Logo system architecture ---------- */
+.lockups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--s-4);
+}
+.lockup {
+  background: var(--paper-soft);
+  border: 1px solid var(--paper-edge);
+  border-radius: var(--r-md);
+  padding: var(--s-5);
+  display: flex; flex-direction: column; gap: var(--s-3);
+}
+.lockup__stage {
+  background: var(--paper-base);
+  border: 1px dashed var(--paper-grain);
+  border-radius: var(--r-sm);
+  padding: var(--s-5);
+  display: flex; align-items: center; justify-content: center;
+  min-height: 120px;
+}
+.lockup__label {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ember-deep);
+}
+.lockup__note { font-size: var(--t-sm); color: var(--ink-mid); margin: 0; }
+
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container site-header__inner">
+    <a href="index.html" aria-label="gMountie home" style="text-decoration:none;">
+      <span class="wordmark" style="font-size: var(--t-lg);">
+        <span class="g">g</span><span class="rest">Mountie</span>
+      </span>
+    </a>
+    <nav class="site-header__nav">
+      <a href="index.html">Landing</a>
+      <a href="https://github.com/gmountie">GitHub</a>
+      <button class="theme-toggle" id="themeToggle" aria-label="toggle theme">paper · lantern</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<!-- =========================================================
+     PAGE HERO
+     ========================================================= -->
+<section class="container guide-hero">
+  <span class="eyebrow reveal" data-delay="1">Brand book · Phase 1 · Design language</span>
+  <h1 class="reveal" data-delay="2">Cartographer's<br/><em>field journal.</em></h1>
+  <p class="lede reveal" data-delay="3" style="max-width: 56ch;">
+    A complete design language for gMountie. Warm cream paper, deep iron-gall
+    ink, one signature ember accent for the morning sun on alpine peaks.
+    Reliable without being cold, technical without being sterile, charming
+    without being cute.
+  </p>
+
+  <div class="guide-hero__credits reveal" data-delay="4">
+    <div>Display<b style="font-family:var(--font-display);font-variation-settings:'opsz' 96,'SOFT' 40">Fraunces</b></div>
+    <div>Sans<b style="font-family:var(--font-sans);font-weight:500">IBM Plex Sans</b></div>
+    <div>Mono<b style="font-family:var(--font-mono);font-weight:500">IBM Plex Mono</b></div>
+    <div>Primary accent<b style="color:var(--ember-deep)">Ember · #C5722A</b></div>
+  </div>
+</section>
+
+<!-- =========================================================
+     CHAPTER I · VOICE & TONE
+     ========================================================= -->
+<section class="chapter">
+  <div class="container chapter__grid">
+    <aside class="chapter__rail">
+      <span class="roman">I</span>
+      <b>Voice &amp; tone</b>
+      <span>How gMountie talks.</span>
+    </aside>
+    <div class="chapter__content">
+      <h2>Three rules.</h2>
+      <p class="lede">Warmth, but earned. Charm comes from honest detail and respect for the reader's time — never from cleverness for its own sake.</p>
+
+      <div class="voice">
+
+        <div class="voice__card">
+          <h3><span class="roman">i.</span> Numbers beat adjectives.</h3>
+          <p style="color: var(--ink-mid); font-size: var(--t-sm);">
+            "Lightning fast" is a feeling we owe the reader, and a number is the receipt. Write the number when you have it; rewrite when you don't.
+          </p>
+          <div class="voice__examples">
+            <div class="voice__example voice__example--bad">
+              <span class="voice__example__tag">Don't</span>
+              <div class="voice__example__copy">"Lightning fast — built with gRPC for speedy communication."</div>
+            </div>
+            <div class="voice__example voice__example--good">
+              <span class="voice__example__tag">Do</span>
+              <div class="voice__example__copy">"Cold readdir in 12ms over a 60ms RTT. gRPC with Snappy compression on the wire."</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="voice__card">
+          <h3><span class="roman">ii.</span> Earnest, never cute for cute's sake.</h3>
+          <p style="color: var(--ink-mid); font-size: var(--t-sm);">
+            Warmth comes from craft, not from emoji clusters or exclamation points. One emoji per page, maximum. None in code or CLI output.
+          </p>
+          <div class="voice__examples">
+            <div class="voice__example voice__example--bad">
+              <span class="voice__example__tag">Don't</span>
+              <div class="voice__example__copy">"Built with ❤️ and lots of ☕ — gMountie is your filesystem's best friend! 🤠⚡🔥"</div>
+            </div>
+            <div class="voice__example voice__example--good">
+              <span class="voice__example__tag">Do</span>
+              <div class="voice__example__copy">"A small server you run beside your data, and a small client you run on your laptop. That is the whole architecture."</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="voice__card">
+          <h3><span class="roman">iii.</span> Speak about the tool, not the team.</h3>
+          <p style="color: var(--ink-mid); font-size: var(--t-sm);">
+            Lead with what gMountie <em>does</em>, not what "we" did. Save first-person plural for the team page and release notes. Never use it for product copy.
+          </p>
+          <div class="voice__examples">
+            <div class="voice__example voice__example--bad">
+              <span class="voice__example__tag">Don't</span>
+              <div class="voice__example__copy">"We built gMountie because we love distributed filesystems. We hope you'll love it too."</div>
+            </div>
+            <div class="voice__example voice__example--good">
+              <span class="voice__example__tag">Do</span>
+              <div class="voice__example__copy">"gMountie mounts a remote directory as a FUSE filesystem over gRPC. No VPN, no S3 layer, no rsync."</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================
+     CHAPTER II · COLOR
+     ========================================================= -->
+<section class="chapter">
+  <div class="container chapter__grid">
+    <aside class="chapter__rail">
+      <span class="roman">II</span>
+      <b>Palette</b>
+      <span>Paper, ink, and ember.</span>
+    </aside>
+    <div class="chapter__content">
+      <h2>One accent. One commitment.</h2>
+      <p class="lede">
+        A single bold accent — <b style="color:var(--ember-deep);font-weight:500;">Ember</b> — does the work that a dozen brand colors would normally fight over. Everything else is paper, ink, and the muted greens and blues of alpine landscape.
+      </p>
+
+      <div class="swatches-section">
+        <h4>§ surface · paper</h4>
+        <div class="swatch-grid">
+          <div class="swatch">
+            <div class="swatch__chip" style="background:#F4ECD8;" data-hex="#F4ECD8"></div>
+            <div class="swatch__meta"><span class="swatch__name">Paper · Base</span><span class="swatch__var">--paper-base</span></div>
+          </div>
+          <div class="swatch">
+            <div class="swatch__chip" style="background:#ECE2C8;" data-hex="#ECE2C8"></div>
+            <div class="swatch__meta"><span class="swatch__name">Paper · Soft</span><span class="swatch__var">--paper-soft</span></div>
+          </div>
+          <div class="swatch">
+            <div class="swatch__chip" style="background:#E2D5B2;" data-hex="#E2D5B2"></div>
+            <div class="swatch__meta"><span class="swatch__name">Paper · Deep</span><span class="swatch__var">--paper-deep</span></div>
+          </div>
+          <div class="swatch">
+            <div class="swatch__chip" style="background:#D6C6A0;" data-hex="#D6C6A0"></div>
+            <div class="swatch__meta"><span class="swatch__name">Paper · Edge</span><span class="swatch__var">--paper-edge</span></div>
+          </div>
+          <div class="swatch">
+            <div class="swatch__chip" style="background:#C9B98C;" data-hex="#C9B98C"></div>
+            <div class="swatch__meta"><span class="swatch__name">Paper · Grain</span><span class="swatch__var">--paper-grain</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="swatches-section">
+        <h4>§ foreground · ink</h4>
+        <div class="swatch-grid">
+          <div class="swatch">
+            <div class="swatch__chip swatch__chip--dark" style="background:#1E1812;" data-hex="#1E1812"></div>
+            <div class="swatch__meta"><span class="swatch__name">Ink · Deep</span><span class="swatch__var">--ink-deep</span></div>
+          </div>
+          <div class="swatch">
+            <div class="swatch__chip swatch__chip--dark" style="background:#5C4F3E;" data-hex="#5C4F3E"></div>
+            <div class="swatch__meta"><span class="swatch__name">Ink · Mid</span><span class="swatch__var">--ink-mid</span></div>
+          </div>
+          <div class="swatch">
+            <div class="swatch__chip" style="background:#8B7E68;" data-hex="#8B7E68"></div>
+            <div class="swatch__meta"><span class="swatch__name">Ink · Faint</span><span class="swatch__var">--ink-faint</span></div>
+          </div>
+          <div class="swatch">
+            <div class="swatch__chip" style="background:#B6A990;" data-hex="#B6A990"></div>
+            <div class="swatch__meta"><span class="swatch__name">Ink · Mute</span><span class="swatch__var">--ink-mute</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="swatches-section">
+        <h4>§ primary accent · ember (the only bold color)</h4>
+        <div class="swatch-grid">
+          <div class="swatch">
+            <div class="swatch__chip swatch__chip--dark" style="background:#C5722A;" data-hex="#C5722A"></div>
+            <div class="swatch__meta"><span class="swatch__name">Ember</span><span class="swatch__var">--ember · the signature</span></div>
+          </div>
+          <div class="swatch">
+            <div class="swatch__chip swatch__chip--dark" style="background:#A35A1E;" data-hex="#A35A1E"></div>
+            <div class="swatch__meta"><span class="swatch__name">Ember · Deep</span><span class="swatch__var">--ember-deep · hover/pressed</span></div>
+          </div>
+          <div class="swatch">
+            <div class="swatch__chip" style="background:#EFB378;" data-hex="#EFB378"></div>
+            <div class="swatch__meta"><span class="swatch__name">Ember · Soft</span><span class="swatch__var">--ember-soft · highlight</span></div>
+          </div>
+          <div class="swatch">
+            <div class="swatch__chip" style="background:#F7DDB7;" data-hex="#F7DDB7"></div>
+            <div class="swatch__meta"><span class="swatch__name">Ember · Mist</span><span class="swatch__var">--ember-mist · callout bg</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="swatches-section">
+        <h4>§ secondary · moss + lake</h4>
+        <div class="swatch-grid">
+          <div class="swatch">
+            <div class="swatch__chip swatch__chip--dark" style="background:#5E7045;" data-hex="#5E7045"></div>
+            <div class="swatch__meta"><span class="swatch__name">Moss</span><span class="swatch__var">--moss · success</span></div>
+          </div>
+          <div class="swatch">
+            <div class="swatch__chip swatch__chip--dark" style="background:#3C5A6E;" data-hex="#3C5A6E"></div>
+            <div class="swatch__meta"><span class="swatch__name">Lake</span><span class="swatch__var">--lake · info / link</span></div>
+          </div>
+          <div class="swatch">
+            <div class="swatch__chip swatch__chip--dark" style="background:#A8442F;" data-hex="#A8442F"></div>
+            <div class="swatch__meta"><span class="swatch__name">Terracotta</span><span class="swatch__var">--terra · danger only</span></div>
+          </div>
+        </div>
+        <p style="margin-top: var(--s-3); color: var(--ink-faint); font-size: var(--t-sm); font-family: var(--font-mono);">
+          Note · Terracotta is the only red we use, reserved for danger states. It is muted and brown-shifted to keep clear distance from RCMP red.
+        </p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================
+     CHAPTER III · TYPOGRAPHY
+     ========================================================= -->
+<section class="chapter">
+  <div class="container chapter__grid">
+    <aside class="chapter__rail">
+      <span class="roman">III</span>
+      <b>Typography</b>
+      <span>Three voices, one conversation.</span>
+    </aside>
+    <div class="chapter__content">
+      <h2>Display, sans, and mono — chosen to argue politely.</h2>
+      <p class="lede">A characterful variable serif for moments that matter, a clean technical sans for the rest, and a precise monospace for code, commands, and small data.</p>
+
+      <div class="font-card type-card-display">
+        <div class="font-card__head">
+          <div class="font-card__name">Fraunces</div>
+          <div class="font-card__use">Display · headings · the wordmark</div>
+        </div>
+        <div class="font-card__big">gMountie — your files, anywhere.</div>
+        <div class="font-card__pangram">The five boxing wizards jump quickly. Sphinx of black quartz, judge my vow.</div>
+        <div class="font-card__weights">300 · 400 · 500 · 600 · 700 · 800 · 900 — opsz axis (9–144) · SOFT axis (0–100)</div>
+      </div>
+
+      <div class="font-card type-card-sans">
+        <div class="font-card__head">
+          <div class="font-card__name">IBM Plex Sans</div>
+          <div class="font-card__use">Sans · body · UI · everything else</div>
+        </div>
+        <div class="font-card__big">The courier is in the post.</div>
+        <div class="font-card__pangram">The five boxing wizards jump quickly. Sphinx of black quartz, judge my vow.</div>
+        <div class="font-card__weights">300 · 400 · 500 · 600 · 700</div>
+      </div>
+
+      <div class="font-card type-card-mono">
+        <div class="font-card__head">
+          <div class="font-card__name">IBM Plex Mono</div>
+          <div class="font-card__use">Mono · code · CLI · data · captions</div>
+        </div>
+        <div class="font-card__big">gmountie serve --vol photos</div>
+        <div class="font-card__pangram">→ readdir 12ms · stat 4ms · cold read 31MB/s</div>
+        <div class="font-card__weights">300 · 400 · 500 · 600</div>
+      </div>
+
+      <h3 style="margin-top: var(--s-7); margin-bottom: var(--s-4);">Type scale</h3>
+      <div class="type-scale">
+        <div class="type-step type-step--xs"><span class="type-step__token">--t-xs</span><span class="type-step__size">12 / 16</span><span class="type-step__sample">Captions, meta, tags</span></div>
+        <div class="type-step type-step--sm"><span class="type-step__token">--t-sm</span><span class="type-step__size">14 / 20</span><span class="type-step__sample">UI, secondary body</span></div>
+        <div class="type-step type-step--base"><span class="type-step__token">--t-base</span><span class="type-step__size">16 / 25</span><span class="type-step__sample">Body, the default</span></div>
+        <div class="type-step type-step--md"><span class="type-step__token">--t-md</span><span class="type-step__size">18 / 28</span><span class="type-step__sample">Long-form body, ledes</span></div>
+        <div class="type-step type-step--lg"><span class="type-step__token">--t-lg</span><span class="type-step__size">22 / 32</span><span class="type-step__sample">Subheads, callouts</span></div>
+        <div class="type-step type-step--xl"><span class="type-step__token">--t-xl</span><span class="type-step__size">28 / 36</span><span class="type-step__sample">Card headings</span></div>
+        <div class="type-step type-step--2xl"><span class="type-step__token">--t-2xl</span><span class="type-step__size">36 / 42</span><span class="type-step__sample">Section heads</span></div>
+        <div class="type-step type-step--3xl"><span class="type-step__token">--t-3xl</span><span class="type-step__size">48 / 52</span><span class="type-step__sample">Page heads</span></div>
+        <div class="type-step type-step--4xl"><span class="type-step__token">--t-4xl</span><span class="type-step__size">64 / 64</span><span class="type-step__sample">Hero, occasional</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================
+     CHAPTER IV · SPACING
+     ========================================================= -->
+<section class="chapter">
+  <div class="container chapter__grid">
+    <aside class="chapter__rail">
+      <span class="roman">IV</span>
+      <b>Spacing</b>
+      <span>The room each piece earns.</span>
+    </aside>
+    <div class="chapter__content">
+      <h2>A 4-based ladder, with breathing room.</h2>
+      <p class="lede">Hierarchy comes from generous spacing, not from extra weight or color. When in doubt, go bigger.</p>
+
+      <div class="type-scale">
+        <div class="space-row"><span class="space-row__token">--s-1</span><span class="space-row__val">4px</span><div class="space-bar" style="width:4px;"></div></div>
+        <div class="space-row"><span class="space-row__token">--s-2</span><span class="space-row__val">8px</span><div class="space-bar" style="width:8px;"></div></div>
+        <div class="space-row"><span class="space-row__token">--s-3</span><span class="space-row__val">12px</span><div class="space-bar" style="width:12px;"></div></div>
+        <div class="space-row"><span class="space-row__token">--s-4</span><span class="space-row__val">16px</span><div class="space-bar" style="width:16px;"></div></div>
+        <div class="space-row"><span class="space-row__token">--s-5</span><span class="space-row__val">24px</span><div class="space-bar" style="width:24px;"></div></div>
+        <div class="space-row"><span class="space-row__token">--s-6</span><span class="space-row__val">32px</span><div class="space-bar" style="width:32px;"></div></div>
+        <div class="space-row"><span class="space-row__token">--s-7</span><span class="space-row__val">48px</span><div class="space-bar" style="width:48px;"></div></div>
+        <div class="space-row"><span class="space-row__token">--s-8</span><span class="space-row__val">72px</span><div class="space-bar" style="width:72px;"></div></div>
+        <div class="space-row"><span class="space-row__token">--s-9</span><span class="space-row__val">96px</span><div class="space-bar" style="width:96px;"></div></div>
+        <div class="space-row"><span class="space-row__token">--s-10</span><span class="space-row__val">144px</span><div class="space-bar" style="width:144px;"></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================
+     CHAPTER V · ICONOGRAPHY
+     ========================================================= -->
+<section class="chapter">
+  <div class="container chapter__grid">
+    <aside class="chapter__rail">
+      <span class="roman">V</span>
+      <b>Iconography</b>
+      <span>Cartographic glyphs.</span>
+    </aside>
+    <div class="chapter__content">
+      <h2>Stroke-based. Hand-feel. Drawn like a survey marker.</h2>
+      <p class="lede">Icons are line-only, drawn on a 24px grid with a 1.5px stroke. The aesthetic reference is mid-century field-survey notation: simple geometric shapes that survive being printed on rough paper.</p>
+
+      <div class="icon-grid">
+
+        <!-- compass -->
+        <div class="icon-cell">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="9"/>
+            <path d="M12 4 L14 12 L12 20 L10 12 Z" fill="var(--ember)" stroke="none"/>
+            <circle cx="12" cy="12" r="1.4" fill="currentColor"/>
+          </svg>
+          <span>compass</span>
+        </div>
+
+        <!-- summit -->
+        <div class="icon-cell">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 19 L9 9 L13 14 L16 11 L21 19 Z"/>
+            <path d="M16 11 L17 7 L20 8" stroke="var(--ember)" stroke-width="1.5"/>
+          </svg>
+          <span>summit</span>
+        </div>
+
+        <!-- folder -->
+        <div class="icon-cell">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 7 V18 a1 1 0 0 0 1 1 H20 a1 1 0 0 0 1-1 V9 a1 1 0 0 0-1-1 H12 L10 6 H4 a1 1 0 0 0-1 1z"/>
+          </svg>
+          <span>folder</span>
+        </div>
+
+        <!-- mount (bracket) -->
+        <div class="icon-cell">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 4 H4 a1 1 0 0 0-1 1 V19 a1 1 0 0 0 1 1 H5"/>
+            <path d="M19 4 H20 a1 1 0 0 1 1 1 V19 a1 1 0 0 1-1 1 H19"/>
+            <path d="M9 12 L15 12" stroke="var(--ember)"/>
+            <circle cx="12" cy="12" r="1.4" fill="var(--ember)" stroke="none"/>
+          </svg>
+          <span>mount</span>
+        </div>
+
+        <!-- connection -->
+        <div class="icon-cell">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="5" cy="12" r="2.4"/>
+            <circle cx="19" cy="12" r="2.4"/>
+            <path d="M7.4 12 H16.6" stroke="var(--ember)" stroke-dasharray="2.5 2.5"/>
+          </svg>
+          <span>link</span>
+        </div>
+
+        <!-- flag -->
+        <div class="icon-cell">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 21 V4"/>
+            <path d="M6 4 L18 4 L15 8 L18 12 L6 12" fill="var(--ember)" stroke="var(--ember)"/>
+          </svg>
+          <span>flag</span>
+        </div>
+
+        <!-- shield -->
+        <div class="icon-cell">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3 L20 6 V12 c0 4-3 7-8 9 c-5-2-8-5-8-9 V6 Z"/>
+            <path d="M9 12 L11 14 L15 10" stroke="var(--ember)"/>
+          </svg>
+          <span>shield</span>
+        </div>
+
+        <!-- terminal -->
+        <div class="icon-cell">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="5" width="18" height="14" rx="2"/>
+            <path d="M7 10 L10 13 L7 16" stroke="var(--ember)"/>
+            <path d="M12 16 L17 16"/>
+          </svg>
+          <span>terminal</span>
+        </div>
+
+      </div>
+
+      <div class="icon-rules">
+        <div class="icon-rule"><b>Grid</b><p>24×24, drawn on a half-pixel grid. Optical balance over perfect symmetry.</p></div>
+        <div class="icon-rule"><b>Stroke</b><p>1.5px at base, never thinner than 1.2. Rounded caps and joins.</p></div>
+        <div class="icon-rule"><b>Fill</b><p>Outlined by default. Ember fill reserved for the focal element of each icon.</p></div>
+        <div class="icon-rule"><b>Density</b><p>Three elements per icon, maximum. Icons exist to label, not to illustrate.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================
+     CHAPTER VI · WORDMARK
+     ========================================================= -->
+<section class="chapter">
+  <div class="container chapter__grid">
+    <aside class="chapter__rail">
+      <span class="roman">VI</span>
+      <b>Wordmark</b>
+      <span>The signature gesture.</span>
+    </aside>
+    <div class="chapter__content">
+      <h2>One lowercase g, doing all the work.</h2>
+      <p class="lede">
+        The wordmark is set in <b>Fraunces</b> with opsz 96, SOFT 30, weight 380, tracking -0.035em. The lowercase <b style="color:var(--ember-deep);">g</b> is set in <b style="color:var(--ember-deep);">Ember</b> — the brand's signature note. A faint contour line continues from the wordmark to the right, a topographic mark we carry through icons and section rules.
+      </p>
+
+      <div class="wordmark-stage">
+        <span class="wordmark">
+          <span class="g">g</span><span class="rest">Mountie</span>
+        </span>
+      </div>
+
+      <div class="wm-spec-row">
+        <div class="wm-spec">
+          <b>Casing — LOCKED</b>
+          <p>Always lowercase g, capital M. <code>gMountie</code> in prose. <code>gmountie</code> in code, URLs, and binaries. <code>GMOUNTIE_</code> for env vars.</p>
+        </div>
+        <div class="wm-spec">
+          <b>The <em>g</em> is for gRPC</b>
+          <p>When asked, the lowercase g is the wire protocol. One sentence, true, technical. Don't invent other meanings.</p>
+        </div>
+        <div class="wm-spec">
+          <b>Clear space</b>
+          <p>Reserve at least the height of the M-stem (≈ 0.7× cap height) on all sides. No element may enter that band.</p>
+        </div>
+        <div class="wm-spec">
+          <b>Minimum size</b>
+          <p>14px on screen, 12pt in print. Below those sizes, use the monogram instead.</p>
+        </div>
+      </div>
+
+      <h3 style="margin-top: var(--s-6); margin-bottom: var(--s-3);">Do · Don't</h3>
+      <div class="wm-do-dont">
+        <div class="wm-do">
+          <span class="wm-tag">Use the wordmark as drawn</span>
+          <div class="wm-sample">
+            <span class="wordmark" style="font-size: 2.4rem;">
+              <span class="g">g</span><span class="rest">Mountie</span>
+            </span>
+          </div>
+          <p class="lockup__note">Set in Fraunces, ember g, on paper or ink background.</p>
+        </div>
+        <div class="wm-dont">
+          <span class="wm-tag">Don't restyle the casing</span>
+          <div class="wm-sample">
+            <span style="font-family: var(--font-display); font-size: 2.4rem; letter-spacing:-0.025em; color: var(--ink-deep); font-variation-settings:'opsz' 96, 'SOFT' 30, 'wght' 380;">GMountie</span>
+          </div>
+          <p class="lockup__note">Never PascalCase. Never all-caps. Never drop the g.</p>
+        </div>
+        <div class="wm-do">
+          <span class="wm-tag">Reverse on dark</span>
+          <div class="wm-sample" style="background: var(--ink-deep); border-color: var(--ink-deep);">
+            <span class="wordmark" style="font-size: 2.4rem; color: #F2E8D2;">
+              <span class="g" style="color:#E29455;">g</span><span class="rest" style="color:#F2E8D2;">Mountie</span>
+            </span>
+          </div>
+          <p class="lockup__note">On ink, use Ember and Paper-Cream. Maintain stroke contrast.</p>
+        </div>
+        <div class="wm-dont">
+          <span class="wm-tag">Don't paint the g a different accent</span>
+          <div class="wm-sample">
+            <span class="wordmark" style="font-size: 2.4rem;">
+              <span class="g" style="color: #6688A0;">g</span><span class="rest">Mountie</span>
+            </span>
+          </div>
+          <p class="lockup__note">The g is always Ember. Never lake, moss, or terracotta.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================
+     CHAPTER VII · MONOGRAM
+     ========================================================= -->
+<section class="chapter">
+  <div class="container chapter__grid">
+    <aside class="chapter__rail">
+      <span class="roman">VII</span>
+      <b>Monogram</b>
+      <span>Below 14px, use this.</span>
+    </aside>
+    <div class="chapter__content">
+      <h2>A broad-brimmed hat in silhouette.</h2>
+      <p class="lede">
+        At favicon scale the wordmark is unreadable. The monogram is a broad-brimmed campaign hat with a single ember band — recognizable at 16×16, distinct from a fedora or cowboy hat, and unmistakable in a tab strip.
+      </p>
+
+      <div class="monogram-row">
+
+        <!-- 128 -->
+        <div class="monogram-cell">
+          <svg class="monogram-128" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+            <rect width="64" height="64" rx="12" fill="var(--paper-base)"/>
+            <path d="M6 42 H58" stroke="var(--ember)" stroke-width="4.6" stroke-linecap="round"/>
+            <path d="M16 42 C16 35, 23 30, 32 30 C41 30, 48 35, 48 42" fill="var(--ink-deep)"/>
+            <path d="M32 16 L37 22 L32 28 L27 22 Z" fill="var(--ink-deep)"/>
+            <circle cx="32" cy="28" r="1.6" fill="var(--paper-base)"/>
+          </svg>
+          <span>128 · brand</span>
+        </div>
+
+        <!-- 64 -->
+        <div class="monogram-cell">
+          <svg class="monogram-64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+            <rect width="64" height="64" rx="10" fill="var(--paper-base)"/>
+            <path d="M6 42 H58" stroke="var(--ember)" stroke-width="4.6" stroke-linecap="round"/>
+            <path d="M16 42 C16 35, 23 30, 32 30 C41 30, 48 35, 48 42" fill="var(--ink-deep)"/>
+            <path d="M32 16 L37 22 L32 28 L27 22 Z" fill="var(--ink-deep)"/>
+            <circle cx="32" cy="28" r="1.6" fill="var(--paper-base)"/>
+          </svg>
+          <span>64 · app icon</span>
+        </div>
+
+        <!-- 32 -->
+        <div class="monogram-cell">
+          <svg class="monogram-32" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+            <rect width="64" height="64" rx="10" fill="var(--paper-base)"/>
+            <path d="M6 42 H58" stroke="var(--ember)" stroke-width="6" stroke-linecap="round"/>
+            <path d="M16 42 C16 35, 23 30, 32 30 C41 30, 48 35, 48 42" fill="var(--ink-deep)"/>
+            <path d="M32 16 L37 22 L32 28 L27 22 Z" fill="var(--ink-deep)"/>
+          </svg>
+          <span>32 · social</span>
+        </div>
+
+        <!-- 16 -->
+        <div class="monogram-cell">
+          <svg class="monogram-16" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+            <rect width="64" height="64" rx="10" fill="var(--paper-base)"/>
+            <path d="M4 42 H60" stroke="var(--ember)" stroke-width="9" stroke-linecap="round"/>
+            <path d="M14 42 C14 32, 22 28, 32 28 C42 28, 50 32, 50 42" fill="var(--ink-deep)"/>
+          </svg>
+          <span>16 · favicon</span>
+        </div>
+      </div>
+
+      <p style="color: var(--ink-mid); margin-top: var(--s-5); max-width: 60ch;">
+        At 16px the chin-strap and hat-band detail drop away. The brim becomes a single heavy ember stroke; the crown is a solid silhouette. Recognizable from anywhere in the tab strip.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================
+     CHAPTER VIII · CLI BANNER
+     ========================================================= -->
+<section class="chapter">
+  <div class="container chapter__grid">
+    <aside class="chapter__rail">
+      <span class="roman">VIII</span>
+      <b>CLI presence</b>
+      <span>The brand at 80 columns.</span>
+    </aside>
+    <div class="chapter__content">
+      <h2>The brand should survive a monospace terminal.</h2>
+      <p class="lede">Use box-drawing characters and a single ember-amber tint (terminal yellow/orange) when colors are available; degrade cleanly to pure mono when they are not.</p>
+
+      <div class="cli-banner"><span class="b-faint">┌─</span> <span class="b-ember">gMountie</span> <span class="b-faint">───────────────────────────────────────────┐</span>
+<span class="b-faint">│</span>                                                       <span class="b-faint">│</span>
+<span class="b-faint">│</span>  <span class="b-cream">a network filesystem for anywhere.</span>                   <span class="b-faint">│</span>
+<span class="b-faint">│</span>  <span class="b-faint">the g is for gRPC · github.com/gmountie</span>              <span class="b-faint">│</span>
+<span class="b-faint">│</span>                                                       <span class="b-faint">│</span>
+<span class="b-faint">├───────────────────────────────────────────────────────┤</span>
+<span class="b-faint">│</span>  <span class="b-ember">▲</span> volume    <span class="b-cream">photos</span>                                 <span class="b-faint">│</span>
+<span class="b-faint">│</span>    mounted   <span class="b-cream">~/photos</span>                               <span class="b-faint">│</span>
+<span class="b-faint">│</span>    server    <span class="b-cream">fs.example.com:8443</span>                    <span class="b-faint">│</span>
+<span class="b-faint">│</span>    latency   <span class="b-moss">14ms</span>  cache <span class="b-moss">cold</span>  state <span class="b-moss">ready</span>          <span class="b-faint">│</span>
+<span class="b-faint">│</span>                                                       <span class="b-faint">│</span>
+<span class="b-faint">└───────────────────────────────────────────────────────┘</span></div>
+
+      <p style="color: var(--ink-mid); margin-top: var(--s-5); font-size: var(--t-sm);">
+        Rules: never animate. Never use spinners with more than two frames. The ember tint
+        is the only color CLI output should reach for; everything else is the terminal's
+        default. If <code>NO_COLOR</code> is set, render in pure monochrome.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================
+     CHAPTER IX · ILLUSTRATION & MASCOT
+     ========================================================= -->
+<section class="chapter">
+  <div class="container chapter__grid">
+    <aside class="chapter__rail">
+      <span class="roman">IX</span>
+      <b>Illustration</b>
+      <span>The mascot, later.</span>
+    </aside>
+    <div class="chapter__content">
+      <h2>Field journal sketches. Alpine marmot. Earned cuteness.</h2>
+      <p class="lede">
+        Phase 3 brings the actual mascot. This phase only sets the <em>direction</em>: hand-drawn line work, restrained color, an alpine animal who has clearly walked here.
+      </p>
+
+      <div class="illo-grid">
+
+        <!-- Placeholder sketch -->
+        <div class="illo-sketch">
+          <svg viewBox="0 0 240 240" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;">
+            <!-- contour frame -->
+            <g stroke="var(--paper-grain)" fill="none" stroke-width="0.5" opacity="0.7">
+              <path d="M0 140 Q60 120 120 140 T240 140"/>
+              <path d="M0 160 Q60 150 120 160 T240 160"/>
+            </g>
+
+            <!-- ground -->
+            <line x1="20" y1="200" x2="220" y2="200" stroke="var(--ink-deep)" stroke-width="1.4"/>
+            <line x1="30" y1="206" x2="210" y2="206" stroke="var(--paper-grain)" stroke-width="0.8"/>
+
+            <!-- marmot body sketch (loose hand-feel) -->
+            <g stroke="var(--ink-deep)" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <!-- body -->
+              <path d="M85 200 c-4 -10 -4 -28 6 -42 c10 -14 30 -22 50 -22 c22 0 38 6 50 22 c8 12 8 30 4 42"/>
+              <!-- belly -->
+              <path d="M105 200 c0 -10 6 -30 30 -34"/>
+              <!-- ear -->
+              <path d="M118 134 c-2 -8 0 -14 6 -16 c4 -2 8 0 10 4"/>
+              <!-- eye -->
+              <circle cx="146" cy="148" r="1.6" fill="var(--ink-deep)"/>
+              <!-- nose -->
+              <path d="M168 152 c2 0 5 1 6 3 c0 2 -2 4 -5 4 c-1 0 -2 -1 -3 -2"/>
+              <!-- mouth -->
+              <path d="M168 162 c-2 1 -4 1 -7 0"/>
+              <!-- paw -->
+              <path d="M118 200 c0 -8 4 -16 14 -16"/>
+              <!-- saddlebag strap & bag -->
+              <path d="M132 142 c-2 6 -6 12 -14 14"/>
+              <path d="M118 156 c-12 4 -22 14 -22 32 c0 6 4 10 10 10 h22 c4 0 6 -2 6 -8 v-26 c0 -6 -4 -10 -10 -10 z" fill="var(--paper-soft)"/>
+              <path d="M104 184 h26" stroke-width="1"/>
+            </g>
+
+            <!-- hat with ember band (campaign hat seen 3/4) -->
+            <g>
+              <!-- brim -->
+              <path d="M86 134 C 86 128, 100 122, 132 122 C 168 122, 188 128, 188 134 C 188 138, 168 142, 132 142 C 100 142, 86 138, 86 134 Z"
+                    fill="var(--ink-deep)" stroke="var(--ink-deep)" stroke-width="1.2"/>
+              <!-- crown -->
+              <path d="M118 126 C 118 110, 122 100, 132 100 C 144 100, 148 110, 148 126 Z"
+                    fill="var(--ink-deep)" stroke="var(--ink-deep)" stroke-width="1.2"/>
+              <!-- ember band -->
+              <path d="M119 124 C 122 121, 128 120, 132 120 C 138 120, 144 121, 147 124"
+                    stroke="var(--ember)" stroke-width="3" fill="none" stroke-linecap="round"/>
+            </g>
+
+            <!-- folder near paw -->
+            <g stroke="var(--ink-deep)" fill="var(--paper-base)" stroke-width="1.4" stroke-linejoin="round">
+              <path d="M178 196 v-22 h12 l4 5 h18 v17 z"/>
+              <line x1="178" y1="180" x2="212" y2="180" stroke-width="0.8"/>
+            </g>
+
+            <!-- caption mark -->
+            <text x="120" y="226" text-anchor="middle" font-family="var(--font-mono)" font-size="9" fill="var(--ink-faint)" letter-spacing="0.16em">MARMOTA · IN UNIFORM · DIRECTION ONLY</text>
+          </svg>
+        </div>
+
+        <!-- Rules -->
+        <div class="illo-rules">
+          <div class="illo-rule">
+            <b>The species — marmot</b>
+            <p>Alpine, plump, calm. Not a chipmunk (too cute), not a beaver (too Canadian-literal). A marmot reads as steady, watchful, native to the hills the brand evokes.</p>
+          </div>
+          <div class="illo-rule">
+            <b>The uniform — hat &amp; saddlebag</b>
+            <p>Broad-brimmed felt campaign hat with a single ember band. A leather saddlebag with a folded paper inside. Never RCMP red serge. Never anthropomorphic clothing beyond the hat and bag.</p>
+          </div>
+          <div class="illo-rule">
+            <b>Line — drawn, not vectored</b>
+            <p>Hand-drawn line work scanned in. Loose contour lines around clean shapes. The line wobbles slightly; it is not perfect. Stroke weight varies from 1px to 2px.</p>
+          </div>
+          <div class="illo-rule">
+            <b>Palette — paper, ink, one ember</b>
+            <p>The mascot lives in the same three-color world as the rest of the brand: paper cream background, deep ink line, one ember band or spot. No gradients. No drop shadows beyond a thin contour.</p>
+          </div>
+          <div class="illo-rule">
+            <b>Posture — earned, never posing</b>
+            <p>The marmot is in the act of doing something — walking with the bag, looking up from a stamp, dipping a pen. Never centered, never smiling at the camera.</p>
+          </div>
+        </div>
+      </div>
+
+      <p style="color: var(--ink-faint); margin-top: var(--s-5); font-size: var(--t-sm); font-family: var(--font-mono);">
+        The sketch above is a wireframe placeholder — Phase 3 will bring the real character. The shape, hat, bag, and palette are the binding decisions.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================
+     CHAPTER X · LOGO SYSTEM
+     ========================================================= -->
+<section class="chapter">
+  <div class="container chapter__grid">
+    <aside class="chapter__rail">
+      <span class="roman">X</span>
+      <b>System</b>
+      <span>Wordmark + monogram + lockups.</span>
+    </aside>
+    <div class="chapter__content">
+      <h2>Three primary lockups, used by context.</h2>
+      <p class="lede">The brand presents itself differently in a navbar, a favicon strip, a slide title, and a t-shirt. The system gives each a defined form.</p>
+
+      <div class="lockups">
+
+        <div class="lockup">
+          <span class="lockup__label">01 · WORDMARK</span>
+          <div class="lockup__stage">
+            <span class="wordmark" style="font-size: 2.4rem;">
+              <span class="g">g</span><span class="rest">Mountie</span>
+            </span>
+          </div>
+          <p class="lockup__note">Default form. Use anywhere with at least 14px of available height.</p>
+        </div>
+
+        <div class="lockup">
+          <span class="lockup__label">02 · MONOGRAM</span>
+          <div class="lockup__stage">
+            <svg viewBox="0 0 64 64" width="80" height="80" xmlns="http://www.w3.org/2000/svg">
+              <rect width="64" height="64" rx="10" fill="var(--paper-base)" stroke="var(--paper-edge)"/>
+              <path d="M6 42 H58" stroke="var(--ember)" stroke-width="4.6" stroke-linecap="round"/>
+              <path d="M16 42 C16 35, 23 30, 32 30 C41 30, 48 35, 48 42" fill="var(--ink-deep)"/>
+              <path d="M32 16 L37 22 L32 28 L27 22 Z" fill="var(--ink-deep)"/>
+              <circle cx="32" cy="28" r="1.6" fill="var(--paper-base)"/>
+            </svg>
+          </div>
+          <p class="lockup__note">Favicons, app icons, social avatars. Anywhere the wordmark won't fit.</p>
+        </div>
+
+        <div class="lockup">
+          <span class="lockup__label">03 · HORIZONTAL LOCKUP</span>
+          <div class="lockup__stage">
+            <div style="display:flex;align-items:center;gap:14px;">
+              <svg viewBox="0 0 64 64" width="44" height="44" xmlns="http://www.w3.org/2000/svg">
+                <rect width="64" height="64" rx="10" fill="var(--paper-base)" stroke="var(--paper-edge)"/>
+                <path d="M6 42 H58" stroke="var(--ember)" stroke-width="4.6" stroke-linecap="round"/>
+                <path d="M16 42 C16 35, 23 30, 32 30 C41 30, 48 35, 48 42" fill="var(--ink-deep)"/>
+                <path d="M32 16 L37 22 L32 28 L27 22 Z" fill="var(--ink-deep)"/>
+                <circle cx="32" cy="28" r="1.6" fill="var(--paper-base)"/>
+              </svg>
+              <span class="wordmark" style="font-size: 1.9rem;">
+                <span class="g">g</span><span class="rest">Mountie</span>
+              </span>
+            </div>
+          </div>
+          <p class="lockup__note">Conference talks, slide titles, marketing headers. Maintain 0.3× M-height gap between mark and wordmark.</p>
+        </div>
+
+        <div class="lockup">
+          <span class="lockup__label">04 · STACK · FUTURE (PHASE 3)</span>
+          <div class="lockup__stage">
+            <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
+              <svg viewBox="0 0 64 64" width="40" height="40" style="opacity:0.5;" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="32" cy="32" r="22" fill="none" stroke="var(--ink-deep)" stroke-width="1.6" stroke-dasharray="3 3"/>
+                <text x="32" y="38" text-anchor="middle" font-family="var(--font-mono)" font-size="11" fill="var(--ink-faint)" letter-spacing="0.1em">SOON</text>
+              </svg>
+              <span class="wordmark" style="font-size: 1.6rem;">
+                <span class="g">g</span><span class="rest">Mountie</span>
+              </span>
+            </div>
+          </div>
+          <p class="lockup__note">Future mascot + wordmark stack. Reserved for community-facing surfaces (README hero, swag) once the marmot ships.</p>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================
+     END NOTE
+     ========================================================= -->
+<section class="chapter">
+  <div class="container chapter__grid">
+    <aside class="chapter__rail">
+      <span class="roman">XI</span>
+      <b>End</b>
+      <span>What this is. What it isn't.</span>
+    </aside>
+    <div class="chapter__content">
+      <h2>Phase 1 of three.</h2>
+      <p class="lede">
+        This book covers <b>brand strategy + design language</b>. Phase 2 finalizes the full identity system: token files, icon set, illustration library, asset exports. Phase 3 brings the mascot artwork to life. Both build on these tokens; neither overrules them without a written reason.
+      </p>
+      <p style="color: var(--ink-mid); margin-top: var(--s-5); font-family: var(--font-mono); font-size: var(--t-sm);">
+        — 2026 · the courier is in the post.
+      </p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="container site-footer__inner">
+    <div>
+      <span class="wordmark" style="font-size: var(--t-lg);">
+        <span class="g">g</span><span class="rest">Mountie</span>
+      </span>
+      <p style="margin: var(--s-2) 0 0; color: var(--ink-mid); font-size: var(--t-sm); max-width: 36ch;">
+        Brand book · Phase 1 design language.
+      </p>
+    </div>
+    <div style="display:flex; gap: var(--s-6); flex-wrap: wrap;">
+      <div>
+        <div class="site-footer__meta" style="margin-bottom: var(--s-2);">PROJECT</div>
+        <a href="index.html" style="display:block; padding: 2px 0;">Landing</a>
+        <a href="https://github.com/gmountie" style="display:block; padding: 2px 0;">GitHub</a>
+      </div>
+    </div>
+  </div>
+  <div class="container" style="margin-top: var(--s-6);">
+    <div class="site-footer__meta">© 2026 gMountie · Cartographer's Field Journal · Phase 1 of III</div>
+  </div>
+</footer>
+
+<script>
+  const root = document.documentElement;
+  const btn = document.getElementById('themeToggle');
+  const stored = localStorage.getItem('gmountie-theme');
+  if (stored) root.setAttribute('data-theme', stored);
+
+  function syncBtn() {
+    const t = root.getAttribute('data-theme');
+    const isDark = t === 'dark' || (!t && matchMedia('(prefers-color-scheme: dark)').matches);
+    btn.textContent = isDark ? 'lantern · paper' : 'paper · lantern';
+  }
+  syncBtn();
+  btn.addEventListener('click', () => {
+    const current = root.getAttribute('data-theme');
+    const isDark = current === 'dark' || (!current && matchMedia('(prefers-color-scheme: dark)').matches);
+    const next = isDark ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    localStorage.setItem('gmountie-theme', next);
+    syncBtn();
+  });
+</script>
+
+</body>
+</html>

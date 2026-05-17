@@ -1,0 +1,838 @@
+<!doctype html>
+<html lang="en" data-theme="">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<title>gMountie — a network filesystem for anywhere</title>
+<meta name="description" content="gMountie mounts a remote directory on your laptop over gRPC — no VPN, no S3, no rsync gymnastics. Open source, written in Go, built on FUSE." />
+<link rel="stylesheet" href="tokens.css" />
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23F4ECD8'/><path d='M3 21h26' stroke='%23C5722A' stroke-width='2.4' stroke-linecap='round'/><path d='M8 21c0-3.5 3.6-6 8-6s8 2.5 8 6' fill='%231E1812'/><path d='M16 8l3 3-3 3-3-3z' fill='%231E1812'/><circle cx='16' cy='14' r='0.9' fill='%23F4ECD8'/></svg>" />
+
+<style>
+/* ============================================================
+   index.html — page-specific styles only
+   ============================================================ */
+
+main { padding-bottom: var(--s-9); }
+
+/* ---------- Hero ---------- */
+.hero {
+  padding-top: var(--s-9);
+  padding-bottom: var(--s-8);
+  position: relative;
+}
+
+.hero__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: var(--s-8);
+  align-items: center;
+}
+@media (max-width: 900px) {
+  .hero__grid { grid-template-columns: 1fr; gap: var(--s-7); }
+}
+
+.hero__plate { position: relative; }
+
+.hero__crest {
+  display: flex; align-items: center; gap: var(--s-3);
+  margin-bottom: var(--s-5);
+}
+.hero__crest .field-coord {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  color: var(--ink-faint);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.hero h1 {
+  font-size: clamp(2.5rem, 6.6vw, var(--t-6xl));
+  font-variation-settings: "opsz" 144, "SOFT" 30, "wght" 380;
+  letter-spacing: -0.035em;
+  line-height: 1.0;
+  margin: var(--s-3) 0 var(--s-5);
+}
+.hero h1 em {
+  font-style: italic;
+  color: var(--ember-deep);
+  font-variation-settings: "opsz" 144, "SOFT" 60, "wght" 360;
+  position: relative;
+}
+.hero h1 em::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: 0.06em;
+  height: 0.06em;
+  background: var(--ember-soft);
+  z-index: -1;
+}
+
+.hero__lede {
+  font-family: var(--font-display);
+  font-size: clamp(1.05rem, 1.6vw, var(--t-lg));
+  line-height: 1.5;
+  color: var(--ink-mid);
+  max-width: 38ch;
+  font-variation-settings: "opsz" 28, "SOFT" 60, "wght" 360;
+  margin: 0 0 var(--s-6);
+}
+
+.hero__cta {
+  display: flex; gap: var(--s-3); flex-wrap: wrap;
+  align-items: center;
+}
+
+.hero__meta-row {
+  margin-top: var(--s-6);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3) var(--s-5);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  color: var(--ink-faint);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.hero__meta-row span { display: inline-flex; align-items: center; gap: var(--s-2); }
+.hero__meta-row span::before {
+  content: ""; width: 6px; height: 6px;
+  background: var(--moss); border-radius: var(--r-pill);
+}
+
+/* ---------- Terminal preview (right column) ---------- */
+.terminal {
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  background: var(--ink-deep);
+  color: #E8DCC0;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-3),
+              0 0 0 1px color-mix(in oklab, var(--ink-deep) 50%, transparent),
+              -14px 14px 0 -2px var(--paper-deep),
+              -14px 14px 0 -1px var(--paper-grain);
+  position: relative;
+  transform: rotate(-0.35deg);
+  transition: transform var(--dur-flow) var(--ease-paper);
+}
+.terminal:hover { transform: rotate(0deg) translateY(-2px); }
+
+[data-theme="dark"] .terminal,
+@media (prefers-color-scheme: dark) { }
+
+.terminal__chrome {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px;
+  background: #100C08;
+  border-bottom: 1px solid #2A2218;
+}
+.terminal__dots {
+  display: flex; gap: 6px;
+}
+.terminal__dots i {
+  width: 11px; height: 11px;
+  border-radius: var(--r-pill);
+  background: #4A3D2A;
+  display: inline-block;
+}
+.terminal__dots i:nth-child(1) { background: #C9722A; }
+.terminal__dots i:nth-child(2) { background: #A39062; }
+.terminal__dots i:nth-child(3) { background: #5E7045; }
+.terminal__title {
+  font-size: var(--t-xs);
+  color: #8B7E68;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.terminal__body {
+  padding: var(--s-5) var(--s-5) var(--s-6);
+  line-height: 1.65;
+}
+.terminal__line { display: block; white-space: pre; }
+.terminal__line + .terminal__line { margin-top: 2px; }
+.t-prompt    { color: #C5722A; }
+.t-cmd       { color: #F2E8D2; }
+.t-flag      { color: #B3C098; }
+.t-arg       { color: #EFB378; }
+.t-comment   { color: #8B7E68; font-style: italic; }
+.t-success   { color: #8FA070; }
+.t-data      { color: #C9BEA5; }
+.t-data b    { color: #F2E8D2; font-weight: 600; }
+.t-bullet    { color: #C5722A; }
+.t-caret {
+  display: inline-block;
+  width: 0.55em;
+  height: 1em;
+  background: #C5722A;
+  vertical-align: -0.12em;
+  margin-left: 4px;
+  animation: blink 1.05s steps(1, end) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ---------- Sections ---------- */
+section.field { padding: var(--s-8) 0; }
+
+.section-head {
+  display: grid;
+  grid-template-columns: minmax(140px, 220px) 1fr;
+  gap: var(--s-6);
+  margin-bottom: var(--s-7);
+  align-items: baseline;
+}
+@media (max-width: 720px) {
+  .section-head { grid-template-columns: 1fr; gap: var(--s-3); }
+}
+.section-head h2 {
+  font-size: clamp(1.8rem, 3.4vw, var(--t-3xl));
+}
+.section-head .section-meta {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  color: var(--ember-deep);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding-top: 0.55em;
+  border-top: 1px solid var(--ember);
+}
+
+/* ---------- "What it is" two-column prose + diagram ---------- */
+.what__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: var(--s-8);
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .what__grid { grid-template-columns: 1fr; }
+}
+.what p {
+  font-size: var(--t-md);
+  line-height: 1.65;
+  max-width: 56ch;
+}
+.what p:first-of-type::first-letter {
+  font-family: var(--font-display);
+  font-size: 3.6em;
+  float: left;
+  line-height: 0.86;
+  padding: 0.06em 0.12em 0 0;
+  color: var(--ember-deep);
+  font-variation-settings: "opsz" 144, "SOFT" 30, "wght" 460;
+}
+
+/* ---------- Architecture diagram (inline SVG) ---------- */
+.diagram-frame {
+  border: 1px solid var(--paper-edge);
+  background: var(--paper-soft);
+  border-radius: var(--r-md);
+  padding: var(--s-5);
+  position: relative;
+  box-shadow: var(--shadow-2);
+}
+.diagram-frame::before {
+  content: "FIG. 1 · TOPOLOGY";
+  position: absolute;
+  top: -10px; left: var(--s-4);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: var(--ember-deep);
+  background: var(--paper-base);
+  padding: 0 6px;
+}
+.diagram-frame svg { width: 100%; height: auto; display: block; }
+.diagram-caption {
+  margin-top: var(--s-3);
+  font-size: var(--t-xs);
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
+/* ---------- Specs grid (numbers, not adjectives) ---------- */
+.specs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1px;
+  background: var(--paper-grain);
+  border: 1px solid var(--paper-grain);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.spec {
+  background: var(--paper-base);
+  padding: var(--s-5);
+  display: flex; flex-direction: column; gap: var(--s-2);
+}
+.spec__metric {
+  font-family: var(--font-display);
+  font-variation-settings: "opsz" 144, "SOFT" 20, "wght" 380;
+  font-size: var(--t-3xl);
+  line-height: 1;
+  color: var(--ink-deep);
+  letter-spacing: -0.04em;
+}
+.spec__metric b { color: var(--ember-deep); font-weight: inherit; }
+.spec__metric sup { font-size: 0.5em; font-family: var(--font-mono); color: var(--ink-faint); margin-left: 2px; }
+.spec__label {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.spec__note {
+  font-size: var(--t-sm);
+  color: var(--ink-mid);
+  line-height: 1.5;
+}
+
+/* ---------- Install block ---------- */
+.install {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-6);
+  align-items: stretch;
+}
+@media (max-width: 800px) { .install { grid-template-columns: 1fr; } }
+
+.install-card {
+  background: var(--paper-soft);
+  border: 1px solid var(--paper-edge);
+  border-radius: var(--r-md);
+  padding: var(--s-5);
+  display: flex; flex-direction: column;
+  gap: var(--s-3);
+}
+.install-card h3 {
+  font-size: var(--t-lg);
+  display: flex; align-items: baseline; gap: var(--s-2);
+}
+.install-card h3 .ord {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  color: var(--ember-deep);
+  letter-spacing: 0.18em;
+}
+.install-card p { color: var(--ink-mid); font-size: var(--t-sm); margin: 0; }
+
+.code-block {
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  background: var(--ink-deep);
+  color: #E8DCC0;
+  padding: var(--s-4);
+  border-radius: var(--r-sm);
+  overflow-x: auto;
+  position: relative;
+  line-height: 1.65;
+  border: 1px solid color-mix(in oklab, var(--ink-deep) 80%, var(--paper-grain) 20%);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+}
+.code-block .c-prompt { color: #C5722A; user-select: none; }
+.code-block .c-cmd { color: #F2E8D2; }
+.code-block .c-flag { color: #B3C098; }
+.code-block .c-arg { color: #EFB378; }
+.code-block .c-comment { color: #8B7E68; font-style: italic; }
+
+/* ---------- Editorial note (field journal entry) ---------- */
+.note-card {
+  background: var(--paper-soft);
+  border: 1px solid var(--paper-edge);
+  border-radius: var(--r-md);
+  padding: var(--s-6);
+  position: relative;
+  max-width: 72ch;
+  margin: 0 auto;
+  box-shadow: var(--shadow-2);
+}
+.note-card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: var(--s-5);
+  width: 80px; height: 18px;
+  background: var(--ember-soft);
+  opacity: 0.7;
+  transform: translateY(-50%) rotate(-2deg);
+  border-radius: 1px;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.04);
+}
+.note-card__heading {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ember-deep);
+  margin-bottom: var(--s-3);
+}
+.note-card blockquote {
+  margin: 0;
+  font-family: var(--font-display);
+  font-variation-settings: "opsz" 28, "SOFT" 60, "wght" 380;
+  font-size: var(--t-lg);
+  line-height: 1.55;
+  color: var(--ink-deep);
+}
+.note-card cite {
+  display: block;
+  margin-top: var(--s-4);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+  font-style: normal;
+}
+
+/* ---------- Feature ledger ---------- */
+.ledger {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--s-5);
+}
+.ledger__item {
+  padding: var(--s-5) 0;
+  border-top: 1px solid var(--paper-grain);
+  position: relative;
+}
+.ledger__item h4 {
+  display: flex; align-items: baseline; gap: var(--s-3);
+  margin-bottom: var(--s-2);
+}
+.ledger__item h4 .num {
+  font-family: var(--font-mono);
+  color: var(--ember-deep);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  letter-spacing: 0.1em;
+}
+.ledger__item p {
+  color: var(--ink-mid);
+  font-size: var(--t-sm);
+  line-height: 1.6;
+  margin: 0;
+}
+
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container site-header__inner">
+    <a href="index.html" aria-label="gMountie home" style="text-decoration:none;">
+      <span class="wordmark" style="font-size: var(--t-lg);">
+        <span class="g">g</span><span class="rest">Mountie</span>
+      </span>
+    </a>
+    <nav class="site-header__nav">
+      <a href="style-guide.html">Brand</a>
+      <a href="#docs">Docs</a>
+      <a href="https://github.com/gmountie">GitHub</a>
+      <button class="theme-toggle" id="themeToggle" aria-label="toggle theme">paper · lantern</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<!-- =========================================================
+     HERO
+     ========================================================= -->
+<section class="hero">
+  <div class="container hero__grid">
+
+    <div class="hero__plate">
+
+      <div class="hero__crest reveal" data-delay="1">
+        <span class="eyebrow">Open source · v0.1 · Apache-2.0</span>
+        <span class="field-coord">47.07° N · 15.43° E</span>
+      </div>
+
+      <h1 class="reveal" data-delay="2">
+        Your files,<br/>
+        <em>wherever you mount.</em>
+      </h1>
+
+      <p class="hero__lede reveal" data-delay="3">
+        gMountie mounts a remote directory on your laptop over gRPC. No VPN,
+        no rsync rituals, no waiting for an upload to finish before you can grep.
+        The <span style="color:var(--ember-deep);font-style:normal;">g</span> is for gRPC.
+      </p>
+
+      <div class="hero__cta reveal" data-delay="4">
+        <a class="btn btn--primary" href="#install">
+          Get started
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 8h10M9 4l4 4-4 4"/>
+          </svg>
+        </a>
+        <a class="btn btn--ghost" href="https://github.com/gmountie">View on GitHub</a>
+      </div>
+
+      <div class="hero__meta-row reveal" data-delay="5">
+        <span>Linux</span>
+        <span>FUSE</span>
+        <span>gRPC + Snappy</span>
+        <span>Apache-2.0</span>
+      </div>
+
+    </div>
+
+    <!-- Terminal preview -->
+    <div class="reveal" data-delay="4" aria-label="terminal preview">
+      <div class="terminal">
+        <div class="terminal__chrome">
+          <span class="terminal__dots"><i></i><i></i><i></i></span>
+          <span class="terminal__title">john@summit · ~/projects</span>
+        </div>
+        <div class="terminal__body">
+<span class="terminal__line"><span class="t-prompt">→</span> <span class="t-cmd">gmountie mount</span> <span class="t-arg">photos</span> <span class="t-flag">--server</span> <span class="t-arg">fs.example.com:8443</span> <span class="t-arg">~/photos</span></span>
+<span class="terminal__line"><span class="t-comment">  · dialing fs.example.com:8443 (mTLS) … ok 41ms</span></span>
+<span class="terminal__line"><span class="t-comment">  · negotiating snappy, basic auth … ok</span></span>
+<span class="terminal__line"><span class="t-comment">  · attaching FUSE at ~/photos … ok</span></span>
+<span class="terminal__line"></span>
+<span class="terminal__line"><span class="t-bullet">▲</span> <span class="t-data">mounted <b>photos</b> at <b>~/photos</b></span></span>
+<span class="terminal__line"><span class="t-bullet"> </span> <span class="t-data">readdir 12ms · stat 4ms · cold read 31MB/s</span></span>
+<span class="terminal__line"></span>
+<span class="terminal__line"><span class="t-prompt">→</span> <span class="t-cmd">ls</span> <span class="t-arg">~/photos/2025-iceland</span></span>
+<span class="terminal__line"><span class="t-data">IMG_4421.NEF  IMG_4422.NEF  IMG_4423.NEF  IMG_4424.NEF</span></span>
+<span class="terminal__line"><span class="t-data">IMG_4425.NEF  IMG_4426.NEF  IMG_4427.NEF  …</span></span>
+<span class="terminal__line"></span>
+<span class="terminal__line"><span class="t-prompt">→</span><span class="t-caret"></span></span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<hr class="field-rule"/>
+
+<!-- =========================================================
+     WHAT IT IS  ·  prose + diagram
+     ========================================================= -->
+<section class="field what" id="docs">
+  <div class="container">
+
+    <div class="section-head reveal" data-delay="1">
+      <div class="section-meta">§ I · The Idea</div>
+      <h2>A network filesystem that doesn't ask much of you.</h2>
+    </div>
+
+    <div class="what__grid">
+      <div class="reveal" data-delay="2">
+        <p>
+          gMountie is a small server you run beside your data, and a small client
+          you run on your laptop. The client mounts a named volume from the server
+          as a regular directory. Syscalls go over gRPC; bytes go back the same way.
+          There is no setup ritual. There is no S3-compatibility layer to learn.
+          There is no daemon you forget about and have to debug six months later.
+        </p>
+        <p>
+          The metaphor we keep in mind: a small, tireless courier who shuttles your
+          files to wherever you happen to be. The courier does not ask why you are
+          on a train in another country. It picks up the page you ask for and brings
+          it back. Then it waits for the next one.
+        </p>
+        <p>
+          Today gMountie is a developer-grade tool you self-host. In time it will
+          be a cloud service, for the days you would rather not run a server. Both
+          will speak the same protocol.
+        </p>
+      </div>
+
+      <div class="reveal" data-delay="3">
+        <div class="diagram-frame">
+          <!-- Architecture diagram (hand-drawn feel via stroke variations) -->
+          <svg viewBox="0 0 460 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="gMountie topology diagram">
+            <defs>
+              <pattern id="grid-fill" width="14" height="14" patternUnits="userSpaceOnUse">
+                <path d="M0 0H14M0 0V14" stroke="var(--paper-edge)" stroke-width="0.4"/>
+              </pattern>
+              <marker id="arrow-ember" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+                <path d="M0,0 L9,5 L0,10 L2,5 z" fill="var(--ember)"/>
+              </marker>
+              <marker id="arrow-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+                <path d="M0,0 L9,5 L0,10 L2,5 z" fill="var(--ink-deep)"/>
+              </marker>
+            </defs>
+
+            <!-- contour background -->
+            <g stroke="var(--paper-grain)" fill="none" stroke-width="0.7" opacity="0.5">
+              <path d="M0,170 Q120,140 230,170 T460,170"/>
+              <path d="M0,200 Q120,180 230,200 T460,200"/>
+              <path d="M0,140 Q120,110 230,140 T460,140"/>
+            </g>
+
+            <!-- Client (left) -->
+            <g>
+              <rect x="20" y="105" width="150" height="120" rx="6"
+                    fill="var(--paper-base)" stroke="var(--ink-deep)" stroke-width="1.4"/>
+              <text x="34" y="130" font-family="var(--font-mono)" font-size="10" letter-spacing="0.16em" fill="var(--ember-deep)">CLIENT</text>
+              <text x="34" y="158" font-family="var(--font-display)" font-size="18" font-weight="500" fill="var(--ink-deep)">your laptop</text>
+              <line x1="34" y1="170" x2="156" y2="170" stroke="var(--paper-edge)" stroke-width="1"/>
+              <text x="34" y="190" font-family="var(--font-mono)" font-size="11" fill="var(--ink-mid)">/mnt/photos</text>
+              <text x="34" y="205" font-family="var(--font-mono)" font-size="11" fill="var(--ink-faint)">FUSE → gRPC</text>
+            </g>
+
+            <!-- Server (right) -->
+            <g>
+              <rect x="290" y="105" width="150" height="120" rx="6"
+                    fill="var(--paper-base)" stroke="var(--ink-deep)" stroke-width="1.4"/>
+              <text x="304" y="130" font-family="var(--font-mono)" font-size="10" letter-spacing="0.16em" fill="var(--ember-deep)">SERVER</text>
+              <text x="304" y="158" font-family="var(--font-display)" font-size="18" font-weight="500" fill="var(--ink-deep)">your storage</text>
+              <line x1="304" y1="170" x2="426" y2="170" stroke="var(--paper-edge)" stroke-width="1"/>
+              <text x="304" y="190" font-family="var(--font-mono)" font-size="11" fill="var(--ink-mid)">/srv/photos</text>
+              <text x="304" y="205" font-family="var(--font-mono)" font-size="11" fill="var(--ink-faint)">gRPC ↔ local fs</text>
+            </g>
+
+            <!-- Internet line -->
+            <g class="draw-on" stroke="var(--ember)" stroke-width="2.2" fill="none" stroke-linecap="round">
+              <path d="M174,165 C 210,140 250,140 286,165" marker-end="url(#arrow-ember)"/>
+            </g>
+            <g class="draw-on" stroke="var(--ember)" stroke-width="2.2" fill="none" stroke-linecap="round" style="animation-delay: 1.0s;">
+              <path d="M286,180 C 250,205 210,205 174,180" marker-end="url(#arrow-ember)"/>
+            </g>
+            <text x="230" y="120" text-anchor="middle" font-family="var(--font-mono)" font-size="10" fill="var(--ember-deep)" letter-spacing="0.2em">OPEN INTERNET</text>
+            <text x="230" y="240" text-anchor="middle" font-family="var(--font-mono)" font-size="10" fill="var(--ink-faint)" letter-spacing="0.1em">gRPC · Snappy · mTLS</text>
+
+            <!-- Bottom annotation -->
+            <line x1="40" y1="278" x2="420" y2="278" stroke="var(--paper-grain)" stroke-width="0.6"/>
+            <text x="40"  y="298" font-family="var(--font-mono)" font-size="10" fill="var(--ink-faint)" letter-spacing="0.06em">no VPN · no S3 · no relay</text>
+            <text x="420" y="298" text-anchor="end" font-family="var(--font-mono)" font-size="10" fill="var(--ink-faint)" letter-spacing="0.06em">FIG. 1</text>
+          </svg>
+          <div class="diagram-caption">Client mounts a volume; server serves it. That is the whole architecture.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================
+     SPECS — numbers, not adjectives
+     ========================================================= -->
+<section class="field" style="padding-top:var(--s-7);">
+  <div class="container">
+
+    <div class="section-head reveal">
+      <div class="section-meta">§ II · Measurements</div>
+      <h2>What it actually does.</h2>
+    </div>
+
+    <div class="specs reveal" data-delay="2">
+      <div class="spec">
+        <div class="spec__metric"><b>12</b><sup>ms</sup></div>
+        <div class="spec__label">cold readdir</div>
+        <div class="spec__note">Across a 60ms RTT link, mounted volume with ~10k entries.</div>
+      </div>
+      <div class="spec">
+        <div class="spec__metric"><b>31</b><sup>MB/s</sup></div>
+        <div class="spec__label">cold sequential read</div>
+        <div class="spec__note">Single-stream, gRPC + Snappy over a 200 Mbit residential link.</div>
+      </div>
+      <div class="spec">
+        <div class="spec__metric"><b>1</b><sup>bin</sup></div>
+        <div class="spec__label">to install</div>
+        <div class="spec__note">A single static Go binary serves on the host, mounts on the client.</div>
+      </div>
+      <div class="spec">
+        <div class="spec__metric"><b>0</b></div>
+        <div class="spec__label">cloud accounts needed</div>
+        <div class="spec__note">Self-hosted today, hosted offering later. Always the same protocol.</div>
+      </div>
+    </div>
+
+    <p style="margin-top: var(--s-5); color: var(--ink-faint); font-size: var(--t-sm); font-family: var(--font-mono);">
+      Numbers are indicative, drawn from our internal perf harness in <code>test/e2e/perf</code>. Your network, your hardware, your mileage.
+    </p>
+
+  </div>
+</section>
+
+<hr class="field-rule"/>
+
+<!-- =========================================================
+     LEDGER — three honest features
+     ========================================================= -->
+<section class="field">
+  <div class="container">
+
+    <div class="section-head reveal">
+      <div class="section-meta">§ III · The Ledger</div>
+      <h2>What it gives you. What it doesn't.</h2>
+    </div>
+
+    <div class="ledger reveal" data-delay="2">
+      <div class="ledger__item">
+        <h4><span class="num">01</span> A real filesystem.</h4>
+        <p>
+          Mounted as a FUSE filesystem on Linux. Open, read, write, stat, fsync — your
+          existing tools work. No new client library to learn.
+        </p>
+      </div>
+      <div class="ledger__item">
+        <h4><span class="num">02</span> Honest about the wire.</h4>
+        <p>
+          gRPC with Snappy compression. Configurable auth (none, basic, mTLS).
+          You can <code>tcpdump</code> a session and see what is going on.
+        </p>
+      </div>
+      <div class="ledger__item">
+        <h4><span class="num">03</span> Volume-scoped, multi-tenant.</h4>
+        <p>
+          Each request carries a volume name. One server, many volumes, isolated
+          per-request — no session state to fight with.
+        </p>
+      </div>
+      <div class="ledger__item">
+        <h4><span class="num">04</span> macOS &amp; Windows: not yet.</h4>
+        <p>
+          Linux is the only supported target today. macOS via macFUSE is on the
+          roadmap. We will not ship "soon" — we will ship "now" when it works.
+        </p>
+      </div>
+      <div class="ledger__item">
+        <h4><span class="num">05</span> Strong consistency: not yet.</h4>
+        <p>
+          gMountie reads through a small client cache. Distributed locking and
+          strong cross-client consistency are a phase-two concern.
+        </p>
+      </div>
+      <div class="ledger__item">
+        <h4><span class="num">06</span> A cloud version: in time.</h4>
+        <p>
+          Open source is the product today. A hosted offering is in design for
+          teams who would rather not run a server. Same wire format.
+        </p>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- =========================================================
+     INSTALL
+     ========================================================= -->
+<section class="field" id="install">
+  <div class="container">
+
+    <div class="section-head reveal">
+      <div class="section-meta">§ IV · Getting started</div>
+      <h2>Three commands. One filesystem.</h2>
+    </div>
+
+    <div class="install reveal" data-delay="2">
+
+      <div class="install-card">
+        <h3><span class="ord">01 / SERVER</span> &nbsp;Serve a directory</h3>
+        <p>Run this beside the data you want to share.</p>
+        <pre class="code-block"><span class="c-prompt">$</span> <span class="c-cmd">go install</span> <span class="c-arg">gmountie/cmd/gmountie@latest</span>
+<span class="c-prompt">$</span> <span class="c-cmd">gmountie serve</span> <span class="c-flag">--volume</span> <span class="c-arg">photos=/srv/photos</span> \
+            <span class="c-flag">--listen</span> <span class="c-arg">0.0.0.0:8443</span> <span class="c-flag">--auth</span> <span class="c-arg">basic</span>
+<span class="c-comment"># serving 1 volume on :8443</span></pre>
+      </div>
+
+      <div class="install-card">
+        <h3><span class="ord">02 / CLIENT</span> &nbsp;Mount it anywhere</h3>
+        <p>Same binary, different verb. Mount at any local path.</p>
+        <pre class="code-block"><span class="c-prompt">$</span> <span class="c-cmd">gmountie mount</span> <span class="c-arg">photos</span> <span class="c-arg">~/photos</span> \
+            <span class="c-flag">--server</span> <span class="c-arg">fs.example.com:8443</span>
+<span class="c-comment"># mounted volume 'photos' at ~/photos</span>
+
+<span class="c-prompt">$</span> <span class="c-cmd">ls</span> <span class="c-arg">~/photos</span>
+<span class="c-comment"># … your files, on your laptop.</span></pre>
+      </div>
+
+    </div>
+
+  </div>
+</section>
+
+<hr class="field-rule"/>
+
+<!-- =========================================================
+     EDITORIAL NOTE  ·  Why we built it
+     ========================================================= -->
+<section class="field">
+  <div class="container">
+
+    <div class="section-head reveal">
+      <div class="section-meta">§ V · The note</div>
+      <h2>Why we built this.</h2>
+    </div>
+
+    <div class="note-card reveal" data-delay="2">
+      <div class="note-card__heading">From the field journal · entry 47</div>
+      <blockquote>
+        I keep a server at home with a few terabytes of photographs, recordings,
+        archives — the things you accumulate when you do not throw anything away.
+        When I am out of the house I want them the way I want my own hands: there
+        when I reach for them. The existing options were a VPN tunnel pretending
+        to be a LAN, or syncing a copy and then forgetting which copy was the
+        original. Both felt wrong. So I wrote the small thing that did the small
+        job, and gMountie is what it became.
+      </blockquote>
+      <cite>— John, in a café in Athens, 2024</cite>
+    </div>
+
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="container site-footer__inner">
+    <div>
+      <span class="wordmark" style="font-size: var(--t-lg);">
+        <span class="g">g</span><span class="rest">Mountie</span>
+      </span>
+      <p style="margin: var(--s-2) 0 0; color: var(--ink-mid); font-size: var(--t-sm); max-width: 36ch;">
+        A network filesystem for anywhere. The <span style="color:var(--ember-deep);font-weight:500;">g</span> is for gRPC.
+      </p>
+    </div>
+    <div style="display:flex; gap: var(--s-6); flex-wrap: wrap;">
+      <div>
+        <div class="site-footer__meta" style="margin-bottom: var(--s-2);">PROJECT</div>
+        <a href="https://github.com/gmountie" style="display:block; padding: 2px 0;">GitHub</a>
+        <a href="style-guide.html" style="display:block; padding: 2px 0;">Brand</a>
+        <a href="#docs" style="display:block; padding: 2px 0;">Docs</a>
+      </div>
+      <div>
+        <div class="site-footer__meta" style="margin-bottom: var(--s-2);">LICENSE</div>
+        <span style="color: var(--ink-mid);">Apache-2.0</span>
+      </div>
+    </div>
+  </div>
+  <div class="container" style="margin-top: var(--s-6);">
+    <div class="site-footer__meta">© 2026 gMountie · 47.07° N 15.43° E · the courier is in the post</div>
+  </div>
+</footer>
+
+<script>
+  // Theme toggle — persist in localStorage
+  const root = document.documentElement;
+  const btn = document.getElementById('themeToggle');
+  const stored = localStorage.getItem('gmountie-theme');
+  if (stored) root.setAttribute('data-theme', stored);
+
+  function syncBtn() {
+    const t = root.getAttribute('data-theme');
+    const isDark = t === 'dark' || (!t && matchMedia('(prefers-color-scheme: dark)').matches);
+    btn.textContent = isDark ? 'lantern · paper' : 'paper · lantern';
+  }
+  syncBtn();
+  btn.addEventListener('click', () => {
+    const current = root.getAttribute('data-theme');
+    const isDark = current === 'dark' || (!current && matchMedia('(prefers-color-scheme: dark)').matches);
+    const next = isDark ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    localStorage.setItem('gmountie-theme', next);
+    syncBtn();
+  });
+</script>
+
+</body>
+</html>
