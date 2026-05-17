@@ -108,21 +108,31 @@ func (s *CacheEnabledFSSuite) TestUnlinkInvalidatesNegativeAttr() {
 }
 
 func (s *CacheEnabledFSSuite) TestRenameOldPathDisappears() {
-	// The cache invariant under test: after Rename(a, b) the cached
-	// attr for `a` must be invalidated, so Stat(a) surfaces ENOENT
-	// instead of returning the pre-rename hit. We intentionally do
-	// not assert on reading `b` here -- the base client FS path has
-	// a separate, pre-existing limitation with rename destinations
-	// that reproduces with the cache disabled, so asserting on it
-	// would conflate cache correctness with an unrelated bug.
+	// Two invariants under test:
+	//   1. After Rename(a, b), the source name surfaces ENOENT — the
+	//      cached attr for `a` must be invalidated, not served stale.
+	//   2. The destination name is fully usable: Stat returns the moved
+	//      file's attrs and Read returns its bytes. Regression guard for
+	//      the relPath-stale-after-MvChild bug fixed alongside this test:
+	//      the node adapter used to cache relPath in the gMountieNode
+	//      struct, but go-fuse's bridge moves the inode under the new
+	//      name via MvChild without notifying our struct, so subsequent
+	//      ops on the moved inode hit the OLD path on the server.
 	a := filepath.Join(s.mountPath(), fmt.Sprintf("rn-a-%d.bin", time.Now().UnixNano()))
 	b := filepath.Join(s.mountPath(), fmt.Sprintf("rn-b-%d.bin", time.Now().UnixNano()))
-	s.Require().NoError(os.WriteFile(a, []byte("body"), 0o644))
+	body := []byte("rename-body")
+	s.Require().NoError(os.WriteFile(a, body, 0o644))
 	_, err := os.Stat(a) // populate cache for a
 	s.Require().NoError(err)
 	s.Require().NoError(os.Rename(a, b))
 	_, err = os.Stat(a)
 	s.Assert().True(os.IsNotExist(err), "after Rename, source name must surface ENOENT (cached attr invalidated)")
+	fi, err := os.Stat(b)
+	s.Require().NoError(err, "after Rename, destination name must be statable")
+	s.Assert().Equal(int64(len(body)), fi.Size(), "destination Stat must report the moved file's size")
+	got, err := os.ReadFile(b)
+	s.Require().NoError(err, "after Rename, destination name must be readable")
+	s.Assert().Equal(body, got, "destination Read must return the moved file's bytes")
 }
 
 func (s *CacheEnabledFSSuite) TestRecreateAfterUnlinkInvalidatesNegative() {
@@ -201,5 +211,22 @@ func TestCacheDisabledFSSanity(t *testing.T) {
 	got, err := os.ReadFile(path)
 	if err != nil || string(got) != "x" {
 		t.Fatalf("sanity: %v / %q", err, got)
+	}
+
+	// Rename round-trip: the underlying node-adapter relPath bug
+	// reproduces with the cache disabled, so this guard belongs in the
+	// no-cache control suite too. Without it a future regression could
+	// be masked by anyone who only runs the cache-enabled suite.
+	a := filepath.Join(mp, fmt.Sprintf("rn-a-%d.bin", time.Now().UnixNano()))
+	b := filepath.Join(mp, fmt.Sprintf("rn-b-%d.bin", time.Now().UnixNano()))
+	body := []byte("rename-body-nocache")
+	if err := os.WriteFile(a, body, 0o644); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+	if err := os.Rename(a, b); err != nil {
+		t.Fatalf("rename a->b: %v", err)
+	}
+	if got, err := os.ReadFile(b); err != nil || string(got) != string(body) {
+		t.Fatalf("read b after rename: %v / %q", err, got)
 	}
 }

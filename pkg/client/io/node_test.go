@@ -74,6 +74,9 @@ func (s *NodeAdapterTestSuite) TestRootLookup_NotFound() {
 
 // childNode does a Lookup against the root so we get a real child
 // InodeEmbedder for path-computation tests (gMountieNode is unexported).
+// node.path() walks the live inode tree (via Inode.Path), which the FUSE
+// bridge normally seeds by calling AddChild after each Lookup; tests run
+// without the bridge, so we attach the child here ourselves.
 func (s *NodeAdapterTestSuite) childNode(name string, ino uint64) fs.InodeEmbedder {
 	s.backend.EXPECT().Lookup(mock.Anything, "", name).Return(
 		&clientio.Attr{Ino: ino, Mode: fuse.S_IFDIR | 0o755}, fuse.OK,
@@ -82,6 +85,7 @@ func (s *NodeAdapterTestSuite) childNode(name string, ino uint64) fs.InodeEmbedd
 	inode, errno := rootAs[fs.NodeLookuper](s).Lookup(context.Background(), name, out)
 	s.Require().Equal(syscall.Errno(0), errno)
 	s.Require().NotNil(inode)
+	s.root.EmbeddedInode().AddChild(name, inode, true)
 	return inode.Operations()
 }
 
