@@ -17,15 +17,15 @@ type AppContext struct {
 	MultiVolumeMounter  mount.VFSVolumeMounter
 }
 
-// NewAppContext creates a new AppContext. fuseCfg must be non-nil — the
-// client config layer always populates it (defaults applied when the
-// user's YAML omits the block).
-func NewAppContext(client grpc.Client, multiMountPath string, fuseCfg *config.FUSEConfig) *AppContext {
+// NewAppContext creates a new AppContext. fuseCfg and cacheCfg must be
+// non-nil — the client config layer always populates them (defaults
+// applied when the user's YAML omits the block).
+func NewAppContext(client grpc.Client, multiMountPath string, fuseCfg *config.FUSEConfig, cacheCfg *config.CacheConfig) *AppContext {
 	log.Log.Info("creating app context")
 	return &AppContext{
 		client:              client,
-		SingleVolumeMounter: mount.NewSingleVolumeMounter(client, fuseCfg),
-		MultiVolumeMounter:  mount.NewMultiVolumeMounter(client, multiMountPath, fuseCfg),
+		SingleVolumeMounter: mount.NewSingleVolumeMounter(client, fuseCfg, *cacheCfg),
+		MultiVolumeMounter:  mount.NewMultiVolumeMounter(client, multiMountPath, fuseCfg, *cacheCfg),
 		VolumeService:       service.NewVolumeService(client),
 	}
 }

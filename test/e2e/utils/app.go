@@ -144,6 +144,13 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 		MaxWriteBytes:  clientConfig.DefaultFUSEMaxWriteBytes,
 		MaxBackground:  clientConfig.DefaultFUSEMaxBackground,
 		WritebackCache: clientConfig.DefaultFUSEWritebackCache,
+	}, &clientConfig.CacheConfig{
+		Enabled:        clientConfig.DefaultCacheEnabled,
+		MaxSizeBytes:   clientConfig.DefaultCacheMaxSizeBytes,
+		ChunkSizeBytes: clientConfig.DefaultCacheChunkSizeBytes,
+		AttrTTL:        clientConfig.DefaultCacheAttrTTL,
+		DirTTL:         clientConfig.DefaultCacheDirTTL,
+		NegativeTTL:    clientConfig.DefaultCacheNegativeTTL,
 	})
 	return appCtx, nil
 }

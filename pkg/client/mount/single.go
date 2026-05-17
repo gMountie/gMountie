@@ -3,6 +3,7 @@ package mount
 import (
 	"time"
 
+	"gmountie/pkg/client/cache"
 	"gmountie/pkg/client/config"
 	"gmountie/pkg/client/grpc"
 	"gmountie/pkg/client/io"
@@ -25,16 +26,19 @@ type SingleVolumeMounter interface {
 type SingleVolumeMounterImpl struct {
 	client grpc.Client
 	fuse   *config.FUSEConfig
+	cache  config.CacheConfig
 	mounts *xsync.MapOf[string, *fuse.Server]
 }
 
 // NewSingleVolumeMounter creates a new SingleVolumeMounterImpl. fuseCfg
 // must be non-nil; the client config layer guarantees this by treating
-// FUSE as a required block with defaults.
-func NewSingleVolumeMounter(client grpc.Client, fuseCfg *config.FUSEConfig) SingleVolumeMounter {
+// FUSE as a required block with defaults. cacheCfg is consumed by value
+// and only applied when cacheCfg.Enabled is true.
+func NewSingleVolumeMounter(client grpc.Client, fuseCfg *config.FUSEConfig, cacheCfg config.CacheConfig) SingleVolumeMounter {
 	return &SingleVolumeMounterImpl{
 		client: client,
 		fuse:   fuseCfg,
+		cache:  cacheCfg,
 		mounts: xsync.NewMapOf[string, *fuse.Server](),
 	}
 }
@@ -48,7 +52,10 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) error {
 
 	maxWrite := negotiateMaxWriteBytes(m.client, m.fuse)
 
-	backend := io.NewBackendClient(m.client, volume)
+	var backend io.FileSystemBackend = io.NewBackendClient(m.client, volume)
+	if m.cache.Enabled {
+		backend = cache.NewCachedBackend(backend, cache.ConfigFromClient(m.cache))
+	}
 	root := io.NewMountieRoot(backend)
 	mountOpts := createMountOptions(m.client.GetEndpoint(), volume, m.fuse, maxWrite)
 	entryTimeout := time.Second

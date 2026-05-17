@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"gmountie/pkg/client/cache"
 	"gmountie/pkg/client/config"
 	"gmountie/pkg/client/grpc"
 	"gmountie/pkg/client/io"
@@ -48,19 +49,24 @@ type VFSVolumeMounterImpl struct {
 	client grpc.Client
 	// fuse is the FUSE-kernel-side tuning config.
 	fuse *config.FUSEConfig
+	// cache is the client-side cache config; when cache.Enabled is true,
+	// each per-volume backend is wrapped in cache.NewCachedBackend.
+	cache config.CacheConfig
 	// initialized is a flag to check if the mounter is initialized
 	initialized bool
 }
 
 // NewMultiVolumeMounter creates a new VFSVolumeMounterImpl. fuseCfg must
 // be non-nil; the client config layer guarantees this by treating FUSE
-// as a required block with defaults.
-func NewMultiVolumeMounter(client grpc.Client, path string, fuseCfg *config.FUSEConfig) VFSVolumeMounter {
+// as a required block with defaults. cacheCfg is consumed by value and
+// only applied (per-volume) when cacheCfg.Enabled is true.
+func NewMultiVolumeMounter(client grpc.Client, path string, fuseCfg *config.FUSEConfig, cacheCfg config.CacheConfig) VFSVolumeMounter {
 	m := &VFSVolumeMounterImpl{
 		path:        path,
 		volumes:     xsync.NewMapOf[string, *gofs.Inode](),
 		client:      client,
 		fuse:        fuseCfg,
+		cache:       cacheCfg,
 		initialized: false,
 	}
 	return m
@@ -90,7 +96,10 @@ func (m *VFSVolumeMounterImpl) Mount(volumeName string) error {
 	// a persistent child of the in-memory parent. NewPersistentInode
 	// keeps the child alive across kernel forgets so the subtree
 	// survives until we explicitly RmChild it.
-	backend := io.NewBackendClient(m.client, volumeName)
+	var backend io.FileSystemBackend = io.NewBackendClient(m.client, volumeName)
+	if m.cache.Enabled {
+		backend = cache.NewCachedBackend(backend, cache.ConfigFromClient(m.cache))
+	}
 	volRoot := io.NewMountieRoot(backend)
 	ctx := context.Background()
 	parent := &m.root.Inode

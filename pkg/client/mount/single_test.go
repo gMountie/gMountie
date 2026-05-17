@@ -30,7 +30,7 @@ func (s *SingleVolumeMounterTestSuite) SetupTest() {
 		MaxWriteBytes:  config.DefaultFUSEMaxWriteBytes,
 		MaxBackground:  config.DefaultFUSEMaxBackground,
 		WritebackCache: config.DefaultFUSEWritebackCache,
-	})
+	}, defaultTestCacheConfig())
 
 	var err error
 	s.tempDir, err = os.MkdirTemp("", "gmountie-test-*")

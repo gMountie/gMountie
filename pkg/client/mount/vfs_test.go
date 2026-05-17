@@ -38,7 +38,7 @@ func (s *VFSVolumeMounterTestSuite) SetupTest() {
 		MaxWriteBytes:  config.DefaultFUSEMaxWriteBytes,
 		MaxBackground:  config.DefaultFUSEMaxBackground,
 		WritebackCache: config.DefaultFUSEWritebackCache,
-	})
+	}, defaultTestCacheConfig())
 
 	// Setup common mock expectations
 	mockFsClient := &mockProto.MockRpcFsClient{}
