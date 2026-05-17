@@ -8,6 +8,7 @@ import (
 	pathfs2 "gmountie/internal/mocks/github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	mockservice "gmountie/internal/mocks/pkg/server/service"
 	"gmountie/pkg/proto"
+	serverio "gmountie/pkg/server/io"
 	"gmountie/pkg/server/metrics"
 	"gmountie/pkg/server/service"
 
@@ -102,6 +103,7 @@ type StreamingReadSuite struct {
 	sessionMgr service.SessionManager
 	sessionID  string
 	frameSize  int
+	bus        serverio.EventBus
 }
 
 func (s *StreamingReadSuite) SetupTest() {
@@ -111,11 +113,13 @@ func (s *StreamingReadSuite) SetupTest() {
 	sid, err := s.sessionMgr.Create()
 	s.Require().NoError(err)
 	s.sessionID = sid
-	s.server = NewRpcFileServer(s.fsService, s.sessionMgr, metrics.NewMetrics(), s.frameSize)
+	s.bus = serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
+	s.server = NewRpcFileServer(s.fsService, s.sessionMgr, metrics.NewMetrics(), s.frameSize, s.bus)
 }
 
 func (s *StreamingReadSuite) TearDownTest() {
 	_ = s.sessionMgr.Stop(context.Background())
+	s.bus.Close()
 }
 
 // registerFile pre-loads the session with a backing chunkedReader and returns

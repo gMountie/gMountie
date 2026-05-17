@@ -9,6 +9,7 @@ import (
 	pathfs2 "gmountie/internal/mocks/github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	mockservice "gmountie/internal/mocks/pkg/server/service"
 	"gmountie/pkg/proto"
+	serverio "gmountie/pkg/server/io"
 	"gmountie/pkg/server/metrics"
 	"gmountie/pkg/server/service"
 
@@ -103,6 +104,7 @@ type StreamingWriteSuite struct {
 	fsService  *mockservice.MockVolumeService
 	sessionMgr service.SessionManager
 	sessionID  string
+	bus        serverio.EventBus
 }
 
 func (s *StreamingWriteSuite) SetupTest() {
@@ -111,11 +113,13 @@ func (s *StreamingWriteSuite) SetupTest() {
 	sid, err := s.sessionMgr.Create()
 	s.Require().NoError(err)
 	s.sessionID = sid
-	s.server = NewRpcFileServer(s.fsService, s.sessionMgr, metrics.NewMetrics(), 1<<20)
+	s.bus = serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
+	s.server = NewRpcFileServer(s.fsService, s.sessionMgr, metrics.NewMetrics(), 1<<20, s.bus)
 }
 
 func (s *StreamingWriteSuite) TearDownTest() {
 	_ = s.sessionMgr.Stop(context.Background())
+	s.bus.Close()
 }
 
 // registerWriter pre-loads the session with a recording write sink and
@@ -124,6 +128,7 @@ func (s *StreamingWriteSuite) registerWriter() (uint64, *recordingWriter) {
 	mockFs := new(pathfs2.MockFileSystem)
 	mockFile := new(nodefs2.MockFile)
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil).Maybe()
+	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
 	writer := &recordingWriter{status: fuse.OK}
 	mockFile.EXPECT().
 		Write(mock.Anything, mock.AnythingOfType("int64")).

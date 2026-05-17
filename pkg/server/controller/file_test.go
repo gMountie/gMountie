@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	mockservice "gmountie/internal/mocks/pkg/server/service"
+	serverio "gmountie/pkg/server/io"
 	"gmountie/pkg/server/metrics"
 	"gmountie/pkg/server/service"
 	"testing"
@@ -25,6 +26,7 @@ type RpcFileServerTestSuite struct {
 	fsService  *mockservice.MockVolumeService
 	sessionMgr service.SessionManager
 	sessionID  string
+	bus        serverio.EventBus
 }
 
 func (s *RpcFileServerTestSuite) SetupTest() {
@@ -33,11 +35,13 @@ func (s *RpcFileServerTestSuite) SetupTest() {
 	sid, err := s.sessionMgr.Create()
 	s.Require().NoError(err)
 	s.sessionID = sid
-	s.server = NewRpcFileServer(s.fsService, s.sessionMgr, metrics.NewMetrics(), 1<<20)
+	s.bus = serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
+	s.server = NewRpcFileServer(s.fsService, s.sessionMgr, metrics.NewMetrics(), 1<<20, s.bus)
 }
 
 func (s *RpcFileServerTestSuite) TearDownTest() {
 	_ = s.sessionMgr.Stop(context.Background())
+	s.bus.Close()
 }
 
 func (s *RpcFileServerTestSuite) TestOpen() {
@@ -63,6 +67,7 @@ func (s *RpcFileServerTestSuite) TestCreate() {
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().Create("/test/path", uint32(0), uint32(0), mock.Anything).Return(nodefs.NewDefaultFile(), fuse.OK)
+	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
 
 	// Test.
 	request := &proto.CreateRequest{Volume: "testVolume", Path: "/test/path", Flags: 0, Mode: 0, Caller: CreateCaller(0, 0, 0), SessionId: s.sessionID, RequestId: "test-req-create"}

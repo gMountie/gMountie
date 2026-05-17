@@ -5,6 +5,7 @@ import (
 	stdio "io"
 
 	"gmountie/pkg/proto"
+	serverio "gmountie/pkg/server/io"
 	"gmountie/pkg/server/metrics"
 	"gmountie/pkg/server/service"
 
@@ -20,6 +21,7 @@ type RpcFileServerImpl struct {
 	sessions  service.SessionManager
 	metrics   *metrics.Metrics
 	streamer  *service.ReadStreamer
+	bus       serverio.EventBus
 	proto.UnimplementedRpcFileServer
 }
 
@@ -29,7 +31,7 @@ var _ proto.RpcFileServer = (*RpcFileServerImpl)(nil)
 // unregistered *Metrics is substituted so callers (e.g. unit tests)
 // don't need to plumb one through. frameSize bounds each ReadFrame
 // emitted by the streaming Read handler.
-func NewRpcFileServer(fsService service.VolumeService, sessions service.SessionManager, m *metrics.Metrics, frameSize int) *RpcFileServerImpl {
+func NewRpcFileServer(fsService service.VolumeService, sessions service.SessionManager, m *metrics.Metrics, frameSize int, bus serverio.EventBus) *RpcFileServerImpl {
 	if m == nil {
 		m = metrics.NewMetrics()
 	}
@@ -38,11 +40,27 @@ func NewRpcFileServer(fsService service.VolumeService, sessions service.SessionM
 		sessions:  sessions,
 		metrics:   m,
 		streamer:  service.NewReadStreamer(frameSize),
+		bus:       bus,
 	}
 }
 
 func (r *RpcFileServerImpl) Register(server *grpc.Server) {
 	proto.RegisterRpcFileServer(server, r)
+}
+
+// versionAfterPath re-Stats path on the named volume to seed an event with the
+// fresh version token. Returns 0 if the volume or Stat fails — the event still
+// fires; the client falls back to GetAttrIfChanged.
+func (r *RpcFileServerImpl) versionAfterPath(ctx context.Context, volume, path string, caller *proto.Caller) uint64 {
+	fs, err := r.fsService.GetVolumeFileSystem(volume)
+	if err != nil {
+		return 0
+	}
+	attr, st := fs.GetAttr(path, createContext(ctx, caller))
+	if !st.Ok() || attr == nil {
+		return 0
+	}
+	return serverio.VersionFromAttr(attr)
 }
 
 func (r *RpcFileServerImpl) Open(ctx context.Context, request *proto.OpenRequest) (*proto.OpenReply, error) {
@@ -80,6 +98,8 @@ func (r *RpcFileServerImpl) Create(ctx context.Context, request *proto.CreateReq
 		if s == fuse.OK {
 			reply.Fd = sess.RegisterFile(request.Path, file)
 			r.metrics.OpenFilesInc(request.Volume, request.SessionId)
+			ver := r.versionAfterPath(ctx, request.Volume, request.Path, request.Caller)
+			r.bus.Emit(request.Volume, request.Path, ver, serverio.KindMutated)
 		}
 		return reply, nil
 	})
@@ -155,12 +175,14 @@ func (r *RpcFileServerImpl) Write(stream proto.RpcFile_WriteServer) error {
 	// drain the remainder of the stream before replying so gRPC sees a clean
 	// half-close.
 	applied := false
+	var entryPath string
 	raw, err := sess.DoOnce(first.RequestId, func() (any, error) {
 		applied = true
 		entry, ok := sess.GetFile(first.Fd)
 		if !ok {
 			return nil, status.Errorf(codes.NotFound, "fd %d not found in session", first.Fd)
 		}
+		entryPath = entry.Path
 		return r.applyWriteStream(stream, first, entry.File)
 	})
 	if err != nil {
@@ -177,6 +199,12 @@ func (r *RpcFileServerImpl) Write(stream proto.RpcFile_WriteServer) error {
 	if !ok {
 		return status.Error(codes.Internal, "Write: idempotency cache: unexpected reply type")
 	}
+
+	if applied && fuse.Status(reply.Status) == fuse.OK && entryPath != "" {
+		ver := r.versionAfterPath(stream.Context(), first.Volume, entryPath, nil)
+		r.bus.Emit(first.Volume, entryPath, ver, serverio.KindMutated)
+	}
+
 	return stream.SendAndClose(reply)
 }
 
@@ -343,7 +371,7 @@ func (r *RpcFileServerImpl) SetLkw(_ context.Context, request *proto.SetLkwReque
 	return &proto.SetLkwReply{Status: int32(entry.File.SetLkw(request.Owner, lock, request.Flags))}, nil
 }
 
-func (r *RpcFileServerImpl) Allocate(_ context.Context, request *proto.AllocateRequest) (*proto.AllocateReply, error) {
+func (r *RpcFileServerImpl) Allocate(ctx context.Context, request *proto.AllocateRequest) (*proto.AllocateReply, error) {
 	sess, err := resolveSession(r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
@@ -352,5 +380,14 @@ func (r *RpcFileServerImpl) Allocate(_ context.Context, request *proto.AllocateR
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 	}
-	return &proto.AllocateReply{Status: int32(entry.File.Allocate(request.Off, request.Size, request.Mode))}, nil
+	s := entry.File.Allocate(request.Off, request.Size, request.Mode)
+	if fuse.Status(s) == fuse.OK {
+		path := entry.Path
+		if path == "" {
+			path = request.Path
+		}
+		ver := r.versionAfterPath(ctx, request.Volume, path, request.Caller)
+		r.bus.Emit(request.Volume, path, ver, serverio.KindMutated)
+	}
+	return &proto.AllocateReply{Status: int32(s)}, nil
 }

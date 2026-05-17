@@ -3,8 +3,10 @@ package controller
 import (
 	"context"
 	mockservice "gmountie/internal/mocks/pkg/server/service"
+	serverio "gmountie/pkg/server/io"
 	"gmountie/pkg/server/service"
 	"testing"
+	"time"
 
 	"gmountie/pkg/proto"
 
@@ -23,6 +25,7 @@ type RpcServerTestSuite struct {
 	fsService  *mockservice.MockVolumeService
 	sessionMgr service.SessionManager
 	sessionID  string
+	bus        serverio.EventBus
 }
 
 func (s *RpcServerTestSuite) SetupTest() {
@@ -31,11 +34,13 @@ func (s *RpcServerTestSuite) SetupTest() {
 	sid, err := s.sessionMgr.Create()
 	s.Require().NoError(err)
 	s.sessionID = sid
-	s.server = NewGrpcServer(s.fsService, s.sessionMgr, 0)
+	s.bus = serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
+	s.server = NewGrpcServer(s.fsService, s.sessionMgr, 0, s.bus)
 }
 
 func (s *RpcServerTestSuite) TearDownTest() {
 	_ = s.sessionMgr.Stop(context.Background())
+	s.bus.Close()
 }
 
 func (s *RpcServerTestSuite) TestGetAttr() {
@@ -61,6 +66,7 @@ func (s *RpcServerTestSuite) TestMkdir() {
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().Mkdir("/test/path", uint32(0), mock.Anything).Return(fuse.OK)
+	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
 
 	// Test.
 	request := &proto.MkdirRequest{
@@ -105,6 +111,7 @@ func (s *RpcServerTestSuite) TestRename() {
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().Rename("/old/path", "/new/path", mock.Anything).Return(fuse.OK)
+	mockFs.EXPECT().GetAttr("/new/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
 
 	// Test.
 	request := &proto.RenameRequest{
@@ -216,6 +223,7 @@ func (s *RpcServerTestSuite) TestTruncate() {
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().Truncate("/test/path", uint64(0), mock.Anything).Return(fuse.OK)
+	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
 
 	// Test.
 	request := &proto.TruncateRequest{
@@ -238,6 +246,7 @@ func (s *RpcServerTestSuite) TestChmod() {
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().Chmod("/test/path", uint32(0), mock.Anything).Return(fuse.OK)
+	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
 
 	// Test.
 	request := &proto.ChmodRequest{
@@ -260,6 +269,7 @@ func (s *RpcServerTestSuite) TestChown() {
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().Chown("/test/path", uint32(0), uint32(0), mock.Anything).Return(fuse.OK)
+	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
 
 	// Test.
 	request := &proto.ChownRequest{
@@ -314,6 +324,7 @@ func (s *RpcServerTestSuite) TestMkdirDuplicateRequestIDReturnsCachedReply() {
 	mockFs := new(pathfs2.MockFileSystem)
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	mockFs.EXPECT().Mkdir("/p", uint32(0), mock.Anything).Return(fuse.OK).Once()
+	mockFs.EXPECT().GetAttr("/p", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
 
 	request := &proto.MkdirRequest{
 		Volume: "testVolume", Path: "/p", Mode: 0,
@@ -339,6 +350,38 @@ func (s *RpcServerTestSuite) TestMkdirUnknownSessionReturnsNotFound() {
 	_, err := s.server.Mkdir(context.Background(), request)
 	s.Require().Error(err)
 	s.Assert().Equal(codes.NotFound, status.Code(err))
+}
+
+func (s *RpcServerTestSuite) TestUnlinkEmitsDeletedEvent() {
+	// Setup: subscribe before the call.
+	events, cancel := s.bus.Subscribe("testVolume")
+	defer cancel()
+
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	mockFs.EXPECT().Unlink("/test/path", mock.Anything).Return(fuse.OK)
+
+	// Act.
+	request := &proto.UnlinkRequest{
+		Volume:    "testVolume",
+		Path:      "/test/path",
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID,
+		RequestId: "test-req-unlink-emit",
+	}
+	reply, err := s.server.Unlink(context.Background(), request)
+	s.Require().NoError(err)
+	s.Require().Equal(int32(fuse.OK), reply.Status)
+
+	// Assert: event must arrive promptly.
+	select {
+	case ev := <-events:
+		s.Assert().Equal(serverio.KindDeleted, ev.Kind)
+		s.Assert().Equal("/test/path", ev.Path)
+		s.Assert().Equal(uint64(0), ev.NewVersion)
+	case <-time.After(time.Second):
+		s.FailNow("Unlink did not emit a KindDeleted event within 1s")
+	}
 }
 
 func TestRpcServerTestSuite(t *testing.T) {

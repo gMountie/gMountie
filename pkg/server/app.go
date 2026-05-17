@@ -28,6 +28,7 @@ type AppContext struct {
 	AuthService    service.AuthService
 	SessionManager service.SessionManager
 	Metrics        *metrics.Metrics
+	Bus            io.EventBus
 }
 
 // NewServerAppContext creates a new ServerContext.
@@ -44,20 +45,25 @@ func NewServerAppContext(cfg *config.Config) *AppContext {
 	volumeService := service.NewVolumeService(cfg, service.WithMiddleware(getVolumeMiddleware()...))
 	authService := service.NewAuthServiceFromConfig(cfg.Auth)
 	sessionMgr := service.NewSessionManager(service.SessionManagerOptions{Metrics: m})
+	bus := io.NewLocalEventBus(io.EventBusOptions{
+		BufferSize:        256,              // Sub-spec D Task 10 wires config.
+		HeartbeatInterval: 10 * time.Second, // Sub-spec D Task 10 wires config.
+	})
 	return &AppContext{
 		Config:         cfg,
 		VolumeService:  volumeService,
 		AuthService:    authService,
 		SessionManager: sessionMgr,
 		Metrics:        m,
+		Bus:            bus,
 	}
 }
 
 // GetGrpcServices returns the gRPC services.
 func (c *AppContext) GetGrpcServices() []grpc.ServiceRegistrar {
 	return []grpc.ServiceRegistrar{
-		controller.NewGrpcServer(c.VolumeService, c.SessionManager, c.Config.Server.CompoundMaxParallel),
-		controller.NewRpcFileServer(c.VolumeService, c.SessionManager, c.Metrics, c.Config.Server.FrameSizeBytes),
+		controller.NewGrpcServer(c.VolumeService, c.SessionManager, c.Config.Server.CompoundMaxParallel, c.Bus),
+		controller.NewRpcFileServer(c.VolumeService, c.SessionManager, c.Metrics, c.Config.Server.FrameSizeBytes, c.Bus),
 		controller.NewVolumeService(c.VolumeService),
 		controller.NewSessionController(c.SessionManager),
 		controller.NewVersionController(c.Config.Server.FrameSizeBytes),
@@ -133,6 +139,7 @@ func Start(ctx context.Context, cfg *config.Config) error {
 			if err := appCtx.SessionManager.Stop(context.Background()); err != nil {
 				log.Log.Warn("session manager stop returned error", zap.Error(err))
 			}
+			appCtx.Bus.Close()
 			opsCtx, opsCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if err := opsServer.Stop(opsCtx); err != nil {
 				log.Log.Warn("ops server stop returned error", zap.Error(err))
@@ -148,6 +155,7 @@ func Start(ctx context.Context, cfg *config.Config) error {
 				log.Log.Warn("session manager stop returned error", zap.Error(err))
 			}
 			sessCancel()
+			appCtx.Bus.Close()
 			opsCtx, opsCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if err := opsServer.Stop(opsCtx); err != nil {
 				log.Log.Warn("ops server stop returned error", zap.Error(err))
