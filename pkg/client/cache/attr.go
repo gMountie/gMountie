@@ -42,6 +42,13 @@ func newAttrCache(acct *accountant, attrTTL, negativeTTL time.Duration, now func
 // on a negative hit (ENOENT cached), or (nil, false, false) on a miss
 // or expired entry. Two booleans (hit, positive) make the call sites
 // readable without a third type.
+//
+// The returned *io.Attr is the cached pointer (not a copy). Callers
+// MUST NOT mutate it — a future handler that wrote through this
+// pointer would silently corrupt the cache entry for every subsequent
+// reader. dirCache copies the slice it returns for the same reason;
+// attr is uncopied because real call sites today only read fields,
+// but the no-mutate rule is contract, not enforcement.
 func (c *attrCache) get(path string) (*io.Attr, bool, bool) {
 	e := c.st.get(path)
 	if e == nil {

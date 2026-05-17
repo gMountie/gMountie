@@ -149,7 +149,14 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 		}
 		copied := copy(dest[total:total+want], filled[insideOff:insideOff+want])
 		total += copied
-		// Short chunk = last chunk of file; otherwise continue to next chunk.
+		// Short chunk = last chunk of file; otherwise continue to next
+		// chunk. This assumes inner.Read only short-reads at EOF.
+		// Today's BackendClient.Read (streaming Recv loop) holds that
+		// invariant. If a future inner ever short-reads for a different
+		// reason (partial-payload retry assembly, etc.), this branch
+		// would truncate the cached chunk and the user-visible Read —
+		// in that case, loop the inner fetch until full-or-EOF before
+		// caching.
 		if int64(n) < chunkSize {
 			return total, fuse.OK
 		}

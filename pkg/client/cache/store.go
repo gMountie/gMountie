@@ -7,9 +7,13 @@ import "sync"
 // thin; callers (attrCache, dirCache, dataCache) wrap it with their
 // own TTL / type semantics.
 //
-// Concurrency: store.mu protects the map. Operations that mutate the
-// accountant DO NOT hold store.mu while doing so (different locks
-// in different orders would deadlock).
+// Concurrency: store.mu protects the map; accountant.mu protects the
+// global LRU + byte budget. When both are held, the canonical order is
+// accountant.mu OUTER, store.mu INNER — set by the eviction callback
+// (accountant.evictLocked invokes store.removeKey while holding
+// accountant.mu). Mutating-store paths (put, remove, removeMatching)
+// therefore release store.mu BEFORE calling into the accountant; the
+// 201a53b fix in store.put's replace path locks that invariant in.
 type store struct {
 	mu      sync.RWMutex
 	entries map[string]*entry
