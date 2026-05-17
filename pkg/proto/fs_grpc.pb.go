@@ -19,19 +19,21 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	RpcFs_GetAttr_FullMethodName  = "/gmountie.RpcFs/GetAttr"
-	RpcFs_StatFs_FullMethodName   = "/gmountie.RpcFs/StatFs"
-	RpcFs_OpenDir_FullMethodName  = "/gmountie.RpcFs/OpenDir"
-	RpcFs_Unlink_FullMethodName   = "/gmountie.RpcFs/Unlink"
-	RpcFs_Access_FullMethodName   = "/gmountie.RpcFs/Access"
-	RpcFs_Truncate_FullMethodName = "/gmountie.RpcFs/Truncate"
-	RpcFs_Chown_FullMethodName    = "/gmountie.RpcFs/Chown"
-	RpcFs_Chmod_FullMethodName    = "/gmountie.RpcFs/Chmod"
-	RpcFs_Mkdir_FullMethodName    = "/gmountie.RpcFs/Mkdir"
-	RpcFs_Rmdir_FullMethodName    = "/gmountie.RpcFs/Rmdir"
-	RpcFs_Rename_FullMethodName   = "/gmountie.RpcFs/Rename"
-	RpcFs_GetXAttr_FullMethodName = "/gmountie.RpcFs/GetXAttr"
-	RpcFs_Compound_FullMethodName = "/gmountie.RpcFs/Compound"
+	RpcFs_GetAttr_FullMethodName          = "/gmountie.RpcFs/GetAttr"
+	RpcFs_StatFs_FullMethodName           = "/gmountie.RpcFs/StatFs"
+	RpcFs_OpenDir_FullMethodName          = "/gmountie.RpcFs/OpenDir"
+	RpcFs_Unlink_FullMethodName           = "/gmountie.RpcFs/Unlink"
+	RpcFs_Access_FullMethodName           = "/gmountie.RpcFs/Access"
+	RpcFs_Truncate_FullMethodName         = "/gmountie.RpcFs/Truncate"
+	RpcFs_Chown_FullMethodName            = "/gmountie.RpcFs/Chown"
+	RpcFs_Chmod_FullMethodName            = "/gmountie.RpcFs/Chmod"
+	RpcFs_Mkdir_FullMethodName            = "/gmountie.RpcFs/Mkdir"
+	RpcFs_Rmdir_FullMethodName            = "/gmountie.RpcFs/Rmdir"
+	RpcFs_Rename_FullMethodName           = "/gmountie.RpcFs/Rename"
+	RpcFs_GetXAttr_FullMethodName         = "/gmountie.RpcFs/GetXAttr"
+	RpcFs_Compound_FullMethodName         = "/gmountie.RpcFs/Compound"
+	RpcFs_GetAttrIfChanged_FullMethodName = "/gmountie.RpcFs/GetAttrIfChanged"
+	RpcFs_Subscribe_FullMethodName        = "/gmountie.RpcFs/Subscribe"
 )
 
 // RpcFsClient is the client API for RpcFs service.
@@ -51,6 +53,8 @@ type RpcFsClient interface {
 	Rename(ctx context.Context, in *RenameRequest, opts ...grpc.CallOption) (*RenameReply, error)
 	GetXAttr(ctx context.Context, in *GetXAttrRequest, opts ...grpc.CallOption) (*GetXAttrReply, error)
 	Compound(ctx context.Context, in *CompoundRequest, opts ...grpc.CallOption) (*CompoundBatch, error)
+	GetAttrIfChanged(ctx context.Context, in *GetAttrIfChangedRequest, opts ...grpc.CallOption) (*GetAttrIfChangedReply, error)
+	Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SubscribeEvent], error)
 }
 
 type rpcFsClient struct {
@@ -191,6 +195,35 @@ func (c *rpcFsClient) Compound(ctx context.Context, in *CompoundRequest, opts ..
 	return out, nil
 }
 
+func (c *rpcFsClient) GetAttrIfChanged(ctx context.Context, in *GetAttrIfChangedRequest, opts ...grpc.CallOption) (*GetAttrIfChangedReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetAttrIfChangedReply)
+	err := c.cc.Invoke(ctx, RpcFs_GetAttrIfChanged_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *rpcFsClient) Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SubscribeEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &RpcFs_ServiceDesc.Streams[0], RpcFs_Subscribe_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[SubscribeRequest, SubscribeEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RpcFs_SubscribeClient = grpc.ServerStreamingClient[SubscribeEvent]
+
 // RpcFsServer is the server API for RpcFs service.
 // All implementations must embed UnimplementedRpcFsServer
 // for forward compatibility.
@@ -208,6 +241,8 @@ type RpcFsServer interface {
 	Rename(context.Context, *RenameRequest) (*RenameReply, error)
 	GetXAttr(context.Context, *GetXAttrRequest) (*GetXAttrReply, error)
 	Compound(context.Context, *CompoundRequest) (*CompoundBatch, error)
+	GetAttrIfChanged(context.Context, *GetAttrIfChangedRequest) (*GetAttrIfChangedReply, error)
+	Subscribe(*SubscribeRequest, grpc.ServerStreamingServer[SubscribeEvent]) error
 	mustEmbedUnimplementedRpcFsServer()
 }
 
@@ -256,6 +291,12 @@ func (UnimplementedRpcFsServer) GetXAttr(context.Context, *GetXAttrRequest) (*Ge
 }
 func (UnimplementedRpcFsServer) Compound(context.Context, *CompoundRequest) (*CompoundBatch, error) {
 	return nil, status.Error(codes.Unimplemented, "method Compound not implemented")
+}
+func (UnimplementedRpcFsServer) GetAttrIfChanged(context.Context, *GetAttrIfChangedRequest) (*GetAttrIfChangedReply, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetAttrIfChanged not implemented")
+}
+func (UnimplementedRpcFsServer) Subscribe(*SubscribeRequest, grpc.ServerStreamingServer[SubscribeEvent]) error {
+	return status.Error(codes.Unimplemented, "method Subscribe not implemented")
 }
 func (UnimplementedRpcFsServer) mustEmbedUnimplementedRpcFsServer() {}
 func (UnimplementedRpcFsServer) testEmbeddedByValue()               {}
@@ -512,6 +553,35 @@ func _RpcFs_Compound_Handler(srv interface{}, ctx context.Context, dec func(inte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RpcFs_GetAttrIfChanged_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetAttrIfChangedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RpcFsServer).GetAttrIfChanged(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RpcFs_GetAttrIfChanged_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RpcFsServer).GetAttrIfChanged(ctx, req.(*GetAttrIfChangedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RpcFs_Subscribe_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(SubscribeRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(RpcFsServer).Subscribe(m, &grpc.GenericServerStream[SubscribeRequest, SubscribeEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RpcFs_SubscribeServer = grpc.ServerStreamingServer[SubscribeEvent]
+
 // RpcFs_ServiceDesc is the grpc.ServiceDesc for RpcFs service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -571,7 +641,17 @@ var RpcFs_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "Compound",
 			Handler:    _RpcFs_Compound_Handler,
 		},
+		{
+			MethodName: "GetAttrIfChanged",
+			Handler:    _RpcFs_GetAttrIfChanged_Handler,
+		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Subscribe",
+			Handler:       _RpcFs_Subscribe_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "api/proto/fs.proto",
 }

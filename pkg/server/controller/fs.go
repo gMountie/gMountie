@@ -250,3 +250,11 @@ func (r *RpcServerImpl) Compound(ctx context.Context, request *proto.CompoundReq
 	replies := r.compound.Dispatch(ctx, request.GetOps())
 	return &proto.CompoundBatch{Replies: replies}, nil
 }
+
+func (r *RpcServerImpl) GetAttrIfChanged(ctx context.Context, request *proto.GetAttrIfChangedRequest) (*proto.GetAttrIfChangedReply, error) {
+	return nil, status.Error(codes.Unimplemented, "GetAttrIfChanged not yet implemented (Sub-spec D Task 5)")
+}
+
+func (r *RpcServerImpl) Subscribe(request *proto.SubscribeRequest, stream proto.RpcFs_SubscribeServer) error {
+	return status.Error(codes.Unimplemented, "Subscribe not yet implemented (Sub-spec D Task 6)")
+}

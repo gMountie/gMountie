@@ -29,6 +29,7 @@ message Attr {
   uint32 rdev = 15;
   uint32 blksize = 16;
   uint32 padding = 17;
+  uint64 version = 18;  // Sub-spec D: VersionFromAttr(mtime, size, ctime). Zero from older clients.
 }
 
 message StatFsRequest {
@@ -58,6 +59,35 @@ message GetAttrRequest {
 message GetAttrReply {
   Attr attributes = 1;
   int32 status = 2;
+}
+
+message GetAttrIfChangedRequest {
+  string volume = 1;
+  string path = 2;
+  uint64 known_version = 3;
+}
+
+message GetAttrIfChangedReply {
+  bool not_modified = 1;
+  Attr attrs = 2;            // unset when not_modified=true
+}
+
+message SubscribeRequest {
+  string volume = 1;
+}
+
+message SubscribeEvent {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    MUTATED = 1;             // Write / Truncate / Chmod / Chown / Allocate / Create / Mkdir
+    DELETED = 2;             // Unlink / Rmdir
+    RENAMED = 3;             // Rename — new_path populated
+    HEARTBEAT = 4;           // periodic, no path
+  }
+  Kind kind = 1;
+  string path = 2;
+  string new_path = 3;       // RENAMED only
+  uint64 new_version = 4;    // 0 for DELETED / HEARTBEAT
 }
 
 message OpenDirRequest {
@@ -236,4 +266,6 @@ service RpcFs {
   rpc Rename (RenameRequest) returns (RenameReply);
   rpc GetXAttr (GetXAttrRequest) returns (GetXAttrReply);
   rpc Compound (CompoundRequest) returns (CompoundBatch);
+  rpc GetAttrIfChanged (GetAttrIfChangedRequest) returns (GetAttrIfChangedReply);
+  rpc Subscribe (SubscribeRequest) returns (stream SubscribeEvent);
 }

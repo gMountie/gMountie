@@ -499,9 +499,9 @@ func (x *ReadFrame) GetStatus() int32 {
 
 // WriteFrame is a single chunk of a client-streaming Write RPC. The FIRST
 // frame carries the full header (volume/fd/session_id/request_id/offset).
-// Subsequent frames carry only `data` — header fields MUST be zero-valued
-// (the server pins the values from frame 1 and rejects any non-zero
-// mismatch as InvalidArgument).
+// Subsequent frames carry only `data` — header fields MUST be either
+// zero-valued or exactly equal to frame 1 (the server pins the values
+// from frame 1 and rejects any other value as InvalidArgument).
 type WriteFrame struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Volume        string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
