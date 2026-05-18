@@ -25,7 +25,12 @@ type AppTestingContext struct {
 	serverCtx *server.AppContext
 	// clientCtx is the client context.
 	clientCtx *client.AppContext
-	// clientOptions is the client options.
+	// userClientOptions holds only the caller-supplied client options
+	// (auth, interceptors, timeouts). Does NOT include the bufconn/TCP
+	// dialer added by setupTransport. NewSiblingClient builds its own
+	// option list from this + a fresh dialer to avoid double-stacking.
+	userClientOptions []grpcClient.ClientOption
+	// clientOptions is the client options (user options + transport dialer).
 	clientOptions []grpcClient.ClientOption
 	// serverOptions is the server options.
 	serverOptions []grpcServer.ServerOption
@@ -64,8 +69,25 @@ func WithBasicAuth(username, password string) TestOptions {
 				},
 			},
 		}
-		// Append the client options
+		// Append the client options to both lists: userClientOptions
+		// (auth only, no transport) is used by NewSiblingClient to
+		// build a second gRPC client without double-stacking the dialer.
+		c.userClientOptions = append(c.userClientOptions, grpcClient.WithBasicAuth(username, password))
 		c.clientOptions = append(c.clientOptions, grpcClient.WithBasicAuth(username, password))
+	}
+}
+
+// WithHeartbeatInterval overrides the server-side Subscribe heartbeat
+// interval. Tests that need to control when stateVerified flips (e.g.
+// restart-revalidate tests where a heartbeat before the first Stat
+// would surface stale cached attrs) should call this with a large
+// duration to prevent the heartbeat from racing the test's first access.
+func WithHeartbeatInterval(d time.Duration) TestOptions {
+	return func(c *AppTestingContext) {
+		if c.cfg.Server == nil {
+			return
+		}
+		c.cfg.Server.SubscribeHeartbeatInterval = d
 	}
 }
 
@@ -142,10 +164,12 @@ func WithExistingVolume(name, srcPath string) TestOptions {
 func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 	appCtx := &AppTestingContext{}
 	appCtx.cfg.Server = &config.ServerConfig{
-		Metrics:             false,
-		FrameSizeBytes:      config.DefaultFrameSizeBytes,
-		CompoundMaxParallel: config.DefaultCompoundMaxParallel,
-		MaxMessageBytes:     config.DefaultMaxMessageBytes,
+		Metrics:                    false,
+		FrameSizeBytes:             config.DefaultFrameSizeBytes,
+		CompoundMaxParallel:        config.DefaultCompoundMaxParallel,
+		MaxMessageBytes:            config.DefaultMaxMessageBytes,
+		SubscribeBufferSize:        config.DefaultServerSubscribeBufferSize,
+		SubscribeHeartbeatInterval: config.DefaultServerSubscribeHeartbeatInterval,
 		Keepalive: config.ServerKeepaliveConfig{
 			Time:                config.DefaultKeepaliveTime,
 			Timeout:             config.DefaultKeepaliveTimeout,
@@ -240,6 +264,53 @@ func (c *AppTestingContext) GetClient() grpcClient.Client {
 // GetVolumes returns the test volumes.
 func (c *AppTestingContext) GetVolumes() []*TestVolume {
 	return c.volumes
+}
+
+// NewSiblingClient creates an independent gRPC client that connects to
+// the same server as this AppTestingContext. This enables two-client
+// tests where both clients share the server's event bus (so Subscribe
+// push events from one client's writes reach the other). The sibling
+// client uses cacheCfg independently of c.cacheCfg; pass a different
+// cache.Path so the two clients don't contend for the same lock file.
+//
+// The caller is responsible for closing the returned *client.AppContext
+// (via clientCtx.Close()) before calling c.Close(). The returned
+// *client.AppContext can mount volumes via SingleVolumeMounter.Mount.
+//
+// Only bufconn transport is supported for siblings today; TCP-transport
+// contexts share a listener address, which can be used directly.
+func (c *AppTestingContext) NewSiblingClient(cacheCfg *clientConfig.CacheConfig) (*client.AppContext, error) {
+	if cacheCfg == nil {
+		cacheCfg = &clientConfig.CacheConfig{Enabled: false}
+	}
+	// Build sibling opts from user-supplied auth options only; do NOT
+	// copy c.clientOptions because setupTransport already appended the
+	// bufconn dialer there. We attach a fresh dialer for the same listener.
+	siblingOpts := make([]grpcClient.ClientOption, 0, len(c.userClientOptions)+1)
+	siblingOpts = append(siblingOpts, c.userClientOptions...)
+	if c.listener != nil {
+		// bufconn: inject a fresh ContextDialer pointing at the same listener.
+		siblingOpts = append(siblingOpts, grpcClient.WithDialOptions([]grpc.DialOption{
+			grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+				return c.listener.Dial()
+			}),
+		}))
+	}
+	// TCP transport: no extra dialer needed; the existing dial target
+	// (passthrough:///host:port) routes correctly to the live listener.
+	siblingClient, err := grpcClient.NewClient(c.client.GetEndpoint(), siblingOpts...)
+	if err != nil {
+		return nil, errors.Wrap(err, "sibling gRPC client")
+	}
+	siblingClient.Connect()
+	if siblingClient.SessionID() == "" {
+		return nil, errors.New("sibling client session handshake failed")
+	}
+	return client.NewAppContext(siblingClient, "", &clientConfig.FUSEConfig{
+		MaxWriteBytes:  clientConfig.DefaultFUSEMaxWriteBytes,
+		MaxBackground:  clientConfig.DefaultFUSEMaxBackground,
+		WritebackCache: clientConfig.DefaultFUSEWritebackCache,
+	}, cacheCfg), nil
 }
 
 // MountVolumeErr mounts the test volume and returns any error. Callers
