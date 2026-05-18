@@ -1,0 +1,74 @@
+/home/john/git/gMountie/docs/perf/phase4d-pre-localhost-2026-05-18.txt:46: parsing iteration count: invalid syntax
+/home/john/git/gMountie/docs/perf/phase4d-pre-localhost-2026-05-18.txt:48: parsing iteration count: invalid syntax
+/home/john/git/gMountie/docs/perf/phase4d-pre-localhost-2026-05-18.txt:52: parsing iteration count: invalid syntax
+/home/john/git/gMountie/docs/perf/phase4d-post-localhost-2026-05-18.txt:47: parsing iteration count: invalid syntax
+/home/john/git/gMountie/docs/perf/phase4d-post-localhost-2026-05-18.txt:49: parsing iteration count: invalid syntax
+goos: linux
+goarch: amd64
+pkg: gmountie/test/e2e/perf
+cpu: Intel Core Processor (Broadwell, IBRS)
+                  │ /home/john/git/gMountie/docs/perf/phase4d-pre-localhost-2026-05-18.txt │ /home/john/git/gMountie/docs/perf/phase4d-post-localhost-2026-05-18.txt │
+                  │                                 sec/op                                 │                    sec/op                     vs base                   │
+OpenStatClose-4                                                               2.752µ ± ∞ ¹                                   2.565µ ± ∞ ¹        ~ (p=0.095 n=5)
+Readdir100-4                                                                  31.04m ± ∞ ¹                                   31.70m ± ∞ ¹        ~ (p=0.151 n=5)
+Lookup-4                                                                      2.767µ ± ∞ ¹                                   2.780µ ± ∞ ¹        ~ (p=0.841 n=5)
+RandomRead4KiB-4                                                              1.013m ± ∞ ¹                                   1.106m ± ∞ ¹        ~ (p=1.000 n=5)
+RandomWrite4KiB-4                                                             684.3µ ± ∞ ¹                                   677.6µ ± ∞ ¹        ~ (p=1.000 n=5)
+SeqRead1MiB-4                                                                 13.93m ± ∞ ¹                                   12.52m ± ∞ ¹        ~ (p=0.095 n=5)
+SeqRead16MiB-4                                                                162.2m ± ∞ ¹                                   168.7m ± ∞ ¹        ~ (p=0.548 n=5)
+SeqRead64MiB-4                                                                576.5m ± ∞ ¹                                   712.7m ± ∞ ¹  +23.64% (p=0.016 n=5)
+SeqWrite1MiB-4                                                                20.48m ± ∞ ¹                                   21.37m ± ∞ ¹        ~ (p=0.400 n=2+3) ²
+SeqWrite16MiB-4                                                               255.6m ± ∞ ¹                                   219.3m ± ∞ ¹  -14.20% (p=0.032 n=5)
+SeqWrite64MiB-4                                                              1094.0m ± ∞ ¹                                   883.1m ± ∞ ¹        ~ (p=0.095 n=5)
+geomean                                                                       6.700m                                         6.612m         -1.33%
+¹ need >= 6 samples for confidence interval at level 0.95
+² need >= 4 samples to detect a difference at alpha level 0.05
+
+                  │ /home/john/git/gMountie/docs/perf/phase4d-pre-localhost-2026-05-18.txt │ /home/john/git/gMountie/docs/perf/phase4d-post-localhost-2026-05-18.txt │
+                  │                                  B/op                                  │                     B/op                       vs base                  │
+OpenStatClose-4                                                                258.0 ± ∞ ¹                                     258.0 ± ∞ ¹       ~ (p=1.000 n=5)
+Readdir100-4                                                                 3.231Mi ± ∞ ¹                                   3.229Mi ± ∞ ¹       ~ (p=1.000 n=5)
+Lookup-4                                                                       274.0 ± ∞ ¹                                     274.0 ± ∞ ¹       ~ (p=1.000 n=5)
+RandomRead4KiB-4                                                             1.065Mi ± ∞ ¹                                   1.067Mi ± ∞ ¹       ~ (p=0.841 n=5)
+RandomWrite4KiB-4                                                            58.95Ki ± ∞ ¹                                   59.47Ki ± ∞ ¹       ~ (p=0.690 n=5)
+SeqRead1MiB-4                                                                15.77Mi ± ∞ ¹                                   15.95Mi ± ∞ ¹       ~ (p=0.690 n=5)
+SeqRead16MiB-4                                                               185.5Mi ± ∞ ¹                                   185.7Mi ± ∞ ¹       ~ (p=1.000 n=5)
+SeqRead64MiB-4                                                               738.2Mi ± ∞ ¹                                   733.8Mi ± ∞ ¹       ~ (p=1.000 n=5)
+SeqWrite1MiB-4                                                               1.433Mi ± ∞ ¹                                   1.435Mi ± ∞ ¹       ~ (p=0.800 n=2+3) ²
+SeqWrite16MiB-4                                                              18.18Mi ± ∞ ¹                                   18.20Mi ± ∞ ¹       ~ (p=0.690 n=5)
+SeqWrite64MiB-4                                                              80.09Mi ± ∞ ¹                                   77.73Mi ± ∞ ¹       ~ (p=0.421 n=5)
+geomean                                                                      1.445Mi                                         1.444Mi        -0.10%
+¹ need >= 6 samples for confidence interval at level 0.95
+² need >= 4 samples to detect a difference at alpha level 0.05
+
+                  │ /home/john/git/gMountie/docs/perf/phase4d-pre-localhost-2026-05-18.txt │ /home/john/git/gMountie/docs/perf/phase4d-post-localhost-2026-05-18.txt │
+                  │                               allocs/op                                │                   allocs/op                    vs base                  │
+OpenStatClose-4                                                                2.000 ± ∞ ¹                                     2.000 ± ∞ ¹       ~ (p=1.000 n=5)   ²
+Readdir100-4                                                                  45.60k ± ∞ ¹                                    45.60k ± ∞ ¹       ~ (p=0.595 n=5)
+Lookup-4                                                                       2.000 ± ∞ ¹                                     2.000 ± ∞ ¹       ~ (p=1.000 n=5)   ²
+RandomRead4KiB-4                                                               281.0 ± ∞ ¹                                     280.0 ± ∞ ¹       ~ (p=1.000 n=5)
+RandomWrite4KiB-4                                                              723.0 ± ∞ ¹                                     728.0 ± ∞ ¹  +0.69% (p=0.008 n=5)
+SeqRead1MiB-4                                                                 5.329k ± ∞ ¹                                    5.303k ± ∞ ¹       ~ (p=0.548 n=5)
+SeqRead16MiB-4                                                                48.45k ± ∞ ¹                                    48.34k ± ∞ ¹       ~ (p=0.794 n=5)
+SeqRead64MiB-4                                                                188.3k ± ∞ ¹                                    187.8k ± ∞ ¹       ~ (p=0.548 n=5)
+SeqWrite1MiB-4                                                                3.428k ± ∞ ¹                                    3.436k ± ∞ ¹       ~ (p=0.200 n=2+3) ³
+SeqWrite16MiB-4                                                               9.691k ± ∞ ¹                                    9.466k ± ∞ ¹       ~ (p=0.151 n=5)
+SeqWrite64MiB-4                                                               28.85k ± ∞ ¹                                    28.44k ± ∞ ¹       ~ (p=0.690 n=5)
+geomean                                                                       1.969k                                          1.962k        -0.38%
+¹ need >= 6 samples for confidence interval at level 0.95
+² all samples are equal
+³ need >= 4 samples to detect a difference at alpha level 0.05
+
+                  │ /home/john/git/gMountie/docs/perf/phase4d-pre-localhost-2026-05-18.txt │ /home/john/git/gMountie/docs/perf/phase4d-post-localhost-2026-05-18.txt │
+                  │                                  B/s                                   │                     B/s                       vs base                   │
+RandomRead4KiB-4                                                             3.862Mi ± ∞ ¹                                  3.529Mi ± ∞ ¹        ~ (p=1.000 n=5)
+RandomWrite4KiB-4                                                            5.713Mi ± ∞ ¹                                  5.760Mi ± ∞ ¹        ~ (p=1.000 n=5)
+SeqRead1MiB-4                                                                71.76Mi ± ∞ ¹                                  79.89Mi ± ∞ ¹        ~ (p=0.095 n=5)
+SeqRead16MiB-4                                                               98.65Mi ± ∞ ¹                                  94.82Mi ± ∞ ¹        ~ (p=0.548 n=5)
+SeqRead64MiB-4                                                              111.03Mi ± ∞ ¹                                  89.80Mi ± ∞ ¹  -19.12% (p=0.016 n=5)
+SeqWrite1MiB-4                                                               48.85Mi ± ∞ ¹                                  46.80Mi ± ∞ ¹        ~ (p=0.400 n=2+3) ²
+SeqWrite16MiB-4                                                              62.60Mi ± ∞ ¹                                  72.96Mi ± ∞ ¹  +16.54% (p=0.032 n=5)
+SeqWrite64MiB-4                                                              58.50Mi ± ∞ ¹                                  72.48Mi ± ∞ ¹        ~ (p=0.095 n=5)
+geomean                                                                      36.43Mi                                        36.88Mi         +1.23%
+¹ need >= 6 samples for confidence interval at level 0.95
+² need >= 4 samples to detect a difference at alpha level 0.05

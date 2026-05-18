@@ -1,0 +1,67 @@
+Warning: Permanently added '192.168.11.11' (ED25519) to the list of known hosts.
+goos: linux
+goarch: amd64
+pkg: gmountie/test/e2e/perf
+cpu: Intel Core Processor (Broadwell, IBRS)
+BenchmarkOpenStatClose-4     	  875745	      2829 ns/op	     258 B/op	       2 allocs/op
+BenchmarkOpenStatClose-4     	  951748	      2615 ns/op	     257 B/op	       2 allocs/op
+BenchmarkOpenStatClose-4     	  942954	      2650 ns/op	     256 B/op	       2 allocs/op
+BenchmarkOpenStatClose-4     	 1087843	      2752 ns/op	     258 B/op	       2 allocs/op
+BenchmarkOpenStatClose-4     	  830235	      2786 ns/op	     258 B/op	       2 allocs/op
+BenchmarkReaddir100-4        	      70	  31311008 ns/op	 3275190 B/op	   45599 allocs/op
+BenchmarkReaddir100-4        	      81	  31468024 ns/op	 3387623 B/op	   45609 allocs/op
+BenchmarkReaddir100-4        	      75	  30556802 ns/op	 3364957 B/op	   45605 allocs/op
+BenchmarkReaddir100-4        	      82	  31043039 ns/op	 3487975 B/op	   45616 allocs/op
+BenchmarkReaddir100-4        	      78	  27917881 ns/op	 3394058 B/op	   45590 allocs/op
+BenchmarkLookup-4            	  901190	      2794 ns/op	     274 B/op	       2 allocs/op
+BenchmarkLookup-4            	  951015	      2611 ns/op	     273 B/op	       2 allocs/op
+BenchmarkLookup-4            	  863386	      2828 ns/op	     273 B/op	       2 allocs/op
+BenchmarkLookup-4            	  911620	      2741 ns/op	     274 B/op	       2 allocs/op
+BenchmarkLookup-4            	  944818	      2767 ns/op	     274 B/op	       2 allocs/op
+BenchmarkRandomRead4KiB-4    	    3169	    769292 ns/op	   5.32 MB/s	 1103393 B/op	     276 allocs/op
+BenchmarkRandomRead4KiB-4    	    2588	    936830 ns/op	   4.37 MB/s	 1079481 B/op	     279 allocs/op
+BenchmarkRandomRead4KiB-4    	    2569	   1304407 ns/op	   3.14 MB/s	 1123364 B/op	     281 allocs/op
+BenchmarkRandomRead4KiB-4    	    2356	   1109801 ns/op	   3.69 MB/s	 1116590 B/op	     283 allocs/op
+BenchmarkRandomRead4KiB-4    	    2103	   1012513 ns/op	   4.05 MB/s	 1140480 B/op	     286 allocs/op
+BenchmarkRandomWrite4KiB-4   	    3228	    680266 ns/op	   6.02 MB/s	   62289 B/op	     723 allocs/op
+BenchmarkRandomWrite4KiB-4   	    3798	    650604 ns/op	   6.30 MB/s	   60332 B/op	     722 allocs/op
+BenchmarkRandomWrite4KiB-4   	    2960	    684315 ns/op	   5.99 MB/s	   60368 B/op	     723 allocs/op
+BenchmarkRandomWrite4KiB-4   	    3350	    690096 ns/op	   5.94 MB/s	   59530 B/op	     723 allocs/op
+BenchmarkRandomWrite4KiB-4   	    2906	    704728 ns/op	   5.81 MB/s	   60897 B/op	     722 allocs/op
+BenchmarkSeqRead1MiB-4       	     152	  13996168 ns/op	  74.92 MB/s	16533992 B/op	    5329 allocs/op
+BenchmarkSeqRead1MiB-4       	     218	   9913983 ns/op	 105.77 MB/s	16674436 B/op	    5350 allocs/op
+BenchmarkSeqRead1MiB-4       	     176	  13934123 ns/op	  75.25 MB/s	16830779 B/op	    5355 allocs/op
+BenchmarkSeqRead1MiB-4       	     159	  14444735 ns/op	  72.59 MB/s	16457874 B/op	    5318 allocs/op
+BenchmarkSeqRead1MiB-4       	     163	  13840354 ns/op	  75.76 MB/s	16431426 B/op	    5261 allocs/op
+BenchmarkSeqRead16MiB-4      	      13	 154421564 ns/op	 108.65 MB/s	197894903 B/op	   49028 allocs/op
+BenchmarkSeqRead16MiB-4      	      14	 148677304 ns/op	 112.84 MB/s	193949180 B/op	   48828 allocs/op
+BenchmarkSeqRead16MiB-4      	      13	 162185395 ns/op	 103.44 MB/s	192554681 B/op	   47236 allocs/op
+BenchmarkSeqRead16MiB-4      	      13	 163781633 ns/op	 102.44 MB/s	196602256 B/op	   48179 allocs/op
+BenchmarkSeqRead16MiB-4      	      14	 174805839 ns/op	  95.98 MB/s	194488550 B/op	   48455 allocs/op
+BenchmarkSeqRead64MiB-4      	       4	 576451684 ns/op	 116.42 MB/s	782656706 B/op	  188266 allocs/op
+BenchmarkSeqRead64MiB-4      	       3	 682859451 ns/op	  98.28 MB/s	765401618 B/op	  188881 allocs/op
+BenchmarkSeqRead64MiB-4      	       4	 607456936 ns/op	 110.48 MB/s	780625106 B/op	  188488 allocs/op
+BenchmarkSeqRead64MiB-4      	       4	 505151092 ns/op	 132.85 MB/s	759270724 B/op	  185188 allocs/op
+BenchmarkSeqRead64MiB-4      	       5	 509712411 ns/op	 131.66 MB/s	774106134 B/op	  186885 allocs/op
+BenchmarkSeqWrite1MiB-4      	--- FAIL: BenchmarkSeqWrite1MiB-4
+    seq_io_bench_test.go:107: close: close /tmp/gmountie-test-289488554/mount/seq_write.bin: input/output error
+BenchmarkSeqWrite1MiB-4      	--- FAIL: BenchmarkSeqWrite1MiB-4
+    seq_io_bench_test.go:107: close: close /tmp/gmountie-test-2668682128/mount/seq_write.bin: input/output error
+BenchmarkSeqWrite1MiB-4      	     100	  20002245 ns/op	  52.42 MB/s	 1474351 B/op	    3429 allocs/op
+BenchmarkSeqWrite1MiB-4      	      99	  20961075 ns/op	  50.02 MB/s	 1530543 B/op	    3426 allocs/op
+BenchmarkSeqWrite1MiB-4      	--- FAIL: BenchmarkSeqWrite1MiB-4
+    seq_io_bench_test.go:107: close: close /tmp/gmountie-test-1936842767/mount/seq_write.bin: input/output error
+BenchmarkSeqWrite16MiB-4     	       9	 251483528 ns/op	  66.71 MB/s	18922070 B/op	    9464 allocs/op
+BenchmarkSeqWrite16MiB-4     	       9	 255587292 ns/op	  65.64 MB/s	19596891 B/op	    9684 allocs/op
+BenchmarkSeqWrite16MiB-4     	       9	 267753402 ns/op	  62.66 MB/s	19174184 B/op	    9691 allocs/op
+BenchmarkSeqWrite16MiB-4     	       9	 237866123 ns/op	  70.53 MB/s	19062488 B/op	    9837 allocs/op
+BenchmarkSeqWrite16MiB-4     	      10	 284359114 ns/op	  59.00 MB/s	19007787 B/op	    9929 allocs/op
+BenchmarkSeqWrite64MiB-4     	       3	1073805125 ns/op	  62.50 MB/s	79812002 B/op	   28046 allocs/op
+BenchmarkSeqWrite64MiB-4     	       2	1132112539 ns/op	  59.28 MB/s	85753832 B/op	   30358 allocs/op
+BenchmarkSeqWrite64MiB-4     	       2	1156783780 ns/op	  58.01 MB/s	83985012 B/op	   28852 allocs/op
+BenchmarkSeqWrite64MiB-4     	       3	1092723633 ns/op	  61.41 MB/s	80430853 B/op	   27760 allocs/op
+BenchmarkSeqWrite64MiB-4     	       2	1094001158 ns/op	  61.34 MB/s	85146664 B/op	   30660 allocs/op
+FAIL
+exit status 1
+FAIL	gmountie/test/e2e/perf	552.144s
+FAIL
