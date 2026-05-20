@@ -62,7 +62,11 @@ jobs:
       - name: govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+          # Exclude ./ui — Wails 3 alpha requires CGO + GTK/WebKit
+          # headers that this lightweight scan job doesn't install,
+          # and the UI is Phase 8 (deferred). Re-add when the desktop
+          # build comes back to life.
+          govulncheck $(go list ./... | grep -v '^gmountie/ui')
 
   test:
     runs-on: ubuntu-latest
