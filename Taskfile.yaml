@@ -69,7 +69,14 @@ tasks:
       # hit across runs — @latest re-resolves on every invocation.
       # Bump with intent when there's a reason; dependabot tracks
       # github-actions but not go-run pins, so this is manual.
-      - go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run {{ .LINT_EXTRA_ARGS }} ./...
+      #
+      # Package list explicitly excludes ./ui and ./pkg/ui. The v2
+      # config's exclusions.paths skips REPORTING from those files but
+      # they're still loaded by go/packages; loading them transitively
+      # imports Wails 3 alpha which needs CGO + GTK/WebKit headers
+      # that the lint job doesn't install. UI is Phase 8 (deferred);
+      # add the ui trees back when the desktop build returns to CI.
+      - go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run {{ .LINT_EXTRA_ARGS }} ./cmd/... ./pkg/client/... ./pkg/server/... ./pkg/common/... ./pkg/utils/... ./pkg/proto/... ./internal/...
 
   test:
     cmds:
