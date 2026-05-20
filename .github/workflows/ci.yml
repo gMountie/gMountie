@@ -27,13 +27,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: awalsh128/cache-apt-pkgs-action@latest
+      - uses: actions/checkout@v6
+      - uses: awalsh128/cache-apt-pkgs-action@v1
         with:
           packages: libwebkit2gtk-4.1-dev gtk+-3.0
           version: lint-1.0
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
           cache-dependency-path: 'go.sum'
@@ -53,9 +53,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
           cache-dependency-path: 'go.sum'
@@ -68,13 +68,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: awalsh128/cache-apt-pkgs-action@latest
+      - uses: actions/checkout@v6
+      - uses: awalsh128/cache-apt-pkgs-action@v1
         with:
           packages: fio libwebkit2gtk-4.1-dev gtk+-3.0
           version: 2.0
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
           cache-dependency-path: 'go.sum'
