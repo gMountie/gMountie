@@ -35,25 +35,48 @@ var mountCmd = &cobra.Command{
 			return fmt.Errorf("volume name is required")
 		}
 
-		// Create config from command line args
+		// Build a viper instance, optionally seeded from a config file,
+		// and let CLI flags layer on top.
+		//
+		// Precedence (highest first):
+		//   1. Explicitly-passed CLI flags (cmd.Flags().Changed(name) == true)
+		//   2. Values read from the file passed via --config / -c
+		//   3. Flag default values (--server 127.0.0.1:9449, --auth-type none)
+		//
+		// (3) only applies when no config file was loaded; once a config
+		// file is in play, the file's values must not be silently shadowed
+		// by flag defaults that the user never explicitly set.
 		v := viper.New()
-
-		// Split the server address into address and port
-		// and set them in the config
-		endpointSlice := strings.Split(serverAddr, ":")
-		if len(endpointSlice) != 2 {
-			return fmt.Errorf("invalid server address: %s", serverAddr)
+		hasConfig := configFile != ""
+		if hasConfig {
+			v.SetConfigFile(configFile)
+			if err := v.ReadInConfig(); err != nil {
+				return fmt.Errorf("failed to read config file %s: %w", configFile, err)
+			}
 		}
-		v.Set("server.address", endpointSlice[0])
-		v.Set("server.port", endpointSlice[1])
-		v.Set("auth.type", authType)
 
-		if authType == "basic" {
-			if username == "" || password == "" {
+		// applyServer is special: -s "host:port" splits into two viper keys.
+		if !hasConfig || cmd.Flags().Changed("server") {
+			endpointSlice := strings.Split(serverAddr, ":")
+			if len(endpointSlice) != 2 {
+				return fmt.Errorf("invalid server address: %s", serverAddr)
+			}
+			v.Set("server.address", endpointSlice[0])
+			v.Set("server.port", endpointSlice[1])
+		}
+		setFromFlag := func(name, viperKey, value string) {
+			if !hasConfig || cmd.Flags().Changed(name) {
+				v.Set(viperKey, value)
+			}
+		}
+		setFromFlag("auth-type", "auth.type", authType)
+		setFromFlag("username", "auth.username", username)
+		setFromFlag("password", "auth.password", password)
+
+		if v.GetString("auth.type") == "basic" {
+			if v.GetString("auth.username") == "" || v.GetString("auth.password") == "" {
 				return fmt.Errorf("username and password are required for basic auth")
 			}
-			v.Set("auth.username", username)
-			v.Set("auth.password", password)
 		}
 
 		var err error
