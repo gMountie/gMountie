@@ -28,10 +28,6 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
-      - uses: awalsh128/cache-apt-pkgs-action@v1
-        with:
-          packages: libwebkit2gtk-4.1-dev gtk+-3.0
-          version: lint-1.0
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
@@ -41,12 +37,24 @@ jobs:
         uses: arduino/setup-task@v2
         with:
           version: 3.x
+      # golangci-lint maintains its own per-package incremental analysis
+      # cache, independent of Go's build cache. Without persisting it
+      # across runs every CI invocation re-analyses every package from
+      # scratch even when nothing changed. Key the cache on the lint
+      # config + go.mod so it invalidates when either changes.
+      - name: Cache golangci-lint analysis
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/golangci-lint
+          key: golangci-lint-${{ runner.os }}-${{ hashFiles('.golang-ci.yaml', 'go.mod') }}
+          restore-keys: |
+            golangci-lint-${{ runner.os }}-
       - name: Lint
-        # task lint go-runs golangci-lint@latest, so the binary gets
-        # built with the project's Go toolchain (go.mod). The
-        # prebuilt binaries shipped via golangci-lint-action lag the
-        # Go release cycle and trip "Go language version used to build
-        # golangci-lint is lower than the targeted Go version".
+        # task lint go-runs a pinned golangci-lint version (see
+        # Taskfile.yaml). The binary is built from source with the
+        # project's Go toolchain, dodging the prebuilt-binary version
+        # drift that tripped the old golangci-lint-action. Setup-go
+        # caches both the module sources and the compiled artifacts.
         run: task lint
 
   govulncheck:

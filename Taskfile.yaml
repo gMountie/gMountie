@@ -65,7 +65,11 @@ tasks:
 
   lint:
     cmds:
-      - go run github.com/golangci/golangci-lint/cmd/golangci-lint@latest run {{ .LINT_EXTRA_ARGS }} ./...
+      # Pinned (not @latest) so the Go module + build caches reliably
+      # hit across runs — @latest re-resolves on every invocation.
+      # Bump with intent when there's a reason; dependabot tracks
+      # github-actions but not go-run pins, so this is manual.
+      - go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8 run {{ .LINT_EXTRA_ARGS }} ./...
 
   test:
     cmds:
