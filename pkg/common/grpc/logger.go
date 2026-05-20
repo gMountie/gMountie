@@ -15,26 +15,28 @@ func InterceptorLogger(l *zap.Logger) logging.Logger {
 		f := make([]zap.Field, 0, len(fields)/2)
 
 		for i := 0; i < len(fields); i += 2 {
-			key := fields[i]
+			// logging.LoggerFunc's contract is alternating string-key/any-value
+			// pairs; non-string keys would be a bug in the caller.
+			key, _ := fields[i].(string)
 			value := fields[i+1]
 
 			switch v := value.(type) {
 			case string:
-				f = append(f, zap.String(key.(string), v))
+				f = append(f, zap.String(key, v))
 			case int:
-				f = append(f, zap.Int(key.(string), v))
+				f = append(f, zap.Int(key, v))
 			case int32:
-				f = append(f, zap.Int32(key.(string), v))
+				f = append(f, zap.Int32(key, v))
 			case int64:
-				f = append(f, zap.Int64(key.(string), v))
+				f = append(f, zap.Int64(key, v))
 			case uint32:
-				f = append(f, zap.Uint32(key.(string), v))
+				f = append(f, zap.Uint32(key, v))
 			case uint64:
-				f = append(f, zap.Uint64(key.(string), v))
+				f = append(f, zap.Uint64(key, v))
 			case bool:
-				f = append(f, zap.Bool(key.(string), v))
+				f = append(f, zap.Bool(key, v))
 			default:
-				f = append(f, zap.Any(key.(string), v))
+				f = append(f, zap.Any(key, v))
 			}
 		}
 

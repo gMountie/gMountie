@@ -40,7 +40,7 @@ func (s *LogContextInterceptorTestSuite) TestInjectsSessionIDAndVolume() {
 	var seen map[string]any
 	handler := func(ctx context.Context, req any) (any, error) {
 		seen = fieldsFromCtx(ctx)
-		return nil, nil
+		return struct{}{}, nil // any non-nil response satisfies the interceptor contract
 	}
 	_, err := interceptor(context.Background(), withSessionAndVolume{}, info, handler)
 	s.Require().NoError(err)
@@ -54,7 +54,7 @@ func (s *LogContextInterceptorTestSuite) TestInjectsOnlyPresentGetters() {
 	var seen map[string]any
 	handler := func(ctx context.Context, req any) (any, error) {
 		seen = fieldsFromCtx(ctx)
-		return nil, nil
+		return struct{}{}, nil // any non-nil response satisfies the interceptor contract
 	}
 	_, err := interceptor(context.Background(), onlyVolume{}, info, handler)
 	s.Require().NoError(err)

@@ -47,7 +47,10 @@ func (p *Persist) runOrphanSweep(minAge time.Duration) error {
 		}
 		raw, err := hex.DecodeString(name)
 		if err != nil {
-			return nil
+			// Filename isn't valid hex — not one of our chunk files.
+			// Skip silently so unrelated files in chunks/ don't abort
+			// the sweep (orphan-cleanup is best-effort).
+			return nil //nolint:nilerr // intentional: skip non-gMountie files
 		}
 		var h [16]byte
 		copy(h[:], raw)

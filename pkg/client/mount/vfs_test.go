@@ -88,7 +88,7 @@ func (s *VFSVolumeMounterTestSuite) TestStart() {
 func (s *VFSVolumeMounterTestSuite) TestMountBeforeStart() {
 	// Test mounting before starting should fail
 	err := s.mounter.Mount("test-volume")
-	s.Assert().Error(err)
+	s.Require().Error(err)
 	s.Assert().Contains(err.Error(), "mounter not started")
 }
 
@@ -125,7 +125,7 @@ func (s *VFSVolumeMounterTestSuite) TestMountDuplicate() {
 
 	// Attempt to mount same volume again
 	err = s.mounter.Mount("test-volume")
-	s.Assert().Error(err)
+	s.Require().Error(err)
 	s.Assert().Contains(err.Error(), "already mounted")
 }
 
@@ -136,7 +136,7 @@ func (s *VFSVolumeMounterTestSuite) TestUnmountNonExistent() {
 
 	// Test unmounting a volume that isn't mounted
 	err = s.mounter.Unmount("non-existent-volume")
-	s.Assert().Error(err)
+	s.Require().Error(err)
 	s.Assert().Contains(err.Error(), "not mounted")
 }
 
@@ -179,7 +179,7 @@ func (s *VFSVolumeMounterTestSuite) TestClose() {
 
 	// Verify mount point is no longer accessible
 	_, err = os.Stat(filepath.Join(s.mntDir, "test-volume"))
-	s.Assert().Error(err)
+	s.Require().Error(err)
 }
 
 func (s *VFSVolumeMounterTestSuite) TestCloseWithoutStart() {

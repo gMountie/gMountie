@@ -44,7 +44,8 @@ func (c *dataCache) get(path string, chunkIndex int) []byte {
 	if e == nil {
 		return nil
 	}
-	return e.value.([]byte)
+	v, _ := e.value.([]byte) // data store only holds []byte
+	return v
 }
 
 // put stores chunk bytes under (path, chunkIndex). data is stored by
@@ -114,7 +115,7 @@ func newDataCacheWithPersist(acct *accountant, chunkSizeBytes int, p *persist.Pe
 		if !ok {
 			return
 		}
-		data := value.([]byte)
+		data, _ := value.([]byte) // data store only holds []byte
 		hash, dedup, err := p.WriteChunk(data)
 		if err != nil {
 			return

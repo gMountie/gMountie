@@ -73,12 +73,12 @@ func (s *FactoryTestSuite) endpoint() string {
 func (s *FactoryTestSuite) TestNewClientFromConfig_NilConfig() {
 	// Test with nil config
 	client, err := NewClientFromConfig(nil)
-	s.Error(err)
+	s.Require().Error(err)
 	s.Nil(client)
 
 	// Test with empty config
 	client, err = NewClientFromConfig(&config.Config{})
-	s.Error(err)
+	s.Require().Error(err)
 	s.Nil(client)
 }
 
@@ -176,7 +176,7 @@ func (s *FactoryTestSuite) TestNewClientFromConfig_HandshakeFailureReturnsError(
 	}
 
 	client, err := NewClientFromConfig(cfg)
-	s.Error(err)
+	s.Require().Error(err)
 	s.Nil(client)
 }
 

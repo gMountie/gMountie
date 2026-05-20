@@ -1,6 +1,7 @@
 package grpc
 
 import (
+	"context"
 	"fmt"
 	grpc2 "gmountie/pkg/common/grpc"
 	"gmountie/pkg/server/config"
@@ -148,7 +149,11 @@ func (s *Server) createListener() (net.Listener, error) {
 		return s.listener, nil
 	}
 	// Create a new listener.
-	lis, err := net.Listen("tcp", fmt.Sprintf("%s:%v", s.config.Server.Address, s.config.Server.Port))
+	// ListenConfig.Listen is the context-aware form of net.Listen. Same
+	// behaviour today (we pass Background) — the linter just wants the
+	// ctx-aware shape so a future refactor can plumb cancellation.
+	lis, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp",
+		fmt.Sprintf("%s:%v", s.config.Server.Address, s.config.Server.Port))
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create listener")
 	}

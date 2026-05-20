@@ -44,7 +44,7 @@ func (s *RetryTestSuite) TestRetryableCall_SucceedsFirstTry() {
 		calls++
 		return 42, nil
 	})
-	s.NoError(err)
+	s.Require().NoError(err)
 	s.Equal(42, res)
 	s.Equal(1, calls)
 }
@@ -58,7 +58,7 @@ func (s *RetryTestSuite) TestRetryableCall_RetriesOnRetryableError() {
 		}
 		return 7, nil
 	})
-	s.NoError(err)
+	s.Require().NoError(err)
 	s.Equal(7, res)
 	s.Equal(3, calls)
 }
@@ -69,7 +69,7 @@ func (s *RetryTestSuite) TestRetryableCall_GivesUpAfterMaxAttempts() {
 		calls++
 		return 0, status.Error(codes.Unavailable, "still down")
 	})
-	s.Error(err)
+	s.Require().Error(err)
 	s.Equal(3, calls, "should attempt 3 times then stop")
 }
 
@@ -79,7 +79,7 @@ func (s *RetryTestSuite) TestRetryableCall_DoesNotRetryNonRetryableError() {
 		calls++
 		return 0, status.Error(codes.NotFound, "missing")
 	})
-	s.Error(err)
+	s.Require().Error(err)
 	s.Equal(1, calls)
 }
 
@@ -94,7 +94,7 @@ func (s *RetryTestSuite) TestRetryableCall_RespectsContextCancellation() {
 		calls++
 		return 0, status.Error(codes.Unavailable, "down")
 	})
-	s.Error(err)
+	s.Require().Error(err)
 	// Could be 1 or 2 depending on timing — never the full 3.
 	s.Less(calls, 3)
 }

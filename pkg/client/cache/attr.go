@@ -55,7 +55,8 @@ func (c *attrCache) get(path string) (*io.Attr, bool, bool) {
 	if e == nil {
 		return nil, false, false
 	}
-	ae := e.value.(*attrEntry)
+	// attr store only holds *attrEntry; the assertion can't fail.
+	ae, _ := e.value.(*attrEntry)
 	// TTL=0 means "never expire on time alone"; expiry is driven solely
 	// by Subscribe push invalidation or explicit cache ops.
 	if ae.negative {
@@ -142,7 +143,8 @@ func newAttrCacheWithPersist(acct *accountant, attrTTL, negativeTTL time.Duratio
 		return ae, attrEntrySize(ae), true
 	}
 	putter := func(key string, value any, _ int) {
-		ae := value.(*attrEntry)
+		ae, _ := value.(*attrEntry) // store only holds *attrEntry
+
 		pa := persistedAttr{Attr: ae.attr, Negative: ae.negative, ExpiresAt: ae.expiresAt.UnixNano()}
 		var buf bytes.Buffer
 		if err := gob.NewEncoder(&buf).Encode(pa); err != nil {

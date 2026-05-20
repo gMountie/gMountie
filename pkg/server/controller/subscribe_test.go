@@ -102,7 +102,7 @@ func (s *SubscribeStreamSuite) TestCtxCancelTearsDownStream() {
 	cancel()
 	select {
 	case err := <-done:
-		s.Assert().Error(err) // ctx.Err() returned
+		s.Require().Error(err) // ctx.Err() returned
 	case <-time.After(time.Second):
 		s.FailNow("Subscribe didn't return after ctx cancel")
 	}

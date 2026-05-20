@@ -93,7 +93,8 @@ func (a *accountant) evictLocked() {
 		if back == nil {
 			return
 		}
-		e := back.Value.(*entry)
+		// accountant.lru only ever stores *entry; the assertion can't fail.
+		e, _ := back.Value.(*entry)
 		a.removeLocked(e)
 		if e.remove != nil {
 			e.remove(e.key)

@@ -17,7 +17,7 @@ func (s *RequestIDInterceptorTestSuite) TestServerGeneratesIDWhenMissing() {
 	var seen string
 	handler := func(ctx context.Context, req any) (any, error) {
 		seen = RequestIDFromContext(ctx)
-		return nil, nil
+		return struct{}{}, nil
 	}
 	_, err := interceptor(context.Background(), nil, info, handler)
 	s.Require().NoError(err)
@@ -30,7 +30,7 @@ func (s *RequestIDInterceptorTestSuite) TestServerHonoursClientID() {
 	var seen string
 	handler := func(ctx context.Context, req any) (any, error) {
 		seen = RequestIDFromContext(ctx)
-		return nil, nil
+		return struct{}{}, nil
 	}
 	md := metadata.Pairs(RequestIDMetadataKey, "from-client")
 	ctx := metadata.NewIncomingContext(context.Background(), md)

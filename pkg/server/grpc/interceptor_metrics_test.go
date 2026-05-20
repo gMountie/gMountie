@@ -32,17 +32,17 @@ func (s *MetricsInterceptorTestSuite) TestRecordsDurationAndError() {
 	}
 	_, err := interceptor(context.Background(), vReq{}, info, handler)
 	s.Require().Error(err)
-	s.Assert().Equal(1.0, testutil.ToFloat64(s.m.RpcErrors.WithLabelValues("photos", "Mkdir", "Unavailable")))
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.RpcErrors.WithLabelValues("photos", "Mkdir", "Unavailable"))))
 	s.Assert().Equal(1, testutil.CollectAndCount(s.m.RequestDuration))
 }
 
 func (s *MetricsInterceptorTestSuite) TestNoErrorCounterOnOK() {
 	interceptor := UnaryServerMetricsInterceptor(s.m)
 	info := &grpc.UnaryServerInfo{FullMethod: "/gmountie.RpcFs/Mkdir"}
-	handler := func(ctx context.Context, req any) (any, error) { return nil, nil }
+	handler := func(ctx context.Context, req any) (any, error) { return struct{}{}, nil }
 	_, err := interceptor(context.Background(), vReq{}, info, handler)
 	s.Require().NoError(err)
-	s.Assert().Equal(0.0, testutil.ToFloat64(s.m.RpcErrors.WithLabelValues("photos", "Mkdir", "OK")))
+	s.Assert().Equal(0, int(testutil.ToFloat64(s.m.RpcErrors.WithLabelValues("photos", "Mkdir", "OK"))))
 	s.Assert().Equal(1, testutil.CollectAndCount(s.m.RequestDuration))
 }
 
@@ -50,7 +50,7 @@ func (s *MetricsInterceptorTestSuite) TestMissingVolumeGetter() {
 	// Requests without GetVolume (e.g. SessionService) tag volume="".
 	interceptor := UnaryServerMetricsInterceptor(s.m)
 	info := &grpc.UnaryServerInfo{FullMethod: "/gmountie.SessionService/Create"}
-	handler := func(ctx context.Context, req any) (any, error) { return nil, nil }
+	handler := func(ctx context.Context, req any) (any, error) { return struct{}{}, nil }
 	_, err := interceptor(context.Background(), struct{}{}, info, handler)
 	s.Require().NoError(err)
 	s.Assert().Equal(1, testutil.CollectAndCount(s.m.RequestDuration))

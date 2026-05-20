@@ -56,7 +56,7 @@ linters:
     # our well-tested controllers) for marginal future-proofing. Our
     # proto messages don't use optional/oneof fields where nil-on-Get
     # would matter; revisit if that changes.
-    - gomodguard       # block deprecated module paths (see settings below)
+    - gomodguard_v2    # block deprecated module paths (see settings below)
     - usestdlibvars    # use http.StatusOK rather than 200
     - mirror           # bytes vs strings consistency
     - unconvert        # truly-unnecessary type conversions hint at confusion
@@ -78,21 +78,20 @@ linters:
         # bugs it catches in non-strict mode are rare in our codebase.
         - shadow
 
-    gomodguard:
+    gomodguard_v2:
       blocked:
-        modules:
-          - github.com/golang/protobuf:
-              recommendations:
-                - google.golang.org/protobuf
-              reason: "old protobuf module is frozen; use google.golang.org/protobuf"
-          - github.com/satori/go.uuid:
-              recommendations:
-                - github.com/google/uuid
-              reason: "satori's package is unmaintained"
-          - github.com/gofrs/uuid:
-              recommendations:
-                - github.com/gofrs/uuid/v5
-              reason: "v4 and below predate go modules"
+        - module: github.com/golang/protobuf
+          recommendations:
+            - google.golang.org/protobuf
+          reason: "old protobuf module is frozen; use google.golang.org/protobuf"
+        - module: github.com/satori/go.uuid
+          recommendations:
+            - github.com/google/uuid
+          reason: "satori's package is unmaintained"
+        - module: github.com/gofrs/uuid
+          recommendations:
+            - github.com/gofrs/uuid/v5
+          reason: "v4 and below predate go modules"
 
     sloglint:
       no-global: all       # no slog.Default-shaped globals; pass a logger

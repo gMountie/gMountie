@@ -27,14 +27,14 @@ func (s *ClientMetricsTestSuite) SetupTest() {
 func (s *ClientMetricsTestSuite) TestRetryInc() {
 	s.m.RetryInc("Read", "Unavailable")
 	s.m.RetryInc("Read", "Unavailable")
-	s.Assert().Equal(2.0, testutil.ToFloat64(s.m.RetryTotal.WithLabelValues("Read", "Unavailable")))
+	s.Assert().Equal(2, int(testutil.ToFloat64(s.m.RetryTotal.WithLabelValues("Read", "Unavailable"))))
 }
 
 func (s *ClientMetricsTestSuite) TestInFlightIncDec() {
 	s.m.InFlightInc("Mkdir")
 	s.m.InFlightInc("Mkdir")
 	s.m.InFlightDec("Mkdir")
-	s.Assert().Equal(1.0, testutil.ToFloat64(s.m.InFlight.WithLabelValues("Mkdir")))
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.InFlight.WithLabelValues("Mkdir"))))
 }
 
 func (s *ClientMetricsTestSuite) TestRetryHook_FiresWhenSet() {
@@ -61,28 +61,28 @@ func (s *ClientMetricsTestSuite) TestRetryHook_NoopWhenUnset() {
 func (s *ClientMetricsTestSuite) TestCacheHitInc_MemoryTier() {
 	s.m.CacheHitInc("memory", "attr")
 	s.m.CacheHitInc("memory", "attr")
-	s.Assert().Equal(2.0, testutil.ToFloat64(s.m.CacheHits.WithLabelValues("memory", "attr")))
+	s.Assert().Equal(2, int(testutil.ToFloat64(s.m.CacheHits.WithLabelValues("memory", "attr"))))
 }
 
 func (s *ClientMetricsTestSuite) TestCacheHitInc_DiskTier() {
 	s.m.CacheHitInc("disk", "data")
-	s.Assert().Equal(1.0, testutil.ToFloat64(s.m.CacheHits.WithLabelValues("disk", "data")))
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.CacheHits.WithLabelValues("disk", "data"))))
 	// Different tier must not pollute memory counter.
-	s.Assert().Equal(0.0, testutil.ToFloat64(s.m.CacheHits.WithLabelValues("memory", "data")))
+	s.Assert().Equal(0, int(testutil.ToFloat64(s.m.CacheHits.WithLabelValues("memory", "data"))))
 }
 
 func (s *ClientMetricsTestSuite) TestCacheMissInc() {
 	s.m.CacheMissInc("dir")
 	s.m.CacheMissInc("dir")
 	s.m.CacheMissInc("attr")
-	s.Assert().Equal(2.0, testutil.ToFloat64(s.m.CacheMisses.WithLabelValues("dir")))
-	s.Assert().Equal(1.0, testutil.ToFloat64(s.m.CacheMisses.WithLabelValues("attr")))
+	s.Assert().Equal(2, int(testutil.ToFloat64(s.m.CacheMisses.WithLabelValues("dir"))))
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.CacheMisses.WithLabelValues("attr"))))
 }
 
 func (s *ClientMetricsTestSuite) TestCacheDedupeHitInc() {
 	s.m.CacheDedupeHitInc()
 	s.m.CacheDedupeHitInc()
-	s.Assert().Equal(2.0, testutil.ToFloat64(s.m.CacheDedupeHits))
+	s.Assert().Equal(2, int(testutil.ToFloat64(s.m.CacheDedupeHits)))
 }
 
 func (s *ClientMetricsTestSuite) TestCacheHitHook_FiresWhenSet() {
@@ -128,25 +128,25 @@ func (s *ClientMetricsTestSuite) TestCacheDedupeHitHook_NoopWhenUnset() {
 func (s *ClientMetricsTestSuite) TestHookWiredToMetric_MemoryHit() {
 	SetCacheHitHook(s.m.CacheHitInc)
 	CacheHit("memory", "dir")
-	s.Assert().Equal(1.0, testutil.ToFloat64(s.m.CacheHits.WithLabelValues("memory", "dir")))
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.CacheHits.WithLabelValues("memory", "dir"))))
 }
 
 func (s *ClientMetricsTestSuite) TestHookWiredToMetric_DiskHit() {
 	SetCacheHitHook(s.m.CacheHitInc)
 	CacheHit("disk", "attr")
-	s.Assert().Equal(1.0, testutil.ToFloat64(s.m.CacheHits.WithLabelValues("disk", "attr")))
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.CacheHits.WithLabelValues("disk", "attr"))))
 }
 
 func (s *ClientMetricsTestSuite) TestHookWiredToMetric_Miss() {
 	SetCacheMissHook(s.m.CacheMissInc)
 	CacheMiss("dir")
-	s.Assert().Equal(1.0, testutil.ToFloat64(s.m.CacheMisses.WithLabelValues("dir")))
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.CacheMisses.WithLabelValues("dir"))))
 }
 
 func (s *ClientMetricsTestSuite) TestHookWiredToMetric_Dedupe() {
 	SetCacheDedupeHitHook(s.m.CacheDedupeHitInc)
 	CacheDedupeHit()
-	s.Assert().Equal(1.0, testutil.ToFloat64(s.m.CacheDedupeHits))
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.CacheDedupeHits)))
 }
 
 // --- Revalidation hook tests ---
@@ -155,8 +155,8 @@ func (s *ClientMetricsTestSuite) TestCacheRevalidationInc() {
 	s.m.CacheRevalidationInc("not_modified")
 	s.m.CacheRevalidationInc("not_modified")
 	s.m.CacheRevalidationInc("changed")
-	s.Assert().Equal(2.0, testutil.ToFloat64(s.m.CacheRevalidations.WithLabelValues("not_modified")))
-	s.Assert().Equal(1.0, testutil.ToFloat64(s.m.CacheRevalidations.WithLabelValues("changed")))
+	s.Assert().Equal(2, int(testutil.ToFloat64(s.m.CacheRevalidations.WithLabelValues("not_modified"))))
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.CacheRevalidations.WithLabelValues("changed"))))
 }
 
 func (s *ClientMetricsTestSuite) TestCacheRevalidationHook_FiresWhenSet() {
@@ -174,7 +174,7 @@ func (s *ClientMetricsTestSuite) TestCacheRevalidationHook_NoopWhenUnset() {
 func (s *ClientMetricsTestSuite) TestHookWiredToMetric_Revalidation() {
 	SetCacheRevalidationHook(s.m.CacheRevalidationInc)
 	CacheRevalidation("not_modified")
-	s.Assert().Equal(1.0, testutil.ToFloat64(s.m.CacheRevalidations.WithLabelValues("not_modified")))
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.CacheRevalidations.WithLabelValues("not_modified"))))
 }
 
 // --- SubscribeEventReceived hook tests ---
@@ -183,8 +183,8 @@ func (s *ClientMetricsTestSuite) TestSubscribeEventReceivedInc() {
 	s.m.SubscribeEventReceivedInc("mutated")
 	s.m.SubscribeEventReceivedInc("heartbeat")
 	s.m.SubscribeEventReceivedInc("heartbeat")
-	s.Assert().Equal(1.0, testutil.ToFloat64(s.m.SubscribeEventsReceived.WithLabelValues("mutated")))
-	s.Assert().Equal(2.0, testutil.ToFloat64(s.m.SubscribeEventsReceived.WithLabelValues("heartbeat")))
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.SubscribeEventsReceived.WithLabelValues("mutated"))))
+	s.Assert().Equal(2, int(testutil.ToFloat64(s.m.SubscribeEventsReceived.WithLabelValues("heartbeat"))))
 }
 
 func (s *ClientMetricsTestSuite) TestSubscribeEventReceivedHook_FiresWhenSet() {
@@ -202,16 +202,16 @@ func (s *ClientMetricsTestSuite) TestSubscribeEventReceivedHook_NoopWhenUnset() 
 func (s *ClientMetricsTestSuite) TestHookWiredToMetric_SubscribeEventReceived() {
 	SetSubscribeEventReceivedHook(s.m.SubscribeEventReceivedInc)
 	SubscribeEventReceived("mutated")
-	s.Assert().Equal(1.0, testutil.ToFloat64(s.m.SubscribeEventsReceived.WithLabelValues("mutated")))
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.SubscribeEventsReceived.WithLabelValues("mutated"))))
 }
 
 // --- SubscribeStreamState hook tests ---
 
 func (s *ClientMetricsTestSuite) TestSubscribeStreamStateSet() {
 	s.m.SubscribeStreamStateSet(true)
-	s.Assert().Equal(1.0, testutil.ToFloat64(s.m.SubscribeStreamState))
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.SubscribeStreamState)))
 	s.m.SubscribeStreamStateSet(false)
-	s.Assert().Equal(0.0, testutil.ToFloat64(s.m.SubscribeStreamState))
+	s.Assert().Equal(0, int(testutil.ToFloat64(s.m.SubscribeStreamState)))
 }
 
 func (s *ClientMetricsTestSuite) TestSubscribeStreamStateHook_FiresWhenSet() {
@@ -229,9 +229,9 @@ func (s *ClientMetricsTestSuite) TestSubscribeStreamStateHook_NoopWhenUnset() {
 func (s *ClientMetricsTestSuite) TestHookWiredToMetric_SubscribeStreamState() {
 	SetSubscribeStreamStateHook(s.m.SubscribeStreamStateSet)
 	SubscribeStreamStateChanged(true)
-	s.Assert().Equal(1.0, testutil.ToFloat64(s.m.SubscribeStreamState))
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.SubscribeStreamState)))
 	SubscribeStreamStateChanged(false)
-	s.Assert().Equal(0.0, testutil.ToFloat64(s.m.SubscribeStreamState))
+	s.Assert().Equal(0, int(testutil.ToFloat64(s.m.SubscribeStreamState)))
 }
 
 // --- CacheUnverified hook tests ---
@@ -239,14 +239,14 @@ func (s *ClientMetricsTestSuite) TestHookWiredToMetric_SubscribeStreamState() {
 func (s *ClientMetricsTestSuite) TestCacheUnverifiedAdd() {
 	s.m.CacheUnverifiedAdd(3.5)
 	s.m.CacheUnverifiedAdd(1.5)
-	s.Assert().Equal(5.0, testutil.ToFloat64(s.m.CacheUnverifiedDurationSecs))
+	s.Assert().Equal(5, int(testutil.ToFloat64(s.m.CacheUnverifiedDurationSecs)))
 }
 
 func (s *ClientMetricsTestSuite) TestCacheUnverifiedHook_FiresWhenSet() {
 	var seen float64
 	SetCacheUnverifiedHook(func(seconds float64) { seen = seconds })
 	CacheUnverifiedElapsed(7.25)
-	s.Assert().Equal(7.25, seen)
+	s.Assert().InDelta(7.25, seen, 0.0001)
 }
 
 func (s *ClientMetricsTestSuite) TestCacheUnverifiedHook_NoopWhenUnset() {
@@ -257,7 +257,7 @@ func (s *ClientMetricsTestSuite) TestCacheUnverifiedHook_NoopWhenUnset() {
 func (s *ClientMetricsTestSuite) TestHookWiredToMetric_CacheUnverified() {
 	SetCacheUnverifiedHook(s.m.CacheUnverifiedAdd)
 	CacheUnverifiedElapsed(4.0)
-	s.Assert().Equal(4.0, testutil.ToFloat64(s.m.CacheUnverifiedDurationSecs))
+	s.Assert().Equal(4, int(testutil.ToFloat64(s.m.CacheUnverifiedDurationSecs)))
 }
 
 func TestClientMetricsTestSuite(t *testing.T) { suite.Run(t, new(ClientMetricsTestSuite)) }

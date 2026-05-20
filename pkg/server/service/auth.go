@@ -31,7 +31,8 @@ func NewAuthServiceFromConfig(cfg config.AuthConfig) AuthService {
 		return &NoneAuthService{}
 	case config.AuthConfigTypeBasic:
 		// Create users map
-		authConfig := cfg.(*config.BasicAuthConfig)
+		// Switch case AuthConfigTypeBasic guarantees cfg is *BasicAuthConfig.
+		authConfig, _ := cfg.(*config.BasicAuthConfig)
 		users := make(map[string]string)
 		for _, user := range authConfig.Users {
 			users[user.Username] = user.Password

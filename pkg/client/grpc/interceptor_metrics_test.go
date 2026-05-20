@@ -27,8 +27,10 @@ func (s *ClientMetricsInterceptorTestSuite) TestIncDuringCallDecAfter() {
 	}
 	err := interceptor(context.Background(), "/gmountie.RpcFs/Mkdir", nil, nil, nil, invoker)
 	s.Require().NoError(err)
-	s.Assert().Equal(1.0, midCallGauge, "gauge must read 1 during the invoker")
-	s.Assert().Equal(0.0, testutil.ToFloat64(s.m.InFlight.WithLabelValues("Mkdir")),
+	// Cast to int — these gauges only ever hold integer in-flight counts,
+	// so float comparison would be a false-positive precision risk.
+	s.Assert().Equal(1, int(midCallGauge), "gauge must read 1 during the invoker")
+	s.Assert().Equal(0, int(testutil.ToFloat64(s.m.InFlight.WithLabelValues("Mkdir"))),
 		"gauge must read 0 after the call returns")
 }
 
@@ -39,7 +41,7 @@ func (s *ClientMetricsInterceptorTestSuite) TestDecreasesOnError() {
 	}
 	err := interceptor(context.Background(), "/gmountie.RpcFs/Mkdir", nil, nil, nil, invoker)
 	s.Require().Error(err)
-	s.Assert().Equal(0.0, testutil.ToFloat64(s.m.InFlight.WithLabelValues("Mkdir")))
+	s.Assert().Equal(0, int(testutil.ToFloat64(s.m.InFlight.WithLabelValues("Mkdir"))))
 }
 
 func TestClientMetricsInterceptorTestSuite(t *testing.T) {

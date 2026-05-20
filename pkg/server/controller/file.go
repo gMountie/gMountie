@@ -381,7 +381,7 @@ func (r *RpcFileServerImpl) Allocate(ctx context.Context, request *proto.Allocat
 		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 	}
 	s := entry.File.Allocate(request.Off, request.Size, request.Mode)
-	if fuse.Status(s) == fuse.OK {
+	if s == fuse.OK {
 		path := entry.Path
 		if path == "" {
 			path = request.Path

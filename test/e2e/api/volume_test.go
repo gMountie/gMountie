@@ -34,7 +34,7 @@ func (s *VolumeAPITestSuite) TestListFiles() {
 	s.Require().NoError(err)
 	serverVolumes, err := s.testAppCtx.GetServerApp().VolumeService.List()
 
-	s.Assert().NoError(err)
+	s.Require().NoError(err)
 	s.Assert().Equal(clientVolumes, serverVolumes)
 }
 

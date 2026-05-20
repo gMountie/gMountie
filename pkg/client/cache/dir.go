@@ -35,7 +35,7 @@ func (c *dirCache) get(path string) ([]io.DirEntry, bool) {
 	if e == nil {
 		return nil, false
 	}
-	de := e.value.(*dirEntry)
+	de, _ := e.value.(*dirEntry) // dir store only holds *dirEntry
 	// dirTTL=0 means "never expire on time alone"; Subscribe push or
 	// explicit invalidation are the only eviction signals in that mode.
 	if c.dirTTL > 0 && c.now().After(de.expiresAt) {
@@ -90,7 +90,7 @@ func newDirCacheWithPersist(acct *accountant, dirTTL time.Duration, now func() t
 		return de, dirEntrySize(de), true
 	}
 	putter := func(key string, value any, _ int) {
-		de := value.(*dirEntry)
+		de, _ := value.(*dirEntry) // dir store only holds *dirEntry
 		pd := persistedDir{Entries: de.entries, ExpiresAt: de.expiresAt.UnixNano()}
 		var buf bytes.Buffer
 		if err := gob.NewEncoder(&buf).Encode(pd); err != nil {
