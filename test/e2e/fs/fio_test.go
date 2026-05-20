@@ -1,16 +1,30 @@
 package fs
 
 import (
+	"bytes"
+	"context"
 	"embed"
+	"errors"
 	"gmountie/test/e2e/utils"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 )
+
+// fioTimeout caps each individual fio config run. Configs target tiny
+// (16 MiB) workloads and finish in seconds on real hardware; CI
+// runners under FUSE-over-gRPC pressure sometimes get stuck on AIO
+// submit or the more aggressive stonewall/exitall configs and hang
+// the whole job until the workflow's outer timeout fires. 90s is far
+// over real-world runtime but bounds the worst case so a hang shows
+// up as a clear "fio X timed out" message instead of consuming the
+// rest of the CI budget.
+const fioTimeout = 90 * time.Second
 
 // Embed fio config files
 //
@@ -52,12 +66,21 @@ func (s *FioTestSuite) TestFS() {
 	for _, entry := range entries {
 		s.Run(entry.Name(), func() {
 			path := filepath.Join(s.volume.GetRootPath(), "scripts", entry.Name())
-			cmd := exec.Command("fio", "--output-format=json+", path)
+			ctx, cancel := context.WithTimeout(context.Background(), fioTimeout)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "fio", "--output-format=json+", path)
 			cmd.Dir = s.volume.GetMountPath()
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
 			out, err := cmd.Output()
 
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				s.T().Fatalf("fio %s timed out after %s\nstdout:\n%s\nstderr:\n%s",
+					entry.Name(), fioTimeout, out, stderr.String())
+			}
 			if err != nil {
-				s.T().Fatal(string(out), err)
+				s.T().Fatalf("fio %s failed: %v\nstdout:\n%s\nstderr:\n%s",
+					entry.Name(), err, out, stderr.String())
 			}
 			s.T().Log(string(out))
 		})
