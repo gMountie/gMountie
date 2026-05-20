@@ -55,8 +55,8 @@ dockers:
     ids:
       - gMountie
     image_templates:
-      - "ghcr.io/johnbuluba/gmountie-server:{{ .Version }}"
-      - "ghcr.io/johnbuluba/gmountie-server:latest"
+      - "ghcr.io/gmountie/gmountie-server:{{ .Version }}"
+      - "ghcr.io/gmountie/gmountie-server:latest"
     dockerfile: Dockerfile
     build_flag_templates:
       - "--pull"

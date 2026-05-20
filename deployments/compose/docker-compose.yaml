@@ -3,7 +3,7 @@ name: gmountie
 
 services:
   server:
-    image: ghcr.io/johnbuluba/gmountie-server:latest
+    image: ghcr.io/gmountie/gmountie-server:latest
     build:
       context: ../../
       dockerfile: Dockerfile
