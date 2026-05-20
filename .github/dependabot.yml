@@ -1,0 +1,38 @@
+version: 2
+updates:
+  # Go module updates — weekly so noise is bounded but security issues
+  # don't sit for long. Grouped so one PR covers the whole batch.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      grpc:
+        patterns:
+          - "google.golang.org/grpc*"
+          - "google.golang.org/protobuf"
+      go-fuse:
+        patterns:
+          - "github.com/hanwen/go-fuse*"
+      observability:
+        patterns:
+          - "github.com/prometheus/*"
+          - "go.uber.org/zap*"
+      testing:
+        patterns:
+          - "github.com/stretchr/testify"
+
+  # GitHub Actions versions in our workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+
+  # UI directory — Sub-spec D's defer to Phase 8 means dependabot
+  # noise here is wasted work for now. Re-enable in Phase 8.
+  # - package-ecosystem: npm
+  #   directory: /ui/frontend
