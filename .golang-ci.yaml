@@ -8,9 +8,11 @@
 # Feel free to adapt and change it for your needs.
 
 run:
-  # Timeout for analysis, e.g. 30s, 5m.
-  # Default: 1m
-  timeout: 3m
+  # Timeout for analysis. CI runners cold-load the full go/packages
+  # graph (incl. proto stubs and large mocks) which can blow past
+  # short defaults. 10m gives headroom; local laptops will finish
+  # in well under a minute.
+  timeout: 10m
 
 
 # This file contains only configs which differ from defaults.
