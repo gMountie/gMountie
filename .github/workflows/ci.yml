@@ -62,11 +62,13 @@ jobs:
       - name: govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          # Exclude ./ui — Wails 3 alpha requires CGO + GTK/WebKit
-          # headers that this lightweight scan job doesn't install,
-          # and the UI is Phase 8 (deferred). Re-add when the desktop
-          # build comes back to life.
-          govulncheck $(go list ./... | grep -v '^gmountie/ui')
+          # Scope to the trees we care about. ./ui and ./pkg/ui are
+          # excluded — Wails 3 alpha needs CGO + GTK/WebKit headers
+          # that this lightweight scan job doesn't install, and the
+          # UI is Phase 8 (deferred). Listing the trees explicitly
+          # (rather than `go list ./... | grep -v ui`) avoids needing
+          # go list itself to succeed on the ui packages.
+          govulncheck ./cmd/... ./pkg/client/... ./pkg/server/... ./pkg/common/... ./pkg/utils/... ./pkg/proto/...
 
   test:
     runs-on: ubuntu-latest

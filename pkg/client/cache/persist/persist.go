@@ -67,7 +67,7 @@ func Open(opts Options) (*Persist, error) {
 	if wiped {
 		if err := wipeChunksFor(opts.Root); err != nil {
 			_ = db.Close()
-			lock.release()
+			_ = lock.release()
 			return nil, err
 		}
 	}

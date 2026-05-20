@@ -343,6 +343,18 @@ issues:
   # Default: 3
   max-same-issues: 50
 
+  # Skip the desktop UI tree entirely. Wails 3 alpha pulls in
+  # CGO + GTK/WebKit headers that aren't installed on the lint
+  # job's runner, causing golangci-lint to hang trying to type-check
+  # packages it can't compile. UI is Phase 8 (deferred); lint it
+  # locally where the dev environment has the headers, or re-enable
+  # this exclusion when the desktop build is wired back into CI.
+  exclude-dirs:
+    - ^ui$
+    - ^ui/
+    - ^pkg/ui$
+    - ^pkg/ui/
+
   exclude-rules:
     - source: "(noinspection|TODO)"
       linters: [ godot ]
