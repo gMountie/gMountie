@@ -59,7 +59,7 @@ var mountCmd = &cobra.Command{
 		var err error
 		cfg, err = config.ParseConfig(v)
 		if err != nil {
-			return fmt.Errorf("failed to parse config: %v", err)
+			return fmt.Errorf("failed to parse config: %w", err)
 		}
 
 		mountpoint := args[0]
@@ -71,7 +71,7 @@ var mountCmd = &cobra.Command{
 		// Create client
 		c, err := grpc.NewClientFromConfig(cfg)
 		if err != nil {
-			return fmt.Errorf("failed to create client: %v", err)
+			return fmt.Errorf("failed to create client: %w", err)
 		}
 
 		defer func(c grpc.Client) {
@@ -92,7 +92,7 @@ var mountCmd = &cobra.Command{
 
 		// Mount volume
 		if err := mounter.Mount(volumeName, mountpoint); err != nil {
-			return fmt.Errorf("failed to mount volume: %v", err)
+			return fmt.Errorf("failed to mount volume: %w", err)
 		}
 
 		log.Log.Sugar().Infof("Mounted volume %s at %s", volumeName, mountpoint)

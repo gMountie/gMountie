@@ -16,10 +16,10 @@ type Metrics struct {
 	CacheDedupeHits prometheus.Counter
 
 	// Subscribe / revalidation counters (Sub-spec D).
-	CacheRevalidations            *prometheus.CounterVec
-	SubscribeEventsReceived       *prometheus.CounterVec
-	SubscribeStreamState          prometheus.Gauge
-	CacheUnverifiedDurationSecs   prometheus.Counter
+	CacheRevalidations          *prometheus.CounterVec
+	SubscribeEventsReceived     *prometheus.CounterVec
+	SubscribeStreamState        prometheus.Gauge
+	CacheUnverifiedDurationSecs prometheus.Counter
 }
 
 // NewMetrics constructs the set of client collectors. They are NOT

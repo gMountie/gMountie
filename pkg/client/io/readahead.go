@@ -117,4 +117,3 @@ func (r *Readahead) Serve(dest []byte, off int64) (int, bool) {
 	r.prefetchedOff = 0
 	return len(dest), true
 }
-

@@ -20,8 +20,8 @@ const (
 // validityTracker is the Sub-spec D freshness arbiter. Read paths check
 // it before serving cached bytes; subscribeConsumer flips it.
 type validityTracker struct {
-	state         atomic.Int32        // validityState
-	verifiedPaths sync.Map            // path → struct{}, populated during partial revalidation under stateUnverified
+	state         atomic.Int32 // validityState
+	verifiedPaths sync.Map     // path → struct{}, populated during partial revalidation under stateUnverified
 }
 
 func newValidityTracker() *validityTracker {

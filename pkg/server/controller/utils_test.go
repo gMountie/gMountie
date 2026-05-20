@@ -19,9 +19,9 @@ func (s *CreateContextTestSuite) TestCreateContext_NilCallerDoesNotPanic() {
 	}()
 	c := createContext(context.Background(), nil)
 	s.NotNil(c)
-	s.Equal(uint32(0), c.Caller.Owner.Uid)
-	s.Equal(uint32(0), c.Caller.Owner.Gid)
-	s.Equal(uint32(0), c.Caller.Pid)
+	s.Equal(uint32(0), c.Uid)
+	s.Equal(uint32(0), c.Gid)
+	s.Equal(uint32(0), c.Pid)
 }
 
 func TestCreateContextTestSuite(t *testing.T) {

@@ -117,8 +117,8 @@ func setAttrFromBackend(dst *fuse.Attr, a *Attr) {
 	dst.Ctimensec = a.Ctimensec
 	dst.Mode = a.Mode
 	dst.Nlink = a.Nlink
-	dst.Owner.Uid = a.Uid
-	dst.Owner.Gid = a.Gid
+	dst.Uid = a.Uid
+	dst.Gid = a.Gid
 	dst.Rdev = a.Rdev
 	dst.Blksize = a.Blksize
 }

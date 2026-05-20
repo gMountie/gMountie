@@ -92,10 +92,10 @@ func (a *subscribeBackendAdapter) putNegative(p string)    { a.b.attr.putNegativ
 // revalidateResult carries the outcome of a GetAttrIfChanged revalidation
 // call made by the gating logic in Stat/Lookup/ListDir/Read.
 type revalidateResult struct {
-	notModified bool      // server confirmed version unchanged
-	enoent      bool      // path is gone on the server
-	freshAttrs  *io.Attr  // new attrs when version changed
-	fallback    bool      // revalidation RPC itself failed; caller falls through to inner
+	notModified bool     // server confirmed version unchanged
+	enoent      bool     // path is gone on the server
+	freshAttrs  *io.Attr // new attrs when version changed
+	fallback    bool     // revalidation RPC itself failed; caller falls through to inner
 }
 
 // revalidate calls GetAttrIfChanged on inner and interprets the result,

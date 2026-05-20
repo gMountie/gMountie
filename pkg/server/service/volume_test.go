@@ -126,7 +126,7 @@ func (s *VolumeServiceTestSuite) TestVolumeService_VolumeListConsistency() {
 	// Verify list remains unchanged
 	volumesAfter, err := s.service.List()
 	s.Require().NoError(err)
-	s.Assert().Equal(initialCount, len(volumesAfter))
+	s.Assert().Len(volumesAfter, initialCount)
 	s.Assert().Equal(volumes, volumesAfter)
 }
 

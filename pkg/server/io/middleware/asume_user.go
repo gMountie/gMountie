@@ -27,8 +27,8 @@ var (
 // NOT call runtime.UnlockOSThread — the tainted thread will die with the
 // goroutine, which is the safe outcome per runtime.LockOSThread semantics.
 func changeUser(context *fuse.Context) (func(), error) {
-	userId := context.Owner.Uid
-	groupId := context.Owner.Gid
+	userId := context.Uid
+	groupId := context.Gid
 	runtime.LockOSThread()
 
 	if err := setfsuid(int(userId)); err != nil {

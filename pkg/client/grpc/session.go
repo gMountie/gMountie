@@ -107,7 +107,7 @@ func (h *SessionHandshake) keepaliveLoop(initial proto.SessionService_KeepaliveC
 				if h.streamCtx.Err() != nil {
 					return
 				}
-				if err == io.EOF {
+				if errors.Is(err, io.EOF) {
 					log.Log.Info("keepalive stream closed by server; recovering",
 						zap.String("session_id", h.SessionID()))
 				} else {

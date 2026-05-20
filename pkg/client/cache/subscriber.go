@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"io"
 	"path"
 	"time"
@@ -94,7 +95,7 @@ func (c *subscribeConsumer) runOnce(ctx context.Context) error {
 	for {
 		ev, err := stream.Recv()
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				return nil
 			}
 			return err

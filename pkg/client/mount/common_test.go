@@ -16,9 +16,9 @@ import (
 
 type NegotiateMaxWriteBytesSuite struct {
 	suite.Suite
-	client       *grpcmocks.MockClient
-	versionMock  *protomocks.MockVersionServiceClient
-	cfg          *config.FUSEConfig
+	client      *grpcmocks.MockClient
+	versionMock *protomocks.MockVersionServiceClient
+	cfg         *config.FUSEConfig
 }
 
 func (s *NegotiateMaxWriteBytesSuite) SetupTest() {

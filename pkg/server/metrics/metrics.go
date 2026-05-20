@@ -1,6 +1,10 @@
 package metrics
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"errors"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 // Metrics is the set of custom server collectors. Construct via NewMetrics
 // and register against a Registerer separately so tests use a fresh
@@ -76,7 +80,8 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 	}
 	for _, c := range all {
 		if err := r.Register(c); err != nil {
-			are, ok := err.(prometheus.AlreadyRegisteredError)
+			var are prometheus.AlreadyRegisteredError
+			ok := errors.As(err, &are)
 			if !ok {
 				return err
 			}

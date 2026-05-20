@@ -97,4 +97,3 @@ func (p *Persist) Close() error {
 
 // Root returns the cache directory passed to Open.
 func (p *Persist) Root() string { return p.root }
-

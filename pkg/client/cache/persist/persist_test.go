@@ -1,7 +1,6 @@
 package persist_test
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -39,7 +38,7 @@ func (s *PersistOpenSuite) TestDualOpenFailsWithErrCacheLocked() {
 
 	_, err = persist.Open(persist.Options{Root: s.dir})
 	s.Require().Error(err)
-	s.Assert().True(errors.Is(err, persist.ErrCacheLocked), "want ErrCacheLocked, got %v", err)
+	s.Assert().ErrorIs(err, persist.ErrCacheLocked, "want ErrCacheLocked, got %v", err)
 }
 
 func (s *PersistOpenSuite) TestCloseReleasesLock() {

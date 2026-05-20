@@ -5,12 +5,13 @@ import (
 	"testing"
 	"time"
 
+	pathfs2 "gmountie/internal/mocks/github.com/hanwen/go-fuse/v2/fuse/pathfs"
+
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hanwen/go-fuse/v2/fuse/nodefs"
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
-	pathfs2 "gmountie/internal/mocks/github.com/hanwen/go-fuse/v2/fuse/pathfs"
 )
 
 // Mock syscall functions

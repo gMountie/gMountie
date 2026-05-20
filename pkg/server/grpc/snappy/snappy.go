@@ -1,6 +1,7 @@
 package snappy
 
 import (
+	"errors"
 	"io"
 	"sync"
 
@@ -67,7 +68,7 @@ type reader struct {
 
 func (r *reader) Read(p []byte) (n int, err error) {
 	n, err = r.Reader.Read(p)
-	if err == io.EOF {
+	if errors.Is(err, io.EOF) {
 		dcmpPool.Put(r)
 	}
 

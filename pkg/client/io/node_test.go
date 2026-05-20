@@ -60,7 +60,7 @@ func (s *NodeAdapterTestSuite) TestRootLookup_Found() {
 	inode, errno := rootAs[fs.NodeLookuper](s).Lookup(context.Background(), "child", out)
 	s.Require().Equal(syscall.Errno(0), errno)
 	s.Require().NotNil(inode)
-	s.Assert().Equal(uint64(42), out.Attr.Ino)
+	s.Assert().Equal(uint64(42), out.Ino)
 	s.Assert().Equal(uint64(42), inode.StableAttr().Ino)
 }
 
@@ -143,7 +143,7 @@ func (s *NodeAdapterTestSuite) TestRootCreate_Happy() {
 	s.Require().Equal(syscall.Errno(0), errno)
 	s.Require().NotNil(inode)
 	s.Require().NotNil(file)
-	s.Assert().Equal(uint64(7), out.Attr.Ino)
+	s.Assert().Equal(uint64(7), out.Ino)
 }
 
 func (s *NodeAdapterTestSuite) TestRootCreate_Error() {
@@ -172,8 +172,8 @@ func (s *NodeAdapterTestSuite) TestRootCreate_StatFailureSurfacesError() {
 	s.Assert().Nil(inode)
 	s.Assert().Nil(file)
 	// The kernel dentry cache must not be poisoned with a zero EntryOut.
-	s.Assert().Equal(uint64(0), out.Attr.Size)
-	s.Assert().Equal(uint32(0), out.Attr.Mode)
+	s.Assert().Equal(uint64(0), out.Size)
+	s.Assert().Equal(uint32(0), out.Mode)
 }
 
 // --- Getattr ---
@@ -185,7 +185,7 @@ func (s *NodeAdapterTestSuite) TestRootGetattr_DelegatesToStat() {
 	out := &fuse.AttrOut{}
 	errno := rootAs[fs.NodeGetattrer](s).Getattr(context.Background(), nil, out)
 	s.Require().Equal(syscall.Errno(0), errno)
-	s.Assert().Equal(uint64(1024), out.Attr.Size)
+	s.Assert().Equal(uint64(1024), out.Size)
 }
 
 // --- Setattr ---
@@ -203,7 +203,7 @@ func (s *NodeAdapterTestSuite) TestRootSetattr_TruncateAndChmod() {
 	out := &fuse.AttrOut{}
 	errno := rootAs[fs.NodeSetattrer](s).Setattr(context.Background(), nil, in, out)
 	s.Require().Equal(syscall.Errno(0), errno)
-	s.Assert().Equal(uint64(512), out.Attr.Size)
+	s.Assert().Equal(uint64(512), out.Size)
 }
 
 func (s *NodeAdapterTestSuite) TestRootSetattr_ChownPartial_StatsForUnset() {
@@ -233,7 +233,7 @@ func (s *NodeAdapterTestSuite) TestRootMkdir_Happy() {
 	inode, errno := rootAs[fs.NodeMkdirer](s).Mkdir(context.Background(), "newdir", 0o755, out)
 	s.Require().Equal(syscall.Errno(0), errno)
 	s.Require().NotNil(inode)
-	s.Assert().Equal(uint64(9), out.Attr.Ino)
+	s.Assert().Equal(uint64(9), out.Ino)
 }
 
 // --- Rmdir / Unlink ---

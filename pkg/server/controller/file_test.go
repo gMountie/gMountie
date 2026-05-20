@@ -10,12 +10,13 @@ import (
 
 	"gmountie/pkg/proto"
 
+	nodefs2 "gmountie/internal/mocks/github.com/hanwen/go-fuse/v2/fuse/nodefs"
+	pathfs2 "gmountie/internal/mocks/github.com/hanwen/go-fuse/v2/fuse/pathfs"
+
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hanwen/go-fuse/v2/fuse/nodefs"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
-	nodefs2 "gmountie/internal/mocks/github.com/hanwen/go-fuse/v2/fuse/nodefs"
-	pathfs2 "gmountie/internal/mocks/github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

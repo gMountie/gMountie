@@ -240,7 +240,7 @@ func (l *silentListener) goSilent() {
 	for _, c := range l.conns {
 		// Wake any in-flight Read. Past read will return a deadline
 		// error, the wrapper sees silent==true and parks instead.
-		_ = c.Conn.SetReadDeadline(time.Now())
+		_ = c.SetReadDeadline(time.Now())
 	}
 }
 

@@ -81,7 +81,7 @@ func (r *RpcServerImpl) GetAttr(ctx context.Context, request *proto.GetAttrReque
 			Ctimensec: attr.Ctimensec,
 			Mode:      attr.Mode,
 			Nlink:     attr.Nlink,
-			Owner:     &proto.Owner{Uid: attr.Owner.Uid, Gid: attr.Owner.Gid},
+			Owner:     &proto.Owner{Uid: attr.Uid, Gid: attr.Gid},
 			Rdev:      attr.Rdev,
 			Blksize:   attr.Blksize,
 			Padding:   attr.Padding,
@@ -317,10 +317,9 @@ func (r *RpcServerImpl) GetAttrIfChanged(ctx context.Context, request *proto.Get
 			Atime: attr.Atime, Mtime: attr.Mtime, Ctime: attr.Ctime,
 			Atimensec: attr.Atimensec, Mtimensec: attr.Mtimensec, Ctimensec: attr.Ctimensec,
 			Mode: attr.Mode, Nlink: attr.Nlink,
-			Owner:   &proto.Owner{Uid: attr.Owner.Uid, Gid: attr.Owner.Gid},
-			Rdev:    attr.Rdev, Blksize: attr.Blksize, Padding: attr.Padding,
+			Owner: &proto.Owner{Uid: attr.Uid, Gid: attr.Gid},
+			Rdev:  attr.Rdev, Blksize: attr.Blksize, Padding: attr.Padding,
 			Version: v,
 		},
 	}, nil
 }
-

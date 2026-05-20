@@ -484,7 +484,7 @@ func (s *BackendClientTestSuite) TestWrite_LargePayloadChunks() {
 	s.Assert().Equal("test-session", header.SessionId)
 	s.Assert().NotEmpty(header.RequestId)
 	s.Assert().Equal(int64(7), header.Offset)
-	s.Assert().Equal(writeFrameSizeBytes, len(header.Data))
+	s.Assert().Len(header.Data, writeFrameSizeBytes)
 	for i, frame := range stub.frames[1:] {
 		s.Assert().Empty(frame.Volume, "frame %d volume must be zero", i+1)
 		s.Assert().Equal(uint64(0), frame.Fd, "frame %d fd must be zero", i+1)
@@ -813,8 +813,8 @@ func (s *BackendClientTestSuite) TestResolveHandle_NilReturnsNil() {
 // reach into.
 type badHandle struct{}
 
-func (b badHandle) Path() string         { return "/bad" }
-func (b badHandle) Unwrap() FileHandle   { return b }
+func (b badHandle) Path() string       { return "/bad" }
+func (b badHandle) Unwrap() FileHandle { return b }
 
 func TestBackendClientTestSuite(t *testing.T) {
 	suite.Run(t, new(BackendClientTestSuite))

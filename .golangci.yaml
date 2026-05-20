@@ -1,0 +1,128 @@
+# golangci-lint v2 config.
+#
+# Curated for signal: linters here catch real bugs (unchecked errors,
+# leaked resources, race-prone patterns, security issues) rather than
+# stylistic preferences. Complexity / line-length / naming nags from
+# the v1 "golden config" are intentionally NOT enabled — they generate
+# churn-PRs without finding defects.
+#
+# If a useful finding shows up that no enabled linter catches, add
+# the specific linter rather than re-enabling a noisy default set.
+
+version: "2"
+
+run:
+  # CI cold-loads the full go/packages graph (proto stubs + mocks);
+  # 10m leaves headroom. Local laptops finish in well under a minute
+  # once the build cache is warm.
+  timeout: 10m
+
+linters:
+  default: none
+  enable:
+    # --- core correctness (every Go codebase should run these) ---
+    - errcheck         # unchecked errors are the most common Go bug
+    - govet            # stdlib analyzer; catches printf mismatches, copying mutexes, etc.
+    - staticcheck      # SA-series rules: dead code, deprecated APIs, suspicious patterns
+    - ineffassign      # assignments that are never read
+    - unused           # unused funcs, vars, types
+    - wastedassign     # complements ineffassign on more shapes
+
+    # --- resource safety ---
+    - bodyclose        # leaked http.Response bodies
+    - rowserrcheck     # unchecked sql.Rows error
+    - sqlclosecheck    # unclosed sql.Rows / sql.Stmt
+    - noctx            # http.NewRequest without a context (no cancellation, no timeout)
+    - fatcontext       # context.WithX accumulating inside a loop = leak
+
+    # --- error handling (Go 1.13+ wrap semantics) ---
+    - errorlint        # errors.Is / errors.As patterns that won't match wrapped errors
+    - nilerr           # `return nil` when an error is non-nil
+    - nilnil           # `return nil, nil` from a (T, error) function
+
+    # --- concurrency + correctness ---
+    - copyloopvar      # Go 1.22 changed loop-var capture; flags ports
+    - recvcheck        # mixed pointer/value receivers — subtle bug source
+    - asasalint        # accidentally passing []any to a func(...any) variadic
+    - durationcheck    # time.Duration multiplied by another Duration = surprise
+
+    # --- security ---
+    - bidichk          # CVE-2021-42574 Trojan-Source unicode controls
+    - nosprintfhostport # fmt.Sprintf for URL host+port is malformed and a known footgun
+
+    # --- API hygiene specific to our stack ---
+    - testifylint      # testify-specific footguns (Equal vs ElementsMatch, etc.)
+    # protogetter intentionally disabled — pervasive churn (50+ hits in
+    # our well-tested controllers) for marginal future-proofing. Our
+    # proto messages don't use optional/oneof fields where nil-on-Get
+    # would matter; revisit if that changes.
+    - gomodguard       # block deprecated module paths (see settings below)
+    - usestdlibvars    # use http.StatusOK rather than 200
+    - mirror           # bytes vs strings consistency
+    - unconvert        # truly-unnecessary type conversions hint at confusion
+    - sloglint         # consistent log/slog use
+    - loggercheck      # zap/zerolog/etc key-value mismatch
+
+  settings:
+    errcheck:
+      # Type assertions like `s, _ := x.(*Foo)` can hide nil-pointer bugs.
+      check-type-assertions: true
+
+    govet:
+      # Enable every vet analyzer except the noisy ones.
+      enable-all: true
+      disable:
+        - fieldalignment  # struct layout micro-optimisation; not worth the churn
+        # shadow disabled — its strict mode flags every `if err := f();
+        # err != nil { ... }` re-declaration which is idiomatic Go. The
+        # bugs it catches in non-strict mode are rare in our codebase.
+        - shadow
+
+    gomodguard:
+      blocked:
+        modules:
+          - github.com/golang/protobuf:
+              recommendations:
+                - google.golang.org/protobuf
+              reason: "old protobuf module is frozen; use google.golang.org/protobuf"
+          - github.com/satori/go.uuid:
+              recommendations:
+                - github.com/google/uuid
+              reason: "satori's package is unmaintained"
+          - github.com/gofrs/uuid:
+              recommendations:
+                - github.com/gofrs/uuid/v5
+              reason: "v4 and below predate go modules"
+
+    sloglint:
+      no-global: all       # no slog.Default-shaped globals; pass a logger
+      context: scope       # require ctx-aware slog method if a context is in scope
+
+    testifylint:
+      # disable the s.Assert().Foo(x) -> s.Foo(x) style nag. Both forms
+      # are valid testify usage; the codebase consistently uses the
+      # explicit form for readability.
+      disable:
+        - suite-extra-assert-call
+
+  exclusions:
+    # Skip the desktop UI tree entirely. Wails 3 alpha pulls in CGO +
+    # GTK/WebKit headers that the lint job doesn't install; the UI is
+    # Phase 8 (deferred). Re-enable when the desktop build returns to
+    # CI.
+    paths:
+      - ^ui/
+      - ^pkg/ui/
+
+    rules:
+      # Tests have different conventions: short-lived contexts, ignored
+      # errors in setup, intentional resource leaks across t.Cleanup.
+      - path: _test\.go
+        linters:
+          - bodyclose
+          - errcheck
+          - noctx
+
+formatters:
+  enable:
+    - goimports        # also formats; replaces gofmt

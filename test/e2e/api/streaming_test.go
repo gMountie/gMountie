@@ -282,7 +282,7 @@ func (s *WriteCoalesceE2ESuite) TestManySmallWritesCoalesce() {
 	srcPath := filepath.Join(s.volume.GetSrcPath(), "coalesce.bin")
 	got, err := os.ReadFile(srcPath)
 	s.Require().NoError(err)
-	s.Require().Equal(len(want), len(got), "short file server-side")
+	s.Require().Len(got, len(want), "short file server-side")
 	s.Require().Equal(sha256.Sum256(want), sha256.Sum256(got), "payload mismatch server-side")
 
 	// Verify the client coalesced the small writes into far fewer RPCs.
