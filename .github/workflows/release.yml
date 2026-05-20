@@ -28,6 +28,34 @@ jobs:
         fetch-depth: 0
         fetch-tags: true
 
+    - name: Require green CI for this commit
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # Production and alpha releases must be cut from a commit whose
+        # CI workflow has completed successfully. Snapshots are local
+        # builds for ad-hoc testing and skip the gate.
+        if [ "${{ github.event.inputs.type }}" = "snapshot" ]; then
+          echo "snapshot build — skipping CI gate"
+          exit 0
+        fi
+        sha="${{ github.sha }}"
+        echo "looking for a successful CI run for $sha"
+        # gh run list filters by workflow + branch; we filter by sha
+        # in jq because gh's --commit flag is gated behind a newer
+        # version on some runners.
+        conclusion="$(gh run list \
+          --workflow ci.yml \
+          --json headSha,conclusion,status \
+          --limit 50 \
+          --jq "[.[] | select(.headSha==\"$sha\") | select(.status==\"completed\")][0].conclusion")"
+        if [ "$conclusion" != "success" ]; then
+          echo "::error::no successful CI run found for $sha (got: '$conclusion')"
+          echo "Run the CI workflow on this commit and wait for it to pass before releasing."
+          exit 1
+        fi
+        echo "CI is green for $sha"
+
     - name: Cache apt packages
       uses: awalsh128/cache-apt-pkgs-action@latest
       with:
