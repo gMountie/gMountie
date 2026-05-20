@@ -1,8 +1,3 @@
-# This is an example .goreleaser.yml file with some sensible defaults.
-# Make sure to check the documentation at https://goreleaser.com
-
-# The lines below are called `modelines`. See `:help modeline`
-# Feel free to remove those if you don't want/need to use them.
 # yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 # vim: set ts=2 sw=2 tw=0 fo=cnqoj
 
@@ -10,14 +5,7 @@ version: 2
 
 before:
   hooks:
-    # You may remove this if you don't use go modules.
     - go mod tidy
-    - |
-     {{- if not .IsSnapshot }}
-      task ui:package:linux BUILD_VERSION={{.Version}} BUILD_COMMIT={{.Commit}} BUILD_DATE={{.Date}}
-     {{- else }}
-      echo skip building AppImage
-     {{- end }}
 
 builds:
   - env:
@@ -27,26 +15,13 @@ builds:
     id: gMountie
     main: cmd/main.go
     binary: gMountie
-    ldflags:
-    - -s -w -X gmountie/pkg.version={{.Version}} -X gmountie/pkg.commit={{.Commit}} -X gmountie/pkg.date={{.Date}}
-    goarch:
-      - amd64
-      - arm64
-  - env:
-      - CGO_ENABLED=1
-    goos:
-      - linux
-    id: gMountie-desktop
-    main: ui/main.go
-    binary: gMountie-desktop
     flags:
-      - -tags=production -trimpath
+      - -trimpath
     ldflags:
       - -s -w -X gmountie/pkg.version={{.Version}} -X gmountie/pkg.commit={{.Commit}} -X gmountie/pkg.date={{.Date}}
     goarch:
       - amd64
-    hooks:
-      pre: task ui:build:frontend
+      - arm64
 
 dockers:
   - id: gMountie
@@ -67,39 +42,42 @@ dockers:
       - "--label=org.opencontainers.image.source={{.GitURL}}"
 
 archives:
-  - format: binary
-    id: gMountie
+  - id: gMountie
     builds:
       - gMountie
+    formats: ['tar.gz']
     name_template: >-
-      {{- .Binary }}_
+      {{- .ProjectName }}_
+      {{- .Version }}_
       {{- .Os }}_
       {{- .Arch }}
-      {{- with .Arm }}v{{ . }}{{ end }}
-      {{- with .Mips }}_{{ . }}{{ end }}
-      {{- if not (eq .Amd64 "v1") }}{{ .Amd64 }}{{ end }}
-  - format: binary
-    id: "gMountie-desktop"
-    builds:
-      - gMountie-desktop
-    name_template: >-
-      {{- .Binary }}_
-      {{- .Os }}_
-      {{- .Arch }}
-      {{- with .Arm }}v{{ . }}{{ end }}
-      {{- with .Mips }}_{{ . }}{{ end }}
-      {{- if not (eq .Amd64 "v1") }}{{ .Amd64 }}{{ end }}
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+      - src: examples/**/*
+        dst: examples
+        info:
+          mode: 0644
+        strip_parent: false
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
 
 release:
   ids:
-   - gMountie
-   - gMountie-desktop
+    - gMountie
   draft: true
   prerelease: auto
-  extra_files:
-  - glob: ./ui/bin/gmountie-desktop-x86_64.AppImage
-    name_template: 'gMountie-desktop_linux_amd64.AppImage'
+  # The curated breaking-changes + feature notes live in CHANGELOG.md
+  # (we point at it from the release header). The auto-generated
+  # commit list below adds the per-commit detail.
+  header: |
+    Curated release notes — including breaking changes — live in
+    [CHANGELOG.md](https://github.com/gMountie/gMountie/blob/master/CHANGELOG.md).
 
+    Auto-generated commit list:
 
 changelog:
   sort: asc
@@ -107,3 +85,5 @@ changelog:
     exclude:
       - "^docs:"
       - "^test:"
+      - "^chore:"
+      - "^ci:"
