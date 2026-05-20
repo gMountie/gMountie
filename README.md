@@ -4,8 +4,6 @@
   <p><i>Because remote filesystems shouldn't feel so... remote</i></p>
 </div>
 
-[![Test Coverage](https://api.codeclimate.com/v1/badges/2f6539c2fab7cd8d66d7/test_coverage)](https://codeclimate.com/github/gMountie/gMountie/test_coverage)
-[![Maintainability](https://api.codeclimate.com/v1/badges/2f6539c2fab7cd8d66d7/maintainability)](https://codeclimate.com/github/gMountie/gMountie/maintainability)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 ## What's This All About? 🤔

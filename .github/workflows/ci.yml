@@ -50,12 +50,6 @@ jobs:
       - name: Run tests
         run: |
           task test:coverage
-      - uses: paambaati/codeclimate-action@v9.0.0
-        env:
-          CC_TEST_REPORTER_ID: ${{ secrets.CC_TEST_REPORTER_ID }}
-        with:
-          coverageLocations: |
-            ${{github.workspace}}/coverage.out:gocov
       - name: check test coverage
         uses: vladopajic/go-test-coverage@v2
         with:
