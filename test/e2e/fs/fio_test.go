@@ -68,7 +68,12 @@ func (s *FioTestSuite) TestFS() {
 			path := filepath.Join(s.volume.GetRootPath(), "scripts", entry.Name())
 			ctx, cancel := context.WithTimeout(context.Background(), fioTimeout)
 			defer cancel()
-			cmd := exec.CommandContext(ctx, "fio", "--output-format=json+", path)
+			// Default fio output (no --output-format) is shorter and more
+			// readable than json+; nothing in the test consumes the blob
+			// programmatically, so JSON's only role was filling the CI
+			// log. Now we capture stdout silently and surface it only
+			// when the test fails.
+			cmd := exec.CommandContext(ctx, "fio", path)
 			cmd.Dir = s.volume.GetMountPath()
 			var stderr bytes.Buffer
 			cmd.Stderr = &stderr
@@ -82,7 +87,7 @@ func (s *FioTestSuite) TestFS() {
 				s.T().Fatalf("fio %s failed: %v\nstdout:\n%s\nstderr:\n%s",
 					entry.Name(), err, out, stderr.String())
 			}
-			s.T().Log(string(out))
+			// Success path: PASS marker from go test is enough.
 		})
 	}
 }
