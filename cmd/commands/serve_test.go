@@ -30,7 +30,8 @@ func (s *ServeCmdTestSuite) SetupTest() {
 	s.cmd = &cobra.Command{Use: "root"}
 	s.cmd.AddCommand(serveCmd)
 	s.buf = new(bytes.Buffer)
-	s.cmd.SetOutput(s.buf)
+	s.cmd.SetOut(s.buf)
+	s.cmd.SetErr(s.buf)
 
 	s.serverStartCalled = false
 	s.originalServerStart = serverStart

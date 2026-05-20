@@ -32,7 +32,8 @@ func (s *MountCmdTestSuite) SetupTest() {
 	s.cmd = &cobra.Command{Use: "root"}
 	s.cmd.AddCommand(mountCmd)
 	s.buf = new(bytes.Buffer)
-	s.cmd.SetOutput(s.buf)
+	s.cmd.SetOut(s.buf)
+	s.cmd.SetErr(s.buf)
 }
 
 func (s *MountCmdTestSuite) TearDownTest() {

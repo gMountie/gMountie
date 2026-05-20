@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	iomocks "gmountie/internal/mocks/pkg/client/io"
-	"gmountie/pkg/client/io"
 
 	"github.com/stretchr/testify/suite"
 )
@@ -18,9 +17,7 @@ func (s *CachedHandleTestSuite) TestPathAndUnwrap() {
 	inner.EXPECT().Path().Return("ignored-inner").Maybe()
 	h := newCachedHandle(inner, "/wrapped/path")
 	s.Assert().Equal("/wrapped/path", h.Path())
-	got, ok := h.Unwrap().(io.FileHandle)
-	s.Require().True(ok)
-	s.Assert().Same(inner, got)
+	s.Assert().Same(inner, h.Unwrap())
 }
 
 func (s *CachedHandleTestSuite) TestUnwrapChainTerminatesAtInner() {

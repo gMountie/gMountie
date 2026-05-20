@@ -55,13 +55,13 @@ func Open(opts Options) (*Persist, error) {
 	}
 	db, err := bolt.Open(filepath.Join(opts.Root, "meta.db"), 0o600, &bolt.Options{Timeout: time.Second})
 	if err != nil {
-		lock.release()
+		_ = lock.release()
 		return nil, errors.Wrap(err, "open meta.db")
 	}
 	wiped, err := ensureSchema(db)
 	if err != nil {
 		_ = db.Close()
-		lock.release()
+		_ = lock.release()
 		return nil, err
 	}
 	if wiped {
@@ -74,12 +74,12 @@ func Open(opts Options) (*Persist, error) {
 	p := &Persist{root: opts.Root, db: db, lock: lock, disk: newDiskAccountant(opts.DiskMaxBytes)}
 	if err := p.seedDiskBytes(); err != nil {
 		_ = db.Close()
-		lock.release()
+		_ = lock.release()
 		return nil, err
 	}
 	if err := p.enforceDiskBudget(); err != nil {
 		_ = db.Close()
-		lock.release()
+		_ = lock.release()
 		return nil, err
 	}
 	p.startBackgroundSweeps()
@@ -98,7 +98,3 @@ func (p *Persist) Close() error {
 // Root returns the cache directory passed to Open.
 func (p *Persist) Root() string { return p.root }
 
-// boltDB returns the bbolt handle for sibling files in this package.
-// External packages compose via the typed methods (data_idx, kv, etc.)
-// added in later Sub-spec C tasks.
-func (p *Persist) boltDB() *bolt.DB { return p.db }

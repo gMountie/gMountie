@@ -106,20 +106,23 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 				case prometheus.Collector(m.SubscribeEventsReceived):
 					m.SubscribeEventsReceived = existing
 				}
+			case *prometheus.GaugeVec:
+				if c == prometheus.Collector(m.InFlight) {
+					m.InFlight = existing
+				}
+			// prometheus.Gauge embeds prometheus.Counter, so the Gauge
+			// case must precede Counter — otherwise the Counter arm
+			// silently catches Gauges.
+			case prometheus.Gauge:
+				if c == prometheus.Collector(m.SubscribeStreamState) {
+					m.SubscribeStreamState = existing
+				}
 			case prometheus.Counter:
 				switch c {
 				case prometheus.Collector(m.CacheDedupeHits):
 					m.CacheDedupeHits = existing
 				case prometheus.Collector(m.CacheUnverifiedDurationSecs):
 					m.CacheUnverifiedDurationSecs = existing
-				}
-			case *prometheus.GaugeVec:
-				if c == prometheus.Collector(m.InFlight) {
-					m.InFlight = existing
-				}
-			case prometheus.Gauge:
-				if c == prometheus.Collector(m.SubscribeStreamState) {
-					m.SubscribeStreamState = existing
 				}
 			}
 		}

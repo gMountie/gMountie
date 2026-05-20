@@ -7,8 +7,6 @@ import (
 
 	"gmountie/pkg/client/cache/persist"
 	"gmountie/pkg/client/io"
-
-	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
 // attrEntry is the value stored in attrCache. negative=true means a
@@ -100,15 +98,6 @@ func attrEntrySize(_ *attrEntry) int {
 	// 16-ish fields × 8 bytes + struct overhead. 256 is a generous
 	// rounded estimate that absorbs the negative variant too.
 	return 256
-}
-
-// attrStatus returns the appropriate FUSE status for a cache hit.
-// Convenience for backend.go's Stat/Lookup handlers.
-func attrStatus(positive bool) fuse.Status {
-	if positive {
-		return fuse.OK
-	}
-	return fuse.ENOENT
 }
 
 // persistedAttr is the on-disk shape. Negative entries persist false
