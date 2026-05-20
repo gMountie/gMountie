@@ -24,11 +24,22 @@ jobs:
         with:
           packages: libwebkit2gtk-4.1-dev gtk+-3.0
           version: lint-1.0
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+      - name: Setup Go
+        uses: actions/setup-go@v5
         with:
-          version: v1.60
-          args: --timeout 5m
+          go-version-file: 'go.mod'
+          cache-dependency-path: 'go.sum'
+      - name: Install Task
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+      - name: Lint
+        # task lint go-runs golangci-lint@latest, so the binary gets
+        # built with the project's Go toolchain (go.mod). The
+        # prebuilt binaries shipped via golangci-lint-action lag the
+        # Go release cycle and trip "Go language version used to build
+        # golangci-lint is lower than the targeted Go version".
+        run: task lint
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
