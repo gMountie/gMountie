@@ -23,7 +23,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/thanhpk/randstr v1.0.6
 	github.com/typomedia/diskspeed v0.1.0
-	github.com/wailsapp/wails/v3 v3.0.0-alpha.7
+	github.com/wailsapp/wails/v3 v3.0.0-alpha.8.3
 	github.com/zeebo/xxh3 v1.1.0
 	go.etcd.io/bbolt v1.4.3
 	go.uber.org/zap v1.28.0
