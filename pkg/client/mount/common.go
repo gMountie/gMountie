@@ -3,6 +3,8 @@ package mount
 import (
 	"context"
 	"fmt"
+	"os/exec"
+	"strings"
 	"time"
 
 	"gmountie/pkg/client/config"
@@ -10,8 +12,8 @@ import (
 	"gmountie/pkg/proto"
 	"gmountie/pkg/utils/log"
 
-	"github.com/avast/retry-go/v4"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -110,28 +112,72 @@ func negotiateMaxWriteBytes(client clientgrpc.Client, cfg *config.FUSEConfig) in
 }
 
 // stopServer requests the FUSE kernel to detach the mount, then blocks
-// until the server's Serve goroutine has fully exited. The second step
-// matters when callers spin up a fresh mount on the heels of an unmount
-// (e.g. back-to-back benchmark iterations): Unmount only requests
-// teardown — go-fuse's Serve loop may still be draining the kernel
-// connection. A new fuse.NewServer issued before Serve returns can land
-// the kernel in a state where the very first op on the new mount comes
-// back with a pre-cancelled context. Waiting here closes that window.
-func stopServer(server *fuse.Server) error {
-	if err := retry.Do(
-		func() error {
-			err := server.Unmount()
-			if err != nil {
-				log.Log.Warn("unmount fail, retrying ...", zap.Error(err))
-				return err
-			}
+// until the server's Serve goroutine has fully exited.
+//
+// The second step matters when callers spin up a fresh mount on the
+// heels of an unmount (e.g. back-to-back benchmark iterations):
+// Unmount only requests teardown — go-fuse's Serve loop may still be
+// draining the kernel connection. A new fuse.NewServer issued before
+// Serve returns can land the kernel in a state where the very first
+// op on the new mount comes back with a pre-cancelled context.
+// Waiting here closes that window.
+//
+// If the regular unmount keeps failing with EBUSY (something still
+// has an open fd into the mount, e.g. an interactive `cat`/`pv`
+// pipeline the user just Ctrl-C'd), we fall back to a lazy unmount
+// via `fusermount3 -uz`. Lazy detaches the mount from the namespace
+// immediately and lets the kernel release per-fd state as each fd
+// closes — the alternative is hanging forever waiting for fds we
+// can't close on the user's behalf.
+func stopServer(server *fuse.Server, mountPath string) error {
+	const (
+		regularAttempts = 2
+		regularDelay    = 500 * time.Millisecond
+	)
+	var lastErr error
+	for i := 0; i < regularAttempts; i++ {
+		lastErr = server.Unmount()
+		if lastErr == nil {
+			server.Wait()
 			return nil
-		},
-		retry.Attempts(3),
-		retry.Delay(5*time.Second),
-	); err != nil {
-		return err
+		}
+		log.Log.Warn("unmount fail, retrying",
+			zap.Int("attempt", i+1),
+			zap.Int("max_attempts", regularAttempts),
+			zap.Error(lastErr),
+		)
+		time.Sleep(regularDelay)
 	}
+	log.Log.Warn("regular unmount kept failing; falling back to lazy unmount",
+		zap.String("mount_path", mountPath),
+		zap.Error(lastErr),
+	)
+	if lazyErr := lazyUnmount(mountPath); lazyErr != nil {
+		return errors.Wrapf(lazyErr, "regular unmount: %v; lazy unmount fallback", lastErr)
+	}
+	log.Log.Info("lazy unmount succeeded; kernel will release refs as fds close",
+		zap.String("mount_path", mountPath),
+	)
 	server.Wait()
+	return nil
+}
+
+// lazyUnmount shells out to `fusermount3 -uz <path>`. Equivalent to
+// `umount(2)` with MNT_DETACH but routed through the setuid fusermount
+// helper so an unprivileged user can request it on their own FUSE
+// mount. The mount disappears from the namespace immediately; in-use
+// fds keep working until they close.
+//
+// Bounded with a 5-second context so a stuck helper can't hang the
+// caller; that's well above the normal fusermount3 runtime (~ms).
+func lazyUnmount(mountPath string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "fusermount3", "-uz", mountPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return errors.Wrapf(err, "fusermount3 -uz %s: %s",
+			mountPath, strings.TrimSpace(string(out)))
+	}
 	return nil
 }

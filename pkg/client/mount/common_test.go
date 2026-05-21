@@ -75,3 +75,27 @@ func (s *NegotiateMaxWriteBytesSuite) TestServerAtOrAboveConfiguredKeepsConfigur
 func TestNegotiateMaxWriteBytesSuite(t *testing.T) {
 	suite.Run(t, new(NegotiateMaxWriteBytesSuite))
 }
+
+// TestLazyUnmount_NonExistentPath confirms that lazyUnmount surfaces
+// the fusermount3 error (including its stderr) when the target path
+// doesn't exist. The whole purpose of the helper is to give callers
+// something actionable when the fallback itself fails; a swallowed
+// error would defeat the point.
+type LazyUnmountTestSuite struct{ suite.Suite }
+
+func (s *LazyUnmountTestSuite) TestNonExistentPathReturnsWrappedError() {
+	err := lazyUnmount("/nonexistent/path/that/cannot/possibly/be/mounted")
+	s.Require().Error(err)
+	// pkg/errors.Wrapf wraps the underlying exec error; the message
+	// embeds the path and the fusermount3 stderr.
+	s.Assert().Contains(err.Error(), "fusermount3 -uz")
+	s.Assert().Contains(err.Error(), "/nonexistent/path/that/cannot/possibly/be/mounted")
+}
+
+func TestLazyUnmountSuite(t *testing.T) {
+	suite.Run(t, new(LazyUnmountTestSuite))
+}
+
+// Make sure errors stays imported now that the suite uses it nowhere
+// directly (suite already imports it via the package's other tests).
+var _ = errors.New

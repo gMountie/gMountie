@@ -14,7 +14,6 @@ import (
 	"gmountie/pkg/client/io"
 	"gmountie/pkg/utils/log"
 
-	"github.com/avast/retry-go/v4"
 	gofs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	pkgerrors "github.com/pkg/errors"
@@ -184,21 +183,9 @@ func (m *VFSVolumeMounterImpl) Close() error {
 	if m.server == nil {
 		return nil
 	}
-	errRetry := retry.Do(
-		func() error {
-			err := m.server.Unmount()
-			if err != nil {
-				log.Log.Warn("unmount fail, retrying ...", zap.Error(err))
-				return err
-			}
-			return nil
-		},
-		retry.Attempts(3),
-		retry.Delay(5*time.Second),
-	)
-	if errRetry != nil {
-		log.Log.Error("unmount fail, giving up", zap.Error(errRetry))
-		return errRetry
+	if err := stopServer(m.server, m.path); err != nil {
+		log.Log.Error("unmount fail, giving up", zap.Error(err))
+		return err
 	}
 	log.Log.Info("root filesystem unmounted", zap.String("path", m.path))
 	// Close any persist handles that were not already drained by UnmountAll.

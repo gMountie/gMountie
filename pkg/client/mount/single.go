@@ -26,12 +26,16 @@ type SingleVolumeMounter interface {
 
 // SingleVolumeMounterImpl is a service that mounts volumes
 type SingleVolumeMounterImpl struct {
-	client   grpc.Client
-	fuse     *config.FUSEConfig
-	cache    config.CacheConfig
-	mounts   *xsync.MapOf[string, *fuse.Server]
-	persists *xsync.MapOf[string, *persist.Persist]
-	backends *xsync.MapOf[string, io.FileSystemBackend]
+	client grpc.Client
+	fuse   *config.FUSEConfig
+	cache  config.CacheConfig
+	mounts *xsync.MapOf[string, *fuse.Server]
+	// mountPaths tracks the local mountpoint per volume so Unmount
+	// can request a lazy fusermount3 -uz fallback if the regular
+	// unmount keeps failing with EBUSY.
+	mountPaths *xsync.MapOf[string, string]
+	persists   *xsync.MapOf[string, *persist.Persist]
+	backends   *xsync.MapOf[string, io.FileSystemBackend]
 }
 
 // NewSingleVolumeMounter creates a new SingleVolumeMounterImpl. fuseCfg
@@ -40,12 +44,13 @@ type SingleVolumeMounterImpl struct {
 // and only applied when cacheCfg.Enabled is true.
 func NewSingleVolumeMounter(client grpc.Client, fuseCfg *config.FUSEConfig, cacheCfg config.CacheConfig) SingleVolumeMounter {
 	return &SingleVolumeMounterImpl{
-		client:   client,
-		fuse:     fuseCfg,
-		cache:    cacheCfg,
-		mounts:   xsync.NewMapOf[string, *fuse.Server](),
-		persists: xsync.NewMapOf[string, *persist.Persist](),
-		backends: xsync.NewMapOf[string, io.FileSystemBackend](),
+		client:     client,
+		fuse:       fuseCfg,
+		cache:      cacheCfg,
+		mounts:     xsync.NewMapOf[string, *fuse.Server](),
+		mountPaths: xsync.NewMapOf[string, string](),
+		persists:   xsync.NewMapOf[string, *persist.Persist](),
+		backends:   xsync.NewMapOf[string, io.FileSystemBackend](),
 	}
 }
 
@@ -86,6 +91,7 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) error {
 		return errors.Wrap(err, "mount fail")
 	}
 	m.mounts.Store(volume, server)
+	m.mountPaths.Store(volume, mountPath)
 	return nil
 }
 
@@ -111,10 +117,12 @@ func (m *SingleVolumeMounterImpl) Unmount(volume string) error {
 	if !ok {
 		return errors.Errorf("volume %s is not mounted", volume)
 	}
-	if err := stopServer(server); err != nil {
+	mountPath, _ := m.mountPaths.Load(volume)
+	if err := stopServer(server, mountPath); err != nil {
 		return err
 	}
 	m.mounts.Delete(volume)
+	m.mountPaths.Delete(volume)
 	if be, ok := m.backends.Load(volume); ok {
 		_ = be.Close()
 		m.backends.Delete(volume)
