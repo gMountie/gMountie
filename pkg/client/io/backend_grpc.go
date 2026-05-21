@@ -733,6 +733,10 @@ func (b *BackendClient) Release(ctx context.Context, fh FileHandle) fuse.Status 
 
 // Flush drains coalesced writes then issues the server-side Flush RPC.
 // If the drain fails, returns EIO and skips the server-side Flush.
+// Idempotent — wrapped in retryableCall so transient gRPC failures
+// (Unavailable, DeadlineExceeded) don't surface to userspace as EIO.
+// No request_id needed: re-running Flush against already-flushed
+// state is a server-side no-op.
 func (b *BackendClient) Flush(ctx context.Context, fh FileHandle) fuse.Status {
 	h := resolveHandle(fh)
 	if h == nil {
@@ -743,10 +747,12 @@ func (b *BackendClient) Flush(ctx context.Context, fh FileHandle) fuse.Status {
 	}
 	ctx2, cancel := withIOTimeout(ctx, h.ioTimeout)
 	defer cancel()
-	res, err := h.fileClient.Flush(ctx2, &proto.FlushRequest{
-		Volume:    h.volume,
-		Fd:        h.fd,
-		SessionId: h.sessionID,
+	res, err := retryableCall(ctx2, "Flush", func(ctx context.Context) (*proto.FlushReply, error) {
+		return h.fileClient.Flush(ctx, &proto.FlushRequest{
+			Volume:    h.volume,
+			Fd:        h.fd,
+			SessionId: h.sessionID,
+		})
 	})
 	if err != nil {
 		log.Log.Error("error in call: Flush", zap.String("path", h.path), zap.Error(err))
@@ -756,6 +762,8 @@ func (b *BackendClient) Flush(ctx context.Context, fh FileHandle) fuse.Status {
 }
 
 // Fsync drains coalesced writes then issues the server-side Fsync RPC.
+// Idempotent — wrapped in retryableCall for the same reason as Flush
+// (a second Fsync against an already-synced fd is a no-op).
 func (b *BackendClient) Fsync(ctx context.Context, fh FileHandle, flags int64) fuse.Status {
 	h := resolveHandle(fh)
 	if h == nil {
@@ -766,11 +774,13 @@ func (b *BackendClient) Fsync(ctx context.Context, fh FileHandle, flags int64) f
 	}
 	ctx2, cancel := withIOTimeout(ctx, h.ioTimeout)
 	defer cancel()
-	res, err := h.fileClient.Fsync(ctx2, &proto.FsyncRequest{
-		Volume:    h.volume,
-		Fd:        h.fd,
-		Flags:     flags,
-		SessionId: h.sessionID,
+	res, err := retryableCall(ctx2, "Fsync", func(ctx context.Context) (*proto.FsyncReply, error) {
+		return h.fileClient.Fsync(ctx, &proto.FsyncRequest{
+			Volume:    h.volume,
+			Fd:        h.fd,
+			Flags:     flags,
+			SessionId: h.sessionID,
+		})
 	})
 	if err != nil {
 		log.Log.Error("error in call: Fsync", zap.String("path", h.path), zap.Error(err))

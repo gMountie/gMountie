@@ -590,6 +590,39 @@ func (s *BackendClientTestSuite) TestFsync() {
 	s.Assert().Equal(fuse.OK, st)
 }
 
+// TestFlush_RetriesOnUnavailable verifies that a transient gRPC
+// Unavailable on Flush survives a retry rather than surfacing as EIO.
+// Flush is idempotent at the FUSE layer (a second Flush against an
+// already-flushed fd is a no-op server-side), so retrying without a
+// request_id is safe.
+func (s *BackendClientTestSuite) TestFlush_RetriesOnUnavailable() {
+	s.fileClient.EXPECT().Flush(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, status.Error(codes.Unavailable, "down")).Once()
+	s.fileClient.EXPECT().Flush(mock.Anything, mock.Anything, mock.Anything).
+		Return(&proto.FlushReply{Status: int32(fuse.OK)}, nil).Once()
+
+	h := s.newHandle(grpcclient.PerFileConfig{})
+	st := s.backend.Flush(context.Background(), h)
+
+	s.Require().Equal(fuse.OK, st)
+	s.fileClient.AssertNumberOfCalls(s.T(), "Flush", 2)
+}
+
+// TestFsync_RetriesOnUnavailable mirrors the Flush retry test for the
+// Fsync path. Same idempotency argument.
+func (s *BackendClientTestSuite) TestFsync_RetriesOnUnavailable() {
+	s.fileClient.EXPECT().Fsync(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, status.Error(codes.Unavailable, "down")).Once()
+	s.fileClient.EXPECT().Fsync(mock.Anything, mock.Anything, mock.Anything).
+		Return(&proto.FsyncReply{Status: int32(fuse.OK)}, nil).Once()
+
+	h := s.newHandle(grpcclient.PerFileConfig{})
+	st := s.backend.Fsync(context.Background(), h, 0)
+
+	s.Require().Equal(fuse.OK, st)
+	s.fileClient.AssertNumberOfCalls(s.T(), "Fsync", 2)
+}
+
 // TestRead_BadHandleEBADF verifies that passing a non-*grpcFileHandle to
 // the fd-level ops fails fast with EBADF rather than panicking.
 func (s *BackendClientTestSuite) TestRead_BadHandleEBADF() {
