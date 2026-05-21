@@ -115,4 +115,35 @@ func (s *DataIdxSuite) TestPutChunkRefUnlinksOverwrittenChunk() {
 	s.Assert().True(os.IsNotExist(err), "overwritten chunk file must be unlinked")
 }
 
+// TestPutChunkRefSameHashIsNoOp regression-guards the memory-tier
+// re-promotion path: store.get on a memory miss + disk hit calls
+// store.put, which calls the disk putter (WriteChunk + PutChunkRef).
+// WriteChunk dedupes (file already exists, same content); PutChunkRef
+// must NOT then schedule a self-unlink of that file.
+func (s *DataIdxSuite) TestPutChunkRefSameHashIsNoOp() {
+	data := []byte("re-promoted chunk bytes")
+	hash, _, err := s.p.WriteChunk(data)
+	s.Require().NoError(err)
+	ref := persist.ChunkRef{Hash: hash, Size: uint32(len(data))}
+	s.Require().NoError(s.p.PutChunkRef("p", 0, ref))
+	// Refcount = 1, chunk file exists.
+
+	// Re-put with the SAME (path, idx, hash). Simulates memory-tier
+	// eviction followed by disk-tier re-promotion of the same chunk.
+	s.Require().NoError(s.p.PutChunkRef("p", 0, ref))
+
+	// Chunk file must still exist (no self-unlink) and the refcount
+	// must still be exactly 1 (no transient drop to 0).
+	_, statErr := os.Stat(persist.TestingChunkPath(s.p, hash))
+	s.Require().NoError(statErr, "same-hash re-put must not unlink the chunk file")
+	count, err := s.p.ChunkRefCount(hash)
+	s.Require().NoError(err)
+	s.Assert().Equal(uint64(1), count, "same-hash re-put must leave refcount unchanged")
+
+	// And the chunk must still be readable via the loader path.
+	got, err := s.p.ReadChunk(hash)
+	s.Require().NoError(err)
+	s.Assert().Equal(data, got)
+}
+
 func TestDataIdxSuite(t *testing.T) { suite.Run(t, new(DataIdxSuite)) }

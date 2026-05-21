@@ -51,6 +51,17 @@ func (p *Persist) PutChunkRef(path string, chunkIndex int, ref ChunkRef) error {
 			if err != nil {
 				return err
 			}
+			// Same-hash re-put is a no-op: the (path, idx) entry still
+			// points at the same content. dec+inc would temporarily drop
+			// the refcount to zero (when this was the last referent),
+			// scheduling a post-commit unlinkChunk that then races with
+			// the immediately-following inc. The chunk file we're trying
+			// to refresh gets deleted out from under us. This path is
+			// hit on memory-tier eviction + disk-tier re-promotion of a
+			// previously cached chunk (store.get → store.put).
+			if old.Hash == ref.Hash {
+				return nil
+			}
 			remaining, err := decRefTx(tx, old.Hash)
 			if err != nil {
 				return err
