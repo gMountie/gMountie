@@ -33,7 +33,11 @@ dockers_v2:
     images:
       - ghcr.io/gmountie/gmountie-server
     tags:
-      - "{{ .Version }}"
+      # `.Tag` keeps the full git tag (incl. leading `v`) so the image
+      # tag matches `git describe`, the GitHub release name, and the
+      # chart's appVersion. Goreleaser's `.Version` strips the `v`,
+      # which we don't want here.
+      - "{{ .Tag }}"
       - latest
     platforms:
       - linux/amd64
