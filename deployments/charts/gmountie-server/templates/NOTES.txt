@@ -1,0 +1,42 @@
+gMountie server is running.
+
+1. Get the gRPC endpoint:
+{{- if eq .Values.service.type "LoadBalancer" }}
+
+   export GMOUNTIE_IP=$(kubectl -n {{ .Release.Namespace }} get svc {{ include "gmountie-server.fullname" . }} \
+     -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+   echo "gmountie://${GMOUNTIE_IP}:{{ .Values.service.port }}"
+
+{{- else if eq .Values.service.type "NodePort" }}
+
+   export NODE_PORT=$(kubectl -n {{ .Release.Namespace }} get svc {{ include "gmountie-server.fullname" . }} \
+     -o jsonpath='{.spec.ports[?(@.name=="grpc")].nodePort}')
+   export NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[0].address}')
+   echo "gmountie://${NODE_IP}:${NODE_PORT}"
+
+{{- else }}
+
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "gmountie-server.fullname" . }} \
+     {{ .Values.service.port }}:{{ .Values.service.port }}
+   # then mount against 127.0.0.1:{{ .Values.service.port }}
+
+{{- end }}
+
+2. Mount from any FUSE-capable client:
+
+   gmountie mount /your/mountpoint \
+     --server <endpoint> \
+     --auth-type {{ .Values.config.auth.type }} \
+{{- if eq .Values.config.auth.type "basic" }}
+     --username {{ (index .Values.config.auth.users 0).username }} \
+     --password '<see values.yaml>' \
+{{- end }}
+     --volume {{ (index .Values.config.volumes 0).name }}
+
+3. Health + metrics:
+
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "gmountie-server.fullname" . }} \
+     {{ .Values.service.metricsPort }}:{{ .Values.service.metricsPort }}
+   curl http://127.0.0.1:{{ .Values.service.metricsPort }}/healthz
+   curl http://127.0.0.1:{{ .Values.service.metricsPort }}/readyz
+   curl http://127.0.0.1:{{ .Values.service.metricsPort }}/metrics

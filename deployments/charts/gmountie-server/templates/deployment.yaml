@@ -9,18 +9,24 @@ spec:
   selector:
     matchLabels:
       {{- include "gmountie-server.selectorLabels" . | nindent 6 }}
+  # Recreate (not RollingUpdate): the data PVC is ReadWriteOnce and
+  # gMountie keeps the volume mtree in process memory — two replicas
+  # touching the same backing dir would race.
   strategy:
     type: Recreate
   template:
     metadata:
-      {{- with .Values.podAnnotations }}
       annotations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+        # Restart the pod whenever the rendered ConfigMap changes.
+        # Standard chart idiom.
+        checksum/config: {{ include (print .Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
       labels:
         {{- include "gmountie-server.labels" . | nindent 8 }}
         {{- with .Values.podLabels }}
-        {{- toYaml . | nindent 8 }}
+          {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
       {{- with .Values.imagePullSecrets }}
@@ -35,41 +41,58 @@ spec:
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
-          args:
-            - "/config/config.yaml"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # `gmountie serve` reads its config via --config (persistent
+          # root-cmd flag). Positional args are ignored.
+          args:
+            - "serve"
+            - "--config"
+            - "/etc/gmountie/config.yaml"
           ports:
             - name: grpc
-              containerPort: {{ .Values.service.port }}
+              containerPort: {{ .Values.config.server.port }}
               protocol: TCP
-{{/*          livenessProbe:*/}}
-{{/*            {{- toYaml .Values.livenessProbe | nindent 12 }}*/}}
-{{/*          readinessProbe:*/}}
-{{/*            {{- toYaml .Values.readinessProbe | nindent 12 }}*/}}
+            - name: metrics
+              # Phase 2 ops HTTP server binds metrics_addr; values.yaml
+              # keeps the two port numbers (Service + container) aligned.
+              containerPort: {{ .Values.service.metricsPort }}
+              protocol: TCP
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
-          {{- with .Values.volumeMounts }}
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          {{- if .Values.persistence.enabled }}
-            - name: data
-              mountPath: /data
-          {{- end }}
             - name: config
-              mountPath: /config
+              mountPath: /etc/gmountie
+              readOnly: true
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              # Mount the PVC at the FIRST volume's configured path.
+              # Multi-volume setups should turn persistence.enabled off
+              # and wire .Values.volumes / .Values.volumeMounts directly.
+              mountPath: {{ (index .Values.config.volumes 0).path }}
+            {{- end }}
+            {{- with .Values.volumeMounts }}
+              {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
-      {{- with .Values.volumes }}
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- if .Values.persistence.storageClass }}
-        - name: data
-          persistentVolumeClaim:
-            claimName: {{ template "gmountie-server.fullname" . }}-data
-      {{- end }}
         - name: config
           configMap:
             name: {{ include "gmountie-server.fullname" . }}-config
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "gmountie-server.fullname" . }}-data
+        {{- end }}
+        {{- with .Values.volumes }}
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

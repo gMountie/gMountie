@@ -3,12 +3,11 @@ kind: ConfigMap
 metadata:
   name: {{ include "gmountie-server.fullname" . }}-config
   namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gmountie-server.labels" . | nindent 4 }}
 data:
+  # Rendered from .Values.config — see values.yaml for the source of
+  # truth. We dump the sub-tree as-is so adding a new server-side
+  # config key needs only a values edit, not a template change.
   config.yaml: |-
-    # This is the configuration file for gmountie-server
-    # The configuration file is in YAML format
-    server:
-      address: 0.0.0.0
-    volumes:
-      - name: data
-        path: /data
+{{ toYaml .Values.config | indent 4 }}

@@ -1,17 +1,18 @@
+{{- if .Values.ingress.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    kubernetes.io/ingress.class: nginx
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
   name: {{ include "gmountie-server.fullname" . }}
-  namespace: default
+  labels:
+    {{- include "gmountie-server.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
-  ingressClassName: nginx
+  ingressClassName: {{ .Values.ingress.className }}
   rules:
-    - host: gmountie.home.buluba.net
+    - host: {{ .Values.ingress.host | quote }}
       http:
         paths:
           - path: /
@@ -21,7 +22,10 @@ spec:
                 name: {{ include "gmountie-server.fullname" . }}
                 port:
                   number: {{ .Values.service.port }}
+  {{- if .Values.ingress.tls.enabled }}
   tls:
     - hosts:
-        - gmountie.home.buluba.net
-      secretName: gmountie-tls-cert
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ required "ingress.tls.secretName is required when tls.enabled" .Values.ingress.tls.secretName | quote }}
+  {{- end }}
+{{- end }}
