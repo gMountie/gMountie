@@ -84,7 +84,13 @@ tasks:
 
   test:coverage:
     cmds:
-      - go test -v -count=1 -coverpkg=./... -covermode=atomic -coverprofile coverage.out  ./...
+      # -timeout 15m: go test's default is 10m. The e2e suite (fio + the
+      # streaming-write 1 GiB test + cache subscribe + fs benchmarks)
+      # is sized to fit comfortably inside 15m on CI runners under load.
+      # A higher cap also turns "the suite stuck on a single op" into a
+      # clear "test timed out" message instead of an unhelpful SIGQUIT
+      # runtime stack dump from go test's panic-on-timeout path.
+      - go test -timeout 15m -v -count=1 -coverpkg=./... -covermode=atomic -coverprofile coverage.out ./...
       - grep -v -E "gmountie/internal/mocks|gmountie/test|gmountie/pkg/proto" coverage.out > coverage-filtered.out
       - sed -i 's/^gmountie\///g' coverage-filtered.out
       - mv coverage-filtered.out coverage.out

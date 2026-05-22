@@ -18,12 +18,18 @@ import (
 
 // fioTimeout caps each individual fio config run. Configs target tiny
 // (16 MiB) workloads and finish in seconds on real hardware; CI
-// runners under FUSE-over-gRPC pressure sometimes get stuck on AIO
-// submit or the more aggressive stonewall/exitall configs and hang
-// the whole job until the workflow's outer timeout fires. 90s is far
-// over real-world runtime but bounds the worst case so a hang shows
-// up as a clear "fio X timed out" message instead of consuming the
-// rest of the CI budget.
+// runners under FUSE-over-gRPC pressure can drag this out, but a
+// runaway invocation needs a hard ceiling so go test's own -timeout
+// doesn't fire and kill the suite with a useless SIGQUIT dump.
+//
+// 90s is well over real-world runtime. If a future config legitimately
+// needs longer, raise this rather than working around it elsewhere.
+//
+// Note: exec.CommandContext sends SIGKILL when the context expires,
+// but a process stuck in D-state on a hung FUSE op won't die until
+// the kernel can deliver the signal. The embedded configs are chosen
+// to avoid that class of deadlock (libaio with high iodepth was the
+// known offender — see aio-read.fio in the git history).
 const fioTimeout = 90 * time.Second
 
 // Embed fio config files
