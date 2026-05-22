@@ -23,27 +23,33 @@ builds:
       - amd64
       - arm64
 
-dockers:
+dockers_v2:
   - id: gMountie
-    goos: linux
-    goarch: amd64
     ids:
       - gMountie
-    image_templates:
-      - "ghcr.io/gmountie/gmountie-server:{{ .Version }}"
-      - "ghcr.io/gmountie/gmountie-server:latest"
+    # dockers_v2 splits repo name from tag list: images holds the
+    # registry/repo (no :tag), tags is the list goreleaser composes
+    # against each.
+    images:
+      - ghcr.io/gmountie/gmountie-server
+    tags:
+      - "{{ .Version }}"
+      - latest
+    platforms:
+      - linux/amd64
     dockerfile: Dockerfile
-    build_flag_templates:
+    flags:
       - "--pull"
-      - "--label=org.opencontainers.image.created={{.Date}}"
-      - "--label=org.opencontainers.image.name={{.ProjectName}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-      - "--label=org.opencontainers.image.source={{.GitURL}}"
+    labels:
+      org.opencontainers.image.created: "{{ .Date }}"
+      org.opencontainers.image.name: "{{ .ProjectName }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.source: "{{ .GitURL }}"
 
 archives:
   - id: gMountie
-    builds:
+    ids:
       - gMountie
     formats: ['tar.gz']
     name_template: >-
