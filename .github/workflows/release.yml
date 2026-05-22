@@ -100,3 +100,39 @@ jobs:
     - name: Push Tags
       if: ${{  github.event.inputs.type == 'alpha' || github.event.inputs.type == 'production' }}
       run: git push --tags
+
+    # Publish the Helm chart as an OCI artifact alongside the container
+    # image, both in ghcr.io/gmountie. Skipped for snapshots — snapshots
+    # are local-throwaway and not worth a registry round-trip.
+    #
+    # Chart consumers install with:
+    #   helm install gmountie oci://ghcr.io/gmountie/charts/gmountie-server \
+    #     --version <release-tag-minus-leading-v>
+    - name: Set up Helm
+      if: ${{ github.event.inputs.type == 'alpha' || github.event.inputs.type == 'production' }}
+      uses: azure/setup-helm@v4
+      with:
+        version: v3.16.4
+
+    - name: Publish chart to ghcr.io (OCI)
+      if: ${{ github.event.inputs.type == 'alpha' || github.event.inputs.type == 'production' }}
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        set -e
+        tag=$(git describe --tags --abbrev=0)
+        # OCI semver tags must not have a leading v. Strip it for the
+        # chart version + app version (the chart's own semver tag and
+        # the version label baked into rendered manifests).
+        version="${tag#v}"
+        echo "packaging chart at version=$version app-version=$tag"
+
+        echo "$GH_TOKEN" | helm registry login ghcr.io \
+          --username "$GITHUB_ACTOR" --password-stdin
+
+        helm package deployments/charts/gmountie-server \
+          --version "$version" --app-version "$tag" \
+          --destination /tmp
+
+        helm push "/tmp/gmountie-server-${version}.tgz" \
+          oci://ghcr.io/gmountie/charts
