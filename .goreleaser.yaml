@@ -37,6 +37,7 @@ dockers_v2:
       - latest
     platforms:
       - linux/amd64
+      - linux/arm64
     dockerfile: Dockerfile
     flags:
       - "--pull"
