@@ -75,7 +75,13 @@ checksum:
 release:
   ids:
     - gMountie
-  draft: true
+  # Publish straight to the Releases page — no draft step. The Release
+  # workflow is already gated on green CI for the commit, so a manual
+  # "publish" click on top of that would just be ceremony.
+  draft: false
+  # `auto` flips prerelease=true when the tag has a semver prerelease
+  # suffix, so anything cut by svu's `prerelease --pre-release alpha`
+  # (v0.2.0-alpha.N) lands on GitHub flagged as a Pre-release.
   prerelease: auto
   # The curated breaking-changes + feature notes live in CHANGELOG.md
   # (we point at it from the release header). The auto-generated
