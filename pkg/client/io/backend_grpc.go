@@ -12,14 +12,12 @@ import (
 
 	grpcclient "gmountie/pkg/client/grpc"
 	"gmountie/pkg/proto"
-	"gmountie/pkg/server/grpc/snappy"
 	"gmountie/pkg/utils/log"
 
 	"github.com/google/uuid"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 )
@@ -501,7 +499,7 @@ func (b *BackendClient) Read(ctx context.Context, fh FileHandle, off int64, dest
 			Offset:    off,
 			Size:      uint32(len(dest)),
 			SessionId: h.sessionID,
-		}, grpc.UseCompressor(snappy.Name))
+		})
 		if err != nil {
 			return readResult{}, err
 		}
@@ -562,7 +560,7 @@ func (b *BackendClient) doPrefetch(h *grpcFileHandle, off int64) {
 		Offset:    off,
 		Size:      uint32(chunk),
 		SessionId: h.sessionID,
-	}, grpc.UseCompressor(snappy.Name))
+	})
 	if err != nil {
 		log.Log.Debug("readahead prefetch: stream open failed", zap.String("path", h.path), zap.Int64("offset", off), zap.Error(err))
 		return
@@ -611,7 +609,7 @@ func (b *BackendClient) streamingWrite(h *grpcFileHandle, data []byte, off int64
 	ctx, cancel := withIOTimeout(context.Background(), h.ioTimeout)
 	defer cancel()
 	res, err := retryableCall(ctx, "Write", func(ctx context.Context) (*proto.WriteReply, error) {
-		stream, err := h.fileClient.Write(ctx, grpc.UseCompressor(snappy.Name))
+		stream, err := h.fileClient.Write(ctx)
 		if err != nil {
 			return nil, err
 		}

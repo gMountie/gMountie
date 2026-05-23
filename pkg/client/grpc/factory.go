@@ -5,6 +5,7 @@ import (
 	"gmountie/pkg/client/config"
 	"gmountie/pkg/client/metrics"
 	serverConfig "gmountie/pkg/server/config"
+	"gmountie/pkg/server/grpc/snappy"
 	"gmountie/pkg/utils/log"
 	"os"
 
@@ -13,6 +14,20 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
+
+// defaultCallOptions builds the DefaultCallOptions for the gRPC dial:
+// message-size caps (always) plus an optional UseCompressor when the
+// operator opted in. Lives here so the dial site stays readable.
+func defaultCallOptions(rpc *config.RpcConfig) []grpc.CallOption {
+	opts := []grpc.CallOption{
+		grpc.MaxCallRecvMsgSize(rpc.MaxMessageBytes),
+		grpc.MaxCallSendMsgSize(rpc.MaxMessageBytes),
+	}
+	if rpc.Compression == config.CompressionSnappy {
+		opts = append(opts, grpc.UseCompressor(snappy.Name))
+	}
+	return opts
+}
 
 // NewClientFromConfig creates a new gRPC Client from the config and
 // triggers the session handshake. Returns an error if the handshake fails
@@ -43,10 +58,7 @@ func NewClientFromConfig(cfg *config.Config) (Client, error) {
 				Timeout:             cfg.Rpc.Keepalive.Timeout,
 				PermitWithoutStream: cfg.Rpc.Keepalive.PermitWithoutStream,
 			}),
-			grpc.WithDefaultCallOptions(
-				grpc.MaxCallRecvMsgSize(cfg.Rpc.MaxMessageBytes),
-				grpc.MaxCallSendMsgSize(cfg.Rpc.MaxMessageBytes),
-			),
+			grpc.WithDefaultCallOptions(defaultCallOptions(cfg.Rpc)...),
 		}
 		opts = append(opts, WithDialOptions(dialOpts))
 	}

@@ -111,6 +111,51 @@ rpc:
 	s.Assert().Equal(time.Minute, result.Rpc.TimeoutIO)
 }
 
+// TestParse_CompressionDefaultsOff documents the perf reasoning: a
+// loopback profile showed snappy was 53% of client CPU, so compression
+// is off by default and must be explicitly opted into.
+func (s *ConfigTestSuite) TestParse_CompressionDefaultsOff() {
+	conf := `
+server:
+  address: 127.0.0.1
+  port: 9449
+auth:
+  type: none
+`
+	result, err := LoadConfigFromString(conf)
+	s.Require().NoError(err)
+	s.Assert().Equal(CompressionNone, result.Rpc.Compression)
+}
+
+func (s *ConfigTestSuite) TestParse_CompressionSnappyOptIn() {
+	conf := `
+server:
+  address: 127.0.0.1
+  port: 9449
+auth:
+  type: none
+rpc:
+  compression: snappy
+`
+	result, err := LoadConfigFromString(conf)
+	s.Require().NoError(err)
+	s.Assert().Equal(CompressionSnappy, result.Rpc.Compression)
+}
+
+func (s *ConfigTestSuite) TestParse_CompressionRejectsUnknown() {
+	conf := `
+server:
+  address: 127.0.0.1
+  port: 9449
+auth:
+  type: none
+rpc:
+  compression: gzip
+`
+	_, err := LoadConfigFromString(conf)
+	s.Require().Error(err)
+}
+
 // TestParse_FUSEDefaults verifies that omitting the fuse: section yields
 // the documented default FUSE mount tuning.
 func (s *ConfigTestSuite) TestParse_FUSEDefaults() {

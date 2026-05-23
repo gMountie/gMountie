@@ -40,6 +40,20 @@ const (
 	// RPCs are in flight — required to surface a dead server from an idle
 	// FUSE mount.
 	DefaultKeepalivePermitWithoutStream = true
+	// DefaultCompression is the default gRPC compressor name.
+	//
+	// Empirically (pprof of a 1 GiB loopback write): snappy.encodeBlock +
+	// the surrounding memclr burned ~53% of client CPU and held throughput
+	// at 24 MiB/s — i.e., on a fast link, compression IS the bottleneck.
+	// Off by default. WAN users on bandwidth-constrained links should
+	// flip rpc.compression: snappy in their client config.
+	DefaultCompression = CompressionNone
+)
+
+// Valid values for RpcConfig.Compression.
+const (
+	CompressionNone   = "none"
+	CompressionSnappy = "snappy"
 )
 
 // ClientKeepaliveConfig holds the gRPC client-side keepalive parameters.
@@ -81,6 +95,11 @@ type RpcConfig struct {
 	MaxMessageBytes int `mapstructure:"max_message_bytes" validate:"min=65536,max=67108864"`
 	// Keepalive controls gRPC HTTP/2 keepalive pings on the client side.
 	Keepalive ClientKeepaliveConfig `mapstructure:"keepalive"`
+	// Compression names the gRPC compressor to apply to every RPC on this
+	// connection. "none" disables compression entirely; "snappy" uses the
+	// snappy codec registered in pkg/server/grpc/snappy. Default "none" —
+	// see DefaultCompression for the why.
+	Compression string `mapstructure:"compression" validate:"oneof=none snappy"`
 }
 
 // NewRpcConfig parses an RpcConfig from a viper sub-tree. A nil v yields
@@ -98,6 +117,7 @@ func NewRpcConfig(v *viper.Viper) (*RpcConfig, error) {
 			Timeout:             DefaultKeepaliveTimeout,
 			PermitWithoutStream: DefaultKeepalivePermitWithoutStream,
 		},
+		Compression: DefaultCompression,
 	}
 	if v == nil {
 		return cfg, nil
@@ -111,6 +131,7 @@ func NewRpcConfig(v *viper.Viper) (*RpcConfig, error) {
 	v.SetDefault("keepalive.time", DefaultKeepaliveTime)
 	v.SetDefault("keepalive.timeout", DefaultKeepaliveTimeout)
 	v.SetDefault("keepalive.permit_without_stream", DefaultKeepalivePermitWithoutStream)
+	v.SetDefault("compression", DefaultCompression)
 	if err := v.UnmarshalExact(cfg, viper.DecodeHook(mapstructure.StringToTimeDurationHookFunc())); err != nil {
 		return nil, err
 	}
