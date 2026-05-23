@@ -107,7 +107,7 @@ func Start(ctx context.Context, cfg *config.Config) error {
 
 	// Build the ops HTTP server (/metrics, /healthz, /readyz, /version).
 	readiness := ops.PathReadinessChecker{Path: firstVolumePath(cfg)}
-	opsServer := ops.NewServer(cfg.Server.MetricsAddr, readiness)
+	opsServer := ops.NewServer(cfg.Server.MetricsAddr, readiness, cfg.Server.Pprof)
 	go opsServer.Start()
 
 	serveErr := make(chan error, 1)

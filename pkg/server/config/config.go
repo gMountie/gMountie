@@ -86,6 +86,7 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		Port:                v.GetUint("server.port"),
 		Metrics:             v.GetBool("server.metrics"),
 		MetricsAddr:         v.GetString("server.metrics_addr"),
+		Pprof:               v.GetBool("server.pprof"),
 		FrameSizeBytes:      v.GetInt("server.frame_size_bytes"),
 		CompoundMaxParallel: v.GetInt("server.compound_max_parallel"),
 		MaxMessageBytes:     v.GetInt("server.max_message_bytes"),

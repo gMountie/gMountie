@@ -77,6 +77,11 @@ type ServerConfig struct {
 	Metrics bool
 	// MetricsAddr is the address the ops HTTP server listens on.
 	MetricsAddr string `validate:"hostname_port" mapstructure:"metrics_addr"`
+	// Pprof exposes /debug/pprof/* on the ops HTTP server. Off by
+	// default: pprof endpoints leak goroutine names + symbols and can
+	// stall the runtime on large captures, so they have no business
+	// being on a production listener. Flip true for perf investigations.
+	Pprof bool `mapstructure:"pprof"`
 	// FrameSizeBytes bounds each ReadFrame emitted by the server's streaming
 	// Read. Capped at 16 MiB to stay safely under gRPC's max recv size; floor
 	// of 4 KiB matches the typical page size.

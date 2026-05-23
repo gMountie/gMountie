@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/pprof"
 
 	"gmountie/pkg/utils/log"
 
@@ -19,15 +20,29 @@ type Server struct {
 }
 
 // NewServer constructs an ops server bound to addr that delegates
-// readiness checks to readiness. The underlying *http.Server is built
-// synchronously here so Stop always has a non-nil target regardless of
-// goroutine scheduling between Start and Stop.
-func NewServer(addr string, readiness ReadinessChecker) *Server {
+// readiness checks to readiness. enablePprof flips the /debug/pprof/*
+// handlers on; off by default because pprof leaks goroutine names and
+// can stall the runtime under large captures. The underlying
+// *http.Server is built synchronously here so Stop always has a
+// non-nil target regardless of goroutine scheduling between Start and
+// Stop.
+func NewServer(addr string, readiness ReadinessChecker, enablePprof bool) *Server {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.Handle("/healthz", LivenessHandler())
 	mux.Handle("/readyz", ReadinessHandler(readiness))
 	mux.Handle("/version", VersionHandler())
+	if enablePprof {
+		// net/http/pprof registers on DefaultServeMux on import; we use a
+		// private mux, so attach the handlers explicitly. Order matters
+		// for /debug/pprof/ — index handler must come last so the
+		// per-profile routes win pattern matching.
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+	}
 	return &Server{
 		server: &http.Server{Addr: addr, Handler: mux},
 	}

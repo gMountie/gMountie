@@ -6,6 +6,8 @@ import (
 	"gmountie/pkg/client/grpc"
 	"gmountie/pkg/client/mount"
 	"gmountie/pkg/utils/log"
+	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"strings"
@@ -15,6 +17,29 @@ import (
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
+
+// startPprofIfEnabled starts a /debug/pprof HTTP listener if the env var
+// GMOUNTIE_PPROF_ADDR is set (e.g. "127.0.0.1:6060"). Diagnostic only —
+// kept env-gated rather than wired through Config because it's a
+// debugger hook, not a runtime feature.
+func startPprofIfEnabled() {
+	addr := os.Getenv("GMOUNTIE_PPROF_ADDR")
+	if addr == "" {
+		return
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	go func() {
+		log.Log.Sugar().Infof("pprof listening on %s/debug/pprof/", addr)
+		if err := http.ListenAndServe(addr, mux); err != nil {
+			log.Log.Error("pprof server stopped", zap.Error(err))
+		}
+	}()
+}
 
 var (
 	serverAddr string
@@ -90,6 +115,8 @@ var mountCmd = &cobra.Command{
 		if _, err := os.Stat(mountpoint); os.IsNotExist(err) {
 			return fmt.Errorf("mountpoint %s does not exist", mountpoint)
 		}
+
+		startPprofIfEnabled()
 
 		// Create client
 		c, err := grpc.NewClientFromConfig(cfg)
