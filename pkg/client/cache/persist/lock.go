@@ -2,6 +2,7 @@ package persist
 
 import (
 	"os"
+	"time"
 
 	"github.com/pkg/errors"
 	"golang.org/x/sys/unix"
@@ -28,6 +29,31 @@ func acquireLock(path string) (*lockHandle, error) {
 		return nil, errors.Wrap(err, "flock LOCK")
 	}
 	return &lockHandle{f: f}, nil
+}
+
+// acquireLockWithRetry takes a non-blocking flock on path, retrying on
+// ErrCacheLocked until timeout elapses. Negative timeout disables the
+// retry (single attempt). Zero uses DefaultLockAcquireTimeout. Any
+// non-ErrCacheLocked error (open failure, unexpected flock error) is
+// returned immediately without retry.
+func acquireLockWithRetry(path string, timeout time.Duration) (*lockHandle, error) {
+	if timeout == 0 {
+		timeout = DefaultLockAcquireTimeout
+	}
+	if timeout < 0 {
+		return acquireLock(path)
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		lock, err := acquireLock(path)
+		if err == nil || !errors.Is(err, ErrCacheLocked) {
+			return lock, err
+		}
+		if time.Now().After(deadline) {
+			return nil, err
+		}
+		time.Sleep(lockRetryInterval)
+	}
 }
 
 func (l *lockHandle) release() error {

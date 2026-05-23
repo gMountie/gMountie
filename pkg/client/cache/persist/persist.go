@@ -15,8 +15,23 @@ import (
 )
 
 // ErrCacheLocked is returned by Open when another process already
-// holds the LOCK file in Root. Wrap-checked with errors.Is.
+// holds the LOCK file in Root after LockAcquireTimeout has elapsed.
+// Wrap-checked with errors.Is.
 var ErrCacheLocked = errors.New("cache directory is locked by another process")
+
+// DefaultLockAcquireTimeout is the wait budget for a brand-new Open
+// call to inherit the LOCK from a previous owner that's still in the
+// middle of releasing it. Sized to cover the unmount-then-remount race:
+// the prior process gets a few seconds of regular fusermount3 retries
+// plus a lazy-unmount fallback (see pkg/client/mount/common.go) before
+// it can close bbolt and drop the flock. A user re-mounting immediately
+// after a Ctrl-C lands inside this window and would otherwise eat
+// ErrCacheLocked.
+const DefaultLockAcquireTimeout = 5 * time.Second
+
+// lockRetryInterval is the poll cadence between flock attempts. Short
+// enough that the typical 1-2s release latency only costs 10-20 wakeups.
+const lockRetryInterval = 100 * time.Millisecond
 
 // Options governs Open behaviour.
 type Options struct {
@@ -24,6 +39,11 @@ type Options struct {
 	Root string
 	// DiskMaxBytes is the advisory byte budget for chunks/. 0 = unbounded.
 	DiskMaxBytes int64
+	// LockAcquireTimeout caps how long Open will retry on ErrCacheLocked
+	// before giving up. Zero uses DefaultLockAcquireTimeout. Negative
+	// disables the retry entirely (single attempt — useful in tests that
+	// assert fast-fail semantics).
+	LockAcquireTimeout time.Duration
 }
 
 // Persist owns the bbolt handle, chunks/ tree, and LOCK file for one
@@ -49,7 +69,7 @@ func Open(opts Options) (*Persist, error) {
 	if err := os.MkdirAll(filepath.Join(opts.Root, "chunks"), 0o755); err != nil {
 		return nil, errors.Wrap(err, "create chunks dir")
 	}
-	lock, err := acquireLock(filepath.Join(opts.Root, "LOCK"))
+	lock, err := acquireLockWithRetry(filepath.Join(opts.Root, "LOCK"), opts.LockAcquireTimeout)
 	if err != nil {
 		return nil, err
 	}
