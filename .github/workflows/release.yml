@@ -136,3 +136,48 @@ jobs:
 
         helm push "/tmp/gmountie-server-${version}.tgz" \
           oci://ghcr.io/gmountie/charts
+
+  perf:
+    needs: [release]
+    if: ${{ github.event.inputs.type != 'snapshot' }}
+    runs-on: [self-hosted, gmountie-perf]
+    env:
+      # WORKDIR points at the runner's node-local PV mount (contract with the
+      # infra repo) so fio + benches hit a stable local disk, not the ephemeral
+      # overlay or tmpfs. run.sh writes all outputs here and the artifact step
+      # reads them back from the same path — keep this the single source.
+      WORKDIR: /mnt/perf
+    steps:
+      - name: Checkout the released tag
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Resolve released tag
+        id: tag
+        run: echo "ref=$(git describe --tags --abbrev=0)" >> "$GITHUB_OUTPUT"
+
+      - name: Run perf suite and upload to Bencher
+        env:
+          BENCHER: "1"
+          BENCHER_API_TOKEN: ${{ secrets.BENCHER_API_TOKEN }}
+          BENCHER_PROJECT: gmountie
+          BENCHER_TESTBED: gmountie-perf-pod
+          BENCHER_BRANCH: master
+          GIT_HASH: ${{ github.sha }}
+          COUNT: "10"
+          BENCHTIME: "10s"
+        run: bash scripts/perf/run.sh
+
+      - name: Upload raw artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-${{ steps.tag.outputs.ref }}
+          path: |
+            ${{ env.WORKDIR }}/bench-lan.txt
+            ${{ env.WORKDIR }}/bench-wan.txt
+            ${{ env.WORKDIR }}/substrate.json
+            ${{ env.WORKDIR }}/report.bmf.json
+          if-no-files-found: warn
