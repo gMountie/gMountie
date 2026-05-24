@@ -69,16 +69,23 @@ significance. p > 0.05 usually means the delta is noise.
 
 ### Slow loopback
 
-`scripts/start-slow-loopback.sh` / `stop-slow-loopback.sh` (hardcoded at
-`delay 10ms rate 1000Mbit`) shape the loopback interface via `tc netem`. For
-custom delays — e.g. the 30 ms profile used in the Phase 3 baseline — invoke
-`tc` directly:
+`scripts/perf/profile.sh` is the single source of truth for named netem
+profiles. Use it directly or via its thin wrapper scripts:
 
 ```bash
-sudo tc qdisc add dev lo root netem delay 30ms
-task perf:bench OUT=docs/perf/slow30ms.txt COUNT=3 BENCHTIME=20s
-sudo tc qdisc del dev lo root
+# Apply the WAN profile (delay 25ms 5ms jitter, 100Mbit) to loopback
+sudo scripts/perf/profile.sh apply wan          # or: sudo scripts/start-slow-loopback.sh [wan] [lo]
+
+# Apply LAN (no shaping — clears any existing qdisc)
+sudo scripts/perf/profile.sh apply lan
+
+# Remove shaping when done
+sudo scripts/perf/profile.sh clear             # or: sudo scripts/stop-slow-loopback.sh
 ```
+
+`scripts/start-slow-loopback.sh [profile] [iface]` delegates straight to
+`profile.sh apply` (default: `wan lo`). `stop-slow-loopback.sh` calls
+`profile.sh clear`.
 
 **Always** remove the qdisc when done — silent slowness leaks into later runs.
 
@@ -87,6 +94,79 @@ sudo tc qdisc del dev lo root
 The harness silences the gMountie zap logger inside `TestMain` so the bench
 stream stays parseable. Set `GMOUNTIE_BENCH_VERBOSE=1` to restore logs when
 diagnosing a hang or unexpected error.
+
+## Continuous tracking (Bencher)
+
+On every **alpha or production release** (not snapshot), a `perf` job in
+`.github/workflows/release.yml` runs on the self-hosted `[gmountie-perf]`
+runner and uploads results to **Bencher Cloud** (project `gmountie`, testbed
+`gmountie-perf-pod`, branch `master`). Each datapoint is identified by the
+release commit SHA. Results live off-repo in Bencher; the dashboard is the
+over-release overview.
+
+### Network profiles
+
+Two codified profiles, both run over the real loopback TCP transport
+(`GMOUNTIE_BENCH_TCP=1`). `scripts/perf/profile.sh` is the single source of
+truth for their `tc netem` parameters.
+
+| Profile | Shaping | Effective RTT on loopback |
+| ------- | ------- | ------------------------- |
+| `lan`   | none    | ~0 ms |
+| `wan`   | `delay 25ms 5ms rate 100Mbit` | ~50 ms (packet traverses the qdisc once per direction) |
+
+Benchmarks are tracked as separate series per profile, e.g.
+`SeqRead64MiB/lan`, `SeqRead64MiB/wan`.
+
+### Emitted measures
+
+| Measure | Unit | Benchmarks |
+| ------- | ---- | ---------- |
+| `latency` | ns/op | all |
+| `throughput` | MB/s | IO benches (sequential + random) |
+| `throughput_pct_of_raw` | % | sequential benches — achieved MB/s as a fraction of the binding `min(disk, link)` ceiling for the profile |
+| `_substrate/*` | various | substrate-only series: `disk_seq_read`, `disk_seq_write`, `disk_rand_4k_iops`, `cpu_compute`, `net_rtt_lan`, `net_rtt_wan` |
+
+The `_substrate/*` series capture the raw hardware floor (disk, CPU, network)
+without gMountie in the path. They make floor drift visible on the dashboard
+as its own tracked series — see Drift runbook below.
+
+### Reproduce locally
+
+```bash
+# Build just the BMF emitter
+task perf:bmf:build
+
+# Full run: substrate probe + lan/wan bench passes + BMF emission
+# Needs FUSE + tc (use the kubevirt VM or a Linux host with /dev/fuse).
+task perf:ci
+
+# To upload to Bencher instead of writing report.bmf.json locally:
+BENCHER=1 BENCHER_PROJECT=gmountie BENCHER_TESTBED=gmountie-perf-pod \
+  BENCHER_API_TOKEN=<token> task perf:ci
+```
+
+`WORKDIR` must point at a **real block-backed filesystem** (the CI job uses
+`/mnt/perf`, a node-local PV). `fio direct=1` and the disk floor probe both
+require it — tmpfs or an overlay filesystem will silently produce wrong
+numbers. Both the bench data directory (`$TMPDIR`) and the fio probe live
+under `WORKDIR`.
+
+### Drift runbook
+
+The dashboard jumped — what to check:
+
+1. **Look at `_substrate/*` first.** If those series moved, the change is
+   environmental: disk filling up, a node kernel upgrade, or the runner Pod
+   accidentally rescheduled onto a different node. The gMountie code is not
+   at fault.
+2. **If `_substrate/*` is flat but `throughput` or `latency` moved**, the
+   change is in gMountie code. Check the release diff.
+3. **If substrate variance is consistently too broad to trust** (the series
+   won't settle despite node pinning), replace the Pod runner with a kubevirt
+   VM and register it as a new Bencher testbed (`gmountie-perf-vm`). Making
+   it a new testbed keeps the substrate change as an explicit series break
+   rather than a silent step in the existing data.
 
 ## Baselines
 

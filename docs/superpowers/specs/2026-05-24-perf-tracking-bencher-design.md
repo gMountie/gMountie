@@ -1,6 +1,6 @@
 # Release-Gated Performance Tracking with Bencher
 
-**Status:** Design approved 2026-05-24.
+**Status:** Design approved 2026-05-24; in-repo pipeline implemented 2026-05-25 (runner / ARC / Bencher provisioning tracked in the infra repo).
 
 **Builds on:**
 - The existing benchstat-shaped harness at `test/e2e/perf/` (sequential / random IO + metadata benchmarks, each spinning up an in-process server + FUSE mount via `test/e2e/utils`).
