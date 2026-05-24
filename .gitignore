@@ -49,3 +49,5 @@ graphify-out/
 # Perf harness working output: the perfbmf binary plus bench/substrate/BMF
 # artifacts produced by `task perf:bmf:build` and scripts/perf/run.sh.
 perf-out/
+# Stray perfbmf binary from `go build ./test/e2e/perf/cmd/perfbmf/` (no -o).
+/perfbmf
