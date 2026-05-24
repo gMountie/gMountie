@@ -8,6 +8,7 @@ package io
 import (
 	"context"
 	stdio "io"
+	"sync/atomic"
 	"time"
 
 	grpcclient "gmountie/pkg/client/grpc"
@@ -669,11 +670,17 @@ func (b *BackendClient) streamingWrite(h *grpcFileHandle, data []byte, off int64
 // returned as successful to FUSE optimistically — durability is
 // established on Flush. Big writes (len(data) >= threshold) bypass the
 // coalescer: pending bytes are drained first to preserve on-disk order.
+//
+// The handle's dirty flag is set on every accepted write so that Flush
+// can skip the RPC on a truly clean handle.
 func (b *BackendClient) Write(ctx context.Context, fh FileHandle, off int64, data []byte) (uint32, fuse.Status) {
 	h := resolveHandle(fh)
 	if h == nil {
 		return 0, fuse.EBADF
 	}
+	// Mark dirty before any network I/O so that a failed write still
+	// leaves the handle marked dirty; the next Flush will retry.
+	h.dirty.Store(true)
 	// Coalescing disabled: pass through to the streaming Write directly.
 	if h.coalescer == nil {
 		return b.streamingWrite(h, data, off, uuid.NewString())
@@ -744,34 +751,59 @@ func (b *BackendClient) Release(ctx context.Context, fh FileHandle) fuse.Status 
 	return fuse.OK
 }
 
-// Flush drains coalesced writes then issues the server-side Flush RPC.
-// If the drain fails, returns EIO and skips the server-side Flush.
+// Flush drains the coalescer in memory and fuses the pending write with
+// the flush into a single WriteAndFlush RPC (one RTT instead of the
+// previous two: streaming Write + Flush). If the handle is clean (nothing
+// written since the last successful Flush) the RPC is skipped entirely.
+//
 // Idempotent — wrapped in retryableCall so transient gRPC failures
 // (Unavailable, DeadlineExceeded) don't surface to userspace as EIO.
-// No request_id needed: re-running Flush against already-flushed
-// state is a server-side no-op.
+// Re-running WriteAndFlush with the same (fd, offset, data) is safe
+// server-side. No request_id needed: the server-side flush is idempotent.
+//
+// reply.FinalAttr is returned by the server but unused at the client;
+// FUSE FLUSH carries no attributes back to the kernel. Available for
+// future cache integration.
 func (b *BackendClient) Flush(ctx context.Context, fh FileHandle) fuse.Status {
 	h := resolveHandle(fh)
 	if h == nil {
 		return fuse.EBADF
 	}
-	if st := b.drainCoalescer(h); !st.Ok() {
-		return st
+	// Clean-handle fast path: nothing written since last flush, coalescer
+	// empty by definition. Skip the RPC entirely.
+	if !h.dirty.Load() {
+		return fuse.OK
+	}
+	// Drain the coalescer in memory; pending may be nil (write went
+	// directly to the wire via streamingWrite on overflow/big-write).
+	var offset int64
+	var data []byte
+	if h.coalescer != nil {
+		if pending := h.coalescer.Drain(); pending != nil {
+			offset = pending.Offset
+			data = pending.Data
+		}
 	}
 	ctx2, cancel := withIOTimeout(ctx, h.ioTimeout)
 	defer cancel()
-	res, err := retryableCall(ctx2, "Flush", func(ctx context.Context) (*proto.FlushReply, error) {
-		return h.fileClient.Flush(ctx, &proto.FlushRequest{
+	res, err := retryableCall(ctx2, "WriteAndFlush", func(ctx context.Context) (*proto.WriteAndFlushReply, error) {
+		return h.fileClient.WriteAndFlush(ctx, &proto.WriteAndFlushRequest{
 			Volume:    h.volume,
 			Fd:        h.fd,
 			SessionId: h.sessionID,
+			Offset:    offset,
+			Data:      data,
 		})
 	})
 	if err != nil {
-		log.Log.Error("error in call: Flush", zap.String("path", h.path), zap.Error(err))
+		log.Log.Error("error in call: WriteAndFlush", zap.String("path", h.path), zap.Error(err))
 		return fuse.EIO
 	}
-	return fuse.Status(res.Status)
+	st := fuse.Status(res.Status)
+	if st.Ok() {
+		h.dirty.Store(false)
+	}
+	return st
 }
 
 // Fsync drains coalesced writes then issues the server-side Fsync RPC.
@@ -916,6 +948,11 @@ type grpcFileHandle struct {
 	fd         uint64
 	ioTimeout  time.Duration
 	sessionID  string
+	// dirty tracks whether a Write has been accepted since the last
+	// successful Flush. Flush skips the RPC entirely when dirty is false
+	// (clean-handle fast path). Set atomically by Write; cleared atomically
+	// by a successful Flush. Fsync does not touch dirty.
+	dirty atomic.Bool
 	// readahead is non-nil when readahead is enabled for this fd.
 	readahead *Readahead
 	// coalescer is non-nil when per-fd small-write coalescing is enabled.
