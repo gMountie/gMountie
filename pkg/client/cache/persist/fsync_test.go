@@ -106,4 +106,28 @@ func (s *PersistFsyncSuite) TestDeleteAttrBytesRealStillDeletes() {
 	s.Assert().False(ok, "key must be gone after delete")
 }
 
+func (s *PersistFsyncSuite) TestOpenEnablesNoSync() {
+	p, err := persist.Open(persist.Options{Root: s.dir})
+	s.Require().NoError(err)
+	defer p.Close()
+	s.Assert().True(persist.TestingNoSync(p), "meta.db should open with NoSync enabled")
+}
+
+// Close must stop the syncer and perform a final sync; data written
+// before Close must be readable after reopening the same directory.
+func (s *PersistFsyncSuite) TestCloseSyncsAndDataSurvivesReopen() {
+	p, err := persist.Open(persist.Options{Root: s.dir})
+	s.Require().NoError(err)
+	s.Require().NoError(p.PutAttrBytes("/a", []byte("durable")))
+	s.Require().NoError(p.Close())
+
+	p2, err := persist.Open(persist.Options{Root: s.dir})
+	s.Require().NoError(err)
+	defer p2.Close()
+	v, ok, err := p2.GetAttrBytes("/a")
+	s.Require().NoError(err)
+	s.Require().True(ok)
+	s.Assert().Equal([]byte("durable"), v)
+}
+
 func TestPersistFsyncSuite(t *testing.T) { suite.Run(t, new(PersistFsyncSuite)) }

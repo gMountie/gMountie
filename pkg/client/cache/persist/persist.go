@@ -8,6 +8,7 @@ package persist
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -33,6 +34,12 @@ const DefaultLockAcquireTimeout = 5 * time.Second
 // enough that the typical 1-2s release latency only costs 10-20 wakeups.
 const lockRetryInterval = 100 * time.Millisecond
 
+// metaSyncInterval bounds how stale the on-disk meta.db can be after an
+// unclean crash. meta.db opens NoSync (no per-commit fsync) because the
+// cache index is reconstructable — a lost entry costs a cache miss, never
+// data. This ticker flushes it durably in the background.
+const metaSyncInterval = time.Second
+
 // Options governs Open behaviour.
 type Options struct {
 	// Root is the per-volume cache directory. Created if missing.
@@ -50,10 +57,12 @@ type Options struct {
 // cache directory. Safe for concurrent use; bbolt is single-writer
 // but Persist serializes writes internally.
 type Persist struct {
-	root string
-	db   *bolt.DB
-	lock *lockHandle
-	disk *diskAccountant
+	root     string
+	db       *bolt.DB
+	lock     *lockHandle
+	disk     *diskAccountant
+	syncStop chan struct{}
+	syncWG   sync.WaitGroup
 }
 
 // Open acquires the LOCK file, opens (or creates) meta.db, ensures
@@ -73,7 +82,7 @@ func Open(opts Options) (*Persist, error) {
 	if err != nil {
 		return nil, err
 	}
-	db, err := bolt.Open(filepath.Join(opts.Root, "meta.db"), 0o600, &bolt.Options{Timeout: time.Second})
+	db, err := bolt.Open(filepath.Join(opts.Root, "meta.db"), 0o600, &bolt.Options{Timeout: time.Second, NoSync: true})
 	if err != nil {
 		_ = lock.release()
 		return nil, errors.Wrap(err, "open meta.db")
@@ -103,11 +112,41 @@ func Open(opts Options) (*Persist, error) {
 		return nil, err
 	}
 	p.startBackgroundSweeps()
+	p.startMetaSyncer()
 	return p, nil
 }
 
-// Close flushes bbolt, releases the lock file, and frees OS resources.
+// startMetaSyncer launches the background goroutine that periodically
+// fsyncs the NoSync meta.db. Stopped by Close before db.Close().
+func (p *Persist) startMetaSyncer() {
+	p.syncStop = make(chan struct{})
+	p.syncWG.Add(1)
+	go func() {
+		defer p.syncWG.Done()
+		t := time.NewTicker(metaSyncInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-p.syncStop:
+				return
+			case <-t.C:
+				_ = p.db.Sync()
+			}
+		}
+	}()
+}
+
+// Close stops the background syncer, flushes bbolt durably, releases the
+// lock file, and frees OS resources.
 func (p *Persist) Close() error {
+	if p.syncStop != nil {
+		close(p.syncStop)
+		p.syncWG.Wait()
+		p.syncStop = nil
+	}
+	// Final durable flush: NoSync means db.Close() won't fsync pending
+	// commits for us.
+	_ = p.db.Sync()
 	if err := p.db.Close(); err != nil {
 		_ = p.lock.release()
 		return errors.Wrap(err, "close meta.db")
