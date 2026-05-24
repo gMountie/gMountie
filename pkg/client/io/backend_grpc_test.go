@@ -619,18 +619,49 @@ func (s *BackendClientTestSuite) TestRelease() {
 	s.Assert().Error(h.lifeCtx.Err(), "lifeCtx must be cancelled after Release")
 }
 
-func (s *BackendClientTestSuite) TestFlush() {
-	s.fileClient.EXPECT().Flush(mock.Anything, &proto.FlushRequest{
-		Volume:    "testVolume",
-		Fd:        1,
-		SessionId: "test-session",
-	}, mock.Anything).Return(&proto.FlushReply{
-		Status: int32(fuse.OK),
-	}, nil)
-
-	h := s.newHandle(grpcclient.PerFileConfig{})
+// TestFlushCleanHandleSkipsRPC verifies the clean-handle fast path: a
+// handle on which nothing has been written since the last flush issues no
+// RPC at all. Strict-mode mock enforces that WriteAndFlush/Flush/Write are
+// not called.
+func (s *BackendClientTestSuite) TestFlushCleanHandleSkipsRPC() {
+	h := s.newHandle(grpcclient.PerFileConfig{WriteCoalesceBytes: 4096})
 	st := s.backend.Flush(context.Background(), h)
 	s.Assert().Equal(fuse.OK, st)
+}
+
+// TestFlushFusesWriteAndFlush verifies that a buffered small write followed
+// by Flush results in exactly one WriteAndFlush RPC carrying the drained
+// buffer — no separate streaming Write, no separate Flush RPC.
+func (s *BackendClientTestSuite) TestFlushFusesWriteAndFlush() {
+	h := s.newHandle(grpcclient.PerFileConfig{WriteCoalesceBytes: 4096})
+	_, wst := s.backend.Write(context.Background(), h, 0, []byte("hi"))
+	s.Require().Equal(fuse.OK, wst)
+
+	s.fileClient.EXPECT().WriteAndFlush(mock.Anything, mock.MatchedBy(func(r *proto.WriteAndFlushRequest) bool {
+		return r.Volume == "testVolume" && r.Fd == 1 &&
+			r.SessionId == "test-session" && r.Offset == 0 && string(r.Data) == "hi"
+	}), mock.Anything).Return(&proto.WriteAndFlushReply{
+		Status:  int32(fuse.OK),
+		Written: 2,
+	}, nil).Once()
+
+	st := s.backend.Flush(context.Background(), h)
+	s.Assert().Equal(fuse.OK, st)
+}
+
+// TestFlush_CleanAfterWrite verifies that a second Flush after a successful
+// WriteAndFlush is a no-op (dirty flag cleared on success).
+func (s *BackendClientTestSuite) TestFlush_CleanAfterWrite() {
+	h := s.newHandle(grpcclient.PerFileConfig{WriteCoalesceBytes: 4096})
+	_, wst := s.backend.Write(context.Background(), h, 0, []byte("data"))
+	s.Require().Equal(fuse.OK, wst)
+
+	s.fileClient.EXPECT().WriteAndFlush(mock.Anything, mock.Anything, mock.Anything).
+		Return(&proto.WriteAndFlushReply{Status: int32(fuse.OK), Written: 4}, nil).Once()
+
+	s.Require().Equal(fuse.OK, s.backend.Flush(context.Background(), h))
+	// Second Flush: handle is clean, no RPC expected.
+	s.Assert().Equal(fuse.OK, s.backend.Flush(context.Background(), h))
 }
 
 func (s *BackendClientTestSuite) TestFsync() {
@@ -649,21 +680,23 @@ func (s *BackendClientTestSuite) TestFsync() {
 }
 
 // TestFlush_RetriesOnUnavailable verifies that a transient gRPC
-// Unavailable on Flush survives a retry rather than surfacing as EIO.
-// Flush is idempotent at the FUSE layer (a second Flush against an
-// already-flushed fd is a no-op server-side), so retrying without a
-// request_id is safe.
+// Unavailable on WriteAndFlush survives a retry rather than surfacing as
+// EIO. WriteAndFlush is idempotent (same fd/offset/data replayed), so
+// retrying is safe.
 func (s *BackendClientTestSuite) TestFlush_RetriesOnUnavailable() {
-	s.fileClient.EXPECT().Flush(mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, status.Error(codes.Unavailable, "down")).Once()
-	s.fileClient.EXPECT().Flush(mock.Anything, mock.Anything, mock.Anything).
-		Return(&proto.FlushReply{Status: int32(fuse.OK)}, nil).Once()
+	h := s.newHandle(grpcclient.PerFileConfig{WriteCoalesceBytes: 4096})
+	_, wst := s.backend.Write(context.Background(), h, 0, []byte("retry"))
+	s.Require().Equal(fuse.OK, wst)
 
-	h := s.newHandle(grpcclient.PerFileConfig{})
+	s.fileClient.EXPECT().WriteAndFlush(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, status.Error(codes.Unavailable, "down")).Once()
+	s.fileClient.EXPECT().WriteAndFlush(mock.Anything, mock.Anything, mock.Anything).
+		Return(&proto.WriteAndFlushReply{Status: int32(fuse.OK), Written: 5}, nil).Once()
+
 	st := s.backend.Flush(context.Background(), h)
 
 	s.Require().Equal(fuse.OK, st)
-	s.fileClient.AssertNumberOfCalls(s.T(), "Flush", 2)
+	s.fileClient.AssertNumberOfCalls(s.T(), "WriteAndFlush", 2)
 }
 
 // TestFsync_RetriesOnUnavailable mirrors the Flush retry test for the
