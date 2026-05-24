@@ -162,6 +162,26 @@ func (p *Persist) InvalidatePathChunks(path string) error {
 // indices [firstIdx, lastIdx]. Decrements each removed entry's
 // refcount and unlinks chunk files whose count hits zero (post-commit).
 func (p *Persist) InvalidateChunkRange(path string, firstIdx, lastIdx int) error {
+	// Probe first: a writable txn commits (and, absent NoSync, fsyncs)
+	// even when it deletes nothing. The hot write path invalidates ranges
+	// that were never cached, so skip the txn when no entry exists in range.
+	var hasAny bool
+	if err := p.db.View(func(tx *bolt.Tx) error {
+		idx := tx.Bucket(bucketDataIdx)
+		for i := firstIdx; i <= lastIdx; i++ {
+			if idx.Get(dataIdxKey(path, i)) != nil {
+				hasAny = true
+				return nil
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if !hasAny {
+		return nil
+	}
+
 	var toUnlink [][16]byte
 	err := p.db.Update(func(tx *bolt.Tx) error {
 		idx := tx.Bucket(bucketDataIdx)
