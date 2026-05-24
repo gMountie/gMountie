@@ -38,9 +38,19 @@ func (p *Persist) kvDelete(bucket []byte, key string) error {
 	if !ok {
 		return nil
 	}
-	return p.db.Update(func(tx *bolt.Tx) error {
+	if err := p.db.Update(func(tx *bolt.Tx) error {
 		return tx.Bucket(bucket).Delete([]byte(key))
-	})
+	}); err != nil {
+		return err
+	}
+	// Belt-and-suspenders: make this real invalidation durable immediately
+	// under NoSync. The probe above confirms the key was present, so the
+	// Update just performed a real deletion. Syncing here prevents a stale
+	// attr/dir entry from surviving a crash and being served as trusted on
+	// the next open when SubscribeEnabled=false (verified at backend.go:52-57:
+	// that branch calls markGlobalVerified() at construction, bypassing
+	// the unverified-startup revalidation the subscribe path provides).
+	return errors.Wrap(p.db.Sync(), "sync after kvDelete")
 }
 
 // PutAttrBytes / GetAttrBytes / DeleteAttrBytes: attr bucket facade.

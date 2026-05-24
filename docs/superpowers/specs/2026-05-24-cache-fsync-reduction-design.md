@@ -109,12 +109,38 @@ The last row depends on the validity/subscribe layer resetting to
 `stateUnverified` on a fresh backend and gating reads until revalidation.
 **Decision:** rely on the validity layer and document the dependency.
 
-**Implementation-time verification (blocking):** confirm the persistent cache
-cannot run in a "trusted-without-subscribe" mode that would serve cached bytes
-as verified without ever revalidating. If such a mode exists, add the
-belt-and-suspenders fallback: `db.Sync()` immediately after any invalidation
-that actually deleted ≥1 entry (rare on the hot path, so cheap). If no such mode
-exists, no extra sync is needed.
+**Implementation-time verification result: UNSAFE → fallback TAKEN.**
+
+Verification traced the read-path gates (`backend.go:142, 188, 231, 283`) —
+all correctly skip cached bytes when `globalState() != stateVerified`. The
+startup default of `newValidityTracker()` is `stateUnverified` (zero value,
+`validity.go:16,27`). However, `backend.go:52-57` contains a branch that fires
+unconditionally when `cfg.SubscribeEnabled == false`:
+
+```go
+if !cfg.SubscribeEnabled {
+    b.validity.markGlobalVerified()   // ← immediately trusts the cache
+}
+```
+
+This means that with subscribe disabled (a supported operator config), a
+freshly-opened `cachedBackend` starts in `stateVerified`, bypassing all
+per-path revalidation. A stale chunk that survived a crash (because its
+invalidation was not fsynced) would be served as a trusted cache hit.
+
+**Fallback implemented:** `db.Sync()` is called immediately after the writable
+transaction in each real-invalidation path:
+- `persist/dataidx.go` — `InvalidatePathChunks` and `InvalidateChunkRange`,
+  after `p.db.Update(...)` returns nil (the no-op probes above guarantee Update
+  only runs when ≥1 entry is present, so every successful Update is a real
+  removal).
+- `persist/kv.go` — `kvDelete`, after `p.db.Update(...)` returns nil (the
+  presence probe above guarantees the same).
+
+These sync calls are only reached when an entry was actually deleted; the hot
+write path (invalidating a range that was never cached) is unaffected.
+A test `TestRealInvalidationDurableAfterReopen` in `persist/fsync_test.go`
+confirms the deleted entries are absent after a close+reopen cycle.
 
 ### `NoSync` is unconditional (explicit decision)
 

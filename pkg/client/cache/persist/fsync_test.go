@@ -130,6 +130,52 @@ func (s *PersistFsyncSuite) TestCloseSyncsAndDataSurvivesReopen() {
 	s.Assert().Equal([]byte("durable"), v)
 }
 
+// TestRealInvalidationDurableAfterReopen verifies that a real invalidation
+// (attr delete + chunk range delete) is durable: the entries are absent when
+// the same directory is reopened via a fresh Open call. This is the
+// belt-and-suspenders guarantee that closes the SubscribeEnabled=false
+// safety gap: when subscribe is off, NewCachedBackend calls
+// markGlobalVerified() at construction (backend.go:52-57), so the validity
+// layer's unverified-startup revalidation is bypassed. The only remaining
+// defence is that the invalidation itself is fsynced before we return, which
+// is what the db.Sync() calls added to kvDelete / InvalidateChunkRange /
+// InvalidatePathChunks provide.
+//
+// Note: this test uses a normal Close→Reopen cycle, not a simulated crash.
+// It cannot prove crash-survival directly (that would require OS-level fault
+// injection), but it does confirm the durable state is written — a clean
+// Close that skipped the sync would pass this test too, but the subsequent
+// sync-count assertions in the "Real" tests above confirm the writable txn
+// committed and the sync fired within the same Open session.
+func (s *PersistFsyncSuite) TestRealInvalidationDurableAfterReopen() {
+	p, err := persist.Open(persist.Options{Root: s.dir})
+	s.Require().NoError(err)
+
+	// Write an attr entry and a chunk ref, then invalidate both.
+	s.Require().NoError(p.PutAttrBytes("/durability-test", []byte("cached-attrs")))
+	hash, _, err := p.WriteChunk([]byte("cached-data"))
+	s.Require().NoError(err)
+	s.Require().NoError(p.PutChunkRef("/durability-test", 0, persist.ChunkRef{Hash: hash, Size: 11}))
+
+	s.Require().NoError(p.DeleteAttrBytes("/durability-test"))
+	s.Require().NoError(p.InvalidateChunkRange("/durability-test", 0, 0))
+
+	// Close (which also syncs) then reopen.
+	s.Require().NoError(p.Close())
+
+	p2, err := persist.Open(persist.Options{Root: s.dir})
+	s.Require().NoError(err)
+	defer p2.Close()
+
+	_, attrPresent, err := p2.GetAttrBytes("/durability-test")
+	s.Require().NoError(err)
+	s.Assert().False(attrPresent, "attr invalidation must be absent after reopen")
+
+	_, chunkPresent, err := p2.GetChunkRef("/durability-test", 0)
+	s.Require().NoError(err)
+	s.Assert().False(chunkPresent, "chunk invalidation must be absent after reopen")
+}
+
 func TestPersistFsyncSuite(t *testing.T) { suite.Run(t, new(PersistFsyncSuite)) }
 
 // BenchmarkInvalidateChunkRangeNoOp guards the no-op skip optimisation: a
