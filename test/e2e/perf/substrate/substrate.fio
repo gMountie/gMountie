@@ -1,0 +1,28 @@
+; Substrate disk probe: one fio run, four named jobs. Targets SUBSTRATE_DIR
+; (set to the same filesystem the gMountie volume backing dir uses, so the
+; numbers reflect the disk the benchmarks actually hit). direct=1 bypasses the
+; page cache to measure the device floor, not RAM.
+[global]
+directory=${SUBSTRATE_DIR}
+ioengine=psync
+direct=1
+size=256m
+time_based=0
+group_reporting=1
+stonewall=1
+
+[seqread]
+rw=read
+bs=1m
+
+[seqwrite]
+rw=write
+bs=1m
+
+[randread]
+rw=randread
+bs=4k
+
+[randwrite]
+rw=randwrite
+bs=4k

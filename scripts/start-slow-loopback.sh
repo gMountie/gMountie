@@ -2,38 +2,16 @@
 # Apply tc netem shaping to the loopback interface for realistic perf testing.
 #
 # Usage:
-#   start-slow-loopback.sh [delay] [rate]
+#   start-slow-loopback.sh [profile] [iface]
 #
-# Defaults: 30ms delay, 1000Mbit rate cap. Both args accept any tc-recognised
-# spec (e.g. "30ms", "100Mbit", "0" to omit a knob — pass empty string to skip).
+# Delegates to scripts/perf/profile.sh apply, which is the single source of
+# truth for named netem profiles. Default profile: wan. Default iface: lo.
 #
-# The script is idempotent: if a netem qdisc already exists on lo it is
-# replaced via `tc qdisc change`; otherwise `tc qdisc add` installs a fresh
-# one. Run stop-slow-loopback.sh to remove it. Requires root (or sudo).
+# Profiles: lan (no shaping), wan (25ms 5ms jitter, 100Mbit).
+# Run stop-slow-loopback.sh to remove shaping. Requires root (or sudo).
 
 set -euo pipefail
-
-DELAY="${1:-30ms}"
-RATE="${2:-1000Mbit}"
-
-netem_args=()
-if [ -n "$DELAY" ]; then
-  netem_args+=(delay "$DELAY")
-fi
-if [ -n "$RATE" ]; then
-  netem_args+=(rate "$RATE")
-fi
-
-if [ ${#netem_args[@]} -eq 0 ]; then
-  echo "start-slow-loopback: nothing to do (no delay, no rate)" >&2
-  exit 1
-fi
-
-# `tc qdisc replace` is the idempotent form — installs if absent, changes if
-# present. Falls back to `add` on older tc that doesn't support `replace`.
-if ! tc qdisc replace dev lo root netem "${netem_args[@]}" 2>/dev/null; then
-  tc qdisc add dev lo root netem "${netem_args[@]}"
-fi
-
-echo "loopback shaping active:"
-tc qdisc show dev lo
+# Back-compat wrapper: the canonical profile definitions now live in
+# scripts/perf/profile.sh. Default behaviour applies the WAN profile to lo.
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$here/perf/profile.sh" apply "${1:-wan}" "${2:-lo}"
