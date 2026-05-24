@@ -52,14 +52,14 @@ ENV PATH=/usr/local/go/bin:/home/runner/go/bin:${PATH}
 
 # benchstat — parity with `task perf:diff` for local diffing on the runner.
 ARG BENCHSTAT_VERSION=latest
-RUN GOBIN=/usr/local/bin GOFLAGS=-mod=mod \
-        go install "golang.org/x/perf/cmd/benchstat@${BENCHSTAT_VERSION}"
+RUN GOBIN=/usr/local/bin go install "golang.org/x/perf/cmd/benchstat@${BENCHSTAT_VERSION}"
 
-# Bencher CLI — the upload step (`bencher run`). Pin BENCHER_VERSION; confirm the
-# install mechanism/asset at https://bencher.dev/docs/how-to/install-cli/.
-ARG BENCHER_VERSION=0.5.0
+# Bencher CLI — the upload step (`bencher run`). The official installer pins via
+# BENCHER_VERSION and installs into $CARGO_HOME/bin; point CARGO_HOME at a dir on
+# PATH so the unprivileged runner user finds it.
+ARG BENCHER_VERSION=0.6.6
 RUN curl -fsSL "https://bencher.dev/download/install-cli.sh" \
-        | VERSION="${BENCHER_VERSION}" sh \
+        | env CARGO_HOME=/usr/local BENCHER_VERSION="${BENCHER_VERSION}" sh \
     && bencher --version
 
 # Back to the unprivileged runner user the chart launches as.
