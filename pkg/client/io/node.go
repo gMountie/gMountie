@@ -288,14 +288,13 @@ func createAt(ctx context.Context, parentInode *fs.Inode, backend FileSystemBack
 		return nil, nil, 0, syscall.Errno(st)
 	}
 	full := childPath(parent, name)
-	// Today proto.CreateReply doesn't carry Attr; fall back to Stat so
-	// the kernel gets a populated EntryOut. If Stat fails, surface the
-	// error rather than returning a zero EntryOut — the kernel would
-	// otherwise cache the zero (Mode=0, Size=0) for EntryTimeout (~1s
-	// per single.go) and poison subsequent stat ops. The server-side
-	// Create already succeeded; this leaks a temporary fd until
-	// Release-on-close fires, but that's bounded and cleaner than a
-	// poisoned dentry cache.
+	// When the server populates CreateReply.Attributes the backend maps it
+	// to attr directly, saving a round-trip. Fall back to Stat for older
+	// servers that omit the field. If Stat fails, surface the error rather
+	// than returning a zero EntryOut — the kernel would cache the zero
+	// (Mode=0, Size=0) for EntryTimeout and poison subsequent stat ops.
+	// The server-side Create already succeeded; the leaked fd is bounded
+	// and cleaned up by Release-on-close.
 	if attr == nil {
 		a, sst := backend.Stat(ctx, full)
 		if !sst.Ok() {

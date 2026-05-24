@@ -417,8 +417,8 @@ func (s *BackendClientTestSuite) TestOpen_Error() {
 }
 
 // TestCreateReturnsHandle verifies the joined-path semantics for Create
-// (parent + "/" + name) and that Attr is nil — Task 3's node adapter
-// must follow up with a Stat for the EntryOut.
+// (parent + "/" + name). When CreateReply carries no Attributes the returned
+// attr is nil — the node adapter falls back to a Stat.
 func (s *BackendClientTestSuite) TestCreateReturnsHandle() {
 	s.fileClient.EXPECT().Create(mock.Anything, mock.MatchedBy(func(req *proto.CreateRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/dir/file" && req.Flags == 0 && req.Mode == 0644 &&
@@ -432,7 +432,24 @@ func (s *BackendClientTestSuite) TestCreateReturnsHandle() {
 	s.Require().Equal(fuse.OK, st)
 	s.Require().NotNil(fh)
 	s.Assert().IsType(&grpcFileHandle{}, fh)
-	s.Assert().Nil(attr, "current proto.CreateReply carries no Attr; node adapter must follow up with Stat")
+	s.Assert().Nil(attr, "no Attributes in reply → attr must be nil so node falls back to Stat")
+}
+
+// TestCreateReturnsAttrFromReply verifies that when CreateReply carries an
+// Attributes field the backend returns it as a populated *Attr instead of nil.
+// The strict mock ensures no stray GetAttr/Stat call is issued by the backend.
+func (s *BackendClientTestSuite) TestCreateReturnsAttrFromReply() {
+	s.fileClient.EXPECT().Create(mock.Anything, mock.Anything).Return(&proto.CreateReply{
+		Status:     int32(fuse.OK),
+		Fd:         7,
+		Attributes: &proto.Attr{Ino: 42, Mode: 0o100644},
+	}, nil).Once()
+
+	_, attr, st := s.backend.Create(context.Background(), "/", "new.txt", 0, 0o644)
+	s.Require().Equal(fuse.OK, st)
+	s.Require().NotNil(attr)
+	s.Assert().Equal(uint64(42), attr.Ino)
+	s.Assert().Equal(uint32(0o100644), attr.Mode)
 }
 
 // --- fd-level ops ---
