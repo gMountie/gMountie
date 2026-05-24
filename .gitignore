@@ -36,3 +36,8 @@ dist/
 .task
 
 .codebuddy
+
+# graphify knowledge-graph — local working state, regenerated from source via /graphify.
+# Contains machine-local absolute paths (cache/, manifest.json) and large derived
+# artifacts (graph.json, graph.html); nothing here belongs in a public repo.
+graphify-out/
