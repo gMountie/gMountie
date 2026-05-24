@@ -454,9 +454,10 @@ func (b *BackendClient) Open(ctx context.Context, path string, flags uint32) (Fi
 	), fuse.OK
 }
 
-// Create creates a new file. The Attr return is always nil — the current
-// proto.CreateReply does not carry attributes; Task 3's node adapter will
-// issue a Stat right after Create to fill the kernel's EntryOut.
+// Create creates a new file. When CreateReply carries an Attributes field the
+// mapped *Attr is returned so the node can populate the kernel's EntryOut
+// without a follow-up Stat RPC. A nil Attr is returned when the server omits
+// Attributes (older servers); in that case the node adapter falls back to Stat.
 func (b *BackendClient) Create(ctx context.Context, parent, name string, flags, mode uint32) (FileHandle, *Attr, fuse.Status) {
 	path := joinPath(parent, name)
 	ctx2, cancel := withMetaTimeout(ctx, b.client.MetaTimeout())
@@ -485,7 +486,7 @@ func (b *BackendClient) Create(ctx context.Context, parent, name string, flags, 
 		b.client.IOTimeout(), b.client.SessionID(),
 		b.client.PerFileConfig(),
 	)
-	return h, nil, fuse.OK
+	return h, attrFromProto(res.Attributes), fuse.OK
 }
 
 // Read consumes the server-streaming Read RPC, accumulating frames into
