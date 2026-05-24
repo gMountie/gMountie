@@ -444,7 +444,7 @@ func (s *BMFSuite) TestBuildReportAggregatesBounds() {
 
 func (s *BMFSuite) TestBuildReportEmitsSubstrateSeries() {
 	rep := BuildReport(map[string][]GoBenchResult{}, s.sampleSubstrate())
-	s.InDelta(1.5e8, rep["_substrate/cpu_compute"]["value"].Value, 1)
+	s.InDelta(1.5e8, rep["_substrate/cpu_compute"]["ops_per_sec"].Value, 1)
 	s.InDelta(2000, rep["_substrate/disk_seq_read"]["throughput"].Value, 0.01)
 	s.InDelta(1800, rep["_substrate/disk_seq_write"]["throughput"].Value, 0.01)
 	s.InDelta(50.0, rep["_substrate/net_rtt_wan"]["latency"].Value, 0.01)
@@ -564,12 +564,14 @@ func aggregate(runs []GoBenchResult, f func(GoBenchResult) float64) Metric {
 
 // addSubstrate appends the raw fingerprint as its own _substrate/* benchmarks
 // so floor drift is visible on the dashboard, not only folded into ratios.
+// Measure-name convention (stable — renaming breaks Bencher series continuity):
+// MB/s -> "throughput", time -> "latency", rates -> "iops"/"ops_per_sec".
 func addSubstrate(rep Report, sub Substrate) {
-	rep["_substrate/cpu_compute"] = map[string]Metric{"value": {Value: sub.CPUOpsPerSec}}
+	rep["_substrate/cpu_compute"] = map[string]Metric{"ops_per_sec": {Value: sub.CPUOpsPerSec}}
 	rep["_substrate/disk_seq_read"] = map[string]Metric{"throughput": {Value: sub.Disk.SeqReadMBs}}
 	rep["_substrate/disk_seq_write"] = map[string]Metric{"throughput": {Value: sub.Disk.SeqWriteMBs}}
-	rep["_substrate/disk_rand_4k_read_iops"] = map[string]Metric{"value": {Value: sub.Disk.Rand4kReadIOPS}}
-	rep["_substrate/disk_rand_4k_write_iops"] = map[string]Metric{"value": {Value: sub.Disk.Rand4kWriteIOPS}}
+	rep["_substrate/disk_rand_4k_read_iops"] = map[string]Metric{"iops": {Value: sub.Disk.Rand4kReadIOPS}}
+	rep["_substrate/disk_rand_4k_write_iops"] = map[string]Metric{"iops": {Value: sub.Disk.Rand4kWriteIOPS}}
 	for profile, n := range sub.Net {
 		rep["_substrate/net_rtt_"+profile] = map[string]Metric{"latency": {Value: n.RTTms}}
 		rep["_substrate/net_bw_"+profile] = map[string]Metric{"throughput": {Value: n.BandwidthMBs}}
@@ -928,9 +930,11 @@ Create `scripts/perf/run.sh`:
 #
 #   COUNT        go test -bench -count        (default 10)
 #   BENCHTIME    go test -benchtime           (default 10s)
-#   WORKDIR      scratch dir for artifacts    (default ./perf-out)
-#   SUBSTRATE_DIR  local dir fio probes       (default $WORKDIR/fio)
+#   WORKDIR      scratch dir; MUST be on the local PV (default ./perf-out)
+#   SUBSTRATE_DIR  fio probe dir (default $TMPDIR == bench data dir)
 #   IFACE        interface to shape           (default lo)
+#   EXPECT_GO_VERSION / EXPECT_FIO_VERSION / EXPECT_IPERF3_VERSION /
+#   EXPECT_BENCHER_VERSION  optional pinned versions; mismatch fails the run
 #   BENCHER      "1" to run bencher upload    (default unset = skip)
 #   BENCHER_PROJECT / BENCHER_TESTBED / BENCHER_BRANCH / GIT_HASH
 #
@@ -944,18 +948,38 @@ repo="$(cd "$here/../.." && pwd)"
 COUNT="${COUNT:-10}"
 BENCHTIME="${BENCHTIME:-10s}"
 WORKDIR="${WORKDIR:-$repo/perf-out}"
-export SUBSTRATE_DIR="${SUBSTRATE_DIR:-$WORKDIR/fio}"
+# The bench harness creates its data dir via os.MkdirTemp("", ...), which
+# honours $TMPDIR. Point TMPDIR and the fio probe at the SAME directory so the
+# substrate disk number reflects the filesystem the benches actually hit.
+# WORKDIR must live on the runner's local PV — not the ephemeral overlay, and
+# not tmpfs (fio direct=1 needs a real block-backed fs).
+export TMPDIR="$WORKDIR/data"
+export SUBSTRATE_DIR="${SUBSTRATE_DIR:-$TMPDIR}"
 IFACE="${IFACE:-lo}"
 PERFBMF="${PERFBMF:-$WORKDIR/perfbmf}"
 
-mkdir -p "$WORKDIR" "$SUBSTRATE_DIR"
+mkdir -p "$WORKDIR" "$TMPDIR" "$SUBSTRATE_DIR"
 
 # Always leave the interface unshaped on exit, even on failure.
 cleanup() { "$here/profile.sh" clear "$IFACE" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-echo "== assert toolchain =="
+echo "== assert toolchain present =="
 for bin in go fio iperf3 ping tc; do command -v "$bin" >/dev/null || { echo "missing $bin" >&2; exit 1; }; done
+[ "${BENCHER:-}" = "1" ] && { command -v bencher >/dev/null || { echo "missing bencher" >&2; exit 1; }; }
+
+echo "== assert pinned tool versions =="
+# Pins live with the runner image (infra repo) and arrive via EXPECT_* env.
+# When set, a drifted tool fails the run loudly instead of silently moving
+# the substrate floor — the spec's runner-upkeep mitigation, enforced here.
+assert_version() { # $1=label $2=actual $3=expected(optional)
+  echo "$1: $2"
+  if [ -n "${3:-}" ] && [ "$2" != "$3" ]; then echo "  ERROR: expected '$3'" >&2; exit 1; fi
+}
+assert_version go      "$(go version | awk '{print $3}')"                "${EXPECT_GO_VERSION:-}"
+assert_version fio     "$(fio --version)"                                "${EXPECT_FIO_VERSION:-}"
+assert_version iperf3  "$(iperf3 --version | head -1 | awk '{print $2}')" "${EXPECT_IPERF3_VERSION:-}"
+[ "${BENCHER:-}" = "1" ] && assert_version bencher "$(bencher --version | awk '{print $NF}')" "${EXPECT_BENCHER_VERSION:-}"
 
 echo "== build perfbmf =="
 go build -o "$PERFBMF" ./test/e2e/perf/cmd/perfbmf/
@@ -964,12 +988,14 @@ echo "== cpu + disk substrate =="
 cpu="$("$PERFBMF" cpuprobe)"
 fio --output-format=json "$repo/test/e2e/perf/substrate/substrate.fio" > "$WORKDIR/fio.json"
 
-run_net_probe() { # $1=profile
-  local p="$1"
+run_net_probe() { # $1=profile $2=iperf seconds
+  local p="$1" secs="$2"
   "$here/profile.sh" apply "$p" "$IFACE" >/dev/null
   iperf3 -s -1 -D                                  # one-shot server, daemonized
   sleep 0.3
-  iperf3 -c 127.0.0.1 -t 3 -J > "$WORKDIR/iperf-$p.json"
+  # WAN needs a longer window so TCP slow-start doesn't drag the average
+  # below the 100 Mbit cap; LAN over lo settles almost instantly.
+  iperf3 -c 127.0.0.1 -t "$secs" -J > "$WORKDIR/iperf-$p.json"
   ping -c 20 -i 0.1 127.0.0.1 > "$WORKDIR/ping-$p.txt"
 }
 
@@ -988,7 +1014,7 @@ assert_rtt() { # $1=profile $2=min $3=max
 
 for p in lan wan; do
   echo "== profile $p: net probe =="
-  run_net_probe "$p"
+  if [ "$p" = wan ]; then run_net_probe "$p" 8; else run_net_probe "$p" 3; fi
   echo "== profile $p: benches =="
   run_bench "$p"
 done
@@ -1119,6 +1145,10 @@ Append this job to `.github/workflows/release.yml` (sibling of the existing `rel
           GIT_HASH: ${{ github.sha }}
           COUNT: "10"
           BENCHTIME: "10s"
+          # WORKDIR must point at the runner's node-local PV mount (contract
+          # with the infra repo) so fio + benches hit a stable local disk, not
+          # the ephemeral overlay or tmpfs. Adjust the path to the actual mount.
+          WORKDIR: /mnt/perf
         run: bash scripts/perf/run.sh
 
       - name: Upload raw artifacts
@@ -1178,6 +1208,7 @@ Add a `## Continuous tracking (Bencher)` section to `docs/perf/README.md` coveri
 - What runs on release (the `perf` job; alpha/prod only) and where results live (Bencher Cloud, testbed `gmountie-perf-pod`, branch `master`).
 - The two profiles (`lan`, `wan` = `delay 25ms 5ms rate 100Mbit`; ~50ms RTT on loopback) and that `scripts/perf/profile.sh` is the single source of truth.
 - How to reproduce locally on the runner: `task perf:ci` (set `BENCHER=1` + token to upload).
+- The `WORKDIR` env (set to the node-local PV mount in the workflow, e.g. `/mnt/perf`) must be a real block-backed filesystem — fio's `direct=1` and the disk-floor measurement assume it isn't tmpfs/overlay. This is the contract with the infra repo; both the bench data dir (`$TMPDIR`) and the fio probe live under it.
 - The measures: `latency`, `throughput`, `throughput_pct_of_raw` (sequential only), and the `_substrate/*` floor series.
 - **Drift runbook** ("the dashboard jumped — what to check"): inspect the `_substrate/*` series first; if those moved, the floor drifted (disk filling, node kernel upgrade, reschedule) — the regression is environmental, not code. If `_substrate/*` is flat but `throughput`/`latency` moved, it's a real gMountie change. If substrate variance is consistently too broad, switch the runner to a kubevirt VM and register it as a new testbed `gmountie-perf-vm`.
 
@@ -1209,6 +1240,8 @@ in-repo pipeline implemented."
 - Trigger / release-gated job → Task 8. ✓
 - LAN/WAN codified profiles over loopback TCP → Task 5 (`profile.sh`), Task 6 (`GMOUNTIE_BENCH_TCP=1`). ✓
 - Substrate fingerprint (cpu/disk/net) + RTT assertion → Tasks 4/6. ✓
+- Substrate fio targets the *same* filesystem as the benches (spec invariant) → Task 6 pins `TMPDIR` + `SUBSTRATE_DIR` together; `WORKDIR` set to the local PV in Task 8. ✓
+- Toolchain version assertions (spec runner-upkeep mitigation) → Task 6 `assert_version` against `EXPECT_*`. ✓
 - BMF with latency/throughput/normalized + `_substrate/*` series → Tasks 1–3. ✓
 - Branch `master` + `--hash`, testbed `gmountie-perf-pod`, `bencher run --adapter json --file` → Tasks 6/8. ✓
 - Artifacts → Task 8. ✓
