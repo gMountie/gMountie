@@ -84,8 +84,7 @@ func (s *PersistOpenSuite) TestOpenRetryGivesUpAfterTimeout() {
 	start := time.Now()
 	_, err = persist.Open(persist.Options{Root: s.dir, LockAcquireTimeout: 250 * time.Millisecond})
 	elapsed := time.Since(start)
-	s.Require().Error(err)
-	s.Assert().ErrorIs(err, persist.ErrCacheLocked)
+	s.Require().ErrorIs(err, persist.ErrCacheLocked)
 	s.Assert().GreaterOrEqual(elapsed, 250*time.Millisecond)
 	s.Assert().Less(elapsed, time.Second, "retry loop should respect the timeout, got %s", elapsed)
 }
