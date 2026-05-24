@@ -69,25 +69,8 @@ func (r *RpcServerImpl) GetAttr(ctx context.Context, request *proto.GetAttrReque
 		}, nil
 	}
 	reply := &proto.GetAttrReply{
-		Attributes: &proto.Attr{
-			Ino:       attr.Ino,
-			Size:      attr.Size,
-			Blocks:    attr.Blocks,
-			Atime:     attr.Atime,
-			Mtime:     attr.Mtime,
-			Ctime:     attr.Ctime,
-			Atimensec: attr.Atimensec,
-			Mtimensec: attr.Mtimensec,
-			Ctimensec: attr.Ctimensec,
-			Mode:      attr.Mode,
-			Nlink:     attr.Nlink,
-			Owner:     &proto.Owner{Uid: attr.Uid, Gid: attr.Gid},
-			Rdev:      attr.Rdev,
-			Blksize:   attr.Blksize,
-			Padding:   attr.Padding,
-			Version:   serverio.VersionFromAttr(attr),
-		},
-		Status: int32(status),
+		Attributes: toProtoAttr(attr),
+		Status:     int32(status),
 	}
 	return reply, nil
 }
@@ -312,14 +295,6 @@ func (r *RpcServerImpl) GetAttrIfChanged(ctx context.Context, request *proto.Get
 	}
 	return &proto.GetAttrIfChangedReply{
 		NotModified: false,
-		Attrs: &proto.Attr{
-			Ino: attr.Ino, Size: attr.Size, Blocks: attr.Blocks,
-			Atime: attr.Atime, Mtime: attr.Mtime, Ctime: attr.Ctime,
-			Atimensec: attr.Atimensec, Mtimensec: attr.Mtimensec, Ctimensec: attr.Ctimensec,
-			Mode: attr.Mode, Nlink: attr.Nlink,
-			Owner: &proto.Owner{Uid: attr.Uid, Gid: attr.Gid},
-			Rdev:  attr.Rdev, Blksize: attr.Blksize, Padding: attr.Padding,
-			Version: v,
-		},
+		Attrs:       toProtoAttr(attr),
 	}, nil
 }

@@ -257,6 +257,58 @@ func (s *RpcFileServerTestSuite) TestOpenDuplicateRequestIDReturnsCachedReply() 
 	s.Assert().Equal(r1.Status, r2.Status)
 }
 
+func (s *RpcFileServerTestSuite) TestWriteAndFlushWritesThenFlushesAndReturnsAttr() {
+	// Setup: register a writable file and a filesystem that can stat it.
+	mockFs := new(pathfs2.MockFileSystem)
+	mockFile := new(nodefs2.MockFile)
+	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	sess, _ := s.sessionMgr.Get(s.sessionID)
+	fd := sess.RegisterFile("/waf.txt", mockFile)
+	ctx := context.Background()
+
+	mockFile.EXPECT().Write([]byte("hello"), int64(0)).Return(uint32(5), fuse.OK)
+	mockFile.EXPECT().Flush().Return(fuse.OK)
+	mockFs.EXPECT().GetAttr("/waf.txt", mock.Anything).Return(&fuse.Attr{Size: 5}, fuse.OK)
+	mockFile.EXPECT().Release().Return().Maybe()
+
+	// Test.
+	reply, err := s.server.WriteAndFlush(ctx, &proto.WriteAndFlushRequest{
+		Volume: "testVolume", Fd: fd, Offset: 0, Data: []byte("hello"), SessionId: s.sessionID,
+	})
+
+	// Verify.
+	s.Require().NoError(err)
+	s.Assert().Equal(int32(fuse.OK), reply.Status)
+	s.Assert().Equal(uint32(5), reply.Written)
+	s.Require().NotNil(reply.FinalAttr)
+	s.Assert().Equal(uint64(5), reply.FinalAttr.Size)
+}
+
+func (s *RpcFileServerTestSuite) TestWriteAndFlushEmptyDataIsPureFlush() {
+	// Setup: register a file; no write call expected, only flush + stat.
+	mockFs := new(pathfs2.MockFileSystem)
+	mockFile := new(nodefs2.MockFile)
+	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	sess, _ := s.sessionMgr.Get(s.sessionID)
+	fd := sess.RegisterFile("/waf2.txt", mockFile)
+	ctx := context.Background()
+
+	mockFile.EXPECT().Flush().Return(fuse.OK)
+	mockFs.EXPECT().GetAttr("/waf2.txt", mock.Anything).Return(&fuse.Attr{Size: 0}, fuse.OK)
+	mockFile.EXPECT().Release().Return().Maybe()
+
+	// Test.
+	reply, err := s.server.WriteAndFlush(ctx, &proto.WriteAndFlushRequest{
+		Volume: "testVolume", Fd: fd, SessionId: s.sessionID, // no Data
+	})
+
+	// Verify.
+	s.Require().NoError(err)
+	s.Assert().Equal(int32(fuse.OK), reply.Status)
+	s.Assert().Equal(uint32(0), reply.Written)
+	s.Require().NotNil(reply.FinalAttr)
+}
+
 // --------- Helper Functions ---------
 
 // CreateCaller creates a caller object

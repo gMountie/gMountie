@@ -98,8 +98,13 @@ func (r *RpcFileServerImpl) Create(ctx context.Context, request *proto.CreateReq
 		if s == fuse.OK {
 			reply.Fd = sess.RegisterFile(request.Path, file)
 			r.metrics.OpenFilesInc(request.Volume, request.SessionId)
-			ver := r.versionAfterPath(ctx, request.Volume, request.Path, request.Caller)
-			r.bus.Emit(request.Volume, request.Path, ver, serverio.KindMutated)
+			if attr, gst := fs.GetAttr(request.Path, createContext(ctx, request.Caller)); gst.Ok() {
+				reply.Attributes = toProtoAttr(attr)
+				r.bus.Emit(request.Volume, request.Path, serverio.VersionFromAttr(attr), serverio.KindMutated)
+			} else {
+				ver := r.versionAfterPath(ctx, request.Volume, request.Path, request.Caller)
+				r.bus.Emit(request.Volume, request.Path, ver, serverio.KindMutated)
+			}
 		}
 		return reply, nil
 	})
@@ -376,6 +381,43 @@ func (r *RpcFileServerImpl) SetLkw(_ context.Context, request *proto.SetLkwReque
 	}
 	lock := &fuse.FileLock{Start: request.Lk.Start, End: request.Lk.End, Typ: request.Lk.Typ, Pid: request.Lk.Pid}
 	return &proto.SetLkwReply{Status: int32(entry.File.SetLkw(request.Owner, lock, request.Flags))}, nil
+}
+
+// WriteAndFlush writes data at offset (if any) then flushes the fd, in one RPC.
+// A write error short-circuits the flush and is what close() will see. The
+// reply carries the post-op Attr so the client needn't re-stat.
+func (r *RpcFileServerImpl) WriteAndFlush(ctx context.Context, req *proto.WriteAndFlushRequest) (*proto.WriteAndFlushReply, error) {
+	sess, err := resolveSession(r.sessions, req.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	entry, ok := sess.GetFile(req.Fd)
+	if !ok {
+		return &proto.WriteAndFlushReply{Status: int32(fuse.EBADF)}, nil
+	}
+	fs, err := r.fsService.GetVolumeFileSystem(req.Volume)
+	if err != nil {
+		return nil, err
+	}
+	reply := &proto.WriteAndFlushReply{}
+	if len(req.Data) > 0 {
+		n, st := entry.File.Write(req.Data, req.Offset)
+		if st != fuse.OK {
+			reply.Status = int32(st)
+			return reply, nil // write error: skip flush, surface at close()
+		}
+		reply.Written = n
+	}
+	st := entry.File.Flush()
+	reply.Status = int32(st)
+	if attr, gst := fs.GetAttr(entry.Path, createContext(ctx, nil)); gst.Ok() {
+		reply.FinalAttr = toProtoAttr(attr)
+	}
+	if st == fuse.OK {
+		ver := r.versionAfterPath(ctx, req.Volume, entry.Path, nil)
+		r.bus.Emit(req.Volume, entry.Path, ver, serverio.KindMutated)
+	}
+	return reply, nil
 }
 
 func (r *RpcFileServerImpl) Allocate(ctx context.Context, request *proto.AllocateRequest) (*proto.AllocateReply, error) {
