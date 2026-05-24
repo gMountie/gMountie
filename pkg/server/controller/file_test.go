@@ -7,6 +7,7 @@ import (
 	"gmountie/pkg/server/metrics"
 	"gmountie/pkg/server/service"
 	"testing"
+	"time"
 
 	"gmountie/pkg/proto"
 
@@ -68,7 +69,8 @@ func (s *RpcFileServerTestSuite) TestCreate() {
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().Create("/test/path", uint32(0), uint32(0), mock.Anything).Return(nodefs.NewDefaultFile(), fuse.OK)
-	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
+	// GetAttr is called unconditionally on successful Create to populate reply.Attributes.
+	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{Ino: 42, Mode: 0o100644}, fuse.OK)
 
 	// Test.
 	request := &proto.CreateRequest{Volume: "testVolume", Path: "/test/path", Flags: 0, Mode: 0, Caller: CreateCaller(0, 0, 0), SessionId: s.sessionID, RequestId: "test-req-create"}
@@ -78,6 +80,10 @@ func (s *RpcFileServerTestSuite) TestCreate() {
 	s.Require().NoError(err)
 	s.Assert().NotNil(reply)
 	s.Assert().Equal(int32(fuse.OK), reply.Status)
+	// The handler must populate reply.Attributes from the post-create GetAttr.
+	s.Require().NotNil(reply.Attributes, "Create reply must carry Attributes")
+	s.Assert().Equal(uint64(42), reply.Attributes.Ino)
+	s.Assert().Equal(uint32(0o100644), reply.Attributes.Mode)
 }
 
 func (s *RpcFileServerTestSuite) TestRead() {
@@ -307,6 +313,66 @@ func (s *RpcFileServerTestSuite) TestWriteAndFlushEmptyDataIsPureFlush() {
 	s.Assert().Equal(int32(fuse.OK), reply.Status)
 	s.Assert().Equal(uint32(0), reply.Written)
 	s.Require().NotNil(reply.FinalAttr)
+}
+
+func (s *RpcFileServerTestSuite) TestWriteAndFlushWriteErrorSkipsFlush() {
+	// Setup: register a file whose Write returns EIO.
+	// Flush and GetAttr must NOT be called — unexpected mock calls would fail the test.
+	mockFs := new(pathfs2.MockFileSystem)
+	mockFile := new(nodefs2.MockFile)
+	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	sess, _ := s.sessionMgr.Get(s.sessionID)
+	fd := sess.RegisterFile("/err.txt", mockFile)
+	ctx := context.Background()
+
+	mockFile.EXPECT().Write([]byte("data"), int64(0)).Return(uint32(0), fuse.EIO)
+	mockFile.EXPECT().Release().Return().Maybe()
+
+	// Test.
+	reply, err := s.server.WriteAndFlush(ctx, &proto.WriteAndFlushRequest{
+		Volume: "testVolume", Fd: fd, Offset: 0, Data: []byte("data"), SessionId: s.sessionID,
+	})
+
+	// Verify: write error is surfaced; flush was NOT called.
+	s.Require().NoError(err)
+	s.Assert().Equal(int32(fuse.EIO), reply.Status)
+	s.Assert().Equal(uint32(0), reply.Written)
+	mockFile.AssertNotCalled(s.T(), "Flush")
+}
+
+func (s *RpcFileServerTestSuite) TestWriteAndFlushEmitsMutationEventOnSuccess() {
+	// Subscribe to the bus BEFORE issuing the RPC so we don't miss the event.
+	events, cancel := s.bus.Subscribe("testVolume")
+	defer cancel()
+
+	// Setup: register a writable file.
+	mockFs := new(pathfs2.MockFileSystem)
+	mockFile := new(nodefs2.MockFile)
+	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	sess, _ := s.sessionMgr.Get(s.sessionID)
+	fd := sess.RegisterFile("/emit.txt", mockFile)
+	ctx := context.Background()
+
+	mockFile.EXPECT().Write([]byte("hi"), int64(0)).Return(uint32(2), fuse.OK)
+	mockFile.EXPECT().Flush().Return(fuse.OK)
+	mockFs.EXPECT().GetAttr("/emit.txt", mock.Anything).Return(&fuse.Attr{Size: 2}, fuse.OK).Maybe()
+	mockFile.EXPECT().Release().Return().Maybe()
+
+	// Test.
+	reply, err := s.server.WriteAndFlush(ctx, &proto.WriteAndFlushRequest{
+		Volume: "testVolume", Fd: fd, Offset: 0, Data: []byte("hi"), SessionId: s.sessionID,
+	})
+	s.Require().NoError(err)
+	s.Assert().Equal(int32(fuse.OK), reply.Status)
+
+	// A KindMutated event for /emit.txt must arrive on the bus.
+	select {
+	case ev := <-events:
+		s.Assert().Equal("/emit.txt", ev.Path)
+		s.Assert().Equal(serverio.KindMutated, ev.Kind)
+	case <-time.After(time.Second):
+		s.FailNow("timed out waiting for mutation event from WriteAndFlush")
+	}
 }
 
 // --------- Helper Functions ---------
