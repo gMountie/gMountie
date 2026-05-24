@@ -1,7 +1,7 @@
 # Cache fsync reduction (no-op invalidation skip + NoSync meta.db)
 
 **Date:** 2026-05-24
-**Status:** approved design, pending spec review → implementation plan
+**Status:** implemented (code + local unit/race tests green, lint clean); **blocking acceptance criterion #4 — VM re-bench on the kubevirt `local-path` PVC — still pending.** Implemented across commits `c8035ab`..`a71aa0e`. Verification found the stale-invalidation dependency UNSAFE (subscribe-off trusts the cache without revalidation) → sync-after-real-invalidation fallback taken; the fresh-file write hot path still pays neither a writable txn nor an fsync, so the bench win is preserved by control-flow analysis (~1 fsync per file at first write, 0 per subsequent write).
 **Scope:** client-side persistent cache (`pkg/client/cache`, `pkg/client/cache/persist`)
 
 ## Problem
