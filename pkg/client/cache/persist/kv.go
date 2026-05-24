@@ -29,6 +29,15 @@ func (p *Persist) kvPut(bucket []byte, key string, value []byte) error {
 }
 
 func (p *Persist) kvDelete(bucket []byte, key string) error {
+	// Probe first: deleting an absent key still commits + fsyncs a txn
+	// that changed nothing. Skip the writable txn when the key is absent.
+	_, ok, err := p.kvGet(bucket, key)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
 	return p.db.Update(func(tx *bolt.Tx) error {
 		return tx.Bucket(bucket).Delete([]byte(key))
 	})

@@ -79,4 +79,31 @@ func (s *PersistFsyncSuite) TestInvalidatePathChunksRealStillDeletes() {
 	s.Assert().False(ok, "entry must be gone after invalidation")
 }
 
+func (s *PersistFsyncSuite) TestDeleteAttrBytesNoOpSkipsTxn() {
+	p, err := persist.Open(persist.Options{Root: s.dir})
+	s.Require().NoError(err)
+	defer p.Close()
+
+	before := persist.TestingMetaWriteCount(p)
+	s.Require().NoError(p.DeleteAttrBytes("/absent"))
+	after := persist.TestingMetaWriteCount(p)
+	s.Assert().Equal(before, after, "deleting an absent attr key must not open a writable txn")
+}
+
+func (s *PersistFsyncSuite) TestDeleteAttrBytesRealStillDeletes() {
+	p, err := persist.Open(persist.Options{Root: s.dir})
+	s.Require().NoError(err)
+	defer p.Close()
+
+	s.Require().NoError(p.PutAttrBytes("/a", []byte("x")))
+	before := persist.TestingMetaWriteCount(p)
+	s.Require().NoError(p.DeleteAttrBytes("/a"))
+	after := persist.TestingMetaWriteCount(p)
+	s.Assert().Greater(after, before, "deleting a present key must commit a writable txn")
+
+	_, ok, err := p.GetAttrBytes("/a")
+	s.Require().NoError(err)
+	s.Assert().False(ok, "key must be gone after delete")
+}
+
 func TestPersistFsyncSuite(t *testing.T) { suite.Run(t, new(PersistFsyncSuite)) }
