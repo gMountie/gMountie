@@ -19,8 +19,8 @@ func toProtoAttr(a *fuse.Attr) *proto.Attr {
 		Atime: a.Atime, Mtime: a.Mtime, Ctime: a.Ctime,
 		Atimensec: a.Atimensec, Mtimensec: a.Mtimensec, Ctimensec: a.Ctimensec,
 		Mode: a.Mode, Nlink: a.Nlink,
-		Owner:   &proto.Owner{Uid: a.Uid, Gid: a.Gid},
-		Rdev:    a.Rdev, Blksize: a.Blksize, Padding: a.Padding,
+		Owner: &proto.Owner{Uid: a.Uid, Gid: a.Gid},
+		Rdev:  a.Rdev, Blksize: a.Blksize, Padding: a.Padding,
 		Version: serverio.VersionFromAttr(a),
 	}
 }

@@ -355,7 +355,7 @@ func (s *RpcFileServerTestSuite) TestWriteAndFlushEmitsMutationEventOnSuccess() 
 
 	mockFile.EXPECT().Write([]byte("hi"), int64(0)).Return(uint32(2), fuse.OK)
 	mockFile.EXPECT().Flush().Return(fuse.OK)
-	mockFs.EXPECT().GetAttr("/emit.txt", mock.Anything).Return(&fuse.Attr{Size: 2}, fuse.OK).Maybe()
+	mockFs.EXPECT().GetAttr("/emit.txt", mock.Anything).Return(&fuse.Attr{Size: 2}, fuse.OK).Once()
 	mockFile.EXPECT().Release().Return().Maybe()
 
 	// Test.

@@ -102,8 +102,7 @@ func (r *RpcFileServerImpl) Create(ctx context.Context, request *proto.CreateReq
 				reply.Attributes = toProtoAttr(attr)
 				r.bus.Emit(request.Volume, request.Path, serverio.VersionFromAttr(attr), serverio.KindMutated)
 			} else {
-				ver := r.versionAfterPath(ctx, request.Volume, request.Path, request.Caller)
-				r.bus.Emit(request.Volume, request.Path, ver, serverio.KindMutated)
+				r.bus.Emit(request.Volume, request.Path, 0, serverio.KindMutated)
 			}
 		}
 		return reply, nil
@@ -393,6 +392,7 @@ func (r *RpcFileServerImpl) WriteAndFlush(ctx context.Context, req *proto.WriteA
 	}
 	entry, ok := sess.GetFile(req.Fd)
 	if !ok {
+		// EBADF in-reply (not a transport error) keeps the errno visible at the FUSE layer.
 		return &proto.WriteAndFlushReply{Status: int32(fuse.EBADF)}, nil
 	}
 	fs, err := r.fsService.GetVolumeFileSystem(req.Volume)
@@ -412,10 +412,11 @@ func (r *RpcFileServerImpl) WriteAndFlush(ctx context.Context, req *proto.WriteA
 	reply.Status = int32(st)
 	if attr, gst := fs.GetAttr(entry.Path, createContext(ctx, nil)); gst.Ok() {
 		reply.FinalAttr = toProtoAttr(attr)
-	}
-	if st == fuse.OK {
-		ver := r.versionAfterPath(ctx, req.Volume, entry.Path, nil)
-		r.bus.Emit(req.Volume, entry.Path, ver, serverio.KindMutated)
+		if st == fuse.OK {
+			r.bus.Emit(req.Volume, entry.Path, serverio.VersionFromAttr(attr), serverio.KindMutated)
+		}
+	} else if st == fuse.OK {
+		r.bus.Emit(req.Volume, entry.Path, 0, serverio.KindMutated)
 	}
 	return reply, nil
 }
