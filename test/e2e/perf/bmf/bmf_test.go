@@ -99,3 +99,75 @@ func (s *BMFSuite) TestParseFioMalformedJSON() {
 	_, err := ParseFio(strings.NewReader("{not json}"))
 	s.Require().Error(err)
 }
+
+func (s *BMFSuite) sampleSubstrate() Substrate {
+	return Substrate{
+		CPUOpsPerSec: 1.5e8,
+		Disk:         DiskSubstrate{SeqReadMBs: 2000, SeqWriteMBs: 1800, Rand4kReadIOPS: 12000, Rand4kWriteIOPS: 9000},
+		Net: map[string]NetProbe{
+			"lan": {RTTms: 0.05, BandwidthMBs: 5000},
+			"wan": {RTTms: 50.0, BandwidthMBs: 12.5},
+		},
+	}
+}
+
+func (s *BMFSuite) TestBuildReportNormalizesSeqAgainstBindingCeiling() {
+	// SeqRead at 1000 MB/s. LAN ceiling = min(disk 2000, net 5000) = 2000 -> 50%.
+	// WAN ceiling = min(disk 2000, net 12.5) = 12.5; SeqRead WAN at 12 MB/s -> 96%.
+	results := map[string][]GoBenchResult{
+		"lan": {{Name: "SeqRead64MiB", NsPerOp: 1e6, MBPerSec: 1000}},
+		"wan": {{Name: "SeqRead64MiB", NsPerOp: 5e6, MBPerSec: 12}},
+	}
+	rep := BuildReport(results, s.sampleSubstrate())
+
+	s.InDelta(50.0, rep["SeqRead64MiB/lan"]["throughput_pct_of_raw"].Value, 0.01)
+	s.InDelta(96.0, rep["SeqRead64MiB/wan"]["throughput_pct_of_raw"].Value, 0.01)
+	s.InDelta(1000, rep["SeqRead64MiB/lan"]["throughput"].Value, 0.01)
+	s.InDelta(1e6, rep["SeqRead64MiB/lan"]["latency"].Value, 0.5)
+}
+
+func (s *BMFSuite) TestBuildReportMetadataHasNoThroughput() {
+	results := map[string][]GoBenchResult{
+		"lan": {{Name: "OpenStatClose", NsPerOp: 30000}},
+	}
+	rep := BuildReport(results, s.sampleSubstrate())
+	m := rep["OpenStatClose/lan"]
+	s.Contains(m, "latency")
+	s.NotContains(m, "throughput")
+	s.NotContains(m, "throughput_pct_of_raw")
+}
+
+func (s *BMFSuite) TestBuildReportRandomHasThroughputButNoNormalization() {
+	results := map[string][]GoBenchResult{
+		"lan": {{Name: "RandomRead4KiB", NsPerOp: 5000, MBPerSec: 0.8}},
+	}
+	rep := BuildReport(results, s.sampleSubstrate())
+	m := rep["RandomRead4KiB/lan"]
+	s.Contains(m, "throughput")
+	s.NotContains(m, "throughput_pct_of_raw") // no principled seq ceiling for random
+}
+
+func (s *BMFSuite) TestBuildReportAggregatesBounds() {
+	results := map[string][]GoBenchResult{
+		"lan": {
+			{Name: "SeqWrite1MiB", NsPerOp: 100, MBPerSec: 10},
+			{Name: "SeqWrite1MiB", NsPerOp: 200, MBPerSec: 20},
+		},
+	}
+	rep := BuildReport(results, s.sampleSubstrate())
+	lat := rep["SeqWrite1MiB/lan"]["latency"]
+	s.InDelta(150, lat.Value, 0.01) // mean
+	s.Require().NotNil(lat.LowerValue)
+	s.Require().NotNil(lat.UpperValue)
+	s.InDelta(100, *lat.LowerValue, 0.01) // min
+	s.InDelta(200, *lat.UpperValue, 0.01) // max
+}
+
+func (s *BMFSuite) TestBuildReportEmitsSubstrateSeries() {
+	rep := BuildReport(map[string][]GoBenchResult{}, s.sampleSubstrate())
+	s.InDelta(1.5e8, rep["_substrate/cpu_compute"]["ops_per_sec"].Value, 1)
+	s.InDelta(2000, rep["_substrate/disk_seq_read"]["throughput"].Value, 0.01)
+	s.InDelta(1800, rep["_substrate/disk_seq_write"]["throughput"].Value, 0.01)
+	s.InDelta(50.0, rep["_substrate/net_rtt_wan"]["latency"].Value, 0.01)
+	s.InDelta(0.05, rep["_substrate/net_rtt_lan"]["latency"].Value, 0.01)
+}
