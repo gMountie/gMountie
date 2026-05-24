@@ -664,6 +664,27 @@ func (s *BackendClientTestSuite) TestFlush_CleanAfterWrite() {
 	s.Assert().Equal(fuse.OK, s.backend.Flush(context.Background(), h))
 }
 
+// TestFsync_CleanAfterWrite verifies that a successful Fsync clears the dirty
+// flag so a subsequent close-Flush is a no-op (no second RPC). This mirrors
+// TestFlush_CleanAfterWrite but via the Fsync path, covering the common
+// Write + Fsync + close sequence used by git and O_SYNC workloads.
+func (s *BackendClientTestSuite) TestFsync_CleanAfterWrite() {
+	h := s.newHandle(grpcclient.PerFileConfig{WriteCoalesceBytes: 4096})
+	_, wst := s.backend.Write(context.Background(), h, 0, []byte("data"))
+	s.Require().Equal(fuse.OK, wst)
+
+	// Fsync drains the coalescer via drainCoalescer (→ streaming Write RPC)
+	// then issues the server-side Fsync RPC.
+	writeStub := newBackendWriteStreamStub(s.T(), &proto.WriteReply{Written: 4, Status: int32(fuse.OK)}, nil)
+	s.fileClient.EXPECT().Write(mock.Anything, mock.Anything).Return(writeStub, nil).Once()
+	s.fileClient.EXPECT().Fsync(mock.Anything, mock.Anything, mock.Anything).
+		Return(&proto.FsyncReply{Status: int32(fuse.OK)}, nil).Once()
+
+	s.Require().Equal(fuse.OK, s.backend.Fsync(context.Background(), h, 0))
+	// Handle is now clean: the close-path Flush must issue no RPC.
+	s.Assert().Equal(fuse.OK, s.backend.Flush(context.Background(), h))
+}
+
 func (s *BackendClientTestSuite) TestFsync() {
 	s.fileClient.EXPECT().Fsync(mock.Anything, &proto.FsyncRequest{
 		Volume:    "testVolume",
