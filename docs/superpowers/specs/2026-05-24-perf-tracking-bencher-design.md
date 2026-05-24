@@ -52,13 +52,14 @@ The pipeline is a single CI job that orchestrates four existing-or-new pieces: t
 
 - **Project:** `gmountie` (one Bencher project).
 - **Testbed:** `gmountie-vm` — the fixed kubevirt VM. The testbed *is* the comparability anchor; we deliberately keep one testbed for the one machine and do **not** fragment it per network profile.
-- **Branch:** the release ref (Bencher auto-detects the git branch/tag; the run is tagged with the release version).
+- **Branch:** `master` — the single development line the series lives on. In Bencher, a Branch *is* the time series; datapoints on one Branch form the over-time chart. We therefore pass `--branch master` **explicitly** to `bencher run` and identify each datapoint by commit hash / release version (`--hash $GITHUB_SHA`, version-stamped with the tag). Passing the *tag* as the branch would create a fresh single-point Branch per release and destroy the series; and a checked-out release tag is a detached HEAD, where `bencher run`'s branch auto-detection is unreliable — so the explicit `--branch` is load-bearing, not cosmetic. (Confirm the exact version/hash flags against the `bencher run` reference during implementation.)
 - **Benchmark:** existing bench name suffixed with the profile, e.g. `SeqRead64MiB/lan`, `SeqRead64MiB/wan`, `OpenStatClose/wan`. This keeps LAN and WAN as distinct tracked series on the same machine.
 - **Measures (per benchmark):**
   - `latency` — ns/op.
   - `throughput` — MB/s (from `b.SetBytes`; absent for metadata benchmarks).
   - `throughput_pct_of_raw` — normalized: achieved throughput as a percentage of the substrate ceiling for that profile (read benches vs raw disk read / link bandwidth; write benches vs raw disk write). Survives moderate floor drift.
   - (Optional, low priority) `alloc_bytes`, `allocs` from `b.ReportAllocs`.
+- **Substrate benchmarks (drift visibility):** the raw fingerprint is *also* uploaded as its own benchmarks — `_substrate/disk_seq_read`, `_substrate/disk_seq_write`, `_substrate/disk_rand_4k_iops`, `_substrate/cpu_compute`, `_substrate/net_rtt_lan`, `_substrate/net_rtt_wan` — so the *floor itself* is visible on the dashboard over time, not only folded into the normalization math. This is what actually delivers the "detect substrate drift" guarantee: a `throughput_pct_of_raw` ratio self-normalizes and would stay healthy even if the disk silently degraded, so the raw substrate series is required to *see* that the machine moved. (These can carry their own Bencher thresholds to alert on floor drift directly.)
 
 ### Network profiles
 
@@ -79,9 +80,9 @@ The job always removes any qdisc on teardown (and defensively at startup) so sha
    - Network, per profile: apply the profile's `netem`, then `iperf3` + `ping` over `lo`. For `wan`, assert measured RTT ≈ target (within tolerance) so a mis-applied profile fails the run rather than silently mislabeling data.
    - Emit `substrate.json`.
 4. **Bench suite, per profile** (`lan` then `wan`), over real loopback TCP (`GMOUNTIE_BENCH_TCP=1`), with a higher `COUNT` than the local VM default for statistical honesty (tune during implementation; benchstat wants ≥6–10). Capture raw `go test -bench` text for archival as a CI artifact.
-5. **BMF emission**: a post-processor combines the bench output with `substrate.json` into one BMF JSON document — per benchmark × profile, with the measures above (absolute + normalized).
-6. **Upload**: `bencher run --adapter json --project gmountie --testbed gmountie-vm --token $BENCHER_API_TOKEN …` ingesting the BMF document, tagged with the release version. Bencher stores it, updates the dashboard, and evaluates thresholds.
-7. **Artifacts**: attach the raw bench text + `substrate.json` + BMF JSON as GitHub Actions artifacts (debugging / audit trail). These expire with normal artifact retention; Bencher is the durable home.
+5. **BMF emission**: a post-processor combines the bench output with `substrate.json` into one BMF JSON document — the gMountie benchmarks (per benchmark × profile, absolute + normalized) **and** the `_substrate/*` benchmarks carrying the raw fingerprint values.
+6. **Upload**: `bencher run --adapter json --project gmountie --branch master --testbed gmountie-vm --hash $GITHUB_SHA --token $BENCHER_API_TOKEN …` ingesting the BMF document, version-stamped with the release tag. Bencher stores it, updates the dashboard, and evaluates thresholds.
+7. **Artifacts**: attach the raw bench text + `substrate.json` + BMF JSON as GitHub Actions artifacts (debugging / audit trail). These expire with normal artifact retention; Bencher is the durable home for both the gMountie *and* substrate series.
 
 ### Regression detection
 
@@ -102,6 +103,7 @@ Bencher **thresholds** (per measure / branch / testbed) replace the hand-rolled 
 
 **Infrastructure (operational, outside the repo):**
 - Register the kubevirt VM as a self-hosted Actions runner with the label `gmountie-perf`; pre-install pinned `fio`, `iperf3`, `benchstat`, Go.
+- Grant the runner user **passwordless sudo for `tc`** (applying/removing the `wan` `netem` qdisc on `lo` needs root). Without it the first WAN pass fails confusingly.
 - Create the Bencher Cloud project `gmountie` + testbed `gmountie-vm`; store `BENCHER_API_TOKEN` as a repo secret.
 
 ## Data flow
@@ -130,7 +132,7 @@ perf job on [self-hosted, gmountie-perf]
 
 ## Risks / open considerations
 
-- **Runner upkeep.** A self-hosted runner must stay registered and online; `apt upgrade` can shift the substrate. Mitigation: the fingerprint makes drift *visible*, and toolchain versions are asserted in-job. Document a "what to check if the dashboard jumps" runbook in `docs/perf/README.md`.
+- **Runner upkeep.** A self-hosted runner must stay registered and online; `apt upgrade` can shift the substrate. Mitigation: the `_substrate/*` benchmarks make floor drift *visible on the dashboard* (with optional thresholds to alert directly), and toolchain versions are asserted in-job. Document a "what to check if the dashboard jumps" runbook in `docs/perf/README.md`.
 - **Signal density.** Alpha/prod releases are infrequent, so the series is sparse — it's "release-over-release diffs," not a smooth curve. Acceptable per the goal. A future opt-in `workflow_dispatch` for ad-hoc runs could densify it (distinct marker), but is out of scope now.
 - **Variance budget.** Even on a fixed VM, microbench noise exists. `COUNT`/`BENCHTIME` must be tuned so a real ~5% regression clears the noise floor; thresholds set accordingly. Validate during implementation with a few back-to-back runs of an unchanged commit.
 - **BMF schema stability.** We own the BMF emitter, so measure names/units are our contract with Bencher; renaming a benchmark or measure breaks series continuity (Bencher tracks by name). Treat the names as a stable API.
