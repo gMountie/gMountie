@@ -140,13 +140,15 @@ jobs:
   perf:
     needs: [release]
     if: ${{ github.event.inputs.type != 'snapshot' }}
-    runs-on: [self-hosted, gmountie-perf]
+    # gha-runner-scale-set runners are addressed by a single label equal to the
+    # scale-set name; `[self-hosted, gmountie-perf]` would never match.
+    runs-on: gmountie-perf
     env:
-      # WORKDIR points at the runner's node-local PV mount (contract with the
-      # infra repo) so fio + benches hit a stable local disk, not the ephemeral
-      # overlay or tmpfs. run.sh writes all outputs here and the artifact step
-      # reads them back from the same path — keep this the single source.
-      WORKDIR: /mnt/perf
+      # WORKDIR is the runner Pod's node-local NVMe PVC mount (claim
+      # gmountie-perf-data, mounted at /perf-data) so fio + benches hit a stable
+      # local disk, not the container overlay. run.sh writes all outputs here
+      # and the artifact step reads them back — keep this the single source.
+      WORKDIR: /perf-data
     steps:
       - name: Checkout the released tag
         uses: actions/checkout@v6
