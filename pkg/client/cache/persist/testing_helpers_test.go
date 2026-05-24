@@ -46,16 +46,23 @@ func TestingChunkPath(p *Persist, hash [16]byte) string {
 // cleaned it.
 func TestingRunOrphanSweep(t *testing.T, p *Persist) {
 	t.Helper()
-	if err := p.runOrphanSweep(0); err != nil {
+	if err := p.runOrphanSweep(0, nil); err != nil {
 		t.Fatalf("orphan sweep: %v", err)
 	}
+}
+
+// TestingRunOrphanSweepStop runs the orphan sweep (minAge 0) with the given
+// stop channel so tests can assert it bails cooperatively when signalled.
+func TestingRunOrphanSweepStop(t *testing.T, p *Persist, stop <-chan struct{}) error {
+	t.Helper()
+	return p.runOrphanSweep(0, stop)
 }
 
 // TestingRunGhostSweep runs the ghost sweep synchronously at the given
 // sample fraction.
 func TestingRunGhostSweep(t *testing.T, p *Persist, fraction float64) {
 	t.Helper()
-	if err := p.runGhostSweep(fraction); err != nil {
+	if err := p.runGhostSweep(fraction, nil); err != nil {
 		t.Fatalf("ghost sweep: %v", err)
 	}
 }

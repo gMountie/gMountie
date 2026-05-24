@@ -18,16 +18,34 @@ import (
 // the sweep removes a chunk before its refcount is recorded.
 const orphanSweepBgAge = 60 * time.Second
 
+// stopRequested reports whether the background-goroutine stop signal has
+// fired. A nil channel never fires (the select falls through to default),
+// so callers that don't participate in lifecycle (tests) pass nil.
+func stopRequested(stop <-chan struct{}) bool {
+	select {
+	case <-stop:
+		return true
+	default:
+		return false
+	}
+}
+
 // runOrphanSweep walks chunks/ and unlinks any file whose hash is not
 // present in the chunk_refs bucket. minAge > 0 causes files newer than
 // that age to be skipped (safe for background use; pass 0 in tests to
-// sweep freshly injected orphans immediately).
-func (p *Persist) runOrphanSweep(minAge time.Duration) error {
+// sweep freshly injected orphans immediately). stop aborts the walk
+// cooperatively when Close signals shutdown (nil disables cancellation).
+func (p *Persist) runOrphanSweep(minAge time.Duration, stop <-chan struct{}) error {
 	cutoff := time.Now().Add(-minAge)
 	chunksRoot := filepath.Join(p.root, "chunks")
 	return filepath.WalkDir(chunksRoot, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		// Bail promptly on shutdown so Close doesn't block on a long walk
+		// and we never touch p.db after it's closed.
+		if stopRequested(stop) {
+			return filepath.SkipAll
 		}
 		if d.IsDir() {
 			return nil
@@ -71,15 +89,20 @@ func (p *Persist) runOrphanSweep(minAge time.Duration) error {
 // it checks the chunk file exists on disk. Missing files mean the
 // index entry is a ghost — delete it and decrement the refcount.
 // sampleFraction in [0, 1]; 1.0 = exhaustive.
-func (p *Persist) runGhostSweep(sampleFraction float64) error {
-	if sampleFraction <= 0 {
+func (p *Persist) runGhostSweep(sampleFraction float64, stop <-chan struct{}) error {
+	if sampleFraction <= 0 || stopRequested(stop) {
 		return nil
 	}
 	var toDelete [][]byte
 	var toDecRef [][16]byte
+	var stopped bool
 	err := p.db.View(func(tx *bolt.Tx) error {
 		c := tx.Bucket(bucketDataIdx).Cursor()
 		for k, v := c.First(); k != nil; k, v = c.Next() {
+			if stopRequested(stop) {
+				stopped = true
+				return nil
+			}
 			if sampleFraction < 1.0 && rand.Float64() > sampleFraction {
 				continue
 			}
@@ -99,7 +122,9 @@ func (p *Persist) runGhostSweep(sampleFraction float64) error {
 	if err != nil {
 		return errors.Wrap(err, "ghost sweep scan")
 	}
-	if len(toDelete) == 0 {
+	// Shutdown signalled mid-scan: drop partial results rather than open a
+	// writable txn (Close is waiting on us, and db may close next).
+	if stopped || len(toDelete) == 0 {
 		return nil
 	}
 	var unlinks [][16]byte
@@ -130,10 +155,13 @@ func (p *Persist) runGhostSweep(sampleFraction float64) error {
 
 // startBackgroundSweeps kicks off the async orphan sweep + the initial
 // sampled ghost sweep. Called from Open. Errors are swallowed (cache
-// is usable during the sweep) — no return.
+// is usable during the sweep) — no return. Both goroutines join p.bgWG
+// and watch p.stopCh so Close cancels and waits for them before closing
+// the db (otherwise they'd touch a closed handle).
 func (p *Persist) startBackgroundSweeps() {
-	go func() { _ = p.runGhostSweep(0.01) }()
-	go func() { _ = p.runOrphanSweep(orphanSweepBgAge) }()
+	p.bgWG.Add(2)
+	go func() { defer p.bgWG.Done(); _ = p.runGhostSweep(0.01, p.stopCh) }()
+	go func() { defer p.bgWG.Done(); _ = p.runOrphanSweep(orphanSweepBgAge, p.stopCh) }()
 }
 
 // enforceDiskBudget evicts the lexically-oldest data_idx entries until

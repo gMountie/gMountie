@@ -61,8 +61,8 @@ type Persist struct {
 	db        *bolt.DB
 	lock      *lockHandle
 	disk      *diskAccountant
-	syncStop  chan struct{}
-	syncWG    sync.WaitGroup
+	stopCh    chan struct{}  // closed by Close to signal all background goroutines
+	bgWG      sync.WaitGroup // syncer + sweeps; Close waits on it before db.Close
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -113,6 +113,10 @@ func Open(opts Options) (*Persist, error) {
 		_ = lock.release()
 		return nil, err
 	}
+	// One stop channel + wait group govern all background goroutines
+	// (sweeps and the meta syncer). Created before any of them start so
+	// Close can cancel and join them deterministically.
+	p.stopCh = make(chan struct{})
 	p.startBackgroundSweeps()
 	p.startMetaSyncer()
 	return p, nil
@@ -121,15 +125,14 @@ func Open(opts Options) (*Persist, error) {
 // startMetaSyncer launches the background goroutine that periodically
 // fsyncs the NoSync meta.db. Stopped by Close before db.Close().
 func (p *Persist) startMetaSyncer() {
-	p.syncStop = make(chan struct{})
-	p.syncWG.Add(1)
+	p.bgWG.Add(1)
 	go func() {
-		defer p.syncWG.Done()
+		defer p.bgWG.Done()
 		t := time.NewTicker(metaSyncInterval)
 		defer t.Stop()
 		for {
 			select {
-			case <-p.syncStop:
+			case <-p.stopCh:
 				return
 			case <-t.C:
 				_ = p.db.Sync()
@@ -143,9 +146,9 @@ func (p *Persist) startMetaSyncer() {
 // calls: the work runs once and every caller gets the same result.
 func (p *Persist) Close() error {
 	p.closeOnce.Do(func() {
-		if p.syncStop != nil {
-			close(p.syncStop)
-			p.syncWG.Wait()
+		if p.stopCh != nil {
+			close(p.stopCh)
+			p.bgWG.Wait()
 		}
 		// Final durable flush: NoSync means db.Close() won't fsync pending
 		// commits for us.

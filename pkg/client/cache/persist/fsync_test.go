@@ -6,6 +6,7 @@ import (
 	"gmountie/pkg/client/cache/persist"
 
 	"github.com/stretchr/testify/suite"
+	"go.uber.org/goleak"
 )
 
 type PersistFsyncSuite struct {
@@ -203,4 +204,45 @@ func (s *PersistFsyncSuite) TestCloseIsIdempotent() {
 	s.Require().NoError(err)
 	s.Require().NoError(p.Close())
 	s.Assert().NoError(p.Close(), "second Close must not error or panic")
+}
+
+// TestOrphanSweepBailsWhenStopped proves the orphan sweep cancels cooperatively
+// when the background stop signal fires — so Close never blocks on a long walk
+// and the sweep can't touch the db after it's closed.
+func (s *PersistFsyncSuite) TestOrphanSweepBailsWhenStopped() {
+	p, err := persist.Open(persist.Options{Root: s.dir})
+	s.Require().NoError(err)
+	defer p.Close()
+
+	// An orphan: a chunk file written with no index ref (refcount 0).
+	hash, _, err := p.WriteChunk([]byte("orphan-bytes"))
+	s.Require().NoError(err)
+	orphan := persist.TestingChunkPath(p, hash)
+	s.Require().FileExists(orphan)
+
+	// Stop already signalled → sweep bails, leaving the orphan in place.
+	stopped := make(chan struct{})
+	close(stopped)
+	s.Require().NoError(persist.TestingRunOrphanSweepStop(s.T(), p, stopped))
+	s.Require().FileExists(orphan)
+
+	// Not stopped → the same sweep removes the orphan (proves it would have
+	// acted; the bail above wasn't a no-op for some other reason).
+	s.Require().NoError(persist.TestingRunOrphanSweepStop(s.T(), p, nil))
+	s.Assert().NoFileExists(orphan)
+}
+
+// TestPersistCloseLeavesNoBackgroundGoroutines asserts Close joins every
+// goroutine Open started (meta syncer + sweeps) — none survive Close to touch
+// the closed db. IgnoreCurrent is captured before Open so unrelated goroutines
+// from other tests don't taint the result.
+func TestPersistCloseLeavesNoBackgroundGoroutines(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	p, err := persist.Open(persist.Options{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
 }
