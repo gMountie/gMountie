@@ -84,8 +84,8 @@ sudo scripts/perf/profile.sh clear             # or: sudo scripts/stop-slow-loop
 ```
 
 `scripts/start-slow-loopback.sh [profile] [iface]` delegates straight to
-`profile.sh apply` (default: `wan lo`). `stop-slow-loopback.sh` calls
-`profile.sh clear`.
+`profile.sh apply` (default: `wan lo`). `scripts/stop-slow-loopback.sh [iface]`
+delegates to `profile.sh clear` (default: `lo`).
 
 **Always** remove the qdisc when done — silent slowness leaks into later runs.
 
@@ -125,7 +125,7 @@ Benchmarks are tracked as separate series per profile, e.g.
 | `latency` | ns/op | all |
 | `throughput` | MB/s | IO benches (sequential + random) |
 | `throughput_pct_of_raw` | % | sequential benches — achieved MB/s as a fraction of the binding `min(disk, link)` ceiling for the profile |
-| `_substrate/*` | various | substrate-only series: `disk_seq_read`, `disk_seq_write`, `disk_rand_4k_iops`, `cpu_compute`, `net_rtt_lan`, `net_rtt_wan` |
+| `_substrate/*` | various | substrate-only series: `disk_seq_read`, `disk_seq_write`, `disk_rand_4k_read_iops`, `disk_rand_4k_write_iops`, `cpu_compute`, `net_rtt_lan`, `net_rtt_wan`, `net_bw_lan`, `net_bw_wan` |
 
 The `_substrate/*` series capture the raw hardware floor (disk, CPU, network)
 without gMountie in the path. They make floor drift visible on the dashboard

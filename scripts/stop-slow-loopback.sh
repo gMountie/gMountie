@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
-# Remove any tc netem shaping previously applied to the loopback interface.
-# Idempotent: no-op if no qdisc is currently installed. Requires root (or sudo).
+# Remove any tc netem shaping on the loopback interface (or a named interface).
+# Delegates to scripts/perf/profile.sh, the single source of truth for perf
+# network profiles. Optional arg: [iface] (default: lo). Requires root (or sudo).
 
 set -euo pipefail
-
-if tc qdisc show dev lo | grep -q '^qdisc netem'; then
-  tc qdisc del dev lo root
-  echo "loopback shaping removed"
-else
-  echo "no netem qdisc on lo — nothing to do"
-fi
+# Thin wrapper — delegates to scripts/perf/profile.sh, the single source of
+# truth for perf network profiles. Clears any netem qdisc on the interface.
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$here/perf/profile.sh" clear "${1:-lo}"
