@@ -59,3 +59,17 @@ func TestingRunGhostSweep(t *testing.T, p *Persist, fraction float64) {
 		t.Fatalf("ghost sweep: %v", err)
 	}
 }
+
+// TestingMetaWriteCount returns bbolt's cumulative count of page writes.
+// A committed writable transaction increments it — even under NoSync,
+// which skips the fsync but still performs the write — while a skipped
+// transaction does not. Used to assert no-op invalidations open no
+// writable txn.
+func TestingMetaWriteCount(p *Persist) int64 {
+	s := p.db.Stats().TxStats
+	return s.GetWrite()
+}
+
+// TestingNoSync reports whether meta.db was opened with fsync-on-commit
+// disabled.
+func TestingNoSync(p *Persist) bool { return p.db.NoSync }
