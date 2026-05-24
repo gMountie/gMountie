@@ -131,3 +131,20 @@ func (s *PersistFsyncSuite) TestCloseSyncsAndDataSurvivesReopen() {
 }
 
 func TestPersistFsyncSuite(t *testing.T) { suite.Run(t, new(PersistFsyncSuite)) }
+
+// BenchmarkInvalidateChunkRangeNoOp guards the no-op skip optimisation: a
+// range invalidation over a never-cached path must not pay for a bbolt
+// commit. A regression (re-introducing the writable txn) shows up as a
+// large ns/op jump on slow-fsync storage.
+func BenchmarkInvalidateChunkRangeNoOp(b *testing.B) {
+	p, err := persist.Open(persist.Options{Root: b.TempDir()})
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer p.Close()
+	for b.Loop() {
+		if err := p.InvalidateChunkRange("/never/written", 0, 0); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
