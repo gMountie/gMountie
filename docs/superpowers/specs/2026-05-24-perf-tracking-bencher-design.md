@@ -113,10 +113,14 @@ Bencher **thresholds** (per measure / branch / testbed) replace the hand-rolled 
 - `Taskfile.yaml` — optional `perf:bmf` / `perf:substrate` targets so the pipeline steps are runnable locally and from CI uniformly.
 - `scripts/start-slow-loopback.sh` — generalize/parametrize so the `wan` profile (`delay 25ms jitter 5ms rate 100Mbit`) is expressed once and shared.
 
-**Infrastructure (operational, outside the repo):**
-- Deploy the self-hosted Actions runner as a single node-pinned Pod (label `gmountie-perf`) per the Runner section; bake pinned `fio`, `iperf3`, `benchstat`, Go into the runner image.
-- Grant the runner **passwordless sudo for `tc`** (applying/removing the `wan` `netem` qdisc on `lo` needs root). Without it the first WAN pass fails confusingly.
-- Create the Bencher Cloud project `gmountie` + testbed `gmountie-perf-pod`; store `BENCHER_API_TOKEN` as a repo secret. **Token identity:** recommend a dedicated Bencher bot/service account that owns the `gmountie` project (so rotation/revocation never touches a personal account); a personal-account token works for a solo start. *(Open: confirm which identity.)* The secret is exposed to the self-hosted Pod — acceptable because the perf job fires only on manual `workflow_dispatch` release, never on untrusted fork PRs.
+**Infrastructure (operational, owned by the separate ARC / runner-infra repo — NOT built here):**
+
+This repo assumes the runner already exists with these properties; provisioning lives elsewhere. Listed so the pipeline's assumptions are explicit:
+- The self-hosted ARC runner is a single node-pinned Pod (label `gmountie-perf`) per the Runner section, with `fio`, `iperf3`, `benchstat`, Go, `tc` (`iproute2`), `fuse3`, and the pinned `bencher` CLI **baked into the runner image**.
+- The runner can run `tc` (privileged Pod grants `NET_ADMIN`; or passwordless sudo for `tc`) — needed for the `wan` `netem` qdisc on the Pod's `lo`.
+- The Bencher Cloud project `gmountie` + testbed `gmountie-perf-pod` exist, and `BENCHER_API_TOKEN` is available to the workflow as a secret. **Token identity:** recommend a dedicated Bencher bot/service account that owns the project (so rotation never touches a personal account); a personal-account token works for a solo start. *(Open: confirm which identity.)* Secret exposure to the self-hosted Pod is acceptable because the perf job fires only on manual `workflow_dispatch` release, never on untrusted fork PRs.
+
+**In-repo scope (what this spec's implementation actually delivers):** the `perf` job in `release.yml`, the BMF emitter, the substrate probes + profile definitions, the Taskfile targets, and the docs. Everything under "New" / "Modified" above.
 
 ## Data flow
 
