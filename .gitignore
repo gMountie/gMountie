@@ -45,3 +45,7 @@ graphify-out/
 # Local Claude Code config (personal hooks, e.g. the graphify Bash hint).
 # Per-developer tooling, not product config.
 .claude/
+
+# Perf harness working output: the perfbmf binary plus bench/substrate/BMF
+# artifacts produced by `task perf:bmf:build` and scripts/perf/run.sh.
+perf-out/

@@ -162,3 +162,14 @@ tasks:
     cmds:
       - benchstat {{.BEFORE}} {{.AFTER}}
 
+  perf:bmf:build:
+    desc: Build the perfbmf BMF emitter into ./perf-out/perfbmf.
+    cmds:
+      - mkdir -p perf-out
+      - go build -o perf-out/perfbmf ./test/e2e/perf/cmd/perfbmf/
+
+  perf:ci:
+    desc: 'Full perf run (substrate + lan/wan benches + BMF). Set BENCHER=1 to upload. Vars via env: COUNT, BENCHTIME, BENCHER_PROJECT, BENCHER_TESTBED, BENCHER_BRANCH, GIT_HASH. Runner-only (needs FUSE + tc).'
+    cmds:
+      - bash scripts/perf/run.sh
+
