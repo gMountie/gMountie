@@ -1,7 +1,9 @@
 # Cache fsync reduction (no-op invalidation skip + NoSync meta.db)
 
 **Date:** 2026-05-24
-**Status:** implemented (code + local unit/race tests green, lint clean); **blocking acceptance criterion #4 — VM re-bench on the kubevirt `local-path` PVC — still pending.** Implemented across commits `c8035ab`..`a71aa0e`. Verification found the stale-invalidation dependency UNSAFE (subscribe-off trusts the cache without revalidation) → sync-after-real-invalidation fallback taken; the fresh-file write hot path still pays neither a writable txn nor an fsync, so the bench win is preserved by control-flow analysis (~1 fsync per file at first write, 0 per subsequent write).
+**Status:** ✅ **implemented and verified.** Code + local unit/race tests green, lint clean; acceptance criterion #4 (VM re-bench) met. Implemented across commits `c8035ab`..`a71aa0e`. Verification found the stale-invalidation dependency UNSAFE (subscribe-off trusts the cache without revalidation) → sync-after-real-invalidation fallback taken; the fresh-file write hot path pays neither a writable txn nor an fsync, so the bench win is preserved by control-flow analysis (~1 fsync per file at first write, 0 per subsequent write).
+
+**VM re-bench result (2026-05-25, kubevirt `local-path` PVC, 1 MiB sequential write, cache enabled, `subscribe_enabled: false`):** baseline (installed pre-change binary) median **~33 MiB/s** (32.1–37.2 across 4 runs); after (this change) median **~100 MiB/s** (87.6–114 across 4 runs) — a **~3× improvement** that lands at the pure-protocol no-cache ceiling, i.e. the cache write penalty is effectively eliminated. meta.db stayed ~32K throughout (writes invalidate, never populate, the cache — confirming the model).
 **Scope:** client-side persistent cache (`pkg/client/cache`, `pkg/client/cache/persist`)
 
 ## Problem
