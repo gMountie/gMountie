@@ -678,8 +678,9 @@ func (b *BackendClient) Write(ctx context.Context, fh FileHandle, off int64, dat
 	if h == nil {
 		return 0, fuse.EBADF
 	}
-	// Mark dirty before any network I/O so that a failed write still
-	// leaves the handle marked dirty; the next Flush will retry.
+	// Mark dirty so the next Flush emits a WriteAndFlush. Safe to set before
+	// buffering: FUSE serializes ops per open fd, so Write and Flush on this
+	// handle never race.
 	h.dirty.Store(true)
 	// Coalescing disabled: pass through to the streaming Write directly.
 	if h.coalescer == nil {
@@ -831,7 +832,11 @@ func (b *BackendClient) Fsync(ctx context.Context, fh FileHandle, flags int64) f
 		log.Log.Error("error in call: Fsync", zap.String("path", h.path), zap.Error(err))
 		return fuse.EIO
 	}
-	return fuse.Status(res.Status)
+	st := fuse.Status(res.Status)
+	if st.Ok() {
+		h.dirty.Store(false)
+	}
+	return st
 }
 
 // Allocate proxies fallocate(2) to the server. Mutating but not retried
@@ -949,9 +954,9 @@ type grpcFileHandle struct {
 	ioTimeout  time.Duration
 	sessionID  string
 	// dirty tracks whether a Write has been accepted since the last
-	// successful Flush. Flush skips the RPC entirely when dirty is false
-	// (clean-handle fast path). Set atomically by Write; cleared atomically
-	// by a successful Flush. Fsync does not touch dirty.
+	// successful Flush or Fsync. Flush skips the RPC entirely when dirty is
+	// false (clean-handle fast path). Set atomically by Write; cleared
+	// atomically by a successful Flush or Fsync.
 	dirty atomic.Bool
 	// readahead is non-nil when readahead is enabled for this fd.
 	readahead *Readahead
