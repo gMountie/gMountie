@@ -194,3 +194,13 @@ func BenchmarkInvalidateChunkRangeNoOp(b *testing.B) {
 		}
 	}
 }
+
+// Close is idempotent and concurrency-safe: a second call (or concurrent
+// calls) must not panic on a double channel-close and must return the same
+// result. Guards the sync.Once close path.
+func (s *PersistFsyncSuite) TestCloseIsIdempotent() {
+	p, err := persist.Open(persist.Options{Root: s.dir})
+	s.Require().NoError(err)
+	s.Require().NoError(p.Close())
+	s.Assert().NoError(p.Close(), "second Close must not error or panic")
+}

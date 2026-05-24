@@ -57,12 +57,14 @@ type Options struct {
 // cache directory. Safe for concurrent use; bbolt is single-writer
 // but Persist serializes writes internally.
 type Persist struct {
-	root     string
-	db       *bolt.DB
-	lock     *lockHandle
-	disk     *diskAccountant
-	syncStop chan struct{}
-	syncWG   sync.WaitGroup
+	root      string
+	db        *bolt.DB
+	lock      *lockHandle
+	disk      *diskAccountant
+	syncStop  chan struct{}
+	syncWG    sync.WaitGroup
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // Open acquires the LOCK file, opens (or creates) meta.db, ensures
@@ -137,21 +139,25 @@ func (p *Persist) startMetaSyncer() {
 }
 
 // Close stops the background syncer, flushes bbolt durably, releases the
-// lock file, and frees OS resources.
+// lock file, and frees OS resources. Idempotent and safe under concurrent
+// calls: the work runs once and every caller gets the same result.
 func (p *Persist) Close() error {
-	if p.syncStop != nil {
-		close(p.syncStop)
-		p.syncWG.Wait()
-		p.syncStop = nil
-	}
-	// Final durable flush: NoSync means db.Close() won't fsync pending
-	// commits for us.
-	_ = p.db.Sync()
-	if err := p.db.Close(); err != nil {
-		_ = p.lock.release()
-		return errors.Wrap(err, "close meta.db")
-	}
-	return p.lock.release()
+	p.closeOnce.Do(func() {
+		if p.syncStop != nil {
+			close(p.syncStop)
+			p.syncWG.Wait()
+		}
+		// Final durable flush: NoSync means db.Close() won't fsync pending
+		// commits for us.
+		_ = p.db.Sync()
+		if err := p.db.Close(); err != nil {
+			_ = p.lock.release()
+			p.closeErr = errors.Wrap(err, "close meta.db")
+			return
+		}
+		p.closeErr = p.lock.release()
+	})
+	return p.closeErr
 }
 
 // Root returns the cache directory passed to Open.
