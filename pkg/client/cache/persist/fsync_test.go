@@ -49,4 +49,34 @@ func (s *PersistFsyncSuite) TestInvalidateChunkRangeRealStillDeletes() {
 	s.Assert().False(ok, "entry must be gone after invalidation")
 }
 
+func (s *PersistFsyncSuite) TestInvalidatePathChunksNoOpSkipsTxn() {
+	p, err := persist.Open(persist.Options{Root: s.dir})
+	s.Require().NoError(err)
+	defer p.Close()
+
+	before := persist.TestingMetaWriteCount(p)
+	s.Require().NoError(p.InvalidatePathChunks("/never/written"))
+	after := persist.TestingMetaWriteCount(p)
+	s.Assert().Equal(before, after, "no-op path invalidation must not open a writable txn")
+}
+
+func (s *PersistFsyncSuite) TestInvalidatePathChunksRealStillDeletes() {
+	p, err := persist.Open(persist.Options{Root: s.dir})
+	s.Require().NoError(err)
+	defer p.Close()
+
+	hash, _, err := p.WriteChunk([]byte("hello"))
+	s.Require().NoError(err)
+	s.Require().NoError(p.PutChunkRef("/f", 0, persist.ChunkRef{Hash: hash, Size: 5}))
+
+	before := persist.TestingMetaWriteCount(p)
+	s.Require().NoError(p.InvalidatePathChunks("/f"))
+	after := persist.TestingMetaWriteCount(p)
+	s.Assert().Greater(after, before, "real path invalidation must commit a writable txn")
+
+	_, ok, err := p.GetChunkRef("/f", 0)
+	s.Require().NoError(err)
+	s.Assert().False(ok, "entry must be gone after invalidation")
+}
+
 func TestPersistFsyncSuite(t *testing.T) { suite.Run(t, new(PersistFsyncSuite)) }

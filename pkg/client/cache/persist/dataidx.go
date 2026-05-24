@@ -116,6 +116,23 @@ func (p *Persist) GetChunkRef(path string, chunkIndex int) (ChunkRef, bool, erro
 // decrements each removed entry's chunk refcount. Hashes whose refcount
 // hits zero have their on-disk chunk files unlinked after the txn.
 func (p *Persist) InvalidatePathChunks(path string) error {
+	// Probe first: skip the writable txn when the path has no cached
+	// chunks (same rationale as InvalidateChunkRange).
+	var hasAny bool
+	if err := p.db.View(func(tx *bolt.Tx) error {
+		c := tx.Bucket(bucketDataIdx).Cursor()
+		prefix := dataIdxPathPrefix(path)
+		if k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix) {
+			hasAny = true
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if !hasAny {
+		return nil
+	}
+
 	var toUnlink [][16]byte
 	err := p.db.Update(func(tx *bolt.Tx) error {
 		idx := tx.Bucket(bucketDataIdx)
