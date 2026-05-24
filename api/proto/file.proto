@@ -3,6 +3,7 @@ package gmountie;
 option go_package = "pkg/proto";
 
 import "api/proto/common.proto";
+import "api/proto/fs.proto";
 
 message FileLock {
   uint64 start = 1;
@@ -38,6 +39,7 @@ message CreateRequest {
 message CreateReply {
   uint64 fd = 1;
   int32 status = 2;
+  Attr attributes = 3;   // lets the client fill EntryOut without a post-create GetAttr
 }
 
 message ReadRequest {
@@ -100,6 +102,23 @@ message FlushRequest {
 
 message FlushReply {
   int32 status = 1;
+}
+
+// WriteAndFlush fuses the deferred coalesced write and the flush into one RPC
+// at FUSE FLUSH time (the errno reaches the app's close()). data may be empty
+// (a pure flush). Unary: only used for buffers <= WriteCoalesceBytes.
+message WriteAndFlushRequest {
+  string volume     = 1;
+  uint64 fd         = 2;
+  int64  offset     = 3;
+  bytes  data       = 4;
+  string session_id = 5;
+}
+
+message WriteAndFlushReply {
+  uint32 written    = 1;
+  int32  status     = 2;   // write errno if the write failed, else the flush errno
+  Attr   final_attr = 3;
 }
 
 message GetLkRequest {
@@ -165,6 +184,7 @@ service RpcFile {
   rpc Release (ReleaseRequest) returns (ReleaseReply);
   rpc Fsync (FsyncRequest) returns (FsyncReply);
   rpc Flush (FlushRequest) returns (FlushReply);
+  rpc WriteAndFlush (WriteAndFlushRequest) returns (WriteAndFlushReply);
   rpc GetLk (GetLkRequest) returns (GetLkReply);
   rpc SetLk (SetLkRequest) returns (SetLkReply);
   rpc SetLkw (SetLkwRequest) returns (SetLkwReply);

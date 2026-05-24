@@ -989,3 +989,90 @@ func (_c *MockRpcFileClient_Write_Call) RunAndReturn(run func(ctx context.Contex
 	_c.Call.Return(run)
 	return _c
 }
+
+// WriteAndFlush provides a mock function for the type MockRpcFileClient
+func (_mock *MockRpcFileClient) WriteAndFlush(ctx context.Context, in *proto.WriteAndFlushRequest, opts ...grpc.CallOption) (*proto.WriteAndFlushReply, error) {
+	// grpc.CallOption
+	_va := make([]interface{}, len(opts))
+	for _i := range opts {
+		_va[_i] = opts[_i]
+	}
+	var _ca []interface{}
+	_ca = append(_ca, ctx, in)
+	_ca = append(_ca, _va...)
+	ret := _mock.Called(_ca...)
+
+	if len(ret) == 0 {
+		panic("no return value specified for WriteAndFlush")
+	}
+
+	var r0 *proto.WriteAndFlushReply
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.WriteAndFlushRequest, ...grpc.CallOption) (*proto.WriteAndFlushReply, error)); ok {
+		return returnFunc(ctx, in, opts...)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.WriteAndFlushRequest, ...grpc.CallOption) *proto.WriteAndFlushReply); ok {
+		r0 = returnFunc(ctx, in, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proto.WriteAndFlushReply)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.WriteAndFlushRequest, ...grpc.CallOption) error); ok {
+		r1 = returnFunc(ctx, in, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockRpcFileClient_WriteAndFlush_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'WriteAndFlush'
+type MockRpcFileClient_WriteAndFlush_Call struct {
+	*mock.Call
+}
+
+// WriteAndFlush is a helper method to define mock.On call
+//   - ctx context.Context
+//   - in *proto.WriteAndFlushRequest
+//   - opts ...grpc.CallOption
+func (_e *MockRpcFileClient_Expecter) WriteAndFlush(ctx interface{}, in interface{}, opts ...interface{}) *MockRpcFileClient_WriteAndFlush_Call {
+	return &MockRpcFileClient_WriteAndFlush_Call{Call: _e.mock.On("WriteAndFlush",
+		append([]interface{}{ctx, in}, opts...)...)}
+}
+
+func (_c *MockRpcFileClient_WriteAndFlush_Call) Run(run func(ctx context.Context, in *proto.WriteAndFlushRequest, opts ...grpc.CallOption)) *MockRpcFileClient_WriteAndFlush_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *proto.WriteAndFlushRequest
+		if args[1] != nil {
+			arg1 = args[1].(*proto.WriteAndFlushRequest)
+		}
+		var arg2 []grpc.CallOption
+		variadicArgs := make([]grpc.CallOption, len(args)-2)
+		for i, a := range args[2:] {
+			if a != nil {
+				variadicArgs[i] = a.(grpc.CallOption)
+			}
+		}
+		arg2 = variadicArgs
+		run(
+			arg0,
+			arg1,
+			arg2...,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFileClient_WriteAndFlush_Call) Return(writeAndFlushReply *proto.WriteAndFlushReply, err error) *MockRpcFileClient_WriteAndFlush_Call {
+	_c.Call.Return(writeAndFlushReply, err)
+	return _c
+}
+
+func (_c *MockRpcFileClient_WriteAndFlush_Call) RunAndReturn(run func(ctx context.Context, in *proto.WriteAndFlushRequest, opts ...grpc.CallOption) (*proto.WriteAndFlushReply, error)) *MockRpcFileClient_WriteAndFlush_Call {
+	_c.Call.Return(run)
+	return _c
+}
