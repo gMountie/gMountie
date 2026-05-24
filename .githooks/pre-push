@@ -1,0 +1,29 @@
+#!/usr/bin/env sh
+# pre-push: run the linter before anything leaves the machine, so a
+# lint failure is caught locally instead of as a red CI run after push.
+#
+# Installed by `task setup` (sets core.hooksPath to .githooks). Bypass a
+# single push with `git push --no-verify` when you know lint is irrelevant
+# (e.g. pushing a docs-only branch CI will lint anyway).
+set -eu
+
+# Skip when every ref being pushed is a deletion (local sha = all-zeros);
+# there's nothing to lint and `task lint` would needlessly run.
+zero='0000000000000000000000000000000000000000'
+only_deletes=1
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+	[ -z "${local_sha:-}" ] && continue
+	[ "$local_sha" = "$zero" ] || only_deletes=0
+done
+[ "$only_deletes" = "1" ] && exit 0
+
+if ! command -v task >/dev/null 2>&1; then
+	echo "pre-push: 'task' (go-task) not found on PATH; run 'task setup' or skip with --no-verify" >&2
+	exit 1
+fi
+
+echo "pre-push: running 'task lint'..." >&2
+if ! task lint; then
+	echo "pre-push: lint failed — push aborted. Fix the issues above, or bypass with 'git push --no-verify'." >&2
+	exit 1
+fi

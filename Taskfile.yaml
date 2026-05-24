@@ -16,6 +16,16 @@ tasks:
     cmds:
       - task: setup:system
       - task: setup:tools
+      - task: setup:hooks
+
+  setup:hooks:
+    desc: Point git at the tracked .githooks/ dir so the pre-push lint hook runs on every push.
+    preconditions:
+      - sh: '[ -d .git ] || git rev-parse --git-dir >/dev/null 2>&1'
+        msg: "setup:hooks must run inside the gMountie git repository."
+    cmds:
+      - git config core.hooksPath .githooks
+      - echo "git hooks installed (core.hooksPath -> .githooks). pre-push now runs 'task lint'."
 
   setup:system:
     desc: Install system packages via apt (protoc, FUSE, GTK/WebKit for the UI, fio for e2e benches).
