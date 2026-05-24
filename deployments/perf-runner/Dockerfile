@@ -10,9 +10,12 @@
 #   docker build -t ghcr.io/gmountie/gmountie-perf-runner:0.1.0 deployments/perf-runner
 #   docker push   ghcr.io/gmountie/gmountie-perf-runner:0.1.0
 #
-# Pin every ARG below — the image version is part of the substrate identity, and
-# run.sh's EXPECT_* guards can assert these exact versions at job time.
-FROM ghcr.io/actions/actions-runner:2.319.1
+# The base is intentionally :latest, NOT pinned: GitHub deprecates old runner
+# *agent* versions and refuses messages from them ("Runner version ... is
+# deprecated and cannot receive messages"). The agent version doesn't affect the
+# substrate (disk/CPU/network), so reproducibility is preserved by pinning the
+# perf-tool ARGs below — which run.sh's EXPECT_* guards assert at job time.
+FROM ghcr.io/actions/actions-runner:latest
 
 USER root
 
