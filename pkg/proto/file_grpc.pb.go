@@ -19,17 +19,18 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	RpcFile_Open_FullMethodName     = "/gmountie.RpcFile/Open"
-	RpcFile_Create_FullMethodName   = "/gmountie.RpcFile/Create"
-	RpcFile_Read_FullMethodName     = "/gmountie.RpcFile/Read"
-	RpcFile_Write_FullMethodName    = "/gmountie.RpcFile/Write"
-	RpcFile_Release_FullMethodName  = "/gmountie.RpcFile/Release"
-	RpcFile_Fsync_FullMethodName    = "/gmountie.RpcFile/Fsync"
-	RpcFile_Flush_FullMethodName    = "/gmountie.RpcFile/Flush"
-	RpcFile_GetLk_FullMethodName    = "/gmountie.RpcFile/GetLk"
-	RpcFile_SetLk_FullMethodName    = "/gmountie.RpcFile/SetLk"
-	RpcFile_SetLkw_FullMethodName   = "/gmountie.RpcFile/SetLkw"
-	RpcFile_Allocate_FullMethodName = "/gmountie.RpcFile/Allocate"
+	RpcFile_Open_FullMethodName          = "/gmountie.RpcFile/Open"
+	RpcFile_Create_FullMethodName        = "/gmountie.RpcFile/Create"
+	RpcFile_Read_FullMethodName          = "/gmountie.RpcFile/Read"
+	RpcFile_Write_FullMethodName         = "/gmountie.RpcFile/Write"
+	RpcFile_Release_FullMethodName       = "/gmountie.RpcFile/Release"
+	RpcFile_Fsync_FullMethodName         = "/gmountie.RpcFile/Fsync"
+	RpcFile_Flush_FullMethodName         = "/gmountie.RpcFile/Flush"
+	RpcFile_WriteAndFlush_FullMethodName = "/gmountie.RpcFile/WriteAndFlush"
+	RpcFile_GetLk_FullMethodName         = "/gmountie.RpcFile/GetLk"
+	RpcFile_SetLk_FullMethodName         = "/gmountie.RpcFile/SetLk"
+	RpcFile_SetLkw_FullMethodName        = "/gmountie.RpcFile/SetLkw"
+	RpcFile_Allocate_FullMethodName      = "/gmountie.RpcFile/Allocate"
 )
 
 // RpcFileClient is the client API for RpcFile service.
@@ -43,6 +44,7 @@ type RpcFileClient interface {
 	Release(ctx context.Context, in *ReleaseRequest, opts ...grpc.CallOption) (*ReleaseReply, error)
 	Fsync(ctx context.Context, in *FsyncRequest, opts ...grpc.CallOption) (*FsyncReply, error)
 	Flush(ctx context.Context, in *FlushRequest, opts ...grpc.CallOption) (*FlushReply, error)
+	WriteAndFlush(ctx context.Context, in *WriteAndFlushRequest, opts ...grpc.CallOption) (*WriteAndFlushReply, error)
 	GetLk(ctx context.Context, in *GetLkRequest, opts ...grpc.CallOption) (*GetLkReply, error)
 	SetLk(ctx context.Context, in *SetLkRequest, opts ...grpc.CallOption) (*SetLkReply, error)
 	SetLkw(ctx context.Context, in *SetLkwRequest, opts ...grpc.CallOption) (*SetLkwReply, error)
@@ -139,6 +141,16 @@ func (c *rpcFileClient) Flush(ctx context.Context, in *FlushRequest, opts ...grp
 	return out, nil
 }
 
+func (c *rpcFileClient) WriteAndFlush(ctx context.Context, in *WriteAndFlushRequest, opts ...grpc.CallOption) (*WriteAndFlushReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WriteAndFlushReply)
+	err := c.cc.Invoke(ctx, RpcFile_WriteAndFlush_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *rpcFileClient) GetLk(ctx context.Context, in *GetLkRequest, opts ...grpc.CallOption) (*GetLkReply, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetLkReply)
@@ -190,6 +202,7 @@ type RpcFileServer interface {
 	Release(context.Context, *ReleaseRequest) (*ReleaseReply, error)
 	Fsync(context.Context, *FsyncRequest) (*FsyncReply, error)
 	Flush(context.Context, *FlushRequest) (*FlushReply, error)
+	WriteAndFlush(context.Context, *WriteAndFlushRequest) (*WriteAndFlushReply, error)
 	GetLk(context.Context, *GetLkRequest) (*GetLkReply, error)
 	SetLk(context.Context, *SetLkRequest) (*SetLkReply, error)
 	SetLkw(context.Context, *SetLkwRequest) (*SetLkwReply, error)
@@ -224,6 +237,9 @@ func (UnimplementedRpcFileServer) Fsync(context.Context, *FsyncRequest) (*FsyncR
 }
 func (UnimplementedRpcFileServer) Flush(context.Context, *FlushRequest) (*FlushReply, error) {
 	return nil, status.Error(codes.Unimplemented, "method Flush not implemented")
+}
+func (UnimplementedRpcFileServer) WriteAndFlush(context.Context, *WriteAndFlushRequest) (*WriteAndFlushReply, error) {
+	return nil, status.Error(codes.Unimplemented, "method WriteAndFlush not implemented")
 }
 func (UnimplementedRpcFileServer) GetLk(context.Context, *GetLkRequest) (*GetLkReply, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetLk not implemented")
@@ -366,6 +382,24 @@ func _RpcFile_Flush_Handler(srv interface{}, ctx context.Context, dec func(inter
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RpcFile_WriteAndFlush_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WriteAndFlushRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RpcFileServer).WriteAndFlush(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RpcFile_WriteAndFlush_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RpcFileServer).WriteAndFlush(ctx, req.(*WriteAndFlushRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _RpcFile_GetLk_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetLkRequest)
 	if err := dec(in); err != nil {
@@ -464,6 +498,10 @@ var RpcFile_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Flush",
 			Handler:    _RpcFile_Flush_Handler,
+		},
+		{
+			MethodName: "WriteAndFlush",
+			Handler:    _RpcFile_WriteAndFlush_Handler,
 		},
 		{
 			MethodName: "GetLk",

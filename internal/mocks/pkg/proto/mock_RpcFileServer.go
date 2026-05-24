@@ -759,6 +759,74 @@ func (_c *MockRpcFileServer_Write_Call) RunAndReturn(run func(clientStreamingSer
 	return _c
 }
 
+// WriteAndFlush provides a mock function for the type MockRpcFileServer
+func (_mock *MockRpcFileServer) WriteAndFlush(context1 context.Context, writeAndFlushRequest *proto.WriteAndFlushRequest) (*proto.WriteAndFlushReply, error) {
+	ret := _mock.Called(context1, writeAndFlushRequest)
+
+	if len(ret) == 0 {
+		panic("no return value specified for WriteAndFlush")
+	}
+
+	var r0 *proto.WriteAndFlushReply
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.WriteAndFlushRequest) (*proto.WriteAndFlushReply, error)); ok {
+		return returnFunc(context1, writeAndFlushRequest)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.WriteAndFlushRequest) *proto.WriteAndFlushReply); ok {
+		r0 = returnFunc(context1, writeAndFlushRequest)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proto.WriteAndFlushReply)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.WriteAndFlushRequest) error); ok {
+		r1 = returnFunc(context1, writeAndFlushRequest)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockRpcFileServer_WriteAndFlush_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'WriteAndFlush'
+type MockRpcFileServer_WriteAndFlush_Call struct {
+	*mock.Call
+}
+
+// WriteAndFlush is a helper method to define mock.On call
+//   - context1 context.Context
+//   - writeAndFlushRequest *proto.WriteAndFlushRequest
+func (_e *MockRpcFileServer_Expecter) WriteAndFlush(context1 interface{}, writeAndFlushRequest interface{}) *MockRpcFileServer_WriteAndFlush_Call {
+	return &MockRpcFileServer_WriteAndFlush_Call{Call: _e.mock.On("WriteAndFlush", context1, writeAndFlushRequest)}
+}
+
+func (_c *MockRpcFileServer_WriteAndFlush_Call) Run(run func(context1 context.Context, writeAndFlushRequest *proto.WriteAndFlushRequest)) *MockRpcFileServer_WriteAndFlush_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *proto.WriteAndFlushRequest
+		if args[1] != nil {
+			arg1 = args[1].(*proto.WriteAndFlushRequest)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFileServer_WriteAndFlush_Call) Return(writeAndFlushReply *proto.WriteAndFlushReply, err error) *MockRpcFileServer_WriteAndFlush_Call {
+	_c.Call.Return(writeAndFlushReply, err)
+	return _c
+}
+
+func (_c *MockRpcFileServer_WriteAndFlush_Call) RunAndReturn(run func(context1 context.Context, writeAndFlushRequest *proto.WriteAndFlushRequest) (*proto.WriteAndFlushReply, error)) *MockRpcFileServer_WriteAndFlush_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // mustEmbedUnimplementedRpcFileServer provides a mock function for the type MockRpcFileServer
 func (_mock *MockRpcFileServer) mustEmbedUnimplementedRpcFileServer() {
 	_mock.Called()

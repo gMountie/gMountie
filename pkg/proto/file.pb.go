@@ -321,6 +321,7 @@ type CreateReply struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Fd            uint64                 `protobuf:"varint,1,opt,name=fd,proto3" json:"fd,omitempty"`
 	Status        int32                  `protobuf:"varint,2,opt,name=status,proto3" json:"status,omitempty"`
+	Attributes    *Attr                  `protobuf:"bytes,3,opt,name=attributes,proto3" json:"attributes,omitempty"` // lets the client fill EntryOut without a post-create GetAttr
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -367,6 +368,13 @@ func (x *CreateReply) GetStatus() int32 {
 		return x.Status
 	}
 	return 0
+}
+
+func (x *CreateReply) GetAttributes() *Attr {
+	if x != nil {
+		return x.Attributes
+	}
+	return nil
 }
 
 type ReadRequest struct {
@@ -950,6 +958,145 @@ func (x *FlushReply) GetStatus() int32 {
 	return 0
 }
 
+// WriteAndFlush fuses the deferred coalesced write and the flush into one RPC
+// at FUSE FLUSH time (the errno reaches the app's close()). data may be empty
+// (a pure flush). Unary: only used for buffers <= WriteCoalesceBytes.
+type WriteAndFlushRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Volume        string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
+	Fd            uint64                 `protobuf:"varint,2,opt,name=fd,proto3" json:"fd,omitempty"`
+	Offset        int64                  `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
+	Data          []byte                 `protobuf:"bytes,4,opt,name=data,proto3" json:"data,omitempty"`
+	SessionId     string                 `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WriteAndFlushRequest) Reset() {
+	*x = WriteAndFlushRequest{}
+	mi := &file_api_proto_file_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WriteAndFlushRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WriteAndFlushRequest) ProtoMessage() {}
+
+func (x *WriteAndFlushRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_file_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WriteAndFlushRequest.ProtoReflect.Descriptor instead.
+func (*WriteAndFlushRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_file_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *WriteAndFlushRequest) GetVolume() string {
+	if x != nil {
+		return x.Volume
+	}
+	return ""
+}
+
+func (x *WriteAndFlushRequest) GetFd() uint64 {
+	if x != nil {
+		return x.Fd
+	}
+	return 0
+}
+
+func (x *WriteAndFlushRequest) GetOffset() int64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *WriteAndFlushRequest) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+func (x *WriteAndFlushRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+type WriteAndFlushReply struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Written       uint32                 `protobuf:"varint,1,opt,name=written,proto3" json:"written,omitempty"`
+	Status        int32                  `protobuf:"varint,2,opt,name=status,proto3" json:"status,omitempty"` // write errno if the write failed, else the flush errno
+	FinalAttr     *Attr                  `protobuf:"bytes,3,opt,name=final_attr,json=finalAttr,proto3" json:"final_attr,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WriteAndFlushReply) Reset() {
+	*x = WriteAndFlushReply{}
+	mi := &file_api_proto_file_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WriteAndFlushReply) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WriteAndFlushReply) ProtoMessage() {}
+
+func (x *WriteAndFlushReply) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_file_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WriteAndFlushReply.ProtoReflect.Descriptor instead.
+func (*WriteAndFlushReply) Descriptor() ([]byte, []int) {
+	return file_api_proto_file_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *WriteAndFlushReply) GetWritten() uint32 {
+	if x != nil {
+		return x.Written
+	}
+	return 0
+}
+
+func (x *WriteAndFlushReply) GetStatus() int32 {
+	if x != nil {
+		return x.Status
+	}
+	return 0
+}
+
+func (x *WriteAndFlushReply) GetFinalAttr() *Attr {
+	if x != nil {
+		return x.FinalAttr
+	}
+	return nil
+}
+
 type GetLkRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Volume        string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
@@ -964,7 +1111,7 @@ type GetLkRequest struct {
 
 func (x *GetLkRequest) Reset() {
 	*x = GetLkRequest{}
-	mi := &file_api_proto_file_proto_msgTypes[15]
+	mi := &file_api_proto_file_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -976,7 +1123,7 @@ func (x *GetLkRequest) String() string {
 func (*GetLkRequest) ProtoMessage() {}
 
 func (x *GetLkRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_file_proto_msgTypes[15]
+	mi := &file_api_proto_file_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -989,7 +1136,7 @@ func (x *GetLkRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetLkRequest.ProtoReflect.Descriptor instead.
 func (*GetLkRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_file_proto_rawDescGZIP(), []int{15}
+	return file_api_proto_file_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *GetLkRequest) GetVolume() string {
@@ -1044,7 +1191,7 @@ type GetLkReply struct {
 
 func (x *GetLkReply) Reset() {
 	*x = GetLkReply{}
-	mi := &file_api_proto_file_proto_msgTypes[16]
+	mi := &file_api_proto_file_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1056,7 +1203,7 @@ func (x *GetLkReply) String() string {
 func (*GetLkReply) ProtoMessage() {}
 
 func (x *GetLkReply) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_file_proto_msgTypes[16]
+	mi := &file_api_proto_file_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1069,7 +1216,7 @@ func (x *GetLkReply) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetLkReply.ProtoReflect.Descriptor instead.
 func (*GetLkReply) Descriptor() ([]byte, []int) {
-	return file_api_proto_file_proto_rawDescGZIP(), []int{16}
+	return file_api_proto_file_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *GetLkReply) GetStatus() int32 {
@@ -1100,7 +1247,7 @@ type SetLkRequest struct {
 
 func (x *SetLkRequest) Reset() {
 	*x = SetLkRequest{}
-	mi := &file_api_proto_file_proto_msgTypes[17]
+	mi := &file_api_proto_file_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1112,7 +1259,7 @@ func (x *SetLkRequest) String() string {
 func (*SetLkRequest) ProtoMessage() {}
 
 func (x *SetLkRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_file_proto_msgTypes[17]
+	mi := &file_api_proto_file_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1125,7 +1272,7 @@ func (x *SetLkRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetLkRequest.ProtoReflect.Descriptor instead.
 func (*SetLkRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_file_proto_rawDescGZIP(), []int{17}
+	return file_api_proto_file_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *SetLkRequest) GetVolume() string {
@@ -1179,7 +1326,7 @@ type SetLkReply struct {
 
 func (x *SetLkReply) Reset() {
 	*x = SetLkReply{}
-	mi := &file_api_proto_file_proto_msgTypes[18]
+	mi := &file_api_proto_file_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1191,7 +1338,7 @@ func (x *SetLkReply) String() string {
 func (*SetLkReply) ProtoMessage() {}
 
 func (x *SetLkReply) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_file_proto_msgTypes[18]
+	mi := &file_api_proto_file_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1204,7 +1351,7 @@ func (x *SetLkReply) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetLkReply.ProtoReflect.Descriptor instead.
 func (*SetLkReply) Descriptor() ([]byte, []int) {
-	return file_api_proto_file_proto_rawDescGZIP(), []int{18}
+	return file_api_proto_file_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *SetLkReply) GetStatus() int32 {
@@ -1228,7 +1375,7 @@ type SetLkwRequest struct {
 
 func (x *SetLkwRequest) Reset() {
 	*x = SetLkwRequest{}
-	mi := &file_api_proto_file_proto_msgTypes[19]
+	mi := &file_api_proto_file_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1240,7 +1387,7 @@ func (x *SetLkwRequest) String() string {
 func (*SetLkwRequest) ProtoMessage() {}
 
 func (x *SetLkwRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_file_proto_msgTypes[19]
+	mi := &file_api_proto_file_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1253,7 +1400,7 @@ func (x *SetLkwRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetLkwRequest.ProtoReflect.Descriptor instead.
 func (*SetLkwRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_file_proto_rawDescGZIP(), []int{19}
+	return file_api_proto_file_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *SetLkwRequest) GetVolume() string {
@@ -1307,7 +1454,7 @@ type SetLkwReply struct {
 
 func (x *SetLkwReply) Reset() {
 	*x = SetLkwReply{}
-	mi := &file_api_proto_file_proto_msgTypes[20]
+	mi := &file_api_proto_file_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1319,7 +1466,7 @@ func (x *SetLkwReply) String() string {
 func (*SetLkwReply) ProtoMessage() {}
 
 func (x *SetLkwReply) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_file_proto_msgTypes[20]
+	mi := &file_api_proto_file_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1332,7 +1479,7 @@ func (x *SetLkwReply) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetLkwReply.ProtoReflect.Descriptor instead.
 func (*SetLkwReply) Descriptor() ([]byte, []int) {
-	return file_api_proto_file_proto_rawDescGZIP(), []int{20}
+	return file_api_proto_file_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *SetLkwReply) GetStatus() int32 {
@@ -1358,7 +1505,7 @@ type AllocateRequest struct {
 
 func (x *AllocateRequest) Reset() {
 	*x = AllocateRequest{}
-	mi := &file_api_proto_file_proto_msgTypes[21]
+	mi := &file_api_proto_file_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1370,7 +1517,7 @@ func (x *AllocateRequest) String() string {
 func (*AllocateRequest) ProtoMessage() {}
 
 func (x *AllocateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_file_proto_msgTypes[21]
+	mi := &file_api_proto_file_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1383,7 +1530,7 @@ func (x *AllocateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AllocateRequest.ProtoReflect.Descriptor instead.
 func (*AllocateRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_file_proto_rawDescGZIP(), []int{21}
+	return file_api_proto_file_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *AllocateRequest) GetVolume() string {
@@ -1451,7 +1598,7 @@ type AllocateReply struct {
 
 func (x *AllocateReply) Reset() {
 	*x = AllocateReply{}
-	mi := &file_api_proto_file_proto_msgTypes[22]
+	mi := &file_api_proto_file_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1463,7 +1610,7 @@ func (x *AllocateReply) String() string {
 func (*AllocateReply) ProtoMessage() {}
 
 func (x *AllocateReply) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_file_proto_msgTypes[22]
+	mi := &file_api_proto_file_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1476,7 +1623,7 @@ func (x *AllocateReply) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AllocateReply.ProtoReflect.Descriptor instead.
 func (*AllocateReply) Descriptor() ([]byte, []int) {
-	return file_api_proto_file_proto_rawDescGZIP(), []int{22}
+	return file_api_proto_file_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *AllocateReply) GetStatus() int32 {
@@ -1490,7 +1637,7 @@ var File_api_proto_file_proto protoreflect.FileDescriptor
 
 const file_api_proto_file_proto_rawDesc = "" +
 	"\n" +
-	"\x14api/proto/file.proto\x12\bgmountie\x1a\x16api/proto/common.proto\"V\n" +
+	"\x14api/proto/file.proto\x12\bgmountie\x1a\x16api/proto/common.proto\x1a\x12api/proto/fs.proto\"V\n" +
 	"\bFileLock\x12\x14\n" +
 	"\x05start\x18\x01 \x01(\x04R\x05start\x12\x10\n" +
 	"\x03end\x18\x02 \x01(\x04R\x03end\x12\x10\n" +
@@ -1517,10 +1664,13 @@ const file_api_proto_file_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x06 \x01(\tR\tsessionId\x12\x1d\n" +
 	"\n" +
-	"request_id\x18\a \x01(\tR\trequestId\"5\n" +
+	"request_id\x18\a \x01(\tR\trequestId\"e\n" +
 	"\vCreateReply\x12\x0e\n" +
 	"\x02fd\x18\x01 \x01(\x04R\x02fd\x12\x16\n" +
-	"\x06status\x18\x02 \x01(\x05R\x06status\"\x80\x01\n" +
+	"\x06status\x18\x02 \x01(\x05R\x06status\x12.\n" +
+	"\n" +
+	"attributes\x18\x03 \x01(\v2\x0e.gmountie.AttrR\n" +
+	"attributes\"\x80\x01\n" +
 	"\vReadRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12\x0e\n" +
 	"\x02fd\x18\x02 \x01(\x04R\x02fd\x12\x16\n" +
@@ -1567,7 +1717,19 @@ const file_api_proto_file_proto_rawDesc = "" +
 	"session_id\x18\x03 \x01(\tR\tsessionId\"$\n" +
 	"\n" +
 	"FlushReply\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\x05R\x06status\"\xa5\x01\n" +
+	"\x06status\x18\x01 \x01(\x05R\x06status\"\x89\x01\n" +
+	"\x14WriteAndFlushRequest\x12\x16\n" +
+	"\x06volume\x18\x01 \x01(\tR\x06volume\x12\x0e\n" +
+	"\x02fd\x18\x02 \x01(\x04R\x02fd\x12\x16\n" +
+	"\x06offset\x18\x03 \x01(\x03R\x06offset\x12\x12\n" +
+	"\x04data\x18\x04 \x01(\fR\x04data\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x05 \x01(\tR\tsessionId\"u\n" +
+	"\x12WriteAndFlushReply\x12\x18\n" +
+	"\awritten\x18\x01 \x01(\rR\awritten\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\x05R\x06status\x12-\n" +
+	"\n" +
+	"final_attr\x18\x03 \x01(\v2\x0e.gmountie.AttrR\tfinalAttr\"\xa5\x01\n" +
 	"\fGetLkRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12\x0e\n" +
 	"\x02fd\x18\x02 \x01(\x04R\x02fd\x12\x14\n" +
@@ -1612,7 +1774,7 @@ const file_api_proto_file_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\b \x01(\tR\tsessionId\"'\n" +
 	"\rAllocateReply\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\x05R\x06status2\xf7\x04\n" +
+	"\x06status\x18\x01 \x01(\x05R\x06status2\xc6\x05\n" +
 	"\aRpcFile\x122\n" +
 	"\x04Open\x12\x15.gmountie.OpenRequest\x1a\x13.gmountie.OpenReply\x128\n" +
 	"\x06Create\x12\x17.gmountie.CreateRequest\x1a\x15.gmountie.CreateReply\x124\n" +
@@ -1620,7 +1782,8 @@ const file_api_proto_file_proto_rawDesc = "" +
 	"\x05Write\x12\x14.gmountie.WriteFrame\x1a\x14.gmountie.WriteReply(\x01\x12;\n" +
 	"\aRelease\x12\x18.gmountie.ReleaseRequest\x1a\x16.gmountie.ReleaseReply\x125\n" +
 	"\x05Fsync\x12\x16.gmountie.FsyncRequest\x1a\x14.gmountie.FsyncReply\x125\n" +
-	"\x05Flush\x12\x16.gmountie.FlushRequest\x1a\x14.gmountie.FlushReply\x125\n" +
+	"\x05Flush\x12\x16.gmountie.FlushRequest\x1a\x14.gmountie.FlushReply\x12M\n" +
+	"\rWriteAndFlush\x12\x1e.gmountie.WriteAndFlushRequest\x1a\x1c.gmountie.WriteAndFlushReply\x125\n" +
 	"\x05GetLk\x12\x16.gmountie.GetLkRequest\x1a\x14.gmountie.GetLkReply\x125\n" +
 	"\x05SetLk\x12\x16.gmountie.SetLkRequest\x1a\x14.gmountie.SetLkReply\x128\n" +
 	"\x06SetLkw\x12\x17.gmountie.SetLkwRequest\x1a\x15.gmountie.SetLkwReply\x12>\n" +
@@ -1638,68 +1801,75 @@ func file_api_proto_file_proto_rawDescGZIP() []byte {
 	return file_api_proto_file_proto_rawDescData
 }
 
-var file_api_proto_file_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
+var file_api_proto_file_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_api_proto_file_proto_goTypes = []any{
-	(*FileLock)(nil),        // 0: gmountie.FileLock
-	(*OpenRequest)(nil),     // 1: gmountie.OpenRequest
-	(*OpenReply)(nil),       // 2: gmountie.OpenReply
-	(*CreateRequest)(nil),   // 3: gmountie.CreateRequest
-	(*CreateReply)(nil),     // 4: gmountie.CreateReply
-	(*ReadRequest)(nil),     // 5: gmountie.ReadRequest
-	(*ReadFrame)(nil),       // 6: gmountie.ReadFrame
-	(*WriteFrame)(nil),      // 7: gmountie.WriteFrame
-	(*WriteReply)(nil),      // 8: gmountie.WriteReply
-	(*FsyncRequest)(nil),    // 9: gmountie.FsyncRequest
-	(*FsyncReply)(nil),      // 10: gmountie.FsyncReply
-	(*ReleaseRequest)(nil),  // 11: gmountie.ReleaseRequest
-	(*ReleaseReply)(nil),    // 12: gmountie.ReleaseReply
-	(*FlushRequest)(nil),    // 13: gmountie.FlushRequest
-	(*FlushReply)(nil),      // 14: gmountie.FlushReply
-	(*GetLkRequest)(nil),    // 15: gmountie.GetLkRequest
-	(*GetLkReply)(nil),      // 16: gmountie.GetLkReply
-	(*SetLkRequest)(nil),    // 17: gmountie.SetLkRequest
-	(*SetLkReply)(nil),      // 18: gmountie.SetLkReply
-	(*SetLkwRequest)(nil),   // 19: gmountie.SetLkwRequest
-	(*SetLkwReply)(nil),     // 20: gmountie.SetLkwReply
-	(*AllocateRequest)(nil), // 21: gmountie.AllocateRequest
-	(*AllocateReply)(nil),   // 22: gmountie.AllocateReply
-	(*Caller)(nil),          // 23: gmountie.Caller
+	(*FileLock)(nil),             // 0: gmountie.FileLock
+	(*OpenRequest)(nil),          // 1: gmountie.OpenRequest
+	(*OpenReply)(nil),            // 2: gmountie.OpenReply
+	(*CreateRequest)(nil),        // 3: gmountie.CreateRequest
+	(*CreateReply)(nil),          // 4: gmountie.CreateReply
+	(*ReadRequest)(nil),          // 5: gmountie.ReadRequest
+	(*ReadFrame)(nil),            // 6: gmountie.ReadFrame
+	(*WriteFrame)(nil),           // 7: gmountie.WriteFrame
+	(*WriteReply)(nil),           // 8: gmountie.WriteReply
+	(*FsyncRequest)(nil),         // 9: gmountie.FsyncRequest
+	(*FsyncReply)(nil),           // 10: gmountie.FsyncReply
+	(*ReleaseRequest)(nil),       // 11: gmountie.ReleaseRequest
+	(*ReleaseReply)(nil),         // 12: gmountie.ReleaseReply
+	(*FlushRequest)(nil),         // 13: gmountie.FlushRequest
+	(*FlushReply)(nil),           // 14: gmountie.FlushReply
+	(*WriteAndFlushRequest)(nil), // 15: gmountie.WriteAndFlushRequest
+	(*WriteAndFlushReply)(nil),   // 16: gmountie.WriteAndFlushReply
+	(*GetLkRequest)(nil),         // 17: gmountie.GetLkRequest
+	(*GetLkReply)(nil),           // 18: gmountie.GetLkReply
+	(*SetLkRequest)(nil),         // 19: gmountie.SetLkRequest
+	(*SetLkReply)(nil),           // 20: gmountie.SetLkReply
+	(*SetLkwRequest)(nil),        // 21: gmountie.SetLkwRequest
+	(*SetLkwReply)(nil),          // 22: gmountie.SetLkwReply
+	(*AllocateRequest)(nil),      // 23: gmountie.AllocateRequest
+	(*AllocateReply)(nil),        // 24: gmountie.AllocateReply
+	(*Caller)(nil),               // 25: gmountie.Caller
+	(*Attr)(nil),                 // 26: gmountie.Attr
 }
 var file_api_proto_file_proto_depIdxs = []int32{
-	23, // 0: gmountie.OpenRequest.caller:type_name -> gmountie.Caller
-	23, // 1: gmountie.CreateRequest.caller:type_name -> gmountie.Caller
-	0,  // 2: gmountie.GetLkRequest.lk:type_name -> gmountie.FileLock
-	0,  // 3: gmountie.GetLkReply.lk:type_name -> gmountie.FileLock
-	0,  // 4: gmountie.SetLkRequest.lk:type_name -> gmountie.FileLock
-	0,  // 5: gmountie.SetLkwRequest.lk:type_name -> gmountie.FileLock
-	23, // 6: gmountie.AllocateRequest.caller:type_name -> gmountie.Caller
-	1,  // 7: gmountie.RpcFile.Open:input_type -> gmountie.OpenRequest
-	3,  // 8: gmountie.RpcFile.Create:input_type -> gmountie.CreateRequest
-	5,  // 9: gmountie.RpcFile.Read:input_type -> gmountie.ReadRequest
-	7,  // 10: gmountie.RpcFile.Write:input_type -> gmountie.WriteFrame
-	11, // 11: gmountie.RpcFile.Release:input_type -> gmountie.ReleaseRequest
-	9,  // 12: gmountie.RpcFile.Fsync:input_type -> gmountie.FsyncRequest
-	13, // 13: gmountie.RpcFile.Flush:input_type -> gmountie.FlushRequest
-	15, // 14: gmountie.RpcFile.GetLk:input_type -> gmountie.GetLkRequest
-	17, // 15: gmountie.RpcFile.SetLk:input_type -> gmountie.SetLkRequest
-	19, // 16: gmountie.RpcFile.SetLkw:input_type -> gmountie.SetLkwRequest
-	21, // 17: gmountie.RpcFile.Allocate:input_type -> gmountie.AllocateRequest
-	2,  // 18: gmountie.RpcFile.Open:output_type -> gmountie.OpenReply
-	4,  // 19: gmountie.RpcFile.Create:output_type -> gmountie.CreateReply
-	6,  // 20: gmountie.RpcFile.Read:output_type -> gmountie.ReadFrame
-	8,  // 21: gmountie.RpcFile.Write:output_type -> gmountie.WriteReply
-	12, // 22: gmountie.RpcFile.Release:output_type -> gmountie.ReleaseReply
-	10, // 23: gmountie.RpcFile.Fsync:output_type -> gmountie.FsyncReply
-	14, // 24: gmountie.RpcFile.Flush:output_type -> gmountie.FlushReply
-	16, // 25: gmountie.RpcFile.GetLk:output_type -> gmountie.GetLkReply
-	18, // 26: gmountie.RpcFile.SetLk:output_type -> gmountie.SetLkReply
-	20, // 27: gmountie.RpcFile.SetLkw:output_type -> gmountie.SetLkwReply
-	22, // 28: gmountie.RpcFile.Allocate:output_type -> gmountie.AllocateReply
-	18, // [18:29] is the sub-list for method output_type
-	7,  // [7:18] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	25, // 0: gmountie.OpenRequest.caller:type_name -> gmountie.Caller
+	25, // 1: gmountie.CreateRequest.caller:type_name -> gmountie.Caller
+	26, // 2: gmountie.CreateReply.attributes:type_name -> gmountie.Attr
+	26, // 3: gmountie.WriteAndFlushReply.final_attr:type_name -> gmountie.Attr
+	0,  // 4: gmountie.GetLkRequest.lk:type_name -> gmountie.FileLock
+	0,  // 5: gmountie.GetLkReply.lk:type_name -> gmountie.FileLock
+	0,  // 6: gmountie.SetLkRequest.lk:type_name -> gmountie.FileLock
+	0,  // 7: gmountie.SetLkwRequest.lk:type_name -> gmountie.FileLock
+	25, // 8: gmountie.AllocateRequest.caller:type_name -> gmountie.Caller
+	1,  // 9: gmountie.RpcFile.Open:input_type -> gmountie.OpenRequest
+	3,  // 10: gmountie.RpcFile.Create:input_type -> gmountie.CreateRequest
+	5,  // 11: gmountie.RpcFile.Read:input_type -> gmountie.ReadRequest
+	7,  // 12: gmountie.RpcFile.Write:input_type -> gmountie.WriteFrame
+	11, // 13: gmountie.RpcFile.Release:input_type -> gmountie.ReleaseRequest
+	9,  // 14: gmountie.RpcFile.Fsync:input_type -> gmountie.FsyncRequest
+	13, // 15: gmountie.RpcFile.Flush:input_type -> gmountie.FlushRequest
+	15, // 16: gmountie.RpcFile.WriteAndFlush:input_type -> gmountie.WriteAndFlushRequest
+	17, // 17: gmountie.RpcFile.GetLk:input_type -> gmountie.GetLkRequest
+	19, // 18: gmountie.RpcFile.SetLk:input_type -> gmountie.SetLkRequest
+	21, // 19: gmountie.RpcFile.SetLkw:input_type -> gmountie.SetLkwRequest
+	23, // 20: gmountie.RpcFile.Allocate:input_type -> gmountie.AllocateRequest
+	2,  // 21: gmountie.RpcFile.Open:output_type -> gmountie.OpenReply
+	4,  // 22: gmountie.RpcFile.Create:output_type -> gmountie.CreateReply
+	6,  // 23: gmountie.RpcFile.Read:output_type -> gmountie.ReadFrame
+	8,  // 24: gmountie.RpcFile.Write:output_type -> gmountie.WriteReply
+	12, // 25: gmountie.RpcFile.Release:output_type -> gmountie.ReleaseReply
+	10, // 26: gmountie.RpcFile.Fsync:output_type -> gmountie.FsyncReply
+	14, // 27: gmountie.RpcFile.Flush:output_type -> gmountie.FlushReply
+	16, // 28: gmountie.RpcFile.WriteAndFlush:output_type -> gmountie.WriteAndFlushReply
+	18, // 29: gmountie.RpcFile.GetLk:output_type -> gmountie.GetLkReply
+	20, // 30: gmountie.RpcFile.SetLk:output_type -> gmountie.SetLkReply
+	22, // 31: gmountie.RpcFile.SetLkw:output_type -> gmountie.SetLkwReply
+	24, // 32: gmountie.RpcFile.Allocate:output_type -> gmountie.AllocateReply
+	21, // [21:33] is the sub-list for method output_type
+	9,  // [9:21] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_file_proto_init() }
@@ -1708,13 +1878,14 @@ func file_api_proto_file_proto_init() {
 		return
 	}
 	file_api_proto_common_proto_init()
+	file_api_proto_fs_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_file_proto_rawDesc), len(file_api_proto_file_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   23,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
