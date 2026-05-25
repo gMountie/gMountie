@@ -199,6 +199,56 @@ func (s *BackendClientTestSuite) TestStatFs_CancelledParentDoesNotAbortRPC() {
 	s.Require().NotNil(res)
 }
 
+// The detach also covers the fd-returning / fd-lifecycle ops: Open (via metaCtx)
+// and the close path (Release, via ioCtx). A cancelled parent must not abort an
+// in-flight open/close with a spurious EIO.
+func (s *BackendClientTestSuite) TestOpen_CancelledParentDoesNotAbortRPC() {
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	s.fileClient.EXPECT().Open(
+		mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() == nil }),
+		mock.Anything,
+	).Return(&proto.OpenReply{Status: int32(fuse.OK), Fd: 1}, nil)
+
+	fh, st := s.backend.Open(parent, "/test", 0)
+	s.Require().Equal(fuse.OK, st)
+	s.Require().NotNil(fh)
+}
+
+func (s *BackendClientTestSuite) TestRelease_CancelledParentDoesNotAbortRPC() {
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	s.fileClient.EXPECT().Release(
+		mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() == nil }),
+		mock.Anything, mock.Anything,
+	).Return(&proto.ReleaseReply{}, nil)
+
+	h := s.newHandle(grpcclient.PerFileConfig{})
+	st := s.backend.Release(parent, h)
+	s.Require().Equal(fuse.OK, st)
+}
+
+// Counter-test: SetLkw is a BLOCKING lock wait (F_SETLKW) and must STAY
+// cancellable — a signal should interrupt a stuck wait. So, unlike every other
+// op, its RPC context MUST still cancel when the parent does. Guards against a
+// future "consistency" change wrongly routing SetLkw through ioCtx.
+func (s *BackendClientTestSuite) TestSetLkw_StaysCancellable() {
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+	lk := &fuse.FileLock{Start: 0, End: 0, Typ: 1, Pid: 1}
+
+	s.fileClient.EXPECT().SetLkw(
+		mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() != nil }),
+		mock.Anything,
+	).Return(&proto.SetLkwReply{Status: int32(fuse.OK)}, nil)
+
+	h := s.newHandle(grpcclient.PerFileConfig{})
+	st := s.backend.SetLkw(parent, h, 7, lk, 0)
+	s.Require().Equal(fuse.OK, st)
+}
+
 // TestStat_RetriesOnUnavailable verifies that an idempotent metadata
 // call survives a single transient Unavailable via the retry wrapper.
 func (s *BackendClientTestSuite) TestStat_RetriesOnUnavailable() {

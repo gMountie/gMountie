@@ -124,11 +124,24 @@ func joinPath(parent, name string) string {
 // EIO on an otherwise-healthy readdir/stat (confirmed: the failures vanish under
 // GODEBUG=asyncpreemptoff=1). context.WithoutCancel keeps the caller's values
 // (the kernel uid/gid/pid that AssumeUserMiddleware reads) while ignoring its
-// cancellation, so the RPC runs to completion or its own timeout. Scoped to
-// idempotent reads; mutating, fd-returning, and streaming ops keep the
-// cancellable context (distinct interrupt-correctness considerations).
+// cancellation, so the RPC runs to completion or its own timeout. Used by every
+// path-level metadata op (reads + mutations + Open/Create); ioCtx is the
+// fd-level sibling. The blocking lock wait (SetLkw) intentionally keeps the
+// cancellable context so a signal can still interrupt it.
 func (b *BackendClient) metaCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 	return withMetaTimeout(context.WithoutCancel(ctx), b.client.MetaTimeout())
+}
+
+// ioCtx is metaCtx's sibling for fd-level RPCs: it bounds the call with the
+// per-handle I/O timeout AND detaches it from the caller's cancellation, for
+// the same reason (a FUSE_INTERRUPT from Go's async-preemption SIGURG must not
+// abort an in-flight Read/close/etc. with a spurious EIO). Applied to the
+// idempotent / fd-lifecycle ops (Read, Release, Flush, Fsync, Allocate, GetLk,
+// SetLk). NOT used by SetLkw — a blocking lock wait must stay interruptible —
+// nor by prefetch / streamingWrite, which already run off h.lifeCtx /
+// context.Background() rather than the FUSE op ctx.
+func ioCtx(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	return withIOTimeout(context.WithoutCancel(parent), timeout)
 }
 
 // Stat returns the attributes of path. Idempotent; no request_id stamping.
@@ -273,7 +286,7 @@ func (b *BackendClient) GetXAttr(ctx context.Context, path, attr string) ([]byte
 
 // Mkdir creates a directory. Mutating — request_id stamped outside retry.
 func (b *BackendClient) Mkdir(ctx context.Context, path string, mode uint32) fuse.Status {
-	ctx2, cancel := withMetaTimeout(ctx, b.client.MetaTimeout())
+	ctx2, cancel := b.metaCtx(ctx)
 	defer cancel()
 	requestID := uuid.NewString()
 	res, err := retryableCall(ctx2, "Mkdir", func(ctx context.Context) (*proto.MkdirReply, error) {
@@ -295,7 +308,7 @@ func (b *BackendClient) Mkdir(ctx context.Context, path string, mode uint32) fus
 
 // Rmdir removes an empty directory.
 func (b *BackendClient) Rmdir(ctx context.Context, path string) fuse.Status {
-	ctx2, cancel := withMetaTimeout(ctx, b.client.MetaTimeout())
+	ctx2, cancel := b.metaCtx(ctx)
 	defer cancel()
 	requestID := uuid.NewString()
 	res, err := retryableCall(ctx2, "Rmdir", func(ctx context.Context) (*proto.RmdirReply, error) {
@@ -316,7 +329,7 @@ func (b *BackendClient) Rmdir(ctx context.Context, path string) fuse.Status {
 
 // Unlink removes a non-directory.
 func (b *BackendClient) Unlink(ctx context.Context, path string) fuse.Status {
-	ctx2, cancel := withMetaTimeout(ctx, b.client.MetaTimeout())
+	ctx2, cancel := b.metaCtx(ctx)
 	defer cancel()
 	requestID := uuid.NewString()
 	res, err := retryableCall(ctx2, "Unlink", func(ctx context.Context) (*proto.UnlinkReply, error) {
@@ -337,7 +350,7 @@ func (b *BackendClient) Unlink(ctx context.Context, path string) fuse.Status {
 
 // Rename moves a file/directory.
 func (b *BackendClient) Rename(ctx context.Context, oldPath, newPath string) fuse.Status {
-	ctx2, cancel := withMetaTimeout(ctx, b.client.MetaTimeout())
+	ctx2, cancel := b.metaCtx(ctx)
 	defer cancel()
 	requestID := uuid.NewString()
 	res, err := retryableCall(ctx2, "Rename", func(ctx context.Context) (*proto.RenameReply, error) {
@@ -359,7 +372,7 @@ func (b *BackendClient) Rename(ctx context.Context, oldPath, newPath string) fus
 
 // Truncate changes a file's length.
 func (b *BackendClient) Truncate(ctx context.Context, path string, size uint64) fuse.Status {
-	ctx2, cancel := withMetaTimeout(ctx, b.client.MetaTimeout())
+	ctx2, cancel := b.metaCtx(ctx)
 	defer cancel()
 	requestID := uuid.NewString()
 	res, err := retryableCall(ctx2, "Truncate", func(ctx context.Context) (*proto.TruncateReply, error) {
@@ -381,7 +394,7 @@ func (b *BackendClient) Truncate(ctx context.Context, path string, size uint64) 
 
 // Chmod changes file permissions.
 func (b *BackendClient) Chmod(ctx context.Context, path string, mode uint32) fuse.Status {
-	ctx2, cancel := withMetaTimeout(ctx, b.client.MetaTimeout())
+	ctx2, cancel := b.metaCtx(ctx)
 	defer cancel()
 	requestID := uuid.NewString()
 	res, err := retryableCall(ctx2, "Chmod", func(ctx context.Context) (*proto.ChmodReply, error) {
@@ -403,7 +416,7 @@ func (b *BackendClient) Chmod(ctx context.Context, path string, mode uint32) fus
 
 // Chown changes ownership.
 func (b *BackendClient) Chown(ctx context.Context, path string, uid, gid uint32) fuse.Status {
-	ctx2, cancel := withMetaTimeout(ctx, b.client.MetaTimeout())
+	ctx2, cancel := b.metaCtx(ctx)
 	defer cancel()
 	requestID := uuid.NewString()
 	res, err := retryableCall(ctx2, "Chown", func(ctx context.Context) (*proto.ChownReply, error) {
@@ -427,7 +440,7 @@ func (b *BackendClient) Chown(ctx context.Context, path string, uid, gid uint32)
 // Open opens an existing file. The returned FileHandle is a
 // *grpcFileHandle holding fd + session + per-file knobs.
 func (b *BackendClient) Open(ctx context.Context, path string, flags uint32) (FileHandle, fuse.Status) {
-	ctx2, cancel := withMetaTimeout(ctx, b.client.MetaTimeout())
+	ctx2, cancel := b.metaCtx(ctx)
 	defer cancel()
 	requestID := uuid.NewString()
 	res, err := retryableCall(ctx2, "Open", func(ctx context.Context) (*proto.OpenReply, error) {
@@ -460,7 +473,7 @@ func (b *BackendClient) Open(ctx context.Context, path string, flags uint32) (Fi
 // Attributes (older servers); in that case the node adapter falls back to Stat.
 func (b *BackendClient) Create(ctx context.Context, parent, name string, flags, mode uint32) (FileHandle, *Attr, fuse.Status) {
 	path := joinPath(parent, name)
-	ctx2, cancel := withMetaTimeout(ctx, b.client.MetaTimeout())
+	ctx2, cancel := b.metaCtx(ctx)
 	defer cancel()
 	requestID := uuid.NewString()
 	res, err := retryableCall(ctx2, "Create", func(ctx context.Context) (*proto.CreateReply, error) {
@@ -507,7 +520,7 @@ func (b *BackendClient) Read(ctx context.Context, fh FileHandle, off int64, dest
 			return n, fuse.OK
 		}
 	}
-	ctx2, cancel := withIOTimeout(ctx, h.ioTimeout)
+	ctx2, cancel := ioCtx(ctx, h.ioTimeout)
 	defer cancel()
 	res, err := retryableCall(ctx2, "Read", func(ctx context.Context) (readResult, error) {
 		stream, err := h.fileClient.Read(ctx, &proto.ReadRequest{
@@ -739,7 +752,7 @@ func (b *BackendClient) Release(ctx context.Context, fh FileHandle) fuse.Status 
 		log.Log.Error("error draining coalescer on Release",
 			zap.String("path", h.path), zap.Stringer("status", st))
 	}
-	ctx2, cancel := withIOTimeout(ctx, h.ioTimeout)
+	ctx2, cancel := ioCtx(ctx, h.ioTimeout)
 	defer cancel()
 	_, err := h.fileClient.Release(ctx2, &proto.ReleaseRequest{
 		Volume:    h.volume,
@@ -786,7 +799,7 @@ func (b *BackendClient) Flush(ctx context.Context, fh FileHandle) fuse.Status {
 			data = pending.Data
 		}
 	}
-	ctx2, cancel := withIOTimeout(ctx, h.ioTimeout)
+	ctx2, cancel := ioCtx(ctx, h.ioTimeout)
 	defer cancel()
 	res, err := retryableCall(ctx2, "WriteAndFlush", func(ctx context.Context) (*proto.WriteAndFlushReply, error) {
 		return h.fileClient.WriteAndFlush(ctx, &proto.WriteAndFlushRequest{
@@ -819,7 +832,7 @@ func (b *BackendClient) Fsync(ctx context.Context, fh FileHandle, flags int64) f
 	if st := b.drainCoalescer(h); !st.Ok() {
 		return st
 	}
-	ctx2, cancel := withIOTimeout(ctx, h.ioTimeout)
+	ctx2, cancel := ioCtx(ctx, h.ioTimeout)
 	defer cancel()
 	res, err := retryableCall(ctx2, "Fsync", func(ctx context.Context) (*proto.FsyncReply, error) {
 		return h.fileClient.Fsync(ctx, &proto.FsyncRequest{
@@ -849,7 +862,7 @@ func (b *BackendClient) Allocate(ctx context.Context, fh FileHandle, off, size u
 	if h == nil {
 		return fuse.EBADF
 	}
-	ctx2, cancel := withIOTimeout(ctx, h.ioTimeout)
+	ctx2, cancel := ioCtx(ctx, h.ioTimeout)
 	defer cancel()
 	res, err := h.fileClient.Allocate(ctx2, &proto.AllocateRequest{
 		Volume:    h.volume,
@@ -876,7 +889,7 @@ func (b *BackendClient) GetLk(ctx context.Context, fh FileHandle, owner uint64, 
 	if h == nil {
 		return fuse.EBADF
 	}
-	ctx2, cancel := withIOTimeout(ctx, h.ioTimeout)
+	ctx2, cancel := ioCtx(ctx, h.ioTimeout)
 	defer cancel()
 	res, err := h.fileClient.GetLk(ctx2, &proto.GetLkRequest{
 		Volume:    h.volume,
@@ -903,7 +916,7 @@ func (b *BackendClient) SetLk(ctx context.Context, fh FileHandle, owner uint64, 
 	if h == nil {
 		return fuse.EBADF
 	}
-	ctx2, cancel := withIOTimeout(ctx, h.ioTimeout)
+	ctx2, cancel := ioCtx(ctx, h.ioTimeout)
 	defer cancel()
 	res, err := h.fileClient.SetLk(ctx2, &proto.SetLkRequest{
 		Volume:    h.volume,
@@ -927,6 +940,8 @@ func (b *BackendClient) SetLkw(ctx context.Context, fh FileHandle, owner uint64,
 	if h == nil {
 		return fuse.EBADF
 	}
+	// SetLkw is a BLOCKING lock acquisition (F_SETLKW): keep it cancellable so a
+	// signal can interrupt a stuck wait, rather than detaching it via ioCtx.
 	ctx2, cancel := withIOTimeout(ctx, h.ioTimeout)
 	defer cancel()
 	res, err := h.fileClient.SetLkw(ctx2, &proto.SetLkwRequest{
