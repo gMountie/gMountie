@@ -168,8 +168,12 @@ jobs:
           BENCHER_TESTBED: gmountie-perf-pod
           BENCHER_BRANCH: master
           GIT_HASH: ${{ github.sha }}
-          COUNT: "10"
-          BENCHTIME: "10s"
+          # Tuned for release-cadence wall-clock: count=6/benchtime=3s keeps the
+          # full LAN+WAN job to ~30-40 min (vs ~75-90 at 10/10s). The trade is
+          # wider CIs — reliably catches ~>10% regressions, not ~>5% — which is
+          # fine for a per-release trend with Bencher threshold detection.
+          COUNT: "6"
+          BENCHTIME: "3s"
         run: bash scripts/perf/run.sh
 
       - name: Upload raw artifacts
