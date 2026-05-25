@@ -110,7 +110,7 @@ jobs:
     #     --version <release-tag-minus-leading-v>
     - name: Set up Helm
       if: ${{ github.event.inputs.type == 'alpha' || github.event.inputs.type == 'production' }}
-      uses: azure/setup-helm@v4
+      uses: azure/setup-helm@v5
       with:
         version: v3.16.4
 
