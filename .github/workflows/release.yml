@@ -137,53 +137,15 @@ jobs:
         helm push "/tmp/gmountie-server-${version}.tgz" \
           oci://ghcr.io/gmountie/charts
 
+  # Per-release perf run. The definition lives once in perf.yml (also
+  # dispatchable on demand); this calls it with release-cadence settings and
+  # records the trend on the `master` Bencher branch.
   perf:
     needs: [release]
     if: ${{ github.event.inputs.type != 'snapshot' }}
-    # gha-runner-scale-set runners are addressed by a single label equal to the
-    # scale-set name; `[self-hosted, gmountie-perf]` would never match.
-    runs-on: gmountie-perf
-    env:
-      # WORKDIR is the runner Pod's node-local NVMe PVC mount (claim
-      # gmountie-perf-data, mounted at /perf-data) so fio + benches hit a stable
-      # local disk, not the container overlay. run.sh writes all outputs here
-      # and the artifact step reads them back — keep this the single source.
-      WORKDIR: /perf-data
-    steps:
-      - name: Checkout the released tag
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Resolve released tag
-        id: tag
-        run: echo "ref=$(git describe --tags --abbrev=0)" >> "$GITHUB_OUTPUT"
-
-      - name: Run perf suite and upload to Bencher
-        env:
-          BENCHER: "1"
-          BENCHER_API_TOKEN: ${{ secrets.BENCHER_API_TOKEN }}
-          BENCHER_PROJECT: gmountie
-          BENCHER_TESTBED: gmountie-perf-pod
-          BENCHER_BRANCH: master
-          GIT_HASH: ${{ github.sha }}
-          # Tuned for release-cadence wall-clock: count=6/benchtime=3s keeps the
-          # full LAN+WAN job to ~30-40 min (vs ~75-90 at 10/10s). The trade is
-          # wider CIs — reliably catches ~>10% regressions, not ~>5% — which is
-          # fine for a per-release trend with Bencher threshold detection.
-          COUNT: "6"
-          BENCHTIME: "3s"
-        run: bash scripts/perf/run.sh
-
-      - name: Upload raw artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: perf-${{ steps.tag.outputs.ref }}
-          path: |
-            ${{ env.WORKDIR }}/bench-lan.txt
-            ${{ env.WORKDIR }}/bench-wan.txt
-            ${{ env.WORKDIR }}/substrate.json
-            ${{ env.WORKDIR }}/report.bmf.json
-          if-no-files-found: warn
+    uses: ./.github/workflows/perf.yml
+    with:
+      bencher_branch: master
+      count: '6'
+      benchtime: '3s'
+    secrets: inherit
