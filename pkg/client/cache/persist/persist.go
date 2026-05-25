@@ -51,6 +51,14 @@ type Options struct {
 	// disables the retry entirely (single attempt — useful in tests that
 	// assert fast-fail semantics).
 	LockAcquireTimeout time.Duration
+	// DisableBackgroundSweeps skips starting the async orphan/ghost sweeps
+	// on Open. Production leaves this false. Index-layer unit tests set it
+	// true so the ghost sweep (which deletes data_idx entries whose chunk
+	// file is missing) can't race with refcount-only fixtures and make
+	// assertions flaky. The meta syncer still runs (it mutates no logical
+	// state). Sweep behaviour itself is covered by calling the sweep
+	// functions synchronously (see sweep_test.go).
+	DisableBackgroundSweeps bool
 }
 
 // Persist owns the bbolt handle, chunks/ tree, and LOCK file for one
@@ -117,7 +125,9 @@ func Open(opts Options) (*Persist, error) {
 	// (sweeps and the meta syncer). Created before any of them start so
 	// Close can cancel and join them deterministically.
 	p.stopCh = make(chan struct{})
-	p.startBackgroundSweeps()
+	if !opts.DisableBackgroundSweeps {
+		p.startBackgroundSweeps()
+	}
 	p.startMetaSyncer()
 	return p, nil
 }
