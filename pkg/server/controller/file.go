@@ -410,6 +410,10 @@ func (r *RpcFileServerImpl) WriteAndFlush(ctx context.Context, req *proto.WriteA
 	}
 	st := entry.File.Flush()
 	reply.Status = int32(st)
+	// final_attr is advisory and currently unused by the client (FUSE FLUSH
+	// returns no attrs to the kernel). The stat uses a nil caller — fine while
+	// it only feeds the bus version. A future client that consumes final_attr
+	// for a caller-scoped view would need a Caller field on WriteAndFlushRequest.
 	if attr, gst := fs.GetAttr(entry.Path, createContext(ctx, nil)); gst.Ok() {
 		reply.FinalAttr = toProtoAttr(attr)
 		if st == fuse.OK {
