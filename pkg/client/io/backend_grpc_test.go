@@ -141,6 +141,39 @@ func (s *BackendClientTestSuite) TestStat_Error() {
 	s.Assert().Nil(attr)
 }
 
+// A cancelled request context means the kernel interrupted the in-flight FUSE
+// op (commonly Go's async-preemption SIGURG landing on a long-running op,
+// which the kernel turns into a FUSE_INTERRUPT). The backend must report EINTR
+// so the kernel restarts the syscall, not a spurious EIO. These guard against
+// regressing into EIO; TestStat_Error (DeadlineExceeded -> EIO) guards the
+// other direction (genuine errors must NOT become EINTR).
+func (s *BackendClientTestSuite) TestStat_CancelledReturnsEINTR() {
+	s.fsClient.EXPECT().GetAttr(mock.Anything, mock.Anything).
+		Return(nil, status.Error(codes.Canceled, "context canceled"))
+
+	attr, st := s.backend.Stat(context.Background(), "/test")
+	s.Assert().Equal(fuse.EINTR, st)
+	s.Assert().Nil(attr)
+}
+
+func (s *BackendClientTestSuite) TestListDir_CancelledReturnsEINTR() {
+	s.fsClient.EXPECT().OpenDir(mock.Anything, mock.Anything).
+		Return(nil, status.Error(codes.Canceled, "context canceled"))
+
+	entries, st := s.backend.ListDir(context.Background(), "/test")
+	s.Assert().Equal(fuse.EINTR, st)
+	s.Assert().Nil(entries)
+}
+
+func (s *BackendClientTestSuite) TestStatFs_CancelledReturnsEINTR() {
+	s.fsClient.EXPECT().StatFs(mock.Anything, mock.Anything).
+		Return(nil, status.Error(codes.Canceled, "context canceled"))
+
+	res, st := s.backend.StatFs(context.Background(), "/test")
+	s.Assert().Equal(fuse.EINTR, st)
+	s.Assert().Nil(res)
+}
+
 // TestStat_RetriesOnUnavailable verifies that an idempotent metadata
 // call survives a single transient Unavailable via the retry wrapper.
 func (s *BackendClientTestSuite) TestStat_RetriesOnUnavailable() {
