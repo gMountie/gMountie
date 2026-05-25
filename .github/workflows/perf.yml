@@ -1,0 +1,73 @@
+name: Perf
+
+# On-demand performance run, decoupled from release.yml so before/after
+# measurements (e.g. a proto-v2 feature branch) don't require cutting a release.
+# Runs the same scripts/perf/run.sh on the self-hosted gmountie-perf runner and
+# uploads to Bencher. The per-release perf job in release.yml is unchanged — it
+# still records the release-cadence trend on the `master` Bencher branch.
+#
+# Dispatch examples:
+#   gh workflow run perf.yml                       # master, defaults
+#   gh workflow run perf.yml --ref my-branch \
+#       -f bencher_branch=my-branch                # measure a feature branch
+#   gh workflow run perf.yml -f count=10 -f benchtime=10s   # tighter CIs
+on:
+  workflow_dispatch:
+    inputs:
+      bencher_branch:
+        description: 'Bencher branch label for trend/threshold comparison (e.g. master, or a feature branch name)'
+        type: string
+        default: master
+      count:
+        description: 'go test -bench -count (higher = tighter confidence intervals, longer run)'
+        type: string
+        default: '6'
+      benchtime:
+        description: 'go test -benchtime'
+        type: string
+        default: '3s'
+
+permissions:
+  contents: read
+
+jobs:
+  perf:
+    # gha-runner-scale-set runners are addressed by a single label equal to the
+    # scale-set name; `[self-hosted, gmountie-perf]` would never match.
+    runs-on: gmountie-perf
+    env:
+      # WORKDIR is the runner Pod's node-local NVMe PVC mount (claim
+      # gmountie-perf-data, mounted at /perf-data) so fio + benches hit a stable
+      # local disk, not the container overlay. run.sh writes all outputs here
+      # and the artifact step reads them back — keep this the single source.
+      WORKDIR: /perf-data
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Run perf suite and upload to Bencher
+        env:
+          BENCHER: "1"
+          BENCHER_API_TOKEN: ${{ secrets.BENCHER_API_TOKEN }}
+          BENCHER_PROJECT: gmountie
+          BENCHER_TESTBED: gmountie-perf-pod
+          BENCHER_BRANCH: ${{ github.event.inputs.bencher_branch }}
+          GIT_HASH: ${{ github.sha }}
+          COUNT: ${{ github.event.inputs.count }}
+          BENCHTIME: ${{ github.event.inputs.benchtime }}
+        run: bash scripts/perf/run.sh
+
+      - name: Upload raw artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-${{ github.ref_name }}-${{ github.run_id }}
+          path: |
+            ${{ env.WORKDIR }}/bench-lan.txt
+            ${{ env.WORKDIR }}/bench-wan.txt
+            ${{ env.WORKDIR }}/substrate.json
+            ${{ env.WORKDIR }}/report.bmf.json
+          if-no-files-found: warn
