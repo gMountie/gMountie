@@ -1,0 +1,97 @@
+name: Perf
+
+# Single source of truth for the perf run. Triggerable two ways:
+#  - workflow_dispatch: on-demand (e.g. a proto-v2 feature branch before/after)
+#  - workflow_call:      reused by release.yml's per-release perf job
+# Runs scripts/perf/run.sh on the self-hosted gmountie-perf runner and uploads
+# to Bencher. Inputs are shared by both triggers and read via the `inputs`
+# context (which GitHub populates for workflow_dispatch and workflow_call alike).
+#
+# Dispatch examples:
+#   gh workflow run perf.yml                                   # master, defaults
+#   gh workflow run perf.yml --ref my-branch -f bencher_branch=my-branch
+#   gh workflow run perf.yml -f count=10 -f benchtime=10s      # tighter CIs
+on:
+  workflow_dispatch:
+    inputs:
+      bencher_branch:
+        description: 'Bencher branch label for trend/threshold comparison (e.g. master, or a feature branch name)'
+        type: string
+        default: master
+      count:
+        description: 'go test -bench -count (higher = tighter confidence intervals, longer run)'
+        type: string
+        default: '6'
+      benchtime:
+        description: 'go test -benchtime'
+        type: string
+        default: '3s'
+  workflow_call:
+    inputs:
+      bencher_branch:
+        type: string
+        required: false
+        default: master
+      count:
+        type: string
+        required: false
+        default: '6'
+      benchtime:
+        type: string
+        required: false
+        default: '3s'
+    # BENCHER_API_TOKEN arrives via the caller's `secrets: inherit`.
+
+permissions:
+  contents: read
+
+jobs:
+  perf:
+    # gha-runner-scale-set runners are addressed by a single label equal to the
+    # scale-set name; `[self-hosted, gmountie-perf]` would never match.
+    runs-on: gmountie-perf
+    env:
+      # WORKDIR is the runner Pod's node-local NVMe PVC mount (claim
+      # gmountie-perf-data, mounted at /perf-data) so fio + benches hit a stable
+      # local disk, not the container overlay. run.sh writes all outputs here
+      # and the artifact step reads them back — keep this the single source.
+      WORKDIR: /perf-data
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Resolve artifact label
+        id: label
+        # Latest reachable tag when run on a release; the branch/ref name otherwise.
+        run: echo "ref=$(git describe --tags --abbrev=0 2>/dev/null || echo '${{ github.ref_name }}')" >> "$GITHUB_OUTPUT"
+
+      - name: Run perf suite and upload to Bencher
+        env:
+          BENCHER: "1"
+          BENCHER_API_TOKEN: ${{ secrets.BENCHER_API_TOKEN }}
+          BENCHER_PROJECT: gmountie
+          BENCHER_TESTBED: gmountie-perf-pod
+          BENCHER_BRANCH: ${{ inputs.bencher_branch }}
+          GIT_HASH: ${{ github.sha }}
+          # Default count=6/benchtime=3s keeps the full LAN+WAN job to ~30-40 min
+          # (vs ~75-90 at 10/10s); wider CIs reliably catch ~>10% regressions —
+          # fine for a per-release trend with Bencher threshold detection.
+          # Override via the dispatch inputs for a tighter one-off measurement.
+          COUNT: ${{ inputs.count }}
+          BENCHTIME: ${{ inputs.benchtime }}
+        run: bash scripts/perf/run.sh
+
+      - name: Upload raw artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-${{ steps.label.outputs.ref }}-${{ github.run_id }}
+          path: |
+            ${{ env.WORKDIR }}/bench-lan.txt
+            ${{ env.WORKDIR }}/bench-wan.txt
+            ${{ env.WORKDIR }}/substrate.json
+            ${{ env.WORKDIR }}/report.bmf.json
+          if-no-files-found: warn
