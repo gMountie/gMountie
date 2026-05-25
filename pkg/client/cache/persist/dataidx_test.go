@@ -17,7 +17,12 @@ type DataIdxSuite struct {
 
 func (s *DataIdxSuite) SetupTest() {
 	s.dir = s.T().TempDir()
-	p, err := persist.Open(persist.Options{Root: s.dir})
+	// DisableBackgroundSweeps: these tests use refcount-only ChunkRef
+	// fixtures (zero hash, no chunk file written). The background ghost
+	// sweep deletes exactly such entries, so leaving it on lets it race
+	// the assertions (~1% CI flake). Sweep behaviour is covered separately
+	// by sweep_test.go calling the sweeps synchronously.
+	p, err := persist.Open(persist.Options{Root: s.dir, DisableBackgroundSweeps: true})
 	s.Require().NoError(err)
 	s.p = p
 }
