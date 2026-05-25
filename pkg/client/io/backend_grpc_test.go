@@ -141,37 +141,62 @@ func (s *BackendClientTestSuite) TestStat_Error() {
 	s.Assert().Nil(attr)
 }
 
-// A cancelled request context means the kernel interrupted the in-flight FUSE
-// op (commonly Go's async-preemption SIGURG landing on a long-running op,
-// which the kernel turns into a FUSE_INTERRUPT). The backend must report EINTR
-// so the kernel restarts the syscall, not a spurious EIO. These guard against
-// regressing into EIO; TestStat_Error (DeadlineExceeded -> EIO) guards the
-// other direction (genuine errors must NOT become EINTR).
-func (s *BackendClientTestSuite) TestStat_CancelledReturnsEINTR() {
-	s.fsClient.EXPECT().GetAttr(mock.Anything, mock.Anything).
-		Return(nil, status.Error(codes.Canceled, "context canceled"))
+// A cancelled FUSE request context — the kernel interrupting the op, most often
+// Go's async-preemption SIGURG landing on a long-running op (FUSE_INTERRUPT) —
+// must NOT abort the in-flight idempotent metadata RPC. The backend detaches the
+// gRPC call from the caller's cancellation, so it still issues the call with a
+// live context and returns the result instead of a spurious EIO.
+//
+// These assert the property the fix protects (the RPC receives a non-cancelled
+// ctx) rather than a specific error value: the real cancellation error from
+// retry-go does not match a clean codes.Canceled, so an error-shape assertion
+// would pass in a mock while the real path still failed.
+func (s *BackendClientTestSuite) TestStat_CancelledParentDoesNotAbortRPC() {
+	parent, cancel := context.WithCancel(context.Background())
+	cancel() // simulate the kernel cancelling the FUSE request ctx
 
-	attr, st := s.backend.Stat(context.Background(), "/test")
-	s.Assert().Equal(fuse.EINTR, st)
-	s.Assert().Nil(attr)
+	s.fsClient.EXPECT().GetAttr(
+		mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() == nil }),
+		mock.Anything,
+	).Return(&proto.GetAttrReply{
+		Status:     int32(fuse.OK),
+		Attributes: &proto.Attr{Mode: 0o644, Owner: &proto.Owner{Uid: 1, Gid: 1}},
+	}, nil)
+
+	attr, st := s.backend.Stat(parent, "/test")
+	s.Require().Equal(fuse.OK, st)
+	s.Require().NotNil(attr)
 }
 
-func (s *BackendClientTestSuite) TestListDir_CancelledReturnsEINTR() {
-	s.fsClient.EXPECT().OpenDir(mock.Anything, mock.Anything).
-		Return(nil, status.Error(codes.Canceled, "context canceled"))
+func (s *BackendClientTestSuite) TestListDir_CancelledParentDoesNotAbortRPC() {
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
 
-	entries, st := s.backend.ListDir(context.Background(), "/test")
-	s.Assert().Equal(fuse.EINTR, st)
-	s.Assert().Nil(entries)
+	s.fsClient.EXPECT().OpenDir(
+		mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() == nil }),
+		mock.Anything,
+	).Return(&proto.OpenDirReply{
+		Status:  int32(fuse.OK),
+		Entries: []*proto.DirEntry{{Name: "f", Mode: 0o644, Ino: 1}},
+	}, nil)
+
+	entries, st := s.backend.ListDir(parent, "/test")
+	s.Require().Equal(fuse.OK, st)
+	s.Require().Len(entries, 1)
 }
 
-func (s *BackendClientTestSuite) TestStatFs_CancelledReturnsEINTR() {
-	s.fsClient.EXPECT().StatFs(mock.Anything, mock.Anything).
-		Return(nil, status.Error(codes.Canceled, "context canceled"))
+func (s *BackendClientTestSuite) TestStatFs_CancelledParentDoesNotAbortRPC() {
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
 
-	res, st := s.backend.StatFs(context.Background(), "/test")
-	s.Assert().Equal(fuse.EINTR, st)
-	s.Assert().Nil(res)
+	s.fsClient.EXPECT().StatFs(
+		mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() == nil }),
+		mock.Anything,
+	).Return(&proto.StatFsReply{Bsize: 4096}, nil)
+
+	res, st := s.backend.StatFs(parent, "/test")
+	s.Require().Equal(fuse.OK, st)
+	s.Require().NotNil(res)
 }
 
 // TestStat_RetriesOnUnavailable verifies that an idempotent metadata

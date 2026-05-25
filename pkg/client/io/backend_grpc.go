@@ -115,31 +115,24 @@ func joinPath(parent, name string) string {
 	return parent + "/" + name
 }
 
-// metaErrStatus maps a failed idempotent metadata RPC to a FUSE status. A
-// cancelled request context means the kernel interrupted the op — most often
-// Go's async-preemption SIGURG landing on a long-running op, which the kernel
-// turns into a FUSE_INTERRUPT that cancels the request context. Returning
-// EINTR lets the kernel restart the syscall (SIGURG is SA_RESTART) instead of
-// surfacing a spurious EIO. grpcstatus.Code special-cases context.Canceled, so
-// a raw cancellation is caught too; DeadlineExceeded is a real timeout and
-// stays EIO. Any other code is a genuine backend failure: keep EIO, log error.
-//
-// Scoped to idempotent metadata reads. Mutating ops (request_id-stamped),
-// fd-returning ops (Open/Create), and streaming Read/Write have distinct
-// interrupt-correctness considerations and are intentionally not routed here.
-func metaErrStatus(op, path string, err error) fuse.Status {
-	if grpcstatus.Code(err) == codes.Canceled {
-		log.Log.Debug("idempotent op interrupted (request ctx cancelled); returning EINTR",
-			zap.String("op", op), zap.String("path", path))
-		return fuse.EINTR
-	}
-	log.Log.Error("error in call: "+op, zap.String("path", path), zap.Error(err))
-	return fuse.EIO
+// metaCtx bounds an idempotent metadata RPC with the meta timeout AND detaches
+// it from the caller's cancellation. The caller is the go-fuse request context,
+// which the kernel cancels on FUSE_INTERRUPT — fired constantly by Go's
+// async-preemption SIGURG landing on a long-running op. Propagating that
+// cancellation aborts the in-flight RPC (gRPC Canceled) and surfaces a spurious
+// EIO on an otherwise-healthy readdir/stat (confirmed: the failures vanish under
+// GODEBUG=asyncpreemptoff=1). context.WithoutCancel keeps the caller's values
+// (the kernel uid/gid/pid that AssumeUserMiddleware reads) while ignoring its
+// cancellation, so the RPC runs to completion or its own timeout. Scoped to
+// idempotent reads; mutating, fd-returning, and streaming ops keep the
+// cancellable context (distinct interrupt-correctness considerations).
+func (b *BackendClient) metaCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return withMetaTimeout(context.WithoutCancel(ctx), b.client.MetaTimeout())
 }
 
 // Stat returns the attributes of path. Idempotent; no request_id stamping.
 func (b *BackendClient) Stat(ctx context.Context, path string) (*Attr, fuse.Status) {
-	ctx2, cancel := withMetaTimeout(ctx, b.client.MetaTimeout())
+	ctx2, cancel := b.metaCtx(ctx)
 	defer cancel()
 	res, err := retryableCall(ctx2, "GetAttr", func(ctx context.Context) (*proto.GetAttrReply, error) {
 		return b.client.Fs().GetAttr(ctx, &proto.GetAttrRequest{
@@ -149,7 +142,8 @@ func (b *BackendClient) Stat(ctx context.Context, path string) (*Attr, fuse.Stat
 		})
 	})
 	if err != nil || res == nil {
-		return nil, metaErrStatus("GetAttr", path, err)
+		log.Log.Error("error in call: GetAttr", zap.String("path", path), zap.Error(err))
+		return nil, fuse.EIO
 	}
 	if res.GetAttributes() == nil {
 		return nil, fuse.Status(res.Status)
@@ -161,7 +155,7 @@ func (b *BackendClient) Stat(ctx context.Context, path string) (*Attr, fuse.Stat
 // (nil, true, OK) on NotModified, (newAttr, false, OK) on version change,
 // (nil, false, ENOENT) if the path is gone, (nil, false, EIO) on error.
 func (b *BackendClient) GetAttrIfChanged(ctx context.Context, path string, knownVersion uint64) (*Attr, bool, fuse.Status) {
-	ctx2, cancel := withMetaTimeout(ctx, b.client.MetaTimeout())
+	ctx2, cancel := b.metaCtx(ctx)
 	defer cancel()
 	reply, err := b.client.Fs().GetAttrIfChanged(ctx2, &proto.GetAttrIfChangedRequest{
 		Volume:       b.volume,
@@ -172,7 +166,8 @@ func (b *BackendClient) GetAttrIfChanged(ctx context.Context, path string, known
 		if st, ok := grpcstatus.FromError(err); ok && st.Code() == codes.NotFound {
 			return nil, false, fuse.ENOENT
 		}
-		return nil, false, metaErrStatus("GetAttrIfChanged", path, err)
+		log.Log.Error("error in call: GetAttrIfChanged", zap.String("path", path), zap.Error(err))
+		return nil, false, fuse.EIO
 	}
 	if reply.GetNotModified() {
 		return nil, true, fuse.OK
@@ -193,7 +188,7 @@ func (b *BackendClient) Lookup(ctx context.Context, parent, name string) (*Attr,
 
 // ListDir returns the directory entries at path. Idempotent.
 func (b *BackendClient) ListDir(ctx context.Context, path string) ([]DirEntry, fuse.Status) {
-	ctx2, cancel := withMetaTimeout(ctx, b.client.MetaTimeout())
+	ctx2, cancel := b.metaCtx(ctx)
 	defer cancel()
 	res, err := retryableCall(ctx2, "OpenDir", func(ctx context.Context) (*proto.OpenDirReply, error) {
 		return b.client.Fs().OpenDir(ctx, &proto.OpenDirRequest{
@@ -203,7 +198,8 @@ func (b *BackendClient) ListDir(ctx context.Context, path string) ([]DirEntry, f
 		})
 	})
 	if err != nil || res == nil {
-		return nil, metaErrStatus("OpenDir", path, err)
+		log.Log.Error("error in call: OpenDir", zap.String("path", path), zap.Error(err))
+		return nil, fuse.EIO
 	}
 	var entries []DirEntry
 	for _, entry := range res.Entries {
@@ -218,7 +214,7 @@ func (b *BackendClient) ListDir(ctx context.Context, path string) ([]DirEntry, f
 
 // Access mirrors access(2). Idempotent.
 func (b *BackendClient) Access(ctx context.Context, path string, mode uint32) fuse.Status {
-	ctx2, cancel := withMetaTimeout(ctx, b.client.MetaTimeout())
+	ctx2, cancel := b.metaCtx(ctx)
 	defer cancel()
 	res, err := retryableCall(ctx2, "Access", func(ctx context.Context) (*proto.AccessReply, error) {
 		return b.client.Fs().Access(ctx, &proto.AccessRequest{
@@ -229,20 +225,22 @@ func (b *BackendClient) Access(ctx context.Context, path string, mode uint32) fu
 		})
 	})
 	if err != nil || res == nil {
-		return metaErrStatus("Access", path, err)
+		log.Log.Error("error in call: Access", zap.String("path", path), zap.Error(err))
+		return fuse.EIO
 	}
 	return fuse.Status(res.Status)
 }
 
 // StatFs returns filesystem statistics for the volume containing path.
 func (b *BackendClient) StatFs(ctx context.Context, path string) (*StatFs, fuse.Status) {
-	ctx2, cancel := withMetaTimeout(ctx, b.client.MetaTimeout())
+	ctx2, cancel := b.metaCtx(ctx)
 	defer cancel()
 	res, err := retryableCall(ctx2, "StatFs", func(ctx context.Context) (*proto.StatFsReply, error) {
 		return b.client.Fs().StatFs(ctx, &proto.StatFsRequest{Volume: b.volume, Path: path})
 	})
 	if err != nil || res == nil {
-		return nil, metaErrStatus("StatFs", path, err)
+		log.Log.Error("error in call: StatFs", zap.String("path", path), zap.Error(err))
+		return nil, fuse.EIO
 	}
 	return &StatFs{
 		Blocks:  res.Blocks,
@@ -258,7 +256,7 @@ func (b *BackendClient) StatFs(ctx context.Context, path string) (*StatFs, fuse.
 
 // GetXAttr returns extended-attribute bytes. Idempotent.
 func (b *BackendClient) GetXAttr(ctx context.Context, path, attr string) ([]byte, fuse.Status) {
-	ctx2, cancel := withMetaTimeout(ctx, b.client.MetaTimeout())
+	ctx2, cancel := b.metaCtx(ctx)
 	defer cancel()
 	res, err := retryableCall(ctx2, "GetXAttr", func(ctx context.Context) (*proto.GetXAttrReply, error) {
 		return b.client.Fs().GetXAttr(ctx, &proto.GetXAttrRequest{
@@ -266,7 +264,8 @@ func (b *BackendClient) GetXAttr(ctx context.Context, path, attr string) ([]byte
 		})
 	})
 	if err != nil || res == nil {
-		return nil, metaErrStatus("GetXAttr", path, err)
+		log.Log.Error("error in call: GetXAttr", zap.String("path", path), zap.Error(err))
+		return nil, fuse.EIO
 	}
 	return res.Data, fuse.Status(res.Status)
 }
