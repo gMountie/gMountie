@@ -72,7 +72,10 @@ jobs:
         env:
           BENCHER: "1"
           BENCHER_API_TOKEN: ${{ secrets.BENCHER_API_TOKEN }}
-          BENCHER_PROJECT: gmountie
+          # Project slug under the gMountie org. NOT "gmountie" — that slug was
+          # already claimed by a project in the personal org; the gMountie-org
+          # project (github.com/gMountie/gMountie) got this suffixed slug.
+          BENCHER_PROJECT: gmountie-tfkojd8g
           BENCHER_TESTBED: gmountie-perf-pod
           BENCHER_BRANCH: ${{ inputs.bencher_branch }}
           GIT_HASH: ${{ github.sha }}
