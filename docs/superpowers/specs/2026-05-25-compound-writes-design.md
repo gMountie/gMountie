@@ -1,10 +1,18 @@
 # Compound-for-writes (SP3): fuse the close-tail Write+Flush
 
 **Date:** 2026-05-25
-**Status:** approved design — re-scoped to a focused `WriteAndFlush` after an
-empirical packet trace (see "Measured baseline") showed RELEASE is already
-async and only Write+Flush is collapsible. The general `MutatingCompound`
-explored earlier was over-built for the measured win.
+**Status:** ✅ **implemented and verified.** Re-scoped to a focused `WriteAndFlush`
+after an empirical packet trace showed RELEASE is async and only Write+Flush is
+collapsible (the general `MutatingCompound` was over-built). Implemented across
+commits `fb56441`..`435f46e` on `worktree-proto-v2-compound-writes`.
+
+**VM acceptance re-bench (2026-05-25, kubevirt loopback, cache on, 100ms netem RTT):**
+Per `echo x > f` the RPCs collapsed from **8 → 5** (server metrics): `Write`(1)+`Flush`(2)
+→ `WriteAndFlush`(1); post-create `GetAttr` 2 → 1. Critical-path RTTs (RELEASE async)
+~7 → ~4. Wall-clock: 5 files **4.01s → 2.11s**; 150 files **126.6s → 68.3s**
+(1.2 → **2.2 files/s**, ~0.80 → ~0.42 s/file). Beats the ~5-RTT target. W2 (large
+streamed write) uses the unchanged streaming path — unaffected. Acceptance
+criteria #1, #2, #5 met; #3, #4, #6 met in code/tests.
 **Branch:** `worktree-proto-v2-compound-writes` (off `origin/master` `40b652e`)
 **Scope:** wire protocol (`api/proto/file.proto`), server controller
 (`pkg/server/controller/file.go`), client io (`pkg/client/io/backend_grpc.go`).
