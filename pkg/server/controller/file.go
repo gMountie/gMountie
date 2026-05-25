@@ -131,9 +131,16 @@ func (r *RpcFileServerImpl) Read(request *proto.ReadRequest, stream proto.RpcFil
 		if !st.Ok() {
 			return 0, st
 		}
-		// ReadResult.Bytes may return a slice that does not alias buf; copy
-		// into buf so the streamer's `buf[:n]` slicing remains correct.
-		n := copy(buf, out)
+		// ReadResult.Bytes may return a slice that does not alias buf (e.g. an
+		// in-memory FS handing back its own backing array); in that case copy
+		// into buf so the streamer's `buf[:n]` slicing reads the right bytes.
+		// The loopback FS we actually serve Preads straight into buf and
+		// returns buf[:n], so out already aliases buf — copying there is a
+		// self-overlapping memmove of the whole frame for no gain. Skip it.
+		n := len(out)
+		if n > 0 && len(buf) > 0 && &out[0] != &buf[0] {
+			n = copy(buf, out)
+		}
 		return n, fuse.OK
 	}
 	emit := func(data []byte, st fuse.Status) error {
