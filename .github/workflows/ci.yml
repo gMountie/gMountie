@@ -41,7 +41,7 @@ jobs:
       # scratch even when nothing changed. Key the cache on the lint
       # config + go.mod so it invalidates when either changes.
       - name: Cache golangci-lint analysis
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/golangci-lint
           key: golangci-lint-${{ runner.os }}-${{ hashFiles('.golang-ci.yaml', 'go.mod') }}
