@@ -121,6 +121,13 @@ The `readahead_window` knob exists to deepen the pipeline on high-BDP WAN links
 does not reliably improve throughput** — see §5 for the reason and the planned
 fix.
 
+At `window=1` the client keeps at most one prefetch in flight and does not arm
+a prefetch when the FUSE read size exceeds `readahead_chunk_bytes`: a single
+chunk can never satisfy a larger read, so `Serve` cannot hit and the prefetch
+would be pure waste. Consequently readahead is a no-op for readers whose buffer
+exceeds the chunk size — making it effective for those readers is the SP5
+partial-consume redesign (§5.1), not this path.
+
 **Write coalescing:** `pkg/client/io/coalesce.go` accumulates contiguous small
 writes per fd into a single buffer up to `write_coalesce_bytes` (default 1 MiB).
 When the buffer overflows, the client flushes via streaming `Write`. At `FLUSH`
@@ -213,6 +220,12 @@ Write is the same in reverse, plus the coalescer's accumulation copies
 
 That is 4 user-space passes of the payload on top of the two unavoidable kernel
 boundaries.
+
+The server recycles the frame-sized read buffer through a `sync.Pool` on the
+shared `ReadStreamer` rather than allocating one per Read RPC, so a large
+sequential read reuses a single buffer instead of one per frame. This is the
+dominant read-path allocation removed; it is safe because `emit` consumes each
+frame synchronously (gRPC `Send` marshals before returning).
 
 ### 3.2 The `acd2c29` waste-copy fix
 
@@ -351,7 +364,7 @@ silently rotates between runs.
 
 **Bencher data model:**
 
-- **Project:** `gmountie`
+- **Project:** `gmountie-tfkojd8g`
 - **Testbed:** `gmountie-perf-pod` — the fixed runner Pod. If the substrate is
   replaced (e.g. Pod → kubevirt VM), a **new testbed** is registered so the
   substrate change is an explicit series break, not a silent step in the data.
@@ -509,7 +522,7 @@ The performance-relevant knobs, their defaults, and where they live:
   snappy`. Not applied to metadata RPCs.
 
 - **Bencher** — the continuous benchmarking service (Bencher Cloud) used to store
-  the per-release performance time series for the project (`gmountie` project,
+  the per-release performance time series for the project (`gmountie-tfkojd8g` project,
   `gmountie-perf-pod` testbed, `master` branch).
 
 - **Substrate fingerprint** — the set of `_substrate/*` Bencher benchmark series
