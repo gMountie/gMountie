@@ -28,12 +28,16 @@ Two independent reasons:
    silently no-op on a gMountie mount — the file's mtime never changes on the
    server. This is a correctness bug regardless of writeback.
 
-2. **Writeback-mode mtime (to be confirmed by probe).** Under
-   `CAP_WRITEBACK_CACHE` the kernel owns size/mtime for cached files and *may*
-   push `FATTR_MTIME` to the FS on flush. Whether the Linux kernel actually
-   sets `FATTR_MTIME` (vs only `FATTR_SIZE`) on a writeback flush is verified
-   by a probe (first implementation step) — it changes only the spec's framing,
-   not the code. Either way, honoring `FATTR_MTIME` is the correct behavior.
+2. **Writeback-mode mtime (confirmed by probe).** Under `CAP_WRITEBACK_CACHE`
+   the kernel owns size/mtime for cached files and pushes `FATTR_MTIME` to the
+   FS on flush. **Confirmed on Linux 6.8 (kubevirt VM, 2026-05-27):** a pure
+   `write()`+close (no explicit metadata op) drives a `SETATTR` with
+   `Valid = FATTR_MTIME | FATTR_FH | FATTR_CTIME` (0x460). Before this change
+   `setattrAt` dropped those bits, so a writeback-cached file's
+   kernel-tracked mtime never reached the server — a silent data-fidelity
+   bug, not just a `touch` gap. Honoring `FATTR_MTIME` fixes both. (The FS
+   cannot set ctime explicitly — it is implicit on the backing write — so
+   dispatching the mtime via `Utimens` is the correct and sufficient action.)
 
 ## Non-goals (YAGNI)
 
