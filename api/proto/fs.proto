@@ -11,6 +11,14 @@ message DirEntry {
   uint64 off = 4;
 }
 
+// FileTime is an optional absolute timestamp. Field types match Attr's
+// mtime/mtimensec so conversions are lossless. A nil FileTime message means
+// UTIME_OMIT — leave that timestamp unchanged.
+message FileTime {
+  uint64 sec  = 1;
+  uint32 nsec = 2;
+}
+
 message Attr {
   uint64 ino = 1;
   uint64 size = 2;
@@ -164,6 +172,20 @@ message ChmodReply {
   int32 status = 1;
 }
 
+message UtimensRequest {
+  string   volume     = 1;
+  Caller   caller     = 2;
+  string   path       = 3;
+  FileTime atime      = 4;   // nil => leave atime unchanged (UTIME_OMIT)
+  FileTime mtime      = 5;   // nil => leave mtime unchanged (UTIME_OMIT)
+  string   request_id = 6;
+  string   session_id = 7;
+}
+
+message UtimensReply {
+  int32 status = 1;
+}
+
 message MkdirRequest {
   string volume = 1;
   Caller caller = 2;
@@ -261,6 +283,7 @@ service RpcFs {
   rpc Truncate (TruncateRequest) returns (TruncateReply);
   rpc Chown (ChownRequest) returns (ChownReply);
   rpc Chmod (ChmodRequest) returns (ChmodReply);
+  rpc Utimens (UtimensRequest) returns (UtimensReply);
   rpc Mkdir (MkdirRequest) returns (MkdirReply);
   rpc Rmdir (RmdirRequest) returns (RmdirReply);
   rpc Rename (RenameRequest) returns (RenameReply);

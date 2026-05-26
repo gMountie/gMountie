@@ -27,6 +27,7 @@ const (
 	RpcFs_Truncate_FullMethodName         = "/gmountie.RpcFs/Truncate"
 	RpcFs_Chown_FullMethodName            = "/gmountie.RpcFs/Chown"
 	RpcFs_Chmod_FullMethodName            = "/gmountie.RpcFs/Chmod"
+	RpcFs_Utimens_FullMethodName          = "/gmountie.RpcFs/Utimens"
 	RpcFs_Mkdir_FullMethodName            = "/gmountie.RpcFs/Mkdir"
 	RpcFs_Rmdir_FullMethodName            = "/gmountie.RpcFs/Rmdir"
 	RpcFs_Rename_FullMethodName           = "/gmountie.RpcFs/Rename"
@@ -48,6 +49,7 @@ type RpcFsClient interface {
 	Truncate(ctx context.Context, in *TruncateRequest, opts ...grpc.CallOption) (*TruncateReply, error)
 	Chown(ctx context.Context, in *ChownRequest, opts ...grpc.CallOption) (*ChownReply, error)
 	Chmod(ctx context.Context, in *ChmodRequest, opts ...grpc.CallOption) (*ChmodReply, error)
+	Utimens(ctx context.Context, in *UtimensRequest, opts ...grpc.CallOption) (*UtimensReply, error)
 	Mkdir(ctx context.Context, in *MkdirRequest, opts ...grpc.CallOption) (*MkdirReply, error)
 	Rmdir(ctx context.Context, in *RmdirRequest, opts ...grpc.CallOption) (*RmdirReply, error)
 	Rename(ctx context.Context, in *RenameRequest, opts ...grpc.CallOption) (*RenameReply, error)
@@ -145,6 +147,16 @@ func (c *rpcFsClient) Chmod(ctx context.Context, in *ChmodRequest, opts ...grpc.
 	return out, nil
 }
 
+func (c *rpcFsClient) Utimens(ctx context.Context, in *UtimensRequest, opts ...grpc.CallOption) (*UtimensReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UtimensReply)
+	err := c.cc.Invoke(ctx, RpcFs_Utimens_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *rpcFsClient) Mkdir(ctx context.Context, in *MkdirRequest, opts ...grpc.CallOption) (*MkdirReply, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(MkdirReply)
@@ -236,6 +248,7 @@ type RpcFsServer interface {
 	Truncate(context.Context, *TruncateRequest) (*TruncateReply, error)
 	Chown(context.Context, *ChownRequest) (*ChownReply, error)
 	Chmod(context.Context, *ChmodRequest) (*ChmodReply, error)
+	Utimens(context.Context, *UtimensRequest) (*UtimensReply, error)
 	Mkdir(context.Context, *MkdirRequest) (*MkdirReply, error)
 	Rmdir(context.Context, *RmdirRequest) (*RmdirReply, error)
 	Rename(context.Context, *RenameRequest) (*RenameReply, error)
@@ -276,6 +289,9 @@ func (UnimplementedRpcFsServer) Chown(context.Context, *ChownRequest) (*ChownRep
 }
 func (UnimplementedRpcFsServer) Chmod(context.Context, *ChmodRequest) (*ChmodReply, error) {
 	return nil, status.Error(codes.Unimplemented, "method Chmod not implemented")
+}
+func (UnimplementedRpcFsServer) Utimens(context.Context, *UtimensRequest) (*UtimensReply, error) {
+	return nil, status.Error(codes.Unimplemented, "method Utimens not implemented")
 }
 func (UnimplementedRpcFsServer) Mkdir(context.Context, *MkdirRequest) (*MkdirReply, error) {
 	return nil, status.Error(codes.Unimplemented, "method Mkdir not implemented")
@@ -463,6 +479,24 @@ func _RpcFs_Chmod_Handler(srv interface{}, ctx context.Context, dec func(interfa
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RpcFs_Utimens_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UtimensRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RpcFsServer).Utimens(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RpcFs_Utimens_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RpcFsServer).Utimens(ctx, req.(*UtimensRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _RpcFs_Mkdir_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MkdirRequest)
 	if err := dec(in); err != nil {
@@ -620,6 +654,10 @@ var RpcFs_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Chmod",
 			Handler:    _RpcFs_Chmod_Handler,
+		},
+		{
+			MethodName: "Utimens",
+			Handler:    _RpcFs_Utimens_Handler,
 		},
 		{
 			MethodName: "Mkdir",
