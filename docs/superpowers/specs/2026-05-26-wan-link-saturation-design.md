@@ -1,7 +1,41 @@
 # WAN link saturation (SP4): writeback cache + readahead window
 
 **Date:** 2026-05-26
-**Status:** approved design, pending spec review → implementation plan
+**Status:** read-half implemented; **measured A = a modest ~+35% WAN win, NOT link
+saturation** — shipping the modest win, saturation deferred (see "Measured
+result"). Read-half code (config knob + N-deep window) is done and reviewed.
+
+## Measured result (VM, 50ms RTT / 100Mbit ≈ 11.9 MiB/s ceiling, cache off)
+
+| WAN 64 MiB | baseline | SP4-A (best cfg) | vs ceiling |
+|---|---|---|---|
+| SeqRead | 5.2 MiB/s | **7.0 MiB/s (+35%)** | ~59% |
+| SeqWrite | 4.36 MiB/s | **5.95 MiB/s (+36%)** | ~50% |
+
+**A is a real but modest win; it does not saturate the link.** Two ceilings,
+both now understood:
+
+1. **Read — the readahead's one-shot-whole-chunk `Serve`.** It consumes the
+   entire prefetched chunk on the first (sub-chunk) FUSE read, so a chunk larger
+   than the FUSE read size is mostly wasted and the following reads miss +
+   re-fetch synchronously. Consequence: `readahead_chunk_bytes` **must be set ≈
+   the FUSE read size** (~128 KiB) for the window to help at all — which forces
+   many small Read RPCs whose per-RPC overhead caps read throughput at ~7 MiB/s
+   even with a deep (16) window. **Recommended WAN read config:**
+   `readahead_chunk_bytes: 131072`, `readahead_window: 16`, `readahead_threshold: 2`.
+2. **Write — writeback gives +36% then plateaus** at ~50% of the link
+   (per-op `streamingWrite` of ~128 KiB WRITEs + kernel writeback depth).
+
+**Deferred saturation lever (separate follow-up, not this spec):** rework the
+readahead to large chunks (e.g. 1 MiB Read RPCs) with a **partial-consume**
+`Serve` (serve sub-ranges, keep the chunk until drained) + deep window, and dig
+into the write per-RPC overhead. That would push toward the ceiling without
+streams-per-fd. Escalation to streams-per-fd (B) remains the last resort if
+saturation is required and the partial-consume redesign falls short.
+
+---
+
+**Original status:** approved design, pending spec review → implementation plan
 **Branch:** `worktree-sp4-bidi-open` (off `origin/master`)
 **Scope:** client I/O only — `pkg/client/io` (readahead + prefetch driving),
 `pkg/client/config` (a readahead-window knob), and validating the already-wired
