@@ -6,6 +6,7 @@ import (
 	serverio "gmountie/pkg/server/io"
 	"gmountie/pkg/server/metrics"
 	"gmountie/pkg/server/service"
+	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
@@ -253,6 +254,36 @@ func (r *RpcServerImpl) Chown(ctx context.Context, request *proto.ChownRequest) 
 			r.bus.Emit(request.Volume, request.Path, r.versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
 		}
 		return &proto.ChownReply{Status: int32(s)}, nil
+	})
+}
+
+// fileTimeToTime maps a wire FileTime to a Go time pointer. A nil input yields
+// nil (UTIME_OMIT — leave that timestamp unchanged).
+func fileTimeToTime(ft *proto.FileTime) *time.Time {
+	if ft == nil {
+		return nil
+	}
+	t := time.Unix(int64(ft.Sec), int64(ft.Nsec))
+	return &t
+}
+
+func (r *RpcServerImpl) Utimens(ctx context.Context, request *proto.UtimensRequest) (*proto.UtimensReply, error) {
+	sess, err := resolveSession(r.sessions, request.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
+	if err != nil {
+		return nil, err
+	}
+	return withIdempotency(sess, request.RequestId, func() (*proto.UtimensReply, error) {
+		atime := fileTimeToTime(request.Atime)
+		mtime := fileTimeToTime(request.Mtime)
+		s := fs.Utimens(request.Path, atime, mtime, createContext(ctx, request.Caller))
+		if s == fuse.OK {
+			r.bus.Emit(request.Volume, request.Path, r.versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
+		}
+		return &proto.UtimensReply{Status: int32(s)}, nil
 	})
 }
 
