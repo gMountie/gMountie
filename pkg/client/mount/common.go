@@ -59,8 +59,8 @@ func createMountOptions(endpoint, volume string, cfg *config.FUSEConfig, maxWrit
 	}
 	// go-fuse v2.10.1 has no `EnableWriteback` field; the writeback page
 	// cache is controlled via the CAP_WRITEBACK_CACHE capability bit.
-	// Leaving it disabled (default) matches the synchronous read/write
-	// path pending Phase 4's cache layer.
+	// Disabled by default (synchronous writes); enabled opt-in for async
+	// writeback on high-RTT links (see FUSEConfig.WritebackCache).
 	if cfg.WritebackCache {
 		opts.ExtraCapabilities |= fuse.CAP_WRITEBACK_CACHE
 	} else {

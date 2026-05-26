@@ -16,9 +16,12 @@ const (
 	// requests in flight from the kernel. go-fuse's library default is
 	// 12; 64 gives the streaming Read/Write path room to overlap.
 	DefaultFUSEMaxBackground = 64
-	// DefaultFUSEWritebackCache leaves the kernel writeback cache off
-	// pending Phase 4's cache layer. Wired through ExtraCapabilities
-	// (CAP_WRITEBACK_CACHE) at mount time when true.
+	// DefaultFUSEWritebackCache leaves the kernel writeback cache off by
+	// default. It is a validated opt-in WAN-throughput mode: with it on, the
+	// kernel buffers writes and flushes them asynchronously (up to
+	// MaxBackground WRITEs in flight), letting the client saturate a
+	// high-RTT link instead of one synchronous WRITE per round-trip. Wired
+	// through ExtraCapabilities (CAP_WRITEBACK_CACHE) at mount time when true.
 	DefaultFUSEWritebackCache = false
 )
 
@@ -40,8 +43,9 @@ type FUSEConfig struct {
 	// [1, 1024]; the upper bound is a sanity ceiling, not a tuned value.
 	MaxBackground int `validate:"min=1,max=1024" mapstructure:"max_background"`
 	// WritebackCache toggles the kernel's writeback page cache for the
-	// mount. Off by default — the read/write path is still synchronous
-	// pending Phase 4's cache layer.
+	// mount. Off by default (synchronous writes); set true to opt into
+	// async writeback for WAN throughput — write errors then surface at
+	// flush/close, and write visibility to other clients is close-to-open.
 	WritebackCache bool `mapstructure:"writeback_cache"`
 }
 
