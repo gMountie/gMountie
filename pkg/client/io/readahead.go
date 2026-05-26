@@ -96,6 +96,16 @@ func (r *Readahead) Observe(off int64, n int) []int64 {
 		return nil
 	}
 
+	// A single chunk can never satisfy a read larger than itself, so Serve can
+	// never hit for this access pattern. Arming a prefetch here is pure waste:
+	// the chunk would be evicted on the next read before it is ever served,
+	// then re-armed — repeating every read. Leave the window empty until the
+	// reads fit within one chunk. The real win for large-buffer readers is the
+	// SP5 partial-consume redesign, not this prefetch.
+	if n > r.chunkSize {
+		return nil
+	}
+
 	// Arm new slots until the window is full.
 	armFrom := next
 	if len(r.chunks) > 0 {
