@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"sync"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pkg/errors"
@@ -18,6 +19,11 @@ import (
 // explicit completion frame.
 type ReadStreamer struct {
 	frameSize int
+	// bufPool recycles frame-sized read buffers across Stream calls. It holds
+	// *[]byte (not []byte) so Put does not box a slice header onto the heap
+	// (staticcheck SA6002). frameSize is fixed per server, so every pooled
+	// buffer is the same length.
+	bufPool sync.Pool
 }
 
 // NewReadStreamer constructs a ReadStreamer that emits frames of at most
@@ -25,7 +31,15 @@ type ReadStreamer struct {
 // against gRPC's max recv size; ServerConfig.FrameSizeBytes enforces
 // `min=4096,max=16777216` upstream.
 func NewReadStreamer(frameSize int) *ReadStreamer {
-	return &ReadStreamer{frameSize: frameSize}
+	return &ReadStreamer{
+		frameSize: frameSize,
+		bufPool: sync.Pool{
+			New: func() any {
+				b := make([]byte, frameSize)
+				return &b
+			},
+		},
+	}
 }
 
 // Stream issues frame-sized reads against fileRead and invokes emit for
@@ -43,10 +57,13 @@ func (s *ReadStreamer) Stream(
 ) error {
 	remaining := totalSize
 	off := startOffset
-	// One buffer reused across frames. emit must consume data synchronously
-	// (gRPC stream.Send marshals before returning), which the controller
-	// closure does — so overwriting the buffer for the next read is safe.
-	buf := make([]byte, s.frameSize)
+	// Borrow a frame-sized buffer from the pool and return it on exit. emit
+	// consumes data synchronously (gRPC stream.Send marshals before
+	// returning), so the buffer is safe to reuse across frames within this
+	// call and to return to the pool once the final emit completes.
+	bufp := s.bufPool.Get().(*[]byte)
+	defer s.bufPool.Put(bufp)
+	buf := *bufp
 	for remaining > 0 {
 		if err := ctx.Err(); err != nil {
 			return errors.Wrap(err, "read stream cancelled")
