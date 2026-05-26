@@ -53,6 +53,10 @@ type AppTestingContext struct {
 	// the package-level disabled defaults in NewAppTestingContext;
 	// WithCache overrides this before NewAppContext sees it.
 	cacheCfg *clientConfig.CacheConfig
+	// fuseCfg is the FUSE kernel-side tuning configuration. Defaulted
+	// to the package-level defaults in NewAppTestingContext;
+	// WithFUSEConfig overrides this before NewAppContext sees it.
+	fuseCfg *clientConfig.FUSEConfig
 }
 
 // TestOptions is a type that defines the TestOptions function.
@@ -124,6 +128,16 @@ func WithCache(cfg clientConfig.CacheConfig) TestOptions {
 	}
 }
 
+// WithFUSEConfig overrides the FUSE kernel tuning for the mount built
+// by NewAppTestingContext. The default is the package-level off/default
+// values (WritebackCache: false); pass a FUSEConfig with
+// WritebackCache: true to exercise the kernel writeback path.
+func WithFUSEConfig(cfg clientConfig.FUSEConfig) TestOptions {
+	return func(c *AppTestingContext) {
+		c.fuseCfg = &cfg
+	}
+}
+
 // WithRandomTestVolume creates random test volume.
 func WithRandomTestVolume(randomfiles bool) TestOptions {
 	return func(c *AppTestingContext) {
@@ -188,6 +202,13 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 		DirTTL:         clientConfig.DefaultCacheDirTTL,
 		NegativeTTL:    clientConfig.DefaultCacheNegativeTTL,
 	}
+	// Default to the standard FUSE tuning; WithFUSEConfig may override
+	// before NewAppContext is called below.
+	appCtx.fuseCfg = &clientConfig.FUSEConfig{
+		MaxWriteBytes:  clientConfig.DefaultFUSEMaxWriteBytes,
+		MaxBackground:  clientConfig.DefaultFUSEMaxBackground,
+		WritebackCache: clientConfig.DefaultFUSEWritebackCache,
+	}
 	// Apply the options
 	for _, opt := range options {
 		opt(appCtx)
@@ -210,11 +231,7 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 		return nil, err
 	}
 	appCtx.client = c
-	appCtx.clientCtx = client.NewAppContext(c, "", &clientConfig.FUSEConfig{
-		MaxWriteBytes:  clientConfig.DefaultFUSEMaxWriteBytes,
-		MaxBackground:  clientConfig.DefaultFUSEMaxBackground,
-		WritebackCache: clientConfig.DefaultFUSEWritebackCache,
-	}, appCtx.cacheCfg)
+	appCtx.clientCtx = client.NewAppContext(c, "", appCtx.fuseCfg, appCtx.cacheCfg)
 	return appCtx, nil
 }
 
@@ -306,11 +323,7 @@ func (c *AppTestingContext) NewSiblingClient(cacheCfg *clientConfig.CacheConfig)
 	if siblingClient.SessionID() == "" {
 		return nil, errors.New("sibling client session handshake failed")
 	}
-	return client.NewAppContext(siblingClient, "", &clientConfig.FUSEConfig{
-		MaxWriteBytes:  clientConfig.DefaultFUSEMaxWriteBytes,
-		MaxBackground:  clientConfig.DefaultFUSEMaxBackground,
-		WritebackCache: clientConfig.DefaultFUSEWritebackCache,
-	}, cacheCfg), nil
+	return client.NewAppContext(siblingClient, "", c.fuseCfg, cacheCfg), nil
 }
 
 // MountVolumeErr mounts the test volume and returns any error. Callers
