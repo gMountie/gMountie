@@ -6,10 +6,10 @@
 //
 // To execute:
 //
-//	task perf:bench OUT=docs/perf/<name>.txt   # COUNT=5 BENCHTIME=10s by default
+//	task perf:bench OUT=perf-out/<name>.txt   # COUNT=5 BENCHTIME=10s by default
 //	task perf:diff  BEFORE=<old> AFTER=<new>
 //
-// See docs/perf/README.md for the full workflow.
+// See docs/design/performance.md for the full workflow and Bencher tracking.
 package perf
 
 import (
