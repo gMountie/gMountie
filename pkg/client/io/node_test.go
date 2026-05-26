@@ -4,6 +4,7 @@ import (
 	"context"
 	"syscall"
 	"testing"
+	"time"
 
 	iomocks "gmountie/internal/mocks/pkg/client/io"
 	clientio "gmountie/pkg/client/io"
@@ -217,6 +218,56 @@ func (s *NodeAdapterTestSuite) TestRootSetattr_ChownPartial_StatsForUnset() {
 	in := &fuse.SetAttrIn{}
 	in.Valid = fuse.FATTR_GID
 	in.Owner = fuse.Owner{Gid: 2000}
+	out := &fuse.AttrOut{}
+	errno := rootAs[fs.NodeSetattrer](s).Setattr(context.Background(), nil, in, out)
+	s.Require().Equal(syscall.Errno(0), errno)
+}
+
+func (s *NodeAdapterTestSuite) TestRootSetattr_MtimeOnly() {
+	// FATTR_MTIME set, FATTR_ATIME unset => Utimens(nil atime, mtime set).
+	s.backend.EXPECT().Utimens(
+		mock.Anything, "",
+		(*time.Time)(nil),
+		mock.MatchedBy(func(t *time.Time) bool { return t != nil && t.Unix() == 1577836800 }),
+	).Return(fuse.OK)
+	s.backend.EXPECT().Stat(mock.Anything, "").Return(
+		&clientio.Attr{Ino: 1, Mtime: 1577836800}, fuse.OK,
+	)
+	in := &fuse.SetAttrIn{}
+	in.Valid = fuse.FATTR_MTIME
+	in.Mtime = 1577836800
+	in.Mtimensec = 0
+	out := &fuse.AttrOut{}
+	errno := rootAs[fs.NodeSetattrer](s).Setattr(context.Background(), nil, in, out)
+	s.Require().Equal(syscall.Errno(0), errno)
+}
+
+func (s *NodeAdapterTestSuite) TestRootSetattr_AtimeAndMtime() {
+	s.backend.EXPECT().Utimens(
+		mock.Anything, "",
+		mock.MatchedBy(func(t *time.Time) bool { return t != nil && t.Unix() == 100 }),
+		mock.MatchedBy(func(t *time.Time) bool { return t != nil && t.Unix() == 200 }),
+	).Return(fuse.OK)
+	s.backend.EXPECT().Stat(mock.Anything, "").Return(&clientio.Attr{Ino: 1}, fuse.OK)
+	in := &fuse.SetAttrIn{}
+	in.Valid = fuse.FATTR_ATIME | fuse.FATTR_MTIME
+	in.Atime = 100
+	in.Mtime = 200
+	out := &fuse.AttrOut{}
+	errno := rootAs[fs.NodeSetattrer](s).Setattr(context.Background(), nil, in, out)
+	s.Require().Equal(syscall.Errno(0), errno)
+}
+
+func (s *NodeAdapterTestSuite) TestRootSetattr_NoTimeBitsNoUtimens() {
+	// Only mode set => Utimens must NOT be called (no EXPECT() => mockery fails
+	// the test if it is called).
+	s.backend.EXPECT().Chmod(mock.Anything, "", uint32(0o600)).Return(fuse.OK)
+	s.backend.EXPECT().Stat(mock.Anything, "").Return(
+		&clientio.Attr{Ino: 1, Mode: fuse.S_IFREG | 0o600}, fuse.OK,
+	)
+	in := &fuse.SetAttrIn{}
+	in.Valid = fuse.FATTR_MODE
+	in.Mode = 0o600
 	out := &fuse.AttrOut{}
 	errno := rootAs[fs.NodeSetattrer](s).Setattr(context.Background(), nil, in, out)
 	s.Require().Equal(syscall.Errno(0), errno)
