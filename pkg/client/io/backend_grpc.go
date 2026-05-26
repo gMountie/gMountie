@@ -437,6 +437,39 @@ func (b *BackendClient) Chown(ctx context.Context, path string, uid, gid uint32)
 	return fuse.Status(res.Status)
 }
 
+// timeToFileTime maps a Go time to the wire FileTime. A nil input yields a
+// nil FileTime — UTIME_OMIT (leave that timestamp unchanged).
+func timeToFileTime(t *time.Time) *proto.FileTime {
+	if t == nil {
+		return nil
+	}
+	return &proto.FileTime{Sec: uint64(t.Unix()), Nsec: uint32(t.Nanosecond())}
+}
+
+// Utimens sets atime and/or mtime. A nil pointer leaves that timestamp
+// unchanged (UTIME_OMIT).
+func (b *BackendClient) Utimens(ctx context.Context, path string, atime, mtime *time.Time) fuse.Status {
+	ctx2, cancel := b.metaCtx(ctx)
+	defer cancel()
+	requestID := uuid.NewString()
+	res, err := retryableCall(ctx2, "Utimens", func(ctx context.Context) (*proto.UtimensReply, error) {
+		return b.client.Fs().Utimens(ctx, &proto.UtimensRequest{
+			Volume:    b.volume,
+			Caller:    callerFromCtx(ctx),
+			Path:      path,
+			Atime:     timeToFileTime(atime),
+			Mtime:     timeToFileTime(mtime),
+			SessionId: b.client.SessionID(),
+			RequestId: requestID,
+		})
+	})
+	if err != nil || res == nil {
+		log.Log.Error("error in call: Utimens", zap.String("path", path), zap.Error(err))
+		return fuse.EIO
+	}
+	return fuse.Status(res.Status)
+}
+
 // Open opens an existing file. The returned FileHandle is a
 // *grpcFileHandle holding fd + session + per-file knobs.
 func (b *BackendClient) Open(ctx context.Context, path string, flags uint32) (FileHandle, fuse.Status) {
