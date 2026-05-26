@@ -61,7 +61,7 @@ func (s *ReadStreamer) Stream(
 	// consumes data synchronously (gRPC stream.Send marshals before
 	// returning), so the buffer is safe to reuse across frames within this
 	// call and to return to the pool once the final emit completes.
-	bufp := s.bufPool.Get().(*[]byte)
+	bufp, _ := s.bufPool.Get().(*[]byte)
 	defer s.bufPool.Put(bufp)
 	buf := *bufp
 	for remaining > 0 {
