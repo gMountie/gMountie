@@ -9,6 +9,7 @@ import (
 	"context"
 	"path"
 	"strings"
+	"time"
 
 	"gmountie/pkg/client/cache/persist"
 	"gmountie/pkg/client/io"
@@ -530,6 +531,15 @@ func (b *cachedBackend) Chmod(ctx context.Context, p string, mode uint32) fuse.S
 
 func (b *cachedBackend) Chown(ctx context.Context, p string, uid, gid uint32) fuse.Status {
 	st := b.inner.Chown(ctx, p, uid, gid)
+	if st != fuse.OK {
+		return st
+	}
+	b.attr.invalidate(p)
+	return fuse.OK
+}
+
+func (b *cachedBackend) Utimens(ctx context.Context, p string, atime, mtime *time.Time) fuse.Status {
+	st := b.inner.Utimens(ctx, p, atime, mtime)
 	if st != fuse.OK {
 		return st
 	}

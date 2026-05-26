@@ -421,6 +421,33 @@ func (s *CachedBackendTestSuite) TestChownInvalidatesAttrOnly() {
 	s.Assert().NotNil(s.b.data.get("/f", 0))
 }
 
+func (s *CachedBackendTestSuite) TestUtimensInvalidatesAttrOnly() {
+	mtime := time.Unix(1577836800, 0)
+	s.b.attr.putPositive("/f", &io.Attr{Mtime: 1})
+	s.b.data.put("/f", 0, []byte("DATA"))
+	s.inner.EXPECT().Utimens(mock.Anything, "/f", (*time.Time)(nil), &mtime).
+		Return(fuse.OK).Once()
+
+	st := s.b.Utimens(context.Background(), "/f", nil, &mtime)
+	s.Require().Equal(fuse.OK, st)
+
+	_, hit, _ := s.b.attr.get("/f")
+	s.Assert().False(hit)                    // attr invalidated
+	s.Assert().NotNil(s.b.data.get("/f", 0)) // data untouched
+}
+
+func (s *CachedBackendTestSuite) TestUtimensFailureDoesNotInvalidate() {
+	s.b.attr.putPositive("/f", &io.Attr{Mtime: 1})
+	s.inner.EXPECT().Utimens(mock.Anything, "/f", mock.Anything, mock.Anything).
+		Return(fuse.EPERM).Once()
+
+	st := s.b.Utimens(context.Background(), "/f", nil, nil)
+	s.Require().Equal(fuse.EPERM, st)
+
+	_, hit, _ := s.b.attr.get("/f")
+	s.Assert().True(hit) // not invalidated on failure
+}
+
 func (s *CachedBackendTestSuite) TestAllocateInvalidatesDataRangeAndAttr() {
 	// Pre-populate 3 chunks. Allocate covers only chunks 0 and 1.
 	s.b.data.put("/f", 0, make([]byte, 1024))
