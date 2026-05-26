@@ -14,25 +14,27 @@ Built with modern tech (FUSE and gRPC) and a lot of ❤️, gMountie makes remot
 
 ## Features That'll Make You Smile 😊
 
-- **Lightning Fast**: Built with gRPC for speedy communication
-- **Rock Solid**: Extensive test coverage ensures reliability
-- **User Friendly**: Both CLI and GUI options available
-- **Secure**: Built-in authentication and encryption options
-- **Modern**: Uses FUSE for flexible filesystem operations
-- **Cross-Platform**: Linux support (macOS coming soon!)
+- **Lightning Fast**: gRPC streaming plus a persistent client-side cache — after the first read, the bytes don't cross the network again
+- **Resilient**: Sessions and idempotent RPCs keep mounts and open files alive across reconnects and server restarts
+- **Rock Solid**: Extensive unit and end-to-end test coverage
+- **Simple CLI**: `gMountie serve` and `gMountie mount` — a desktop app is in progress
+- **Authenticated**: Built-in basic auth; TLS transport is on the [roadmap](docs/roadmap.md)
+- **FUSE-native**: Real filesystem semantics via FUSE (Linux is the supported target today)
 
 ## Installation 📦
 
-Detailed installation instructions are available in our [documentation](https://gmountie.docs.com).
+Detailed installation instructions and a quick start are in our [documentation](https://docs.gmountie.dev).
 
 ## Documentation 📚
 
-Our comprehensive documentation covers everything you need to know:
+Full documentation lives at **[docs.gmountie.dev](https://docs.gmountie.dev)**. Highlights:
 
-- [Server Configuration](docs/server/config.md)
-- [Client Configuration](docs/client/config.md)
-- [Server CLI Reference](docs/server/cli.md)
-- [Client CLI Reference](docs/client/cli.md)
+- [Quick Start](docs/quickstart.md)
+- [Architecture & Protocol](docs/design/architecture.md)
+- [Caching & Consistency](docs/design/caching-and-consistency.md)
+- [Performance](docs/design/performance.md)
+- [Roadmap](docs/roadmap.md)
+- Configuration & CLI reference — [server](docs/server/config.md) · [client](docs/client/config.md)
 
 ## Architecture 🏗️
 
@@ -67,7 +69,7 @@ We love contributions! Whether it's:
 - 📝 Documentation improvements
 - 🔧 Code contributions
 
-Check out our [Contributing Guide](CONTRIBUTING.md) to get started.
+Open an [issue](https://github.com/gMountie/gMountie/issues) or a pull request to get started. (A dedicated contributing guide is on the way.)
 
 ## Support & Community 💬
 

@@ -193,8 +193,7 @@ See [Caching & Consistency](design/caching-and-consistency.md) for the design, c
 
 6. **Doc fixes.**
    - `docs/server/config.md` and `docs/quickstart.md` use `authentication:` — parser expects `auth:`. Replace.
-   - Add `CONTRIBUTING.md` (linked from `README.md`, currently 404).
-   - Replace the placeholder `https://gmountie.docs.com` in `README.md`.
+   - Add `CONTRIBUTING.md` (the README links to issues/PRs as a stopgap until it exists).
    - Add an "internet deployment" guide (TLS setup, NAT / firewall, expected latencies, cache sizing recommendations).
    - Add an **"alternatives — when not to use gMountie"** page comparing honestly against Tailscale + NFS, rclone mount, SSHFS, and Cloudflare Tunnel + WebDAV.
    - Document the three-service gRPC split intent in the proto files (see Appendix B item 6).
