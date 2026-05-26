@@ -42,6 +42,9 @@ type Readahead struct {
 // chunks in flight or ready ahead of the read cursor. window < 1 is
 // clamped to 1.
 func NewReadahead(chunkSize, threshold, window int) *Readahead {
+	if chunkSize <= 0 {
+		panic("NewReadahead: chunkSize must be > 0")
+	}
 	if window < 1 {
 		window = 1
 	}
@@ -122,13 +125,11 @@ func (r *Readahead) Store(off int64, data []byte) {
 	}
 }
 
-// Serve attempts to satisfy a Read(dest, off) entirely from a ready chunk
-// in the window. It returns (len(dest), true) on a hit, removing the
-// consumed chunk (one-shot consume). On any miss — no ready chunk covers
-// off, or dest is larger than the available data — it returns (0, false).
-//
-// Chunks whose end falls at or before off are also evicted on a miss to
-// prevent stale data accumulation after the caller advances past them.
+// Serve attempts to satisfy a Read(dest, off) entirely from a ready chunk in
+// the window. Returns (len(dest), true) on a hit, removing the consumed chunk
+// (one-shot consume). On any miss — no ready chunk covers off, or dest is
+// larger than the available bytes — it returns (0, false). Stale chunks are
+// evicted by Observe (the sole eviction point); Serve does not evict on a miss.
 func (r *Readahead) Serve(dest []byte, off int64) (int, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

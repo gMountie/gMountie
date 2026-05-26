@@ -156,6 +156,10 @@ func (s *ReadaheadTestSuite) TestDoesNotReArmInflight() {
 	s.Assert().Empty(r.Observe(0, 100))
 }
 
+func (s *ReadaheadTestSuite) TestNewReadaheadPanicsOnZeroChunkSize() {
+	s.Assert().Panics(func() { NewReadahead(0, 1, 4) })
+}
+
 func TestReadaheadSuite(t *testing.T) {
 	suite.Run(t, new(ReadaheadTestSuite))
 }
