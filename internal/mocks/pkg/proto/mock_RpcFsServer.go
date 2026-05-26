@@ -1048,6 +1048,74 @@ func (_c *MockRpcFsServer_Unlink_Call) RunAndReturn(run func(context1 context.Co
 	return _c
 }
 
+// Utimens provides a mock function for the type MockRpcFsServer
+func (_mock *MockRpcFsServer) Utimens(context1 context.Context, utimensRequest *proto.UtimensRequest) (*proto.UtimensReply, error) {
+	ret := _mock.Called(context1, utimensRequest)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Utimens")
+	}
+
+	var r0 *proto.UtimensReply
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.UtimensRequest) (*proto.UtimensReply, error)); ok {
+		return returnFunc(context1, utimensRequest)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.UtimensRequest) *proto.UtimensReply); ok {
+		r0 = returnFunc(context1, utimensRequest)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proto.UtimensReply)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.UtimensRequest) error); ok {
+		r1 = returnFunc(context1, utimensRequest)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockRpcFsServer_Utimens_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Utimens'
+type MockRpcFsServer_Utimens_Call struct {
+	*mock.Call
+}
+
+// Utimens is a helper method to define mock.On call
+//   - context1 context.Context
+//   - utimensRequest *proto.UtimensRequest
+func (_e *MockRpcFsServer_Expecter) Utimens(context1 interface{}, utimensRequest interface{}) *MockRpcFsServer_Utimens_Call {
+	return &MockRpcFsServer_Utimens_Call{Call: _e.mock.On("Utimens", context1, utimensRequest)}
+}
+
+func (_c *MockRpcFsServer_Utimens_Call) Run(run func(context1 context.Context, utimensRequest *proto.UtimensRequest)) *MockRpcFsServer_Utimens_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *proto.UtimensRequest
+		if args[1] != nil {
+			arg1 = args[1].(*proto.UtimensRequest)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFsServer_Utimens_Call) Return(utimensReply *proto.UtimensReply, err error) *MockRpcFsServer_Utimens_Call {
+	_c.Call.Return(utimensReply, err)
+	return _c
+}
+
+func (_c *MockRpcFsServer_Utimens_Call) RunAndReturn(run func(context1 context.Context, utimensRequest *proto.UtimensRequest) (*proto.UtimensReply, error)) *MockRpcFsServer_Utimens_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // mustEmbedUnimplementedRpcFsServer provides a mock function for the type MockRpcFsServer
 func (_mock *MockRpcFsServer) mustEmbedUnimplementedRpcFsServer() {
 	_mock.Called()
