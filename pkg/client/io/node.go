@@ -16,6 +16,7 @@ import (
 	"context"
 	"path"
 	"syscall"
+	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -212,10 +213,12 @@ func (n *gMountieNode) Setattr(ctx context.Context, _ fs.FileHandle, in *fuse.Se
 	return setattrAt(ctx, n.backend, n.path(), in, out)
 }
 
-// setattrAt dispatches on SetAttrIn.Valid flags. The backend has no
-// atime/mtime mutation today, so those bits are silently no-op'd (same
-// as the legacy code). For Chown with only one of uid/gid set, we Stat
-// first to read the unset side, so we don't accidentally overwrite it.
+// setattrAt dispatches on SetAttrIn.Valid flags: size -> Truncate, mode ->
+// Chmod, uid/gid -> Chown, atime/mtime -> Utimens. For Chown with only one of
+// uid/gid set, we Stat first to read the unset side so we don't overwrite it.
+// in.GetATime()/GetMTime() return the resolved concrete time (UTIME_NOW is
+// already resolved to time.Now() by go-fuse); a false ok means the bit was
+// unset (UTIME_OMIT), so that timestamp is passed as nil and left unchanged.
 func setattrAt(ctx context.Context, backend FileSystemBackend, p string, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
 	if sz, ok := in.GetSize(); ok {
 		if st := backend.Truncate(ctx, p, sz); !st.Ok() {
@@ -243,6 +246,20 @@ func setattrAt(ctx context.Context, backend FileSystemBackend, p string, in *fus
 			}
 		}
 		if st := backend.Chown(ctx, p, uid, gid); !st.Ok() {
+			return syscall.Errno(st)
+		}
+	}
+	atime, aok := in.GetATime()
+	mtime, mok := in.GetMTime()
+	if aok || mok {
+		var ap, mp *time.Time
+		if aok {
+			ap = &atime
+		}
+		if mok {
+			mp = &mtime
+		}
+		if st := backend.Utimens(ctx, p, ap, mp); !st.Ok() {
 			return syscall.Errno(st)
 		}
 	}
