@@ -7,6 +7,7 @@ package io
 import (
 	"context"
 	"gmountie/pkg/client/io"
+	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	mock "github.com/stretchr/testify/mock"
@@ -1738,6 +1739,75 @@ func (_c *MockFileSystemBackend_Unlink_Call) Return(status fuse.Status) *MockFil
 }
 
 func (_c *MockFileSystemBackend_Unlink_Call) RunAndReturn(run func(ctx context.Context, path string) fuse.Status) *MockFileSystemBackend_Unlink_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Utimens provides a mock function for the type MockFileSystemBackend
+func (_mock *MockFileSystemBackend) Utimens(ctx context.Context, path string, atime *time.Time, mtime *time.Time) fuse.Status {
+	ret := _mock.Called(ctx, path, atime, mtime)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Utimens")
+	}
+
+	var r0 fuse.Status
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, *time.Time, *time.Time) fuse.Status); ok {
+		r0 = returnFunc(ctx, path, atime, mtime)
+	} else {
+		r0 = ret.Get(0).(fuse.Status)
+	}
+	return r0
+}
+
+// MockFileSystemBackend_Utimens_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Utimens'
+type MockFileSystemBackend_Utimens_Call struct {
+	*mock.Call
+}
+
+// Utimens is a helper method to define mock.On call
+//   - ctx context.Context
+//   - path string
+//   - atime *time.Time
+//   - mtime *time.Time
+func (_e *MockFileSystemBackend_Expecter) Utimens(ctx interface{}, path interface{}, atime interface{}, mtime interface{}) *MockFileSystemBackend_Utimens_Call {
+	return &MockFileSystemBackend_Utimens_Call{Call: _e.mock.On("Utimens", ctx, path, atime, mtime)}
+}
+
+func (_c *MockFileSystemBackend_Utimens_Call) Run(run func(ctx context.Context, path string, atime *time.Time, mtime *time.Time)) *MockFileSystemBackend_Utimens_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 *time.Time
+		if args[2] != nil {
+			arg2 = args[2].(*time.Time)
+		}
+		var arg3 *time.Time
+		if args[3] != nil {
+			arg3 = args[3].(*time.Time)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+		)
+	})
+	return _c
+}
+
+func (_c *MockFileSystemBackend_Utimens_Call) Return(status fuse.Status) *MockFileSystemBackend_Utimens_Call {
+	_c.Call.Return(status)
+	return _c
+}
+
+func (_c *MockFileSystemBackend_Utimens_Call) RunAndReturn(run func(ctx context.Context, path string, atime *time.Time, mtime *time.Time) fuse.Status) *MockFileSystemBackend_Utimens_Call {
 	_c.Call.Return(run)
 	return _c
 }

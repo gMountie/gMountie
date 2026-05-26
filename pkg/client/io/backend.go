@@ -7,6 +7,7 @@ package io
 
 import (
 	"context"
+	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
@@ -140,6 +141,9 @@ type FileSystemBackend interface {
 	Chmod(ctx context.Context, path string, mode uint32) fuse.Status
 	// Chown changes ownership.
 	Chown(ctx context.Context, path string, uid, gid uint32) fuse.Status
+	// Utimens sets atime and/or mtime. A nil pointer leaves that timestamp
+	// unchanged (UTIME_OMIT semantics).
+	Utimens(ctx context.Context, path string, atime, mtime *time.Time) fuse.Status
 
 	// Close releases resources held by the backend. For the gRPC backend
 	// this is a no-op (the connection is owned by the caller); for
