@@ -291,6 +291,49 @@ func (s *ConfigTestSuite) TestParse_LogEnvBindings() {
 	s.Assert().Equal("json", result.Log.Format)
 }
 
+func (s *ConfigTestSuite) TestParse_ReadaheadWindowDefault() {
+	conf := `
+server:
+  address: 127.0.0.1
+  port: 9449
+auth:
+  type: none
+`
+	result, err := LoadConfigFromString(conf)
+	s.Require().NoError(err)
+	s.Assert().Equal(DefaultReadaheadWindow, result.Rpc.ReadaheadWindow)
+	s.Assert().Equal(1, result.Rpc.ReadaheadWindow)
+}
+
+func (s *ConfigTestSuite) TestParse_ReadaheadWindowOverride() {
+	conf := `
+server:
+  address: 127.0.0.1
+  port: 9449
+auth:
+  type: none
+rpc:
+  readahead_window: 12
+`
+	result, err := LoadConfigFromString(conf)
+	s.Require().NoError(err)
+	s.Assert().Equal(12, result.Rpc.ReadaheadWindow)
+}
+
+func (s *ConfigTestSuite) TestParse_ReadaheadWindowRejectsOutOfRange() {
+	conf := `
+server:
+  address: 127.0.0.1
+  port: 9449
+auth:
+  type: none
+rpc:
+  readahead_window: 0
+`
+	_, err := LoadConfigFromString(conf)
+	s.Require().Error(err)
+}
+
 // Test Runner
 func TestConfigTestSuite(t *testing.T) {
 	suite.Run(t, new(ConfigTestSuite))
