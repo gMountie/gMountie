@@ -52,6 +52,11 @@ type PerFileConfig struct {
 	// ReadaheadThreshold is the number of strictly-sequential reads
 	// required before the client arms a prefetch.
 	ReadaheadThreshold int
+	// ReadaheadWindow is how many ReadaheadChunkBytes chunks to keep in
+	// flight or ready ahead of the read cursor. Zero is treated as 1 by
+	// NewReadahead. A window > 1 saturates the WAN link on sequential
+	// reads by issuing multiple concurrent prefetch RPCs.
+	ReadaheadWindow int
 	// WriteCoalesceBytes is the per-fd small-write coalescing threshold.
 	// Zero disables coalescing; small contiguous writes flow straight
 	// through to the streaming Write RPC.
@@ -113,11 +118,14 @@ func WithTimeouts(meta, io time.Duration) ClientOption {
 }
 
 // WithReadahead sets the per-fd readahead parameters used when opening
-// GrpcFile instances. chunkBytes of 0 disables readahead.
-func WithReadahead(chunkBytes, threshold int) ClientOption {
+// GrpcFile instances. chunkBytes of 0 disables readahead. window
+// controls how many chunks are kept in flight or ready ahead of the
+// read cursor; values < 1 are treated as 1 by NewReadahead.
+func WithReadahead(chunkBytes, threshold, window int) ClientOption {
 	return func(c *ClientImpl) {
 		c.perFile.ReadaheadChunkBytes = chunkBytes
 		c.perFile.ReadaheadThreshold = threshold
+		c.perFile.ReadaheadWindow = window
 	}
 }
 
@@ -140,6 +148,7 @@ func NewClient(endpoint string, options ...ClientOption) (Client, error) {
 		perFile: PerFileConfig{
 			ReadaheadChunkBytes: 64 << 10,
 			ReadaheadThreshold:  3,
+			ReadaheadWindow:     1,
 			WriteCoalesceBytes:  1 << 20,
 		},
 	}

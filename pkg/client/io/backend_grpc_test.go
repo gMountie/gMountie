@@ -3,6 +3,7 @@ package io
 import (
 	"context"
 	stdio "io"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -1016,6 +1018,43 @@ func (s *BackendClientTestSuite) TestResolveHandle_ForeignLeafReturnsNil() {
 // TestResolveHandle_NilReturnsNil verifies the nil-safe behaviour.
 func (s *BackendClientTestSuite) TestResolveHandle_NilReturnsNil() {
 	s.Assert().Nil(resolveHandle(nil))
+}
+
+// TestReadFillsPrefetchWindow verifies that a single synchronous Read
+// with a window-3 readahead config causes the backend to issue at least
+// three additional prefetch Read RPCs (the synchronous call plus ≥3
+// prefetch goroutines). The mock uses Maybe() so unfired prefetches do
+// not cause strict-mock teardown failures when Eventually fires early.
+func (s *BackendClientTestSuite) TestReadFillsPrefetchWindow() {
+	const chunkBytes = 64 << 10 // 64 KiB
+	cfg := grpcclient.PerFileConfig{
+		ReadaheadChunkBytes: chunkBytes,
+		ReadaheadThreshold:  1,
+		ReadaheadWindow:     3,
+	}
+	h := s.newHandle(cfg)
+
+	var readCount atomic.Int64
+	s.fileClient.EXPECT().Read(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ *proto.ReadRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[proto.ReadFrame], error) {
+			readCount.Add(1)
+			data := make([]byte, chunkBytes)
+			stub := newBackendReadStreamStub(s.T(),
+				&proto.ReadFrame{Data: data, Status: int32(fuse.OK)},
+				&proto.ReadFrame{Status: int32(fuse.OK)},
+			)
+			return stub, nil
+		}).Maybe()
+
+	dest := make([]byte, chunkBytes)
+	n, st := s.backend.Read(context.Background(), h, 0, dest)
+	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(chunkBytes, n)
+
+	// One synchronous Read + 3 prefetch goroutines = at least 4 total calls.
+	s.Eventually(func() bool {
+		return readCount.Load() >= 4
+	}, time.Second, 10*time.Millisecond, "expected at least 4 Read RPCs (1 sync + 3 prefetch)")
 }
 
 // badHandle is a FileHandle implementation that is not a *grpcFileHandle,
