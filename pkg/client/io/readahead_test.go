@@ -11,58 +11,43 @@ type ReadaheadTestSuite struct {
 }
 
 func (s *ReadaheadTestSuite) TestObserve_SequentialOffsetsTriggerPrefetch() {
-	r := NewReadahead(4096, 3)
+	r := NewReadahead(4096, 3, 1)
 
 	// First two sequential reads do not arm yet.
-	_, ok := r.Observe(0, 4096)
-	s.Require().False(ok)
-	_, ok = r.Observe(4096, 4096)
-	s.Require().False(ok)
+	arm := r.Observe(0, 4096)
+	s.Require().Empty(arm)
+	arm = r.Observe(4096, 4096)
+	s.Require().Empty(arm)
 
 	// Third sequential read meets the threshold.
-	prefetchOff, ok := r.Observe(8192, 4096)
-	s.Require().True(ok, "third sequential observation should arm a prefetch")
-	s.Assert().Equal(int64(12288), prefetchOff)
+	arm = r.Observe(8192, 4096)
+	s.Require().Len(arm, 1, "third sequential observation should arm a prefetch")
+	s.Assert().Equal(int64(12288), arm[0])
 }
 
 func (s *ReadaheadTestSuite) TestObserve_BackwardSeekResetsState() {
-	r := NewReadahead(4096, 3)
+	r := NewReadahead(4096, 3, 1)
 
-	_, _ = r.Observe(0, 4096)
-	_, _ = r.Observe(4096, 4096)
-	_, _ = r.Observe(8192, 4096)
+	r.Observe(0, 4096)
+	r.Observe(4096, 4096)
+	r.Observe(8192, 4096)
 
 	// Backward seek to 0 — must reset seqHits.
-	_, ok := r.Observe(0, 4096)
-	s.Require().False(ok, "backward seek must not immediately re-arm prefetch")
-}
-
-func (s *ReadaheadTestSuite) TestObserve_NoConsecutiveTriggerWhilePrefetchOutstanding() {
-	r := NewReadahead(4096, 3)
-
-	_, _ = r.Observe(0, 4096)
-	_, _ = r.Observe(4096, 4096)
-	prefetchOff, ok := r.Observe(8192, 4096)
-	s.Require().True(ok)
-	s.Require().Equal(int64(12288), prefetchOff)
-
-	// Simulate the prefetch goroutine storing the result.
-	r.Store(12288, make([]byte, 4096))
-
-	// A further sequential observation must NOT trigger another prefetch
-	// while a prefetched buffer is still pending.
-	_, ok = r.Observe(12288, 4096)
-	// Note: Observe(12288, 4096) consumes via lastOffset update — but the
-	// outstanding buffer should still block re-arming.
-	s.Require().False(ok, "must not arm a new prefetch while one is outstanding")
+	arm := r.Observe(0, 4096)
+	s.Require().Empty(arm, "backward seek must not immediately re-arm prefetch")
 }
 
 func (s *ReadaheadTestSuite) TestServe_FullRangeHitReturnsBytesAndConsumesRing() {
-	r := NewReadahead(4096, 3)
+	r := NewReadahead(4096, 3, 1)
 	stored := make([]byte, 4096)
 	for i := range stored {
 		stored[i] = byte(i % 251)
 	}
+	// Arm the slot at 12288 by reaching the threshold with three sequential reads.
+	r.Observe(0, 4096)
+	r.Observe(4096, 4096)
+	arm := r.Observe(8192, 4096)
+	s.Require().Equal([]int64{12288}, arm)
 	r.Store(12288, stored)
 
 	dest := make([]byte, 1024)
@@ -79,8 +64,12 @@ func (s *ReadaheadTestSuite) TestServe_FullRangeHitReturnsBytesAndConsumesRing()
 }
 
 func (s *ReadaheadTestSuite) TestServe_OutOfRangeMisses() {
-	r := NewReadahead(4096, 3)
+	r := NewReadahead(4096, 3, 1)
 	stored := make([]byte, 4096)
+	// Arm the slot at 12288 via three sequential reads.
+	r.Observe(0, 4096)
+	r.Observe(4096, 4096)
+	r.Observe(8192, 4096)
 	r.Store(12288, stored)
 
 	// Offset below the ring.
@@ -102,17 +91,69 @@ func (s *ReadaheadTestSuite) TestServe_OutOfRangeMisses() {
 }
 
 func (s *ReadaheadTestSuite) TestObserve_NonSequentialDropsRing() {
-	r := NewReadahead(4096, 3)
+	r := NewReadahead(4096, 3, 1)
 	stored := make([]byte, 4096)
+	// Arm the slot at 12288 via three sequential reads, then store data.
+	r.Observe(0, 4096)
+	r.Observe(4096, 4096)
+	r.Observe(8192, 4096)
 	r.Store(12288, stored)
 
-	// Non-sequential observation should reset state and drop the ring.
-	_, _ = r.Observe(99999, 4096)
+	// Non-sequential observation should evict the chunk behind the new cursor.
+	r.Observe(99999, 4096)
 
 	dest := make([]byte, 1024)
 	n, hit := r.Serve(dest, 12288)
 	s.Require().False(hit, "ring must be dropped after a non-sequential observation")
 	s.Assert().Equal(0, n)
+}
+
+// --- window tests ---
+
+func (s *ReadaheadTestSuite) TestWindowFillsAheadAndSlides() {
+	r := NewReadahead(100, 1, 4)
+	arm := r.Observe(0, 100)
+	s.Require().Equal([]int64{100, 200, 300, 400}, arm)
+	for _, off := range arm {
+		r.Store(off, make([]byte, 100))
+	}
+	n, hit := r.Serve(make([]byte, 100), 100)
+	s.Require().True(hit)
+	s.Assert().Equal(100, n)
+	arm2 := r.Observe(100, 100)
+	s.Assert().Equal([]int64{500}, arm2)
+}
+
+func (s *ReadaheadTestSuite) TestWindowOneEqualsLegacy() {
+	r := NewReadahead(100, 1, 1)
+	s.Require().Equal([]int64{100}, r.Observe(0, 100))
+	r.Store(100, make([]byte, 100))
+	s.Assert().Empty(r.Observe(0, 100))
+}
+
+func (s *ReadaheadTestSuite) TestNonSequentialDropsWindow() {
+	r := NewReadahead(100, 1, 4)
+	for _, off := range r.Observe(0, 100) {
+		r.Store(off, make([]byte, 100))
+	}
+	s.Assert().Equal([]int64{1100, 1200, 1300, 1400}, r.Observe(1000, 100))
+	_, hit := r.Serve(make([]byte, 100), 100)
+	s.Assert().False(hit)
+}
+
+func (s *ReadaheadTestSuite) TestServeMissWhenDestLargerThanChunk() {
+	r := NewReadahead(100, 1, 4)
+	for _, off := range r.Observe(0, 100) {
+		r.Store(off, make([]byte, 100))
+	}
+	_, hit := r.Serve(make([]byte, 150), 100)
+	s.Assert().False(hit)
+}
+
+func (s *ReadaheadTestSuite) TestDoesNotReArmInflight() {
+	r := NewReadahead(100, 1, 4)
+	r.Observe(0, 100)
+	s.Assert().Empty(r.Observe(0, 100))
 }
 
 func TestReadaheadSuite(t *testing.T) {
