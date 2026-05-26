@@ -472,6 +472,30 @@ func (s *RpcServerTestSuite) TestGetAttrIfChanged_ENOENT() {
 	_ = reply
 }
 
+func (s *RpcServerTestSuite) TestUtimens() {
+	// Setup.
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	ctx := context.Background()
+	mockFs.EXPECT().Utimens("/test/path", mock.Anything, mock.Anything, mock.Anything).Return(fuse.OK)
+	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
+
+	// Test.
+	request := &proto.UtimensRequest{
+		Volume: "testVolume", Path: "/test/path",
+		Mtime:     &proto.FileTime{Sec: 1577836800, Nsec: 0},
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID,
+		RequestId: "test-req-utimens",
+	}
+	reply, err := s.server.Utimens(ctx, request)
+
+	// Verify.
+	s.Require().NoError(err)
+	s.Assert().NotNil(reply)
+	s.Assert().Equal(int32(fuse.OK), reply.Status)
+}
+
 func TestRpcServerTestSuite(t *testing.T) {
 	suite.Run(t, new(RpcServerTestSuite))
 }
