@@ -514,7 +514,7 @@ func (b *BackendClient) Read(ctx context.Context, fh FileHandle, off int64, dest
 	}
 	if h.readahead != nil {
 		if n, hit := h.readahead.Serve(dest, off); hit {
-			if prefetchOff, ok := h.readahead.Observe(off, n); ok {
+			for _, prefetchOff := range h.readahead.Observe(off, n) {
 				go b.doPrefetch(h, prefetchOff)
 			}
 			return n, fuse.OK
@@ -566,7 +566,7 @@ func (b *BackendClient) Read(ctx context.Context, fh FileHandle, off int64, dest
 		return 0, res.status
 	}
 	if h.readahead != nil {
-		if prefetchOff, ok := h.readahead.Observe(off, res.written); ok {
+		for _, prefetchOff := range h.readahead.Observe(off, res.written) {
 			go b.doPrefetch(h, prefetchOff)
 		}
 	}
@@ -1044,7 +1044,7 @@ func newGrpcFileHandle(
 		lifeCancel:        cancel,
 	}
 	if cfg.ReadaheadChunkBytes > 0 && cfg.ReadaheadThreshold > 0 {
-		h.readahead = NewReadahead(cfg.ReadaheadChunkBytes, cfg.ReadaheadThreshold)
+		h.readahead = NewReadahead(cfg.ReadaheadChunkBytes, cfg.ReadaheadThreshold, cfg.ReadaheadWindow)
 	}
 	if cfg.WriteCoalesceBytes > 0 {
 		h.coalescer = NewWriteCoalescer(cfg.WriteCoalesceBytes)
