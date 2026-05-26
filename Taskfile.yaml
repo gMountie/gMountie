@@ -117,11 +117,11 @@ tasks:
   perf:bench:
     desc: 'Run perf benchmarks under test/e2e/perf. Vars: OUT (output file), COUNT (default 5), BENCHTIME (default 10s).'
     vars:
-      OUT: '{{.OUT | default (printf "docs/perf/bench-%s.txt" (now | date "2006-01-02T15-04-05"))}}'
+      OUT: '{{.OUT | default (printf "perf-out/bench-%s.txt" (now | date "2006-01-02T15-04-05"))}}'
       COUNT: '{{.COUNT | default "5"}}'
       BENCHTIME: '{{.BENCHTIME | default "10s"}}'
     cmds:
-      - mkdir -p docs/perf
+      - mkdir -p perf-out
       - |
         set -o pipefail
         go test -run=^$ -bench=. -benchmem -count={{.COUNT}} -benchtime={{.BENCHTIME}} ./test/e2e/perf/ | tee {{.OUT}}
@@ -130,13 +130,13 @@ tasks:
   perf:bench:tcp:
     desc: 'Run perf benchmarks over a real loopback TCP transport (GMOUNTIE_BENCH_TCP=1). Same Vars as perf:bench; bufconn results from perf:bench are not directly comparable.'
     vars:
-      OUT: '{{.OUT | default (printf "docs/perf/bench-tcp-%s.txt" (now | date "2006-01-02T15-04-05"))}}'
+      OUT: '{{.OUT | default (printf "perf-out/bench-tcp-%s.txt" (now | date "2006-01-02T15-04-05"))}}'
       COUNT: '{{.COUNT | default "5"}}'
       BENCHTIME: '{{.BENCHTIME | default "10s"}}'
     env:
       GMOUNTIE_BENCH_TCP: "1"
     cmds:
-      - mkdir -p docs/perf
+      - mkdir -p perf-out
       - |
         set -o pipefail
         go test -run=^$ -bench=. -benchmem -count={{.COUNT}} -benchtime={{.BENCHTIME}} ./test/e2e/perf/ | tee {{.OUT}}
@@ -145,13 +145,13 @@ tasks:
   perf:bench:cache:
     desc: 'Run perf benchmarks with the client-side cache enabled (GMOUNTIE_BENCH_CACHE=1). Same Vars as perf:bench; cache-off results from perf:bench are the natural baseline.'
     vars:
-      OUT: '{{.OUT | default (printf "docs/perf/bench-cache-%s.txt" (now | date "2006-01-02T15-04-05"))}}'
+      OUT: '{{.OUT | default (printf "perf-out/bench-cache-%s.txt" (now | date "2006-01-02T15-04-05"))}}'
       COUNT: '{{.COUNT | default "5"}}'
       BENCHTIME: '{{.BENCHTIME | default "10s"}}'
     env:
       GMOUNTIE_BENCH_CACHE: "1"
     cmds:
-      - mkdir -p docs/perf
+      - mkdir -p perf-out
       - |
         set -o pipefail
         go test -run=^$ -bench=. -benchmem -count={{.COUNT}} -benchtime={{.BENCHTIME}} ./test/e2e/perf/ | tee {{.OUT}}
