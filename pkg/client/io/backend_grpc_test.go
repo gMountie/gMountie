@@ -1062,7 +1062,8 @@ func (s *BackendClientTestSuite) TestUtimens() {
 	s.fsClient.EXPECT().Utimens(mock.Anything, mock.MatchedBy(func(req *proto.UtimensRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/test" &&
 			req.Atime == nil && // UTIME_OMIT
-			req.Mtime != nil && req.Mtime.Sec == 1577836800 && req.Mtime.Nsec == 500
+			req.Mtime != nil && req.Mtime.Sec == 1577836800 && req.Mtime.Nsec == 500 &&
+			req.SessionId == "test-session" && req.RequestId != ""
 	})).Return(&proto.UtimensReply{Status: int32(fuse.OK)}, nil)
 
 	st := s.backend.Utimens(context.Background(), "/test", nil, &mtime)
@@ -1074,7 +1075,8 @@ func (s *BackendClientTestSuite) TestUtimens_BothTimes() {
 	mtime := time.Unix(200, 2)
 	s.fsClient.EXPECT().Utimens(mock.Anything, mock.MatchedBy(func(req *proto.UtimensRequest) bool {
 		return req.Atime != nil && req.Atime.Sec == 100 && req.Atime.Nsec == 1 &&
-			req.Mtime != nil && req.Mtime.Sec == 200 && req.Mtime.Nsec == 2
+			req.Mtime != nil && req.Mtime.Sec == 200 && req.Mtime.Nsec == 2 &&
+			req.SessionId == "test-session" && req.RequestId != ""
 	})).Return(&proto.UtimensReply{Status: int32(fuse.OK)}, nil)
 
 	st := s.backend.Utimens(context.Background(), "/test", &atime, &mtime)
