@@ -477,7 +477,13 @@ func (s *RpcServerTestSuite) TestUtimens() {
 	mockFs := new(pathfs2.MockFileSystem)
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	ctx := context.Background()
-	mockFs.EXPECT().Utimens("/test/path", mock.Anything, mock.Anything, mock.Anything).Return(fuse.OK)
+	expectedMtime := time.Unix(1577836800, 0)
+	mockFs.EXPECT().Utimens(
+		"/test/path",
+		(*time.Time)(nil), // atime omitted
+		&expectedMtime,
+		mock.Anything,
+	).Return(fuse.OK)
 	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
 
 	// Test.
