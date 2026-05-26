@@ -26,6 +26,14 @@ both now understood:
 2. **Write — writeback gives +36% then plateaus** at ~50% of the link
    (per-op `streamingWrite` of ~128 KiB WRITEs + kernel writeback depth).
 
+**Writeback correctness — validated.** `test/e2e/fs` writeback suite passes on
+real FUSE (VM): write-then-read-back (3 MiB > one max_write, exercises async
+flush) and truncate-under-writeback both correct; the diagnostic's 64 MiB
+round-trip across a remount confirms close-to-open. One limitation, **pre-existing
+and NOT writeback-specific**: `node.go` `setattrAt` drops `FATTR_MTIME` (gMountie
+has no `utimens`/mtime-mutation RPC at all), so explicit `utimes` and the kernel's
+mtime-on-flush are no-ops — a separate future `Utimens` RPC, unchanged by this work.
+
 **Deferred saturation lever (separate follow-up, not this spec):** rework the
 readahead to large chunks (e.g. 1 MiB Read RPCs) with a **partial-consume**
 `Serve` (serve sub-ranges, keep the chunk until drained) + deep window, and dig
