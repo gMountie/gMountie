@@ -1057,6 +1057,53 @@ func (s *BackendClientTestSuite) TestReadFillsPrefetchWindow() {
 	}, time.Second, 10*time.Millisecond, "expected at least 4 Read RPCs (1 sync + 3 prefetch)")
 }
 
+func (s *BackendClientTestSuite) TestUtimens() {
+	mtime := time.Unix(1577836800, 500) // 2020-01-01, 500ns
+	s.fsClient.EXPECT().Utimens(mock.Anything, mock.MatchedBy(func(req *proto.UtimensRequest) bool {
+		return req.Volume == "testVolume" && req.Path == "/test" &&
+			req.Atime == nil && // UTIME_OMIT
+			req.Mtime != nil && req.Mtime.Sec == 1577836800 && req.Mtime.Nsec == 500
+	})).Return(&proto.UtimensReply{Status: int32(fuse.OK)}, nil)
+
+	st := s.backend.Utimens(context.Background(), "/test", nil, &mtime)
+	s.Require().Equal(fuse.OK, st)
+}
+
+func (s *BackendClientTestSuite) TestUtimens_BothTimes() {
+	atime := time.Unix(100, 1)
+	mtime := time.Unix(200, 2)
+	s.fsClient.EXPECT().Utimens(mock.Anything, mock.MatchedBy(func(req *proto.UtimensRequest) bool {
+		return req.Atime != nil && req.Atime.Sec == 100 && req.Atime.Nsec == 1 &&
+			req.Mtime != nil && req.Mtime.Sec == 200 && req.Mtime.Nsec == 2
+	})).Return(&proto.UtimensReply{Status: int32(fuse.OK)}, nil)
+
+	st := s.backend.Utimens(context.Background(), "/test", &atime, &mtime)
+	s.Require().Equal(fuse.OK, st)
+}
+
+func (s *BackendClientTestSuite) TestUtimens_Error() {
+	s.fsClient.EXPECT().Utimens(mock.Anything, mock.Anything).Return(nil, context.DeadlineExceeded)
+	st := s.backend.Utimens(context.Background(), "/test", nil, nil)
+	s.Assert().Equal(fuse.EIO, st)
+}
+
+// Protective property: a cancelled FUSE request ctx must NOT abort the in-flight
+// idempotent metadata RPC. Assert the RPC receives a non-cancelled ctx rather
+// than a specific error value (the real cancellation error from retry-go does
+// not match a clean codes.Canceled, so an error-shape assertion would pass in a
+// mock while the real path still failed).
+func (s *BackendClientTestSuite) TestUtimens_CancelledParentDoesNotAbortRPC() {
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+	s.fsClient.EXPECT().Utimens(
+		mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() == nil }),
+		mock.Anything,
+	).Return(&proto.UtimensReply{Status: int32(fuse.OK)}, nil)
+
+	st := s.backend.Utimens(parent, "/test", nil, nil)
+	s.Require().Equal(fuse.OK, st)
+}
+
 // badHandle is a FileHandle implementation that is not a *grpcFileHandle,
 // used to exercise the type-assertion guard on fd-level ops. Unwrap
 // returns the receiver (leaf marker) so resolveHandle's walk terminates
