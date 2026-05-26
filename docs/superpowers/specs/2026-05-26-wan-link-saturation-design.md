@@ -1,30 +1,35 @@
 # WAN link saturation (SP4): writeback cache + readahead window
 
 **Date:** 2026-05-26
-**Status:** read-half implemented; **measured A = a modest ~+35% WAN win, NOT link
-saturation** — shipping the modest win, saturation deferred (see "Measured
-result"). Read-half code (config knob + N-deep window) is done and reviewed.
+**Status:** implemented; **the WRITE win (writeback) is strong and near-saturating
+(+50%); the READ win (readahead window) does NOT hold up — it regresses in the
+perf harness and is deferred to a partial-consume redesign.** The optimized perf
+suite (`*Opt` benchmarks) tracks both configs in Bencher.
 
-## Measured result (VM, 50ms RTT / 100Mbit ≈ 11.9 MiB/s ceiling, cache off)
+## Measured result — through the perf harness (VM, `GMOUNTIE_BENCH_TCP`, 50ms RTT / 100Mbit ≈ 11.9 MiB/s)
 
-| WAN 64 MiB | baseline | SP4-A (best cfg) | vs ceiling |
+| WAN 64 MiB (bench) | baseline | Opt (writeback + window 16 × 256KiB) | verdict |
 |---|---|---|---|
-| SeqRead | 5.2 MiB/s | **7.0 MiB/s (+35%)** | ~59% |
-| SeqWrite | 4.36 MiB/s | **5.95 MiB/s (+36%)** | ~50% |
+| **SeqWrite** | 6.84 MB/s | **10.28 MB/s (+50%, ~86% of ceiling)** | **win — ship** |
+| **SeqRead** | 3.36 MB/s | **2.96 MB/s (−12%)** | **regresses — defer** |
 
-**A is a real but modest win; it does not saturate the link.** Two ceilings,
-both now understood:
+**Write (writeback): a strong, near-saturating win — keep + recommend (opt-in).**
 
-1. **Read — the readahead's one-shot-whole-chunk `Serve`.** It consumes the
-   entire prefetched chunk on the first (sub-chunk) FUSE read, so a chunk larger
-   than the FUSE read size is mostly wasted and the following reads miss +
-   re-fetch synchronously. Consequence: `readahead_chunk_bytes` **must be set ≈
-   the FUSE read size** (~128 KiB) for the window to help at all — which forces
-   many small Read RPCs whose per-RPC overhead caps read throughput at ~7 MiB/s
-   even with a deep (16) window. **Recommended WAN read config:**
-   `readahead_chunk_bytes: 131072`, `readahead_window: 16`, `readahead_threshold: 2`.
-2. **Write — writeback gives +36% then plateaus** at ~50% of the link
-   (per-op `streamingWrite` of ~128 KiB WRITEs + kernel writeback depth).
+**Read (readahead window): does NOT robustly help; it regresses in the bench.**
+The deep window's concurrent prefetches do not pipeline effectively on a
+bandwidth-limited link, and the **one-shot-whole-chunk `Serve`** wastes any chunk
+larger than a single FUSE read (so a deep window of large chunks fetches data
+the consumer never serves from). An earlier *ad-hoc* fio run showed a fragile
++35% read at `chunk=128KiB` — but the organized bench (the authoritative
+measurement) shows the window regressing. **Conclusion: the readahead window is
+not a read win as implemented.** It needs the **partial-consume `Serve`
+redesign** (large Read RPCs, serve sub-ranges, keep the chunk until drained) +
+an investigation into why the deep window's prefetches don't overlap. Until then,
+**leave `readahead_window` at its default 1** (the deep window can hurt); the
+knob ships, but is not recommended for reads yet.
+
+**Recommended WAN config (current):** `writeback_cache: true` (the real win);
+`readahead_window: 1` (default — do NOT deepen until the partial-consume redesign).
 
 **Writeback correctness — validated.** `test/e2e/fs` writeback suite passes on
 real FUSE (VM): write-then-read-back (3 MiB > one max_write, exercises async
