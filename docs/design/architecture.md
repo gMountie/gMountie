@@ -278,21 +278,20 @@ rather than ratio.
 
 ## 9. What this protocol intentionally does not do
 
-- **No streaming I/O.** A 4 MiB unary ceiling applies to `Read`/`Write`
-  today; very large reads/writes are chunked client-side. Streaming
-  RPCs are planned (see roadmap).
-- **No client-side cache.** Every `GetAttr` and every `Read` traverses
-  the wire today. A path-keyed attribute and content cache is a
-  headline future feature.
-- **No bidirectional RPCs from server to client.** The server cannot
-  push cache invalidations or attribute changes; consistency is
-  request-time only. Adding a server-push channel is a known need for
-  any future cache.
+> **Since implemented.** Several items this section originally listed as
+> "not done" have shipped. Streaming `Read`/`Write` (no more 4 MiB
+> ceiling) and frame-size negotiation are documented in
+> [performance.md](performance.md). The client-side cache and the
+> server-push `Subscribe` invalidation channel are documented in
+> [caching-and-consistency.md](caching-and-consistency.md).
+
+The protocol still does not do:
+
 - **No POSIX advisory locks across sessions.** `GetLk`/`SetLk`/`SetLkw`
   exist on the wire and pass through to the loopback FS for a single
   client, but no server-side lock manager coordinates between multiple
-  clients sharing a volume. Multi-client coordination is a Phase 3
-  topic.
+  clients sharing a volume. Multi-client lock coordination is not
+  implemented.
 - **No durable session state.** Sessions live in server memory; server
   restart drops them.
 
