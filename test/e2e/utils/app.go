@@ -138,6 +138,14 @@ func WithFUSEConfig(cfg clientConfig.FUSEConfig) TestOptions {
 	}
 }
 
+// WithReadahead configures the client-side readahead window for the mount
+// (chunk size, sequential-read arming threshold, and in-flight window depth).
+func WithReadahead(chunkBytes, threshold, window int) TestOptions {
+	return func(c *AppTestingContext) {
+		c.clientOptions = append(c.clientOptions, grpcClient.WithReadahead(chunkBytes, threshold, window))
+	}
+}
+
 // WithRandomTestVolume creates random test volume.
 func WithRandomTestVolume(randomfiles bool) TestOptions {
 	return func(c *AppTestingContext) {

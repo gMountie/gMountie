@@ -59,6 +59,36 @@ type benchEnv struct {
 // that the Phase 3 final-review flagged as a follow-up.
 func setupBenchEnv(b *testing.B) *benchEnv {
 	b.Helper()
+	return setupBenchEnvWith(b)
+}
+
+// setupBenchEnvOpt is setupBenchEnv with the SP4-A WAN tuning layered on:
+// the kernel writeback cache and a deep readahead window. Used by the
+// Benchmark*Opt* functions so Bencher tracks the optimized config as a
+// separate series from the default-config baseline benchmarks.
+func setupBenchEnvOpt(b *testing.B) *benchEnv {
+	b.Helper()
+	return setupBenchEnvWith(b,
+		utils.WithFUSEConfig(clientconfig.FUSEConfig{
+			MaxWriteBytes:  clientconfig.DefaultFUSEMaxWriteBytes,
+			MaxBackground:  clientconfig.DefaultFUSEMaxBackground,
+			WritebackCache: true,
+		}),
+		// chunk = the bench read buffer (256 KiB) so each FUSE read consumes
+		// exactly one readahead chunk (the one-shot-consume Serve needs
+		// chunk ~= read size); window 16 covers the WAN bandwidth-delay product.
+		utils.WithReadahead(256<<10, 2, 16),
+	)
+}
+
+// setupBenchEnvWith is the shared implementation underlying setupBenchEnv and
+// setupBenchEnvOpt. It builds the base opts (auth, volume, env-driven TCP and
+// cache config), appends any caller-supplied extra options, and then
+// constructs, starts, and mounts the in-process server + FUSE mount. Both
+// baseline and optimised variants apply the same GMOUNTIE_BENCH_TCP and
+// GMOUNTIE_BENCH_CACHE env handling so they remain apples-to-apples.
+func setupBenchEnvWith(b *testing.B, extra ...utils.TestOptions) *benchEnv {
+	b.Helper()
 
 	opts := []utils.TestOptions{
 		utils.WithBasicAuth("test", "test"),
@@ -83,6 +113,7 @@ func setupBenchEnv(b *testing.B) *benchEnv {
 			NegativeTTL:    2 * time.Second,
 		}))
 	}
+	opts = append(opts, extra...)
 	ctx, err := utils.NewAppTestingContext(opts...)
 	if err != nil {
 		b.Fatalf("NewAppTestingContext: %v", err)
