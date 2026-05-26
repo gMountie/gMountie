@@ -160,6 +160,36 @@ func (s *ReadaheadTestSuite) TestNewReadaheadPanicsOnZeroChunkSize() {
 	s.Assert().Panics(func() { NewReadahead(0, 1, 4) })
 }
 
+func (s *ReadaheadTestSuite) TestObserve_ReadLargerThanChunkArmsNothing() {
+	// chunk=4096, threshold=3, window=1. Each read is 8192 bytes — larger than
+	// one chunk — so Serve can never hit (Serve misses when len(dest) > avail,
+	// and avail <= chunkSize). Observe must therefore never arm a wasted
+	// prefetch, even once the sequential threshold is met.
+	r := NewReadahead(4096, 3, 1)
+
+	s.Require().Empty(r.Observe(0, 8192))
+	s.Require().Empty(r.Observe(8192, 8192))
+	arm := r.Observe(16384, 8192)
+	s.Assert().Empty(arm, "a read larger than one chunk must not arm a prefetch")
+	s.Assert().Empty(r.chunks, "no chunk should be left armed for an unservable read size")
+}
+
+func (s *ReadaheadTestSuite) TestObserve_SingleInFlightNeverExceedsWindowOne() {
+	// Guards an existing invariant the fix must not break: at window=1, across a
+	// sequential servable run, Observe arms at most one chunk per call and the
+	// window never holds more than one chunk. Reads are 4096 (== chunk), so
+	// they are servable and the unservable-skip does not apply.
+	r := NewReadahead(4096, 1, 1)
+
+	off := int64(0)
+	for i := 0; i < 8; i++ {
+		arm := r.Observe(off, 4096)
+		s.Require().LessOrEqual(len(arm), 1, "window=1 must arm at most one prefetch per Observe")
+		s.Require().LessOrEqual(len(r.chunks), 1, "window=1 must never hold more than one chunk")
+		off += 4096
+	}
+}
+
 func TestReadaheadSuite(t *testing.T) {
 	suite.Run(t, new(ReadaheadTestSuite))
 }
