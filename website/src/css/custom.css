@@ -1,13 +1,38 @@
 /**
  * gMountie docs theme — "Bonded Courier".
- * Maps Infima onto the design-system tokens (brand/design-system/colors_and_type.css):
- * ember accent, paper/ink surfaces, Newsreader (display) + Geist (sans) + Geist Mono.
- * A re-skin of the default theme, not a bespoke layout.
+ * Tracks brand/design-system/ui_kits/docs as closely as Docusaurus allows:
+ * ember accent, paper/ink surfaces, Newsreader (display) + Geist (sans) + Geist Mono,
+ * § section headings, signal-colored sidebar/TOC/admonitions, dark terminal code blocks,
+ * and the Pacer mascot card in the TOC.
  */
 
+/* ============================================================
+   Brand tokens (theme-aware) — mirror colors_and_type.css
+   ============================================================ */
 :root {
-  /* Ember — the single bold accent */
-  --ifm-color-primary: #d9641c;
+  --gm-ember: #d9641c;
+  --gm-ember-deep: #b14c12;
+  --gm-ember-soft: #f3b488;
+  --gm-ember-mist: #fbe4cc;
+  --gm-ember-ink: #6e2d08;
+  --gm-paper-0: #fbf8f2;
+  --gm-paper-1: #f4f0e6;
+  --gm-paper-2: #ece6d6;
+  --gm-paper-3: #dfd7c2;
+  --gm-paper-4: #bfb39a;
+  --gm-ink-0: #15120d;
+  --gm-ink-1: #3a3328;
+  --gm-ink-2: #6b6151;
+  --gm-ink-3: #9c927f;
+  --gm-pine: #2f5d50;
+  --gm-pine-soft: #bfd2ca;
+  --gm-wire: #3d6e96;
+  --gm-wire-soft: #bbcedd;
+  --gm-postmark: #9e2f22;
+  --gm-postmark-soft: #e9c0b9;
+
+  /* Infima mapping */
+  --ifm-color-primary: var(--gm-ember);
   --ifm-color-primary-dark: #c35a19;
   --ifm-color-primary-darker: #b85416;
   --ifm-color-primary-darkest: #974514;
@@ -15,36 +40,52 @@
   --ifm-color-primary-lighter: #e08049;
   --ifm-color-primary-lightest: #e9a57b;
 
-  /* Paper (surfaces) + ink (text) */
-  --ifm-background-color: #fbf8f2;
-  --ifm-background-surface-color: #f4f0e6;
-  --ifm-font-color-base: #15120d;
-  --ifm-color-content-secondary: #6b6151;
-  --ifm-color-emphasis-200: #ece6d6;
-  --ifm-color-emphasis-300: #dfd7c2;
-  --ifm-toc-border-color: #dfd7c2;
-  --ifm-hr-border-color: #dfd7c2;
+  --ifm-background-color: var(--gm-paper-0);
+  --ifm-background-surface-color: var(--gm-paper-1);
+  --ifm-font-color-base: var(--gm-ink-0);
+  --ifm-color-content-secondary: var(--gm-ink-2);
+  --ifm-color-emphasis-200: var(--gm-paper-2);
+  --ifm-color-emphasis-300: var(--gm-paper-3);
+  --ifm-toc-border-color: var(--gm-paper-3);
+  --ifm-hr-border-color: var(--gm-paper-3);
 
-  /* Type — Geist body, Newsreader headings, Geist Mono code */
   --ifm-font-family-base: 'Geist', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
   --ifm-heading-font-family: 'Newsreader', 'Iowan Old Style', Georgia, serif;
   --ifm-font-family-monospace: 'Geist Mono', 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
   --ifm-heading-font-weight: 460;
   --ifm-h1-font-size: 2.6rem;
 
-  /* Code surfaces */
   --ifm-code-font-size: 92%;
-  --ifm-code-background: #ece6d6;
+  --ifm-code-background: var(--gm-paper-2);
   --docusaurus-highlighted-code-line-bg: rgba(217, 100, 28, 0.12);
 
-  /* Navbar / footer */
-  --ifm-navbar-background-color: rgba(251, 248, 242, 0.85);
-  --ifm-footer-background-color: #15120d;
+  --ifm-navbar-background-color: color-mix(in oklab, var(--gm-paper-0) 82%, transparent);
+  --ifm-menu-color-active: var(--gm-ember-ink);
 }
 
-/* Dark mode — warm near-black, brighter ember signal */
 [data-theme='dark'] {
-  --ifm-color-primary: #ed7a33;
+  --gm-ember: #ed7a33;
+  --gm-ember-deep: #d9641c;
+  --gm-ember-soft: #f4a36e;
+  --gm-ember-mist: #2a1a0e;
+  --gm-ember-ink: #f4a36e;
+  --gm-paper-0: #0e0c09;
+  --gm-paper-1: #161310;
+  --gm-paper-2: #1f1a14;
+  --gm-paper-3: #2e2820;
+  --gm-paper-4: #4a4232;
+  --gm-ink-0: #f4eedd;
+  --gm-ink-1: #c9c1ab;
+  --gm-ink-2: #8b826e;
+  --gm-ink-3: #5a5240;
+  --gm-pine: #8fb39c;
+  --gm-pine-soft: #1e2e28;
+  --gm-wire: #8fb0cb;
+  --gm-wire-soft: #1a2632;
+  --gm-postmark: #d4736a;
+  --gm-postmark-soft: #2e1814;
+
+  --ifm-color-primary: var(--gm-ember);
   --ifm-color-primary-dark: #ea6b1b;
   --ifm-color-primary-darker: #e26416;
   --ifm-color-primary-darkest: #bb5212;
@@ -52,42 +93,211 @@
   --ifm-color-primary-lighter: #f2935c;
   --ifm-color-primary-lightest: #f6b488;
 
-  --ifm-background-color: #0e0c09;
-  --ifm-background-surface-color: #161310;
-  --ifm-font-color-base: #f4eedd;
-  --ifm-color-content-secondary: #8b826e;
-  --ifm-color-emphasis-200: #1f1a14;
-  --ifm-color-emphasis-300: #2e2820;
-  --ifm-toc-border-color: #2e2820;
-  --ifm-hr-border-color: #2e2820;
+  --ifm-background-color: var(--gm-paper-0);
+  --ifm-background-surface-color: var(--gm-paper-1);
+  --ifm-font-color-base: var(--gm-ink-0);
+  --ifm-color-content-secondary: var(--gm-ink-2);
+  --ifm-color-emphasis-200: var(--gm-paper-2);
+  --ifm-color-emphasis-300: var(--gm-paper-3);
+  --ifm-toc-border-color: var(--gm-paper-3);
+  --ifm-hr-border-color: var(--gm-paper-3);
 
-  --ifm-code-background: #1f1a14;
+  --ifm-code-background: var(--gm-paper-2);
   --docusaurus-highlighted-code-line-bg: rgba(237, 122, 51, 0.15);
 
-  --ifm-navbar-background-color: rgba(14, 12, 9, 0.85);
-  --ifm-footer-background-color: #08070a;
+  --ifm-navbar-background-color: color-mix(in oklab, var(--gm-paper-0) 82%, transparent);
 }
 
-/* Editorial headings — restrained Newsreader weights with brand tracking */
-h1 {
+/* ============================================================
+   Headings — editorial Newsreader, with the § section mark
+   ============================================================ */
+h1 { font-weight: 380; letter-spacing: -0.028em; }
+h2 { font-weight: 420; letter-spacing: -0.02em; }
+
+.markdown h2 {
+  position: relative;
+  padding-left: 0.7em;
+  margin-top: 2.4rem;
+}
+.markdown h2::before {
+  content: '§';
+  position: absolute;
+  left: 0;
+  top: 0.05em;
+  color: var(--gm-ember);
+  font-family: var(--ifm-heading-font-family);
   font-weight: 380;
-  letter-spacing: -0.028em;
 }
-h2 {
-  font-weight: 420;
-  letter-spacing: -0.02em;
+.markdown ul > li::marker { color: var(--gm-ember); }
+
+/* ============================================================
+   Wordmark — live text, ember "g" with the mount-point underline
+   ============================================================ */
+.wordmark {
+  font-family: var(--ifm-heading-font-family);
+  font-weight: 380;
+  letter-spacing: -0.03em;
+  color: var(--ifm-font-color-base);
+  display: inline-flex;
+  align-items: baseline;
+  position: relative;
+  white-space: nowrap;
+  line-height: 1;
+}
+.wordmark .g { color: var(--gm-ember); position: relative; }
+.wordmark .g::after {
+  content: '';
+  position: absolute;
+  left: 8%;
+  right: 12%;
+  bottom: -0.16em;
+  height: 0.08em;
+  background: var(--gm-ember);
+  border-radius: 2px;
 }
 
-/* Sticky header with a subtle blur, matching the design-system header */
+/* ============================================================
+   Navbar — blurred, ember "g" in the title
+   ============================================================ */
 .navbar {
   backdrop-filter: blur(10px) saturate(120%);
   border-bottom: 1px solid var(--ifm-toc-border-color);
 }
+.navbar__title {
+  font-family: var(--ifm-heading-font-family);
+  font-weight: 460;
+  letter-spacing: -0.022em;
+}
+.navbar__title::first-letter { color: var(--gm-ember); }
 
-/* Mono eyebrow feel for sidebar category labels */
-.menu__link--sublist-caret,
-.theme-doc-sidebar-item-category > .menu__list-item-collapsible .menu__link {
+/* ============================================================
+   Sidebar — mono section labels, ember-mist active item
+   ============================================================ */
+.menu__list-item-collapsible > .menu__link,
+.theme-doc-sidebar-item-category-level-1 > .menu__list-item-collapsible > .menu__link {
   font-family: var(--ifm-font-family-monospace);
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   letter-spacing: 0.02em;
+  color: var(--ifm-color-content-secondary);
+}
+.menu__link--active:not(.menu__link--sublist) {
+  background: var(--gm-ember-mist);
+  color: var(--gm-ember-ink);
+  font-weight: 500;
+  box-shadow: inset 2px 0 0 var(--gm-ember);
+}
+
+/* ============================================================
+   Table of contents — ember active + Pacer mascot card
+   ============================================================ */
+.table-of-contents__link--active,
+.table-of-contents__link--active code {
+  color: var(--gm-ember-deep);
+  font-weight: 500;
+}
+[data-theme='dark'] .table-of-contents__link--active { color: var(--gm-ember); }
+
+.pacer-card {
+  margin: 1.75rem 0.5rem 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1.1rem 0.75rem;
+  border: 1px solid var(--ifm-toc-border-color);
+  border-radius: 6px;
+  background: var(--ifm-background-surface-color);
+}
+.pacer-card img { width: 92px; height: auto; }
+.pacer-card p {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--ifm-color-content-secondary);
+}
+.pacer-card a {
+  font-size: 0.75rem;
+  color: var(--gm-ember-deep);
+  font-weight: 500;
+}
+[data-theme='dark'] .pacer-card a { color: var(--gm-ember); }
+
+/* ============================================================
+   Admonitions — map to the kit's signal callouts
+   ============================================================ */
+.theme-admonition { border-radius: 6px; }
+.alert--secondary { /* note */
+  --ifm-alert-background-color: var(--gm-ember-mist);
+  --ifm-alert-border-color: var(--gm-ember);
+  --ifm-alert-foreground-color: var(--gm-ember-ink);
+}
+.alert--info { /* info */
+  --ifm-alert-background-color: var(--gm-wire-soft);
+  --ifm-alert-border-color: var(--gm-wire);
+  --ifm-alert-foreground-color: var(--gm-wire);
+}
+.alert--success { /* tip */
+  --ifm-alert-background-color: var(--gm-pine-soft);
+  --ifm-alert-border-color: var(--gm-pine);
+  --ifm-alert-foreground-color: var(--gm-pine);
+}
+.alert--warning { /* caution */
+  --ifm-alert-background-color: color-mix(in oklab, var(--gm-ember-soft) 35%, var(--ifm-background-surface-color));
+  --ifm-alert-border-color: var(--gm-ember-deep);
+  --ifm-alert-foreground-color: var(--gm-ember-ink);
+}
+.alert--danger { /* danger */
+  --ifm-alert-background-color: var(--gm-postmark-soft);
+  --ifm-alert-border-color: var(--gm-postmark);
+  --ifm-alert-foreground-color: var(--gm-postmark);
+}
+
+/* ============================================================
+   Blockquotes — branded "note" callout. Admonitions don't render in
+   CommonMark .md, so blockquotes carry notes (and render on GitHub too).
+   ============================================================ */
+.markdown blockquote {
+  border-left: 3px solid var(--gm-ember);
+  background: var(--gm-ember-mist);
+  border-radius: 0 6px 6px 0;
+  padding: 0.9rem 1.1rem;
+  color: var(--ifm-font-color-base);
+}
+.markdown blockquote > :last-child { margin-bottom: 0; }
+
+/* ============================================================
+   Code blocks — always the dark terminal look (border tweak;
+   token colors come from the custom Prism theme in the config)
+   ============================================================ */
+.theme-code-block,
+pre[class*='language-'] {
+  border: 1px solid #2e2820;
+}
+
+/* ============================================================
+   Pagination cards + breadcrumbs — mono meta, ember hover
+   ============================================================ */
+.pagination-nav__link {
+  border-color: var(--ifm-toc-border-color);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.pagination-nav__link:hover {
+  border-color: var(--gm-ember);
+  background: var(--ifm-background-surface-color);
+}
+.pagination-nav__sublabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ifm-color-content-secondary);
+}
+.pagination-nav__label { font-family: var(--ifm-heading-font-family); font-weight: 480; }
+
+.breadcrumbs__link {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }

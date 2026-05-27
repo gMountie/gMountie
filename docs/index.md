@@ -6,8 +6,8 @@ slug: /
 hide_title: true
 ---
 
-<p align="center">
-  <img src="/img/wordmark.svg" alt="gMountie" width="320" />
+<p align="center" style="margin: 1.5rem 0 0.5rem;">
+  <span class="wordmark" style="font-size: 64px;"><span class="g">g</span>Mountie</span>
 </p>
 
 **Mount a directory from a remote server and use it like a local folder — over the public internet, no VPN, and without falling apart when the network hiccups.** gMountie is built on [FUSE](https://www.kernel.org/doc/html/latest/filesystems/fuse.html) and [gRPC](https://grpc.io): a `gMountie serve` process exposes folders as named **volumes**, and a `gMountie mount` client mounts one locally and proxies every filesystem call to the server.
