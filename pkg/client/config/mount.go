@@ -27,6 +27,10 @@ type SingleMountConfig struct {
 	Type   MountType `validate:"required"`
 	Path   string    `validate:"required"`
 	Volume string    `validate:"required"`
+	// RawIDs disables server-to-local UID/GID rewriting. When true the kernel
+	// sees the server-side numeric IDs unchanged; useful for backup tools and
+	// admin inspection that need to preserve the original ownership.
+	RawIDs bool `mapstructure:"raw_ids"`
 }
 
 // GetType returns the mount type

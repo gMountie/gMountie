@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"errors"
 	"gmountie/pkg/client/cache/persist"
 	"gmountie/pkg/client/config"
 	"gmountie/pkg/proto"
@@ -31,7 +32,7 @@ func (s *SingleVolumeMounterTestSuite) SetupTest() {
 		MaxWriteBytes:  config.DefaultFUSEMaxWriteBytes,
 		MaxBackground:  config.DefaultFUSEMaxBackground,
 		WritebackCache: config.DefaultFUSEWritebackCache,
-	}, defaultTestCacheConfig())
+	}, defaultTestCacheConfig(), false)
 
 	var err error
 	s.tempDir, err = os.MkdirTemp("", "gmountie-test-*")
@@ -67,6 +68,10 @@ func (s *SingleVolumeMounterTestSuite) SetupTest() {
 	s.client.EXPECT().MetaTimeout().Return(2 * time.Second).Maybe()
 	s.client.EXPECT().IOTimeout().Return(30 * time.Second).Maybe()
 	s.client.EXPECT().SessionID().Return("test-session").Maybe()
+	// WhoAmI is called once per Mount when raw_ids=false. We allow it to fail
+	// (degrade path) so existing tests keep passing without extra per-test setup.
+	s.client.EXPECT().WhoAmI(mock.Anything, mock.Anything).
+		Return(nil, errors.New("test: degrade to raw ids")).Maybe()
 }
 
 func (s *SingleVolumeMounterTestSuite) TearDownTest() {
@@ -172,7 +177,7 @@ func (s *SingleVolumeMounterTestSuite) TestMountFailsWithLockedCacheDir() {
 		MaxWriteBytes:  config.DefaultFUSEMaxWriteBytes,
 		MaxBackground:  config.DefaultFUSEMaxBackground,
 		WritebackCache: config.DefaultFUSEWritebackCache,
-	}, cacheCfg)
+	}, cacheCfg, false)
 	err = m.Mount(volume, s.T().TempDir())
 	s.Require().Error(err)
 	s.Assert().ErrorIs(err, persist.ErrCacheLocked)

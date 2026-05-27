@@ -117,6 +117,7 @@ func (m *VFSVolumeMounterImpl) Mount(volumeName string) error {
 		backend = cache.NewCachedBackend(backend, cache.ConfigFromClient(m.cache), p, m.client.Fs(), volumeName)
 	}
 	m.backends.Store(volumeName, backend)
+	// TODO(phase1b): per-volume identity rewriting for the VFS mounter
 	volRoot := io.NewMountieRoot(backend, nil)
 	ctx := context.Background()
 	parent := &m.root.Inode
