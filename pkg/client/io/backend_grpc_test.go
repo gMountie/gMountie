@@ -938,7 +938,7 @@ func (s *BackendClientTestSuite) TestSetLkw_BadHandleEBADF() {
 // per-op ctx (the same ctx that go-fuse populates via fuse.NewContext
 // on each request) and stamp them onto the outbound proto.Caller. A
 // regression here causes every server-side op to run as the wrong user
-// (UID 0 if AssumeUserMiddleware is active server-side).
+// (UID 0 if the server's identity-bound filesystem is active server-side).
 func (s *BackendClientTestSuite) TestStat_PropagatesCallerFromCtx() {
 	wantUID, wantGID, wantPID := uint32(1234), uint32(5678), uint32(99)
 	ctx := fuse.NewContext(context.Background(), &fuse.Caller{

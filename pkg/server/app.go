@@ -6,7 +6,6 @@ import (
 	"gmountie/pkg/server/controller"
 	"gmountie/pkg/server/grpc"
 	"gmountie/pkg/server/io"
-	"gmountie/pkg/server/io/middleware"
 	"gmountie/pkg/server/metrics"
 	"gmountie/pkg/server/ops"
 	"gmountie/pkg/server/service"
@@ -42,7 +41,8 @@ func NewServerAppContext(cfg *config.Config) *AppContext {
 		log.Log.Warn("register server metrics", zap.Error(err))
 	}
 
-	volumeService := service.NewVolumeService(cfg, service.WithMiddleware(getVolumeMiddleware()...))
+	warnIfIdentityEnforcementUnprivileged()
+	volumeService := service.NewVolumeService(cfg)
 	authService := service.NewAuthServiceFromConfig(cfg.Auth)
 	sessionMgr := service.NewSessionManager(service.SessionManagerOptions{Metrics: m})
 	bus := io.NewLocalEventBus(io.EventBusOptions{
@@ -167,20 +167,17 @@ func Start(ctx context.Context, cfg *config.Config) error {
 	}
 }
 
-// getVolumeMiddleware returns the volume middleware.
-func getVolumeMiddleware() []io.Middleware {
-	m := make([]io.Middleware, 0)
-	// If user is root we can assume the user identity
-	if runtime.GOOS == "linux" && syscall.Getuid() == 0 {
-		m = append(m, middleware.AssumeUserMiddleware)
+// warnIfIdentityEnforcementUnprivileged emits a loud startup warning when the
+// server is running unprivileged on Linux. The per-request identity-bound
+// filesystem (BindIdentity) sets the resolved identity's credentials via
+// setfsuid/setfsgid/setgroups on every op; those calls require root (or
+// CAP_SETUID+CAP_SETGID) and fail with EPERM otherwise, making every
+// filesystem operation fail. We warn rather than refuse to start so local
+// development without privileges remains possible.
+func warnIfIdentityEnforcementUnprivileged() {
+	if runtime.GOOS == "linux" && syscall.Getuid() != 0 {
+		log.Log.Warn("server is not running as root; identity enforcement will fail",
+			zap.String("detail", "per-request setfsuid/setfsgid/setgroups require root "+
+				"(or CAP_SETUID+CAP_SETGID); without them filesystem operations will fail with EPERM"))
 	}
-	// Print middleware
-	names := make([]string, 0, len(m))
-	for _, mw := range m {
-		names = append(names, mw.GetName())
-	}
-	if len(names) > 0 {
-		log.Log.Info("enabled filesystem middlewares", zap.Strings("middlewares", names))
-	}
-	return m
 }
