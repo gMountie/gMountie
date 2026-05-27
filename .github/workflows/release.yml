@@ -114,24 +114,12 @@ jobs:
       env:
         GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
 
-    # Generate and attest an SPDX SBOM for the pushed image (keyless). This is
-    # the SBOM supply-chain consumers look for; goreleaser only SBOMs archives.
-    # Snapshots don't push an image, so this is alpha/production only.
-    # LIMITATION: syft on a multi-arch manifest inspects the runner's platform
-    # (linux/amd64), so the attested SBOM covers amd64 only. arm64 package
-    # coverage is a tracked follow-up (loop syft --platform per-arch).
-    - name: Attest image SBOM
-      if: ${{ github.event.inputs.type == 'alpha' || github.event.inputs.type == 'production' }}
-      run: |
-        set -e
-        tag=$(git describe --tags --abbrev=0)
-        img="ghcr.io/gmountie/gmountie-server:${tag}"
-        echo "generating + attesting SBOM for $img"
-        syft "$img" -o spdx-json=image.spdx.json
-        # --new-bundle-format writes a Sigstore bundle (OCI referrers) instead
-        # of the legacy annotation format, so `cosign verify-attestation` on
-        # current cosign (v3) reads it without extra flags.
-        cosign attest --yes --new-bundle-format --type spdx --predicate image.spdx.json "$img"
+    # No image SBOM attestation: `cosign attest --type spdx --predicate` mangles
+    # the syft SPDX predicate (embeds it as a string on cosign v2, errors on
+    # v3), producing an attestation no cosign version can verify. The per-archive
+    # SBOMs (goreleaser `sboms`) ship as release assets and the image is signed;
+    # an in-registry image SBOM isn't worth the cosign breakage. Revisit with
+    # actions/attest-sbom if it's wanted later.
 
     - name: Push Tags
       if: ${{  github.event.inputs.type == 'alpha' || github.event.inputs.type == 'production' }}
