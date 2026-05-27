@@ -107,14 +107,15 @@ const config = {
         title: 'gMountie',
         logo: {alt: 'gMountie', src: 'img/logo.svg'},
         items: [
-          // Ready for the first version cut; the dropdown stays hidden while only
-          // the "current" version exists.
-          {type: 'docsVersionDropdown', position: 'right'},
+          // Link back to the OSS landing site, like the kit header's "gMountie ↗".
+          {href: 'https://gmountie.dev', label: 'gMountie ↗', position: 'right'},
           {
             href: 'https://github.com/gMountie/gMountie',
             label: 'GitHub',
             position: 'right',
           },
+          // NOTE: re-add `{type: 'docsVersionDropdown', position: 'right'}` here
+          // once the first version is cut (`npm run docusaurus docs:version <v>`).
         ],
       },
       footer: {

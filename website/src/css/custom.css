@@ -171,14 +171,21 @@ h2 { font-weight: 420; letter-spacing: -0.02em; }
 .navbar__title::first-letter { color: var(--gm-ember); }
 
 /* ============================================================
-   Sidebar — mono section labels, ember-mist active item
+   Sidebar — flat uppercase mono section labels (the kit's h6 sections;
+   categories are collapsible:false), ember-mist active item
    ============================================================ */
-.menu__list-item-collapsible > .menu__link,
-.theme-doc-sidebar-item-category-level-1 > .menu__list-item-collapsible > .menu__link {
+.theme-doc-sidebar-item-category-level-1 > .menu__list-item-collapsible > .menu__link,
+.theme-doc-sidebar-item-category-level-1 > .menu__link {
   font-family: var(--ifm-font-family-monospace);
-  font-size: 0.8rem;
-  letter-spacing: 0.02em;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 500;
   color: var(--ifm-color-content-secondary);
+  cursor: default;
+}
+.theme-doc-sidebar-item-category-level-1 > .menu__list-item-collapsible:hover {
+  background: transparent;
 }
 .menu__link--active:not(.menu__link--sublist) {
   background: var(--gm-ember-mist);
@@ -301,3 +308,33 @@ pre[class*='language-'] {
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
+
+/* ============================================================
+   Header "docs" tag, wider search, "On this page" TOC label, H1 size
+   ============================================================ */
+.navbar__title::after {
+  content: 'docs';
+  margin-left: 0.5rem;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.62rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ifm-color-content-secondary);
+}
+.navbar__search-input { width: 14rem; }
+@media (min-width: 997px) {
+  .navbar__search-input:focus { width: 22rem; }
+}
+.table-of-contents__left-border::before {
+  content: 'On this page';
+  display: block;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.62rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ifm-color-content-secondary);
+  margin: 0 0 0.6rem 1rem;
+}
+.markdown h1 { font-size: 2.75rem; }
