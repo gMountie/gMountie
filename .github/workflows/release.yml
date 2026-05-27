@@ -16,6 +16,8 @@ on:
 permissions:
   contents: write
   packages: write
+  # Required for keyless cosign signing (Sigstore/Fulcio OIDC).
+  id-token: write
 
 jobs:
 
@@ -64,6 +66,14 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v4
 
+    # cosign signs release artifacts + images (keyless); syft generates the
+    # SBOMs goreleaser attaches to archives and the image SBOM attested below.
+    - name: Install cosign
+      uses: sigstore/cosign-installer@v3
+
+    - name: Install syft
+      uses: anchore/sbom-action/download-syft@v0
+
     - name: Login to ghcr.io
       uses: docker/login-action@v4
       with:
@@ -88,7 +98,9 @@ jobs:
 
     - name: Set release type
       if: ${{  github.event.inputs.type == 'snapshot' }}
-      run: echo "flags=--snapshot" >> $GITHUB_ENV
+      # --skip=sign: don't keyless-sign throwaway snapshot artifacts (docker
+      # signing already no-ops since snapshots aren't pushed).
+      run: echo "flags=--snapshot --skip=sign" >> $GITHUB_ENV
 
     - name: Run GoReleaser
       uses: goreleaser/goreleaser-action@v7
@@ -96,6 +108,19 @@ jobs:
         args: release --clean ${{ env.flags }}
       env:
         GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+
+    # Generate and attest an SPDX SBOM for the pushed image (keyless). This is
+    # the SBOM supply-chain consumers look for; goreleaser only SBOMs archives.
+    # Snapshots don't push an image, so this is alpha/production only.
+    - name: Attest image SBOM
+      if: ${{ github.event.inputs.type == 'alpha' || github.event.inputs.type == 'production' }}
+      run: |
+        set -e
+        tag=$(git describe --tags --abbrev=0)
+        img="ghcr.io/gmountie/gmountie-server:${tag}"
+        echo "generating + attesting SBOM for $img"
+        syft "$img" -o spdx-json=image.spdx.json
+        cosign attest --yes --type spdx --predicate image.spdx.json "$img"
 
     - name: Push Tags
       if: ${{  github.event.inputs.type == 'alpha' || github.event.inputs.type == 'production' }}
