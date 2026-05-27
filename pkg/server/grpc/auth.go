@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"gmountie/pkg/server/principal"
 	"gmountie/pkg/server/service"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
@@ -30,6 +31,7 @@ func (i *AuthInterceptor) Unary() grpc.UnaryServerInterceptor {
 			return nil, status.Errorf(codes.PermissionDenied, "unauthorized")
 		}
 		ctx = logging.InjectLogField(ctx, "user", user.Username)
+		ctx = principal.WithPrincipal(ctx, user.Username)
 		return handler(ctx, req)
 	}
 }
