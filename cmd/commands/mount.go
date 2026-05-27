@@ -111,6 +111,12 @@ var mountCmd = &cobra.Command{
 			return fmt.Errorf("failed to parse config: %w", err)
 		}
 
+		// raw IDs are enabled by either the --raw-ids flag or `mount.raw_ids`
+		// in the config file (it's opt-in; either source turns it on).
+		if sm, ok := cfg.Mount.(*config.SingleMountConfig); ok && sm.RawIDs {
+			rawIDs = true
+		}
+
 		mountpoint := args[0]
 		// Verify that the mountpoint directory exists
 		if _, err := os.Stat(mountpoint); os.IsNotExist(err) {
