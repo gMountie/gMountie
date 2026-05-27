@@ -27,6 +27,9 @@ type VolumeService interface {
 	// BindIdentity resolves the request's identity for a volume and returns a
 	// per-request identity-bound filesystem wrapping the volume's loopback.
 	BindIdentity(ctx context.Context, volume string, caller *proto.Caller) (pathfs.FileSystem, error)
+	// ResolveIdentity resolves the request's server-side identity for a volume
+	// (principal from ctx for mapped modes; wire caller for passthrough).
+	ResolveIdentity(ctx context.Context, volume string, caller *proto.Caller) (Identity, error)
 }
 
 type VolumeServiceOptions func(*VolumeServiceImpl)
@@ -114,6 +117,12 @@ func (s *VolumeServiceImpl) BindIdentity(ctx context.Context, volume string, cal
 		return nil, err
 	}
 	return io.NewIdentityBoundFS(fs, &io.Identity{Uid: id.Uid, Gid: id.Gid, Gids: id.Gids}), nil
+}
+
+// ResolveIdentity resolves the request's server-side identity for a volume.
+// It is the exported counterpart of resolveIdentity, for use by the WhoAmI handler.
+func (s *VolumeServiceImpl) ResolveIdentity(ctx context.Context, volume string, caller *proto.Caller) (Identity, error) {
+	return s.resolveIdentity(ctx, volume, caller)
 }
 
 // identityEnforceable reports whether the process can change thread credentials
