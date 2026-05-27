@@ -171,9 +171,13 @@ h2 { font-weight: 420; letter-spacing: -0.02em; }
 .navbar__title::first-letter { color: var(--gm-ember); }
 
 /* ============================================================
-   Sidebar — flat uppercase mono section labels (the kit's h6 sections;
-   categories are collapsible:false), ember-mist active item
+   Sidebar — compact list + flat uppercase mono section labels (the kit's
+   h6 sections; categories are collapsible:false), ember-mist active item
    ============================================================ */
+.menu { font-size: 0.8125rem; padding: 0.75rem 0.5rem; }
+.menu__link { padding: 0.28rem 0.5rem; line-height: 1.5; border-radius: 3px; font-weight: 400; }
+.menu__list-item { margin-top: 1px; }
+.theme-doc-sidebar-item-category-level-1 { margin-top: 0.85rem; }
 .theme-doc-sidebar-item-category-level-1 > .menu__list-item-collapsible > .menu__link,
 .theme-doc-sidebar-item-category-level-1 > .menu__link {
   font-family: var(--ifm-font-family-monospace);
@@ -195,8 +199,24 @@ h2 { font-weight: 420; letter-spacing: -0.02em; }
 }
 
 /* ============================================================
-   Table of contents — ember active + Pacer mascot card
+   Table of contents — pinned together with the Pacer card, ember active
    ============================================================ */
+.toc-pinned {
+  position: sticky;
+  top: calc(var(--ifm-navbar-height) + 1.25rem);
+  max-height: calc(100vh - var(--ifm-navbar-height) - 2.5rem);
+  overflow-y: auto;
+  padding-right: 0.4rem;
+}
+/* the inner TOC's own sticky is replaced by .toc-pinned's, so it flows normally */
+.toc-pinned .theme-doc-toc-desktop {
+  position: static;
+  max-height: none;
+  overflow: visible;
+  top: auto;
+  margin-bottom: 0;
+}
+.table-of-contents { font-size: 0.78rem; }
 .table-of-contents__link--active,
 .table-of-contents__link--active code {
   color: var(--gm-ember-deep);
