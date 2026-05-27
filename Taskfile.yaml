@@ -92,6 +92,17 @@ tasks:
     cmds:
       - go test -failfast -v ./...
 
+  test:race:
+    # Race detector over the concurrent logic packages. Trees are listed
+    # explicitly (like the govulncheck job) to exclude ./pkg/ui (Wails 3 alpha,
+    # CGO + GTK/WebKit headers, Phase 8) so this runs without those deps, and to
+    # skip the heavy e2e suite (its correctness is covered by `task test`;
+    # running fio / 1 GiB streaming under -race every run isn't worth the
+    # minutes). Data races live in the server streaming/cache/subscribe and
+    # client IO code, which this covers.
+    cmds:
+      - go test -race -failfast ./cmd/... ./pkg/client/... ./pkg/server/... ./pkg/common/... ./pkg/utils/...
+
   test:coverage:
     cmds:
       # -timeout 15m: go test's default is 10m. The e2e suite (fio + the
