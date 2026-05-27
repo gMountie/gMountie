@@ -5,15 +5,19 @@ import (
 	"testing"
 	"time"
 
+	mockservice "gmountie/internal/mocks/pkg/server/service"
 	"gmountie/pkg/proto"
+	"gmountie/pkg/server/principal"
 	"gmountie/pkg/server/service"
 
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
 
 type SessionControllerTestSuite struct {
 	suite.Suite
 	mgr        service.SessionManager
+	volSvc     *mockservice.MockVolumeService
 	controller *SessionController
 }
 
@@ -21,7 +25,8 @@ func (s *SessionControllerTestSuite) SetupTest() {
 	s.mgr = service.NewSessionManager(service.SessionManagerOptions{
 		GracePeriod: 100 * time.Millisecond,
 	})
-	s.controller = NewSessionController(s.mgr)
+	s.volSvc = mockservice.NewMockVolumeService(s.T())
+	s.controller = NewSessionController(s.mgr, s.volSvc)
 }
 
 func (s *SessionControllerTestSuite) TearDownTest() {
@@ -51,6 +56,18 @@ func (s *SessionControllerTestSuite) TestResumeUnknownSession() {
 		&proto.SessionResumeRequest{SessionId: "ghost"})
 	s.Require().NoError(err)
 	s.Assert().False(reply.Resumed)
+}
+
+func (s *SessionControllerTestSuite) TestWhoAmI() {
+	s.volSvc.EXPECT().ResolveIdentity(mock.Anything, "v", mock.Anything).
+		Return(service.Identity{Principal: "alice", Uid: 1001, Gid: 1001, Gids: []uint32{1001, 2000}}, nil)
+	ctx := principal.WithPrincipal(context.Background(), "alice")
+	reply, err := s.controller.WhoAmI(ctx, &proto.WhoAmIRequest{Volume: "v"})
+	s.Require().NoError(err)
+	s.Equal("alice", reply.Principal)
+	s.Equal(uint32(1001), reply.Uid)
+	s.Equal(uint32(1001), reply.PrimaryGid)
+	s.ElementsMatch([]uint32{1001, 2000}, reply.Gids)
 }
 
 func TestSessionControllerTestSuite(t *testing.T) {
