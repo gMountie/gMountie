@@ -1,0 +1,51 @@
+# Declarative definition of the Bencher dashboard plots for project gmountie.
+#
+# Apply with:  task perf:plots:diff   (dry-run, prints the plan)
+#              task perf:plots:sync    (converge the live dashboard)
+# Implemented by `perfbmf plots sync` (test/e2e/perf/cmd/perfbmf, planner in
+# test/e2e/perf/bmf/plotsync.go). Requires the `bencher` CLI and, for an actual
+# sync, $BENCHER_API_TOKEN (read-only dry-run needs no token on a public project).
+#
+# Why this exists: `bencher plot update` cannot change a plot's benchmark or
+# measure set, and new benchmarks never auto-join a plot — so the dashboard
+# drifts from reality every time a benchmark is added. Here, benchmarks are
+# referenced by NAME GLOB (path.Match, "*" does not cross "/"), so a future
+# SeqReadOpt128MiB is picked up on the next sync with no edit here.
+#
+# Document order == dashboard index (top to bottom). Title is the match key:
+# renaming a plot here is a delete-then-create of that plot.
+
+defaults:
+  branch: master
+  testbed: gmountie-perf-pod
+  window: 315360000 # ~10y in seconds: keep the full history on every plot
+  x_axis: date_time
+
+plots:
+  - title: Sequential throughput (LAN)
+    measure: throughput
+    benchmarks: ["Seq*MiB/lan"] # plain + Opt read/write, all sizes, LAN
+
+  - title: Sequential throughput (WAN)
+    measure: throughput
+    benchmarks: ["Seq*MiB/wan"]
+
+  - title: Metadata latency
+    measure: latency
+    benchmarks: ["Lookup/*", "OpenStatClose/*", "Readdir*/*"]
+
+  - title: Normalized overhead (% of raw)
+    measure: throughput_pct_of_raw
+    benchmarks: ["Seq*MiB/lan", "Seq*MiB/wan"]
+
+  - title: Substrate floor (disk/net MB/s)
+    measure: throughput
+    benchmarks: ["_substrate/disk_seq_*", "_substrate/net_bw_*"]
+
+  - title: Random 4KiB I/O latency
+    measure: latency
+    benchmarks: ["Random*4KiB/*"]
+
+  - title: Random 4KiB I/O throughput
+    measure: throughput
+    benchmarks: ["Random*4KiB/*"]
