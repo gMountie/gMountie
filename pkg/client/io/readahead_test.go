@@ -190,6 +190,23 @@ func (s *ReadaheadTestSuite) TestObserve_SingleInFlightNeverExceedsWindowOne() {
 	}
 }
 
+func (s *ReadaheadTestSuite) TestObserve_PrefetchResumesWhenReadsShrinkBelowChunk() {
+	// Large reads (n > chunkSize) arm nothing (unservable-skip). Once reads
+	// shrink back to <= chunkSize while staying sequential, prefetch must
+	// resume — the unservable-skip preserves sequential continuity, it does
+	// not permanently disable prefetch.
+	r := NewReadahead(4096, 1, 1) // threshold=1: a servable read arms immediately
+
+	// Two large sequential reads — unservable, arm nothing.
+	s.Require().Empty(r.Observe(0, 8192))
+	s.Require().Empty(r.Observe(8192, 8192))
+
+	// Reads shrink to one chunk (servable), still sequential (off == 16384).
+	arm := r.Observe(16384, 4096)
+	s.Require().Len(arm, 1, "prefetch must resume once reads fit within one chunk")
+	s.Assert().Equal(int64(20480), arm[0], "resumed prefetch arms at off+n")
+}
+
 func TestReadaheadSuite(t *testing.T) {
 	suite.Run(t, new(ReadaheadTestSuite))
 }
