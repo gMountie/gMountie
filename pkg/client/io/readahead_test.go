@@ -37,13 +37,12 @@ func (s *ReadaheadTestSuite) TestObserve_BackwardSeekResetsState() {
 	s.Require().Empty(arm, "backward seek must not immediately re-arm prefetch")
 }
 
-func (s *ReadaheadTestSuite) TestServe_FullRangeHitReturnsBytesAndConsumesRing() {
+func (s *ReadaheadTestSuite) TestServe_PartialConsumeRetainsChunk() {
 	r := NewReadahead(4096, 3, 1)
 	stored := make([]byte, 4096)
 	for i := range stored {
 		stored[i] = byte(i % 251)
 	}
-	// Arm the slot at 12288 by reaching the threshold with three sequential reads.
 	r.Observe(0, 4096)
 	r.Observe(4096, 4096)
 	arm := r.Observe(8192, 4096)
@@ -56,11 +55,17 @@ func (s *ReadaheadTestSuite) TestServe_FullRangeHitReturnsBytesAndConsumesRing()
 	s.Require().Equal(1024, n)
 	s.Assert().Equal(stored[:1024], dest)
 
-	// Ring consumed — second Serve must miss.
 	dest2 := make([]byte, 1024)
-	n, hit = r.Serve(dest2, 12288)
-	s.Require().False(hit)
-	s.Assert().Equal(0, n)
+	n, hit = r.Serve(dest2, 12288+1024)
+	s.Require().True(hit, "retained tail must still serve")
+	s.Require().Equal(1024, n)
+	s.Assert().Equal(stored[1024:2048], dest2)
+
+	rest := make([]byte, 2048)
+	_, hit = r.Serve(rest, 12288+2048)
+	s.Require().True(hit)
+	_, hit = r.Serve(make([]byte, 1), 12288)
+	s.Assert().False(hit, "fully drained chunk must be gone")
 }
 
 func (s *ReadaheadTestSuite) TestServe_OutOfRangeMisses() {
@@ -142,7 +147,9 @@ func (s *ReadaheadTestSuite) TestNonSequentialDropsWindow() {
 }
 
 func (s *ReadaheadTestSuite) TestServeMissWhenDestLargerThanChunk() {
-	r := NewReadahead(100, 1, 4)
+	// window=1: only one chunk ever armed, so a 150-byte read across a 100-byte
+	// chunk boundary has no second chunk available and must miss.
+	r := NewReadahead(100, 1, 1)
 	for _, off := range r.Observe(0, 100) {
 		r.Store(off, make([]byte, 100))
 	}
@@ -160,18 +167,11 @@ func (s *ReadaheadTestSuite) TestNewReadaheadPanicsOnZeroChunkSize() {
 	s.Assert().Panics(func() { NewReadahead(0, 1, 4) })
 }
 
-func (s *ReadaheadTestSuite) TestObserve_ReadLargerThanChunkArmsNothing() {
-	// chunk=4096, threshold=3, window=1. Each read is 8192 bytes — larger than
-	// one chunk — so Serve can never hit (Serve misses when len(dest) > avail,
-	// and avail <= chunkSize). Observe must therefore never arm a wasted
-	// prefetch, even once the sequential threshold is met.
-	r := NewReadahead(4096, 3, 1)
-
-	s.Require().Empty(r.Observe(0, 8192))
-	s.Require().Empty(r.Observe(8192, 8192))
-	arm := r.Observe(16384, 8192)
-	s.Assert().Empty(arm, "a read larger than one chunk must not arm a prefetch")
-	s.Assert().Empty(r.chunks, "no chunk should be left armed for an unservable read size")
+func (s *ReadaheadTestSuite) TestObserve_ReadLargerThanChunkArmsWindow() {
+	r := NewReadahead(4096, 1, 2)
+	arm := r.Observe(0, 8192)
+	s.Require().Len(arm, 2, "large read must arm a deep window now")
+	s.Assert().Equal([]int64{8192, 12288}, arm, "arm contiguous chunks ahead of cursor")
 }
 
 func (s *ReadaheadTestSuite) TestObserve_SingleInFlightNeverExceedsWindowOne() {
@@ -190,21 +190,47 @@ func (s *ReadaheadTestSuite) TestObserve_SingleInFlightNeverExceedsWindowOne() {
 	}
 }
 
-func (s *ReadaheadTestSuite) TestObserve_PrefetchResumesWhenReadsShrinkBelowChunk() {
-	// Large reads (n > chunkSize) arm nothing (unservable-skip). Once reads
-	// shrink back to <= chunkSize while staying sequential, prefetch must
-	// resume — the unservable-skip preserves sequential continuity, it does
-	// not permanently disable prefetch.
-	r := NewReadahead(4096, 1, 1) // threshold=1: a servable read arms immediately
+func (s *ReadaheadTestSuite) TestObserve_DeepWindowArmsForLargeReads() {
+	r := NewReadahead(1<<20, 1, 4)
+	arm := r.Observe(0, 1<<20)
+	s.Require().Len(arm, 4, "deep window armed ahead of the cursor")
+	s.Assert().Equal(int64(1<<20), arm[0])
+	s.Assert().Equal(int64(4<<20), arm[3])
+}
 
-	// Two large sequential reads — unservable, arm nothing.
-	s.Require().Empty(r.Observe(0, 8192))
-	s.Require().Empty(r.Observe(8192, 8192))
+func (s *ReadaheadTestSuite) TestServe_CrossChunkHitSpansContiguousChunks() {
+	r := NewReadahead(4096, 1, 4)
+	arm := r.Observe(0, 4096)
+	s.Require().Contains(arm, int64(4096))
+	s.Require().Contains(arm, int64(8192))
+	c0 := make([]byte, 4096)
+	c1 := make([]byte, 4096)
+	for i := range c0 {
+		c0[i] = byte(i % 251)
+		c1[i] = byte((i + 7) % 251)
+	}
+	r.Store(4096, c0)
+	r.Store(8192, c1)
 
-	// Reads shrink to one chunk (servable), still sequential (off == 16384).
-	arm := r.Observe(16384, 4096)
-	s.Require().Len(arm, 1, "prefetch must resume once reads fit within one chunk")
-	s.Assert().Equal(int64(20480), arm[0], "resumed prefetch arms at off+n")
+	dest := make([]byte, 4096)
+	n, hit := r.Serve(dest, 6144)
+	s.Require().True(hit, "read spanning two contiguous ready chunks must hit")
+	s.Require().Equal(4096, n)
+	s.Assert().Equal(c0[2048:], dest[:2048])
+	s.Assert().Equal(c1[:2048], dest[2048:])
+}
+
+func (s *ReadaheadTestSuite) TestServe_MissWhenNextChunkNotReady() {
+	r := NewReadahead(4096, 1, 4)
+	r.Observe(0, 4096)
+	r.Store(4096, make([]byte, 4096))
+	dest := make([]byte, 4096+10)
+	n, hit := r.Serve(dest, 4096)
+	s.Assert().False(hit)
+	s.Assert().Equal(0, n)
+	d2 := make([]byte, 4096)
+	_, hit = r.Serve(d2, 4096)
+	s.Assert().True(hit, "a miss must leave the ready chunk intact")
 }
 
 func TestReadaheadSuite(t *testing.T) {

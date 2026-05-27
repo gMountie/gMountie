@@ -4,10 +4,13 @@ import "sync"
 
 // raChunk is a single prefetch slot: the file offset at which the fetch
 // was issued and the bytes returned. data is nil while the fetch is in
-// flight; non-nil means the chunk is ready to serve.
+// flight; non-nil means the chunk is ready to serve. consumed tracks how
+// many bytes from the front of data have already been served, allowing
+// partial reads to retain the tail for the next Serve call.
 type raChunk struct {
-	off  int64
-	data []byte
+	off      int64
+	data     []byte
+	consumed int // bytes already served from the front of data (partial consume)
 }
 
 // Readahead is per-fd state for client-side sequential-read prefetch.
@@ -86,23 +89,17 @@ func (r *Readahead) Observe(off int64, n int) []int64 {
 	next := off + int64(n)
 	kept := r.chunks[:0]
 	for _, c := range r.chunks {
-		if c.off+int64(r.chunkSize) > next {
+		endOff := c.off + int64(r.chunkSize)
+		if c.data != nil {
+			endOff = c.off + int64(len(c.data))
+		}
+		if endOff > next {
 			kept = append(kept, c)
 		}
 	}
 	r.chunks = kept
 
 	if r.seqHits < r.threshold {
-		return nil
-	}
-
-	// A single chunk can never satisfy a read larger than itself, so Serve can
-	// never hit for this access pattern. Arming a prefetch here is pure waste:
-	// the chunk would be evicted on the next read before it is ever served,
-	// then re-armed — repeating every read. Leave the window empty until the
-	// reads fit within one chunk. The real win for large-buffer readers is the
-	// SP5 partial-consume redesign, not this prefetch.
-	if n > r.chunkSize {
 		return nil
 	}
 
@@ -135,29 +132,78 @@ func (r *Readahead) Store(off int64, data []byte) {
 	}
 }
 
-// Serve attempts to satisfy a Read(dest, off) entirely from a ready chunk in
-// the window. Returns (len(dest), true) on a hit, removing the consumed chunk
-// (one-shot consume). On any miss — no ready chunk covers off, or dest is
-// larger than the available bytes — it returns (0, false). Stale chunks are
-// evicted by Observe (the sole eviction point); Serve does not evict on a miss.
+// Serve attempts to satisfy a Read(dest, off) entirely from ready chunks in
+// the window. It is full-or-miss: if the requested range is not fully covered
+// by contiguous ready chunks it returns (0, false) without modifying any state
+// (side-effect-free on miss). On a hit it copies the bytes, advances the
+// consumed cursor on each touched chunk, and drops any chunk that has been
+// fully consumed. Partially consumed chunks are retained for subsequent calls.
+// Cross-chunk reads are satisfied by spanning contiguous ready chunks.
 func (r *Readahead) Serve(dest []byte, off int64) (int, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	need := int64(len(dest))
+	if need == 0 {
+		return 0, true
+	}
+	end := off + need
+
+	start := -1
 	for i := range r.chunks {
 		c := r.chunks[i]
 		if c.data == nil {
 			continue
 		}
-		end := c.off + int64(len(c.data))
-		if off < c.off || off >= end {
-			continue
+		if c.off+int64(c.consumed) <= off && off < c.off+int64(len(c.data)) {
+			start = i
+			break
 		}
-		if int64(len(dest)) > end-off {
+	}
+	if start == -1 {
+		return 0, false
+	}
+
+	covEnd := r.chunks[start].off + int64(len(r.chunks[start].data))
+	last := start
+	for covEnd < end {
+		next := last + 1
+		if next >= len(r.chunks) {
 			return 0, false
 		}
-		copy(dest, c.data[off-c.off:off-c.off+int64(len(dest))])
-		r.chunks = append(r.chunks[:i], r.chunks[i+1:]...)
-		return len(dest), true
+		c := r.chunks[next]
+		if c.data == nil || c.off != covEnd {
+			return 0, false
+		}
+		covEnd = c.off + int64(len(c.data))
+		last = next
 	}
-	return 0, false
+
+	written := int64(0)
+	for i := start; i <= last; i++ {
+		c := &r.chunks[i]
+		srcStart := int64(0)
+		if i == start {
+			srcStart = off - c.off
+		}
+		take := int64(len(c.data)) - srcStart
+		if take > need-written {
+			take = need - written
+		}
+		copy(dest[written:written+take], c.data[srcStart:srcStart+take])
+		written += take
+		if int(srcStart+take) > c.consumed {
+			c.consumed = int(srcStart + take)
+		}
+	}
+
+	kept := r.chunks[:0]
+	for _, c := range r.chunks {
+		if c.data != nil && c.consumed >= len(c.data) {
+			continue
+		}
+		kept = append(kept, c)
+	}
+	r.chunks = kept
+	return int(written), true
 }
