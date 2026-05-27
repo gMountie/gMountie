@@ -246,7 +246,7 @@ compose hygiene, keyless release signing + SBOMs).
 
 **This phase is deferred but not unbounded.** The internet-deployment goal makes TLS in particular hard to defer indefinitely; treat the start of Phase 7 as "the moment we open the server to a non-trusted network for real."
 
-The known gaps (file:line references in [Appendix A](#appendix-a-known-security-gaps)):
+The known gaps (file:line references in [Appendix A](#appendix-a--known-security-gaps)):
 
 - TLS is advertised but not implemented — every connection is today plaintext.
 - Basic-auth credentials travel in plaintext.
