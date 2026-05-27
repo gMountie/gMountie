@@ -112,6 +112,9 @@ jobs:
     # Generate and attest an SPDX SBOM for the pushed image (keyless). This is
     # the SBOM supply-chain consumers look for; goreleaser only SBOMs archives.
     # Snapshots don't push an image, so this is alpha/production only.
+    # LIMITATION: syft on a multi-arch manifest inspects the runner's platform
+    # (linux/amd64), so the attested SBOM covers amd64 only. arm64 package
+    # coverage is a tracked follow-up (loop syft --platform per-arch).
     - name: Attest image SBOM
       if: ${{ github.event.inputs.type == 'alpha' || github.event.inputs.type == 'production' }}
       run: |
