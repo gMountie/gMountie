@@ -61,7 +61,7 @@ filesystem.
 - Safe handling of client-root per mode; real `no_root_squash` passthrough as
   an explicit option.
 - **Volume confinement** — path resolution that cannot escape the volume root
-  via symlinks or `..` (§3.10). Lands as a prerequisite before identity work.
+  via symlinks or `..` (§3.10). Ships as Phase 2 — after identity, before caps.
 - **Resolver robustness and fail-closed semantics** — injection-safe resolution,
   timeouts, and a defined policy for unresolved principals (§3.11).
 
@@ -221,7 +221,7 @@ correct kernel denial), but it must not silently always-allow.
 - `dac_read` — read/traverse-only bypass. Keep `fsuid=0` but **`capset` the
   thread to drop `CAP_DAC_OVERRIDE`/`FOWNER`/`FSETID` while keeping
   `CAP_DAC_READ_SEARCH`**. Capabilities are per-thread, so this is feasible;
-  the exact `capset` is a Phase 2 task to verify before relying on it.
+  the exact `capset` is a Phase 3 task to verify before relying on it.
 
 Both cap paths require the **server to run as root** (or hold the matching
 Linux file-capabilities) — an accepted precondition.
@@ -329,19 +329,20 @@ same cached rows.
 one principal's view); `entry_timeout`/`attr_timeout` left at FUSE defaults,
 exposed as knobs.
 
-### 3.10 Volume confinement (path-resolution safety) — PREREQUISITE
+### 3.10 Volume confinement (path-resolution safety)
 
 The server's loopback FS is **path-based** and follows symlinks and `..`
 relative to the *server's* root, not the volume root. A client can create
 `evil -> /etc` (or send a `..`-laden path) and the server will operate outside
 the volume. Today this is bounded by the wire UID; once `dac_override` runs at
-`fsuid=0` (Phase 2), it becomes a **remote root-equivalent escape of the entire
+`fsuid=0` (Phase 3), it becomes a **remote root-equivalent escape of the entire
 server box**, not just the volume.
 
-This is an independent, already-latent bug. It **ships as a prerequisite PR
-(Phase 0)** before any identity work, and `dac_override` must not ship until it
-is in place. Confinement is enforced at the path-resolution / `Open` boundary
-(the data path then rides the confined fd, per §3.4):
+This is an independent, already-latent bug. It ships as **Phase 2** — after the
+identity foundation (Phase 1 is safe without it; see §9) but **before** the
+capability phase, and `dac_override` must not ship until it is in place.
+Confinement is enforced at the path-resolution / `Open` boundary (the data path
+then rides the confined fd, per §3.4):
 
 - Resolve every wire path **beneath the volume root** with
   `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)` (Linux ≥5.6), or refactor
@@ -432,7 +433,7 @@ disk / NFS `no_root_squash`.
 - `controller.createContext`: in mapped modes build context from the resolved
   identity; in `passthrough` from the wire caller (with `root_squash` applied).
 - `SessionService.WhoAmI` controller + service plumbing.
-- `pkg/server/io` (Phase 0): confine path resolution to the volume root
+- `pkg/server/io` (Phase 2): confine path resolution to the volume root
   (`openat2(RESOLVE_BENEATH|RESOLVE_NO_MAGICLINKS)` or fd-relative loopback).
 - Config validation: reject `mode: system|static` + `auth: none`; reject
   `passthrough` `no_root_squash` only logs a warning (not a hard error).
@@ -464,21 +465,17 @@ Plus, from discussion: squash default; real passthrough with `root_squash` both
 ways; `WhoAmI` on `SessionService`; admin-via-capability not `sudo`;
 kernel-native enforcement (per-thread `setgroups`); backups via `raw_ids` or
 `passthrough`; capability set = `dac_read` + `dac_override` (`chown_any`
-deferred); server runs as root; volume confinement as the Phase 0 prerequisite.
+deferred); server runs as root; volume confinement as Phase 2 (after identity,
+before caps) per the sequencing chosen 2026-05-27.
 
-## 9. Phasing (one spec, two implementation plans, one PR each)
+## 9. Phasing (one spec, three implementation plans, one PR each)
 
 Per the worktree-per-feature working agreement, each phase is its own worktree
 + PR. The kernel-enforcement pivot removed the user-space evaluator, so the old
 "primary-group-only interim limitation" is **gone** — Phase 1 ships correct
 supplementary-group permissions from the start.
 
-0. **Phase 0 — volume confinement (PREREQUISITE PR, ships first).**
-   - Confine loopback path resolution to the volume root (§3.10). Independent of
-     identity; fixes a latent escape that becomes root-equivalent once
-     `dac_override` exists. **`dac_override` (Phase 2) must not ship before this
-     is merged.**
-1. **Phase 1 — identity foundation + correct permissions (PR 1).**
+1. **Phase 1 — identity foundation + correct permissions (PR 1, ships first).**
    - Config `mapping` schema + validation.
    - `IdentityResolver` (`squash`, `system`, `static`) + `passthrough` wiring
      with `root_squash` knob.
@@ -488,12 +485,22 @@ supplementary-group permissions from the start.
    - `WhoAmI` + client identity cache.
    - Client-side UID/GID rewriting, `raw_ids` option, symbolic names in
      `Owner`.
-2. **Phase 2 — admin capabilities (PR 2).**
+   - **Safe without confinement:** mapped modes ignore the wire uid and the
+     kernel permission-checks as the (unprivileged) principal, so a symlink
+     escape is just a normal `EACCES`. The escape only turns dangerous under
+     `dac_override` (Phase 3).
+2. **Phase 2 — volume confinement (PR 2).**
+   - `ConfinedLoopbackFileSystem` resolving every op beneath the volume root via
+     `openat2(RESOLVE_BENEATH)` (§3.10). Independent of identity; fixes a latent
+     escape. **Must merge before Phase 3.**
+3. **Phase 3 — admin capabilities (PR 3).**
    - `dac_override` (keep `fsuid=0`; `fchown` cap-granted creates to the
      principal) and `dac_read` (selective per-thread `capset` — verify first).
    - `admin_groups` derivation in `system` mode.
+   - **Gated on Phase 2** — `dac_override` at `fsuid=0` over an unconfined
+     loopback would be a remote root-equivalent escape.
 
-On Phase 2 ship, fold the durable record into
+On Phase 3 ship, fold the durable record into
 `docs/design/identity-and-permissions.md` and prune this transient spec.
 
 ## 10. Testing
@@ -505,7 +512,7 @@ On Phase 2 ship, fold the durable record into
 - **Resolver unit tests** (testify suites): each mode maps a principal to the
   expected identity; `system` against a fixture NSS lookup; `passthrough`
   root_squash both ways.
-- **Confinement (Phase 0):** symlink-escape (`evil -> /etc/passwd`) and `..`
+- **Confinement (Phase 2):** symlink-escape (`evil -> /etc/passwd`) and `..`
   traversal attempts are rejected; a symlink *within* the volume still resolves.
 - **Resolver failure policy:** unknown principal → `EACCES` (fail closed);
   `mode: system|static` + `auth: none` → server refuses to start; a simulated
@@ -528,7 +535,7 @@ threads). Per-thread credential changes use raw syscalls only.
 ## 11. Deferred / open questions
 
 - **`chown_any` capability** — deferred; `dac_override` covers the admin case.
-- **POSIX advisory locks** (`SetLk`/`GetLk`) — Phase 3, needs a reconnect
+- **POSIX advisory locks** (`SetLk`/`GetLk`) — a later phase, needs a reconnect
   recovery story.
 - **Readdirplus** — independent perf win, ship separately.
 - **Multi-user mounts (`allow_other`)** — single-user is the only supported
