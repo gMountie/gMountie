@@ -311,7 +311,12 @@ func (r *RpcServerImpl) Compound(ctx context.Context, request *proto.CompoundReq
 }
 
 func (r *RpcServerImpl) GetAttrIfChanged(ctx context.Context, request *proto.GetAttrIfChangedRequest) (*proto.GetAttrIfChangedReply, error) {
-	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
+	// Identity-bound like GetAttr: this serves file attrs to the client, so it
+	// must enforce the principal's permissions — otherwise a client could skip
+	// the identity-checked GetAttr and read metadata by polling here. Nil caller:
+	// mapped modes use the ctx principal; passthrough degrades to anon for this
+	// cache-revalidation stat (the request carries no Caller field).
+	fs, err := r.fsService.BindIdentity(ctx, request.Volume, nil)
 	if err != nil {
 		return nil, err
 	}

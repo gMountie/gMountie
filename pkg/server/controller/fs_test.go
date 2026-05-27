@@ -411,11 +411,9 @@ func (s *RpcServerTestSuite) TestUnlinkEmitsDeletedEvent() {
 }
 
 func (s *RpcServerTestSuite) TestGetAttrIfChanged_NotModified() {
-	// Setup. GetAttr (a path op) binds identity; GetAttrIfChanged is
-	// identity-agnostic and resolves the FS via GetVolumeFileSystem.
+	// Setup. Both GetAttr and GetAttrIfChanged are identity-bound path ops.
 	mockFs := new(pathfs2.MockFileSystem)
 	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	ctx := context.Background()
 
 	// Mock GetAttr to return an attr with a specific version.
@@ -455,7 +453,7 @@ func (s *RpcServerTestSuite) TestGetAttrIfChanged_NotModified() {
 func (s *RpcServerTestSuite) TestGetAttrIfChanged_Changed() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	ctx := context.Background()
 
 	attr := &fuse.Attr{
@@ -481,7 +479,7 @@ func (s *RpcServerTestSuite) TestGetAttrIfChanged_Changed() {
 func (s *RpcServerTestSuite) TestGetAttrIfChanged_ENOENT() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	ctx := context.Background()
 
 	mockFs.EXPECT().GetAttr("/no-such.bin", mock.Anything).Return((*fuse.Attr)(nil), fuse.ENOENT)
