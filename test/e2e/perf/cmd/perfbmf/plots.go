@@ -43,9 +43,21 @@ func plots(args []string) {
 		fail("%v", err)
 	}
 
+	// Fetch measures once: they feed both the plot resolver (name/slug -> uuid)
+	// and the measure-units planner.
+	measures := listMeasures(*project)
+	measMap := make(map[string]string, 2*len(measures))
+	for _, m := range measures {
+		if m.Name != "" {
+			measMap[m.Name] = m.UUID
+		}
+		if m.Slug != "" {
+			measMap[m.Slug] = m.UUID
+		}
+	}
 	nm := bmf.NameMaps{
 		Benchmarks: listNameMap(*project, "benchmark"),
-		Measures:   listNameMap(*project, "measure"),
+		Measures:   measMap,
 		Branches:   listNameMap(*project, "branch"),
 		Testbeds:   listNameMap(*project, "testbed"),
 	}
@@ -55,15 +67,45 @@ func plots(args []string) {
 	if err != nil {
 		fail("%v", err)
 	}
-
+	measureActions, err := bmf.PlanMeasures(sp.Measures, measures)
+	if err != nil {
+		fail("%v", err)
+	}
 	actions := bmf.Plan(desired, actual, *prune)
+
+	printMeasurePlan(measureActions)
 	printPlan(actions)
 
 	if *dryRun {
 		fmt.Println("\n(dry-run; no changes applied)")
 		return
 	}
+	applyMeasures(*project, measureActions)
 	applyPlan(*project, actions)
+}
+
+func printMeasurePlan(actions []bmf.MeasureAction) {
+	if len(actions) == 0 {
+		return
+	}
+	fmt.Println("Measures:")
+	for _, a := range actions {
+		if a.Kind == bmf.MeasureUpdateUnits {
+			fmt.Printf("  %-6s %-24s %q -> %q\n", a.Kind, a.Key, a.From, a.To)
+		} else {
+			fmt.Printf("  %-6s %-24s %q\n", a.Kind, a.Key, a.To)
+		}
+	}
+	fmt.Println()
+}
+
+func applyMeasures(project string, actions []bmf.MeasureAction) {
+	for _, a := range actions {
+		if a.Kind == bmf.MeasureUpdateUnits {
+			bencherOut("measure", "update", project, a.UUID, "--units", a.To)
+			fmt.Printf("  applied UNITS  %s -> %q\n", a.Key, a.To)
+		}
+	}
 }
 
 func printPlan(actions []bmf.Action) {
@@ -184,4 +226,12 @@ func listPlots(project string) []bmf.Plot {
 		fail("decode plot list: %v", err)
 	}
 	return ps
+}
+
+func listMeasures(project string) []bmf.Measure {
+	var ms []bmf.Measure
+	if err := json.Unmarshal(bencherOut("measure", "list", project, "--per-page", "255"), &ms); err != nil {
+		fail("decode measure list: %v", err)
+	}
+	return ms
 }

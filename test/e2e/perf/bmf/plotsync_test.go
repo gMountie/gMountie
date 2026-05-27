@@ -233,3 +233,53 @@ func (s *PlotSyncSuite) TestPlanAssignsIndexFromSpecOrder() {
 	s.Equal(0, actions[0].Index)
 	s.Equal(1, actions[1].Index)
 }
+
+// --- measure planner ---
+
+func (s *PlotSyncSuite) liveMeasures() []Measure {
+	return []Measure{
+		{UUID: "m-thru", Name: "Throughput", Slug: "throughput", Units: "megabytes / second (MB/s)"},
+		{UUID: "m-pct", Name: "throughput_pct_of_raw", Slug: "throughput-pct-of-raw", Units: "Measure (units)"},
+	}
+}
+
+func (s *PlotSyncSuite) TestPlanMeasuresNoopWhenUnitsMatch() {
+	got, err := PlanMeasures(map[string]string{"throughput": "megabytes / second (MB/s)"}, s.liveMeasures())
+	s.Require().NoError(err)
+	s.Require().Len(got, 1)
+	s.Equal(MeasureNoop, got[0].Kind)
+}
+
+func (s *PlotSyncSuite) TestPlanMeasuresUpdatesWhenUnitsDiffer() {
+	got, err := PlanMeasures(map[string]string{"throughput_pct_of_raw": "percent of raw ceiling (%)"}, s.liveMeasures())
+	s.Require().NoError(err)
+	s.Require().Len(got, 1)
+	s.Equal(MeasureUpdateUnits, got[0].Kind)
+	s.Equal("m-pct", got[0].UUID) // resolved by name
+	s.Equal("Measure (units)", got[0].From)
+	s.Equal("percent of raw ceiling (%)", got[0].To)
+}
+
+func (s *PlotSyncSuite) TestPlanMeasuresResolvesBySlug() {
+	// key given as the dash-slug rather than the underscore name.
+	got, err := PlanMeasures(map[string]string{"throughput-pct-of-raw": "x"}, s.liveMeasures())
+	s.Require().NoError(err)
+	s.Equal("m-pct", got[0].UUID)
+}
+
+func (s *PlotSyncSuite) TestPlanMeasuresUnknownIsError() {
+	_, err := PlanMeasures(map[string]string{"bogus": "x"}, s.liveMeasures())
+	s.Require().Error(err)
+	s.Contains(err.Error(), "unknown measure")
+}
+
+func (s *PlotSyncSuite) TestPlanMeasuresIsDeterministic() {
+	desired := map[string]string{"throughput": "a", "throughput_pct_of_raw": "b"}
+	first, err := PlanMeasures(desired, s.liveMeasures())
+	s.Require().NoError(err)
+	for i := 0; i < 5; i++ {
+		again, err := PlanMeasures(desired, s.liveMeasures())
+		s.Require().NoError(err)
+		s.Equal(first, again) // sorted-key iteration -> stable order
+	}
+}

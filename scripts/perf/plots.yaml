@@ -25,6 +25,17 @@ defaults:
   window: 315360000 # ~10y in seconds: keep the full history on every plot
   x_axis: date_time
 
+# Display units per measure (keyed by measure name or slug). Bencher auto-creates
+# each measure from the BMF report with the placeholder unit "Measure (units)";
+# pinning them here keeps the chart axes correct and declarative. Every value the
+# harness emits is in these units — see report.go (b.SetBytes -> MB/s, ns/op, etc.).
+measures:
+  latency: "nanoseconds (ns)"
+  throughput: "megabytes / second (MB/s)"
+  throughput_pct_of_raw: "percent of raw ceiling (%)"
+  iops: "operations / second (IOPS)"
+  ops_per_sec: "operations / second (ops/s)"
+
 plots:
   # --- sequential throughput (MB/s), one direction per link ---
   - title: Sequential read throughput (LAN)
