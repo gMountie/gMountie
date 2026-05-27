@@ -8,34 +8,39 @@ pruned (per the doc-organization working agreement).
 
 ## 0. What changed since the 2026-05-14 draft
 
-The original draft predates several things that have since shipped and which
-this revision reconciles:
+The original draft predates several things that have since shipped, and one of
+its foundational assumptions turned out to be false:
 
 - **Sessions exist.** `SessionService` (`Create`/`Resume`/`Keepalive`,
-  `pkg/server/service/session.go`) now owns per-client state (fd table,
-  idempotency cache). `WhoAmI` becomes a method on `SessionService`, not a new
-  service.
+  `pkg/server/service/session.go`) owns per-client state. `WhoAmI` becomes a
+  method on it, not a new service.
 - **`Utimens` shipped** as a first-class RPC; `AssumeUserMiddleware` already
-  wraps it. The evaluator/middleware list below includes it.
-- **Mapping-mode rework.** The draft's `static` and `identity` modes were
-  near-duplicates. This revision collapses them: `static` (config table) and
-  `system` (real OS accounts via NSS) are two backends behind one resolver
-  interface; the redundant `identity` label is dropped.
+  wraps it.
+- **Mapping-mode rework.** The draft's near-duplicate `static`/`identity` modes
+  are collapsed: `static` (config table) and `system` (real OS accounts via
+  NSS) are two backends behind one resolver; the redundant `identity` label is
+  dropped.
 - **`passthrough` is now genuinely transparent**, with `root_squash` exposed
-  both ways (see §3.7) — the draft only offered squash-on.
+  both ways (§3.7).
+- **The "no per-thread `setgroups`" assumption was wrong** — verified on Linux
+  6.8 / Go 1.26.2 (2026-05-27). A raw `SYS_setgroups` on a
+  `runtime.LockOSThread`-pinned goroutine sets supplementary groups for *that
+  thread only*, and the kernel then enforces group access. This **eliminates
+  the user-space permission evaluator** the draft proposed: the kernel becomes
+  the sole permission authority via per-request `setfsuid` + `setfsgid` + raw
+  `setgroups`. Supplementary groups, **POSIX ACLs**, sticky bits, setgid dirs,
+  and chown rules all work natively and correctly, with no TOCTOU window and no
+  re-implemented POSIX logic. See §3.4.
 
 ## 1. The one principle
 
 The **authenticated principal is identity.** The **server is the sole
-authority** for who owns a file and whether an operation is permitted. The
-**wire UID/GID is advisory** — used for display hints and (only in
-`passthrough`) as the literal identity, never trusted for permission decisions
-in the mapped modes. The **client rewrites IDs purely for local display** so a
-mount renders like a local filesystem.
-
-Everything below is the machinery to honor that principle while making a mount
-feel local (goal 4 from the original draft: applications should not be able to
-tell a mount is remote).
+authority** for who owns a file and whether an operation is permitted, and it
+enforces that **through the kernel** by assuming the principal's full
+credentials per request. The **wire UID/GID is advisory** — used for display
+hints, and (only in `passthrough`) as the literal identity. The **client
+rewrites IDs purely for local display** so a mount renders like a local
+filesystem.
 
 ## 2. Goals & non-goals
 
@@ -45,18 +50,21 @@ tell a mount is remote).
   `passthrough`.
 - A pluggable `IdentityResolver` interface (principal → `{uid, gid, gids,
   caps}`).
-- Server-side, user-space POSIX permission evaluation with supplementary
-  groups, sticky-bit dirs, setgid dirs (Phase 2).
+- **Kernel-native permission enforcement** via per-thread `setfsuid` +
+  `setfsgid` + raw `setgroups` (supplementary groups, ACLs, sticky, setgid,
+  chown rules — all for free).
 - An admin capability model (`dac_read`, `dac_override`) decoupled from
-  client-side `sudo` (Phase 2).
+  client-side `sudo`.
 - `WhoAmI` on `SessionService` + client identity cache.
-- Client-side UID/GID rewriting and symbolic names in `Owner`.
+- Client-side UID/GID rewriting, a `raw_ids` opt-out for backup/admin tooling,
+  and symbolic names in `Owner`.
 - Safe handling of client-root per mode; real `no_root_squash` passthrough as
   an explicit option.
 
-**Deferred (see §11):** POSIX ACL passthrough/awareness, `chown_any`
-capability, POSIX advisory locks, readdirplus, multi-user mounts
-(`allow_other`), server-push identity invalidation.
+**Deferred (see §11):** `chown_any` capability, POSIX advisory locks,
+readdirplus, multi-user mounts (`allow_other`), server-push identity
+invalidation. (POSIX ACLs are **no longer deferred** — kernel enforcement
+covers them automatically.)
 
 ## 3. Design
 
@@ -105,16 +113,20 @@ volumes:
       root_squash: false         # no_root_squash: sudo-write lands root-owned
 ```
 
-| Mode | Principal → identity | Permission enforcement | Use case |
-|---|---|---|---|
-| `squash` *(default)* | everyone → one fixed `{uid, gid}` | kernel via `setfsuid` | shared appliance volume; safe default |
-| `system` | principal name → real OS account (`getpwnam` + `getgrouplist`) | user-space evaluator (Phase 2) | real multi-user; groups sync via server `/etc/group` / LDAP-SSSD |
-| `static` | principal → config table `{uid, gid, gids, caps}` | user-space evaluator (Phase 2) | locked-down server with no OS accounts for these principals |
-| `passthrough` | wire `{uid, gid}` verbatim | kernel via `setfsuid`; **no evaluator, no caps** | I control both ends / trusted LAN |
+| Mode | Principal → identity | Use case |
+|---|---|---|
+| `squash` *(default)* | everyone → one fixed `{uid, gid}` | shared appliance volume; safe default |
+| `system` | principal name → real OS account (`getpwnam` + `getgrouplist`) | real multi-user; groups sync via server `/etc/group` / LDAP-SSSD |
+| `static` | principal → config table `{uid, gid, gids, caps}` | locked-down server with no OS accounts for these principals |
+| `passthrough` | wire `{uid, gid}` verbatim | I control both ends / trusted LAN |
 
-**`system` mode requires the server to resolve principals via NSS** — a real
-OS account, or LDAP/SSSD wired into NSS. A stripped container image will not
-have these entries; **containerized deployments use `static` or `squash`.**
+In every mode the resolved identity's full credentials are assumed in the
+kernel per request (§3.4) — there is no separate enforcement path per mode.
+`passthrough` simply takes the identity from the wire instead of a resolver.
+
+**`system` mode requires the server to resolve principals via NSS** — a real OS
+account, or LDAP/SSSD wired into NSS. A stripped container image will not have
+these entries; **containerized deployments use `static` or `squash`.**
 (Coordinate with the in-flight `phase6-dockerfile-compose` work: the
 docker-compose example should default to `squash` with an explicit uid/gid,
 replacing the `chmod 777` sidecar.)
@@ -127,7 +139,7 @@ type Identity struct {
     Principal  string
     Uid, Gid   uint32
     Gids       []uint32          // supplementary, includes Gid
-    Caps       CapSet            // dac_read, dac_override (Phase 2)
+    Caps       CapSet            // dac_read, dac_override
     UserName   string            // display
     GroupNames map[uint32]string // display, for gids the caller is in
 }
@@ -144,54 +156,52 @@ type IdentityResolver interface {
 claims, external resolver) implement the same interface with **no proto or
 config-schema change**.
 
-### 3.4 Server-side permission evaluation (Phase 2)
+### 3.4 Server-side permission enforcement — kernel-native, per-thread
 
-Linux has no per-thread `setgroups`, so `setfsuid`/`setfsgid` can enforce only
-the **primary** gid. The mapped modes therefore evaluate permission in user
-space before touching disk.
+The server assumes the resolved identity's **full** credentials on the OS
+thread handling the request and lets the **kernel** perform the permission
+check as part of the actual op. Verified feasible (§0): credentials are
+per-thread on Linux, so this does not affect other in-flight requests.
 
-Middleware order (mapped modes): `IdentityResolver → PermissionEval →
-AssumeUser → loopback`.
+`AssumeUserMiddleware` (mapped modes), per request, on a `LockOSThread`-pinned
+thread:
 
-```go
-// Decision is the evaluator's verdict for one op against one target.
-type Decision struct {
-    Allowed  bool
-    Elevated bool // the access is granted ONLY by a capability; the actual
-                  // IO must run privileged (as root), not as the mapped uid,
-                  // or the kernel would re-deny it.
-}
-```
+1. `setgroups(identity.Gids)` via **raw `SYS_setgroups`** (not Go's
+   broadcasting `syscall.Setgroups`) — installs the full supplementary set.
+2. `setfsgid(identity.Gid)`.
+3. `setfsuid(identity.Uid)` — this also **drops the fs-related capabilities**
+   (`CAP_DAC_OVERRIDE`/`READ_SEARCH`/`FOWNER`/`FSETID`), so the kernel enforces
+   DAC normally for an unprivileged principal.
+4. Run the loopback op. The kernel checks owner/group/other bits, the full
+   group set, sticky-bit unlink rules, setgid-dir inheritance, and **POSIX
+   ACLs** — all natively. Created files are owned by `identity.Uid:Gid`.
+5. Restore root creds on the cleanup path (existing thread-taint handling in
+   `asume_user.go` applies).
 
-1. `PermissionEval` `Lstat`s the target, reads `{uid, gid, mode}`, and checks
-   it against the resolved `Identity` (owner/group/other bits, full `Gids`,
-   sticky-bit unlink rules, setgid-dir inheritance on create).
-2. Capability short-circuit: `dac_override` ⇒ `{Allowed:true, Elevated:true}`
-   for any op; `dac_read` ⇒ same for read/traverse ops. Elevated is set
-   **only** when the mapped uid alone would have been denied.
-3. `AssumeUser` performs the IO:
-   - **Default:** `setfsuid(identity.Uid)` + `setfsgid(identity.Gid)` so the
-     kernel enforces and **created files are owned by the principal's uid.**
-   - **`Elevated`:** run the IO as the server's real (root) identity so the
-     kernel permits it. **Ownership rule for cap-granted creates:** the file
-     is still attributed to the principal's resolved uid (a `setfsuid` to the
-     principal's uid is applied for the create/ownership-setting step even
-     when read access came via a cap), so an admin writing into the tree does
-     not silently create root-owned files. Pure reads/traversals under a cap
-     leave no ownership trace, so they simply run as root.
+Middleware order (mapped modes): `IdentityResolver → AssumeUser → loopback`.
+There is **no user-space permission evaluator** and **no separate `Lstat`
+check** — the single kernel-checked op is the enforcement, so there is no
+TOCTOU window.
 
-`dac_override`/`dac_read` thus require the **server to run privileged** (root
-or the matching Linux file-capability) to actually wield the bypass — the same
-precondition `AssumeUserMiddleware` already has.
+**Capabilities** (admin bypass, decoupled from client `sudo`):
 
-**Phase 1 interim:** ships before the evaluator, with **primary-group-only**
-enforcement (`setfsuid` + `setfsgid(primary)`), documented as a known
-limitation. Supplementary-group correctness and caps arrive with Phase 2.
+- `dac_override` — **keep `fsuid=0`** for the op (steps 2–3 set groups/fsgid
+  but skip `setfsuid`), so the thread retains `CAP_DAC_OVERRIDE` and the kernel
+  permits anything. Verified (§0, worker C). For a *create* under
+  `dac_override`, `fchown` the new file to `identity.Uid:Gid` afterward so the
+  admin does not silently leave root-owned files.
+- `dac_read` — read/traverse-only bypass. Keep `fsuid=0` but **`capset` the
+  thread to drop `CAP_DAC_OVERRIDE`/`FOWNER`/`FSETID` while keeping
+  `CAP_DAC_READ_SEARCH`**. Capabilities are per-thread, so this is feasible;
+  the exact `capset` is a Phase 2 task to verify before relying on it.
+
+Both cap paths require the **server to run as root** (or hold the matching
+Linux file-capabilities) — an accepted precondition.
 
 ### 3.5 `WhoAmI` on `SessionService`
 
-Identity is **volume-scoped** (the same principal maps differently per
-volume), so `WhoAmI` carries a volume:
+Identity is **volume-scoped** (the same principal maps differently per volume),
+so `WhoAmI` carries a volume:
 
 ```proto
 message WhoAmIRequest { string volume = 1; }
@@ -230,32 +240,32 @@ message Owner {
 ```
 
 **[DECISION — flagged for review] Display fidelity.** Recommended default:
-**hybrid** — the server fills `group_name` for groups the caller is a member
-of (so shared directories render sensibly), and fills `user_name` only for the
-caller's own identity; **all other users render as `nobody`** on the client.
-This reveals that a group exists but never leaks the server's full user list.
-Alternatives: privacy-first (`nobody:nogroup` for anyone-but-me) or
-idmap-like (reveal all names).
+**hybrid** — the server fills `group_name` for groups the caller is a member of
+(so shared directories render sensibly) and `user_name` only for the caller's
+own identity; **all other users render as `nobody`** on the client. Reveals
+that a group exists but never leaks the server's full user list. Alternatives:
+privacy-first (`nobody:nogroup` for anyone-but-me) or idmap-like (reveal all
+names).
 
 ### 3.7 Client-root handling
 
 - **`squash` / `system` / `static`:** wire UID is advisory, so client root is
   closed *by construction* — `sudo` on the client is still just "the
-  principal." This also fixes the **current live bug** where the wire UID
-  (root included) is fed straight into `setfsuid`.
+  principal." This also fixes the **current live bug** where the wire UID (root
+  included) is fed straight into `setfsuid`.
 - **`passthrough`:** `root_squash` is a per-volume knob, **both directions**:
   - `root_squash: true` *(conservative default within passthrough)* — incoming
     `uid==0` → `anon_uid` (default: the server's own UID, never 0).
-  - `root_squash: false` (`no_root_squash`) — wire `{uid, gid}` used verbatim,
-    root included; a `sudo`-write lands **root-owned** on the server. This is
-    the full-transparency mode for "I own both ends."
+  - `root_squash: false` (`no_root_squash`) — wire `{uid, gid}` verbatim, root
+    included; a `sudo`-write lands **root-owned** on the server. Full
+    transparency for "I own both ends."
 
   **Security note (conscious choice):** `no_root_squash` means anyone who can
   authenticate to the volume has root-equivalent write on the exposed tree.
   Intended for trusted single-tenant use. The server logs a warning at startup
   when `no_root_squash` is combined with `auth: none`.
 
-### 3.8 Client-side UID/GID rewriting + cache interaction
+### 3.8 Client-side UID/GID rewriting, `raw_ids`, and cache interaction
 
 The client FUSE layer rewrites IDs at the attribute boundary, anchored to the
 session `Identity`:
@@ -268,11 +278,18 @@ is in with a known `group_name` → that name; everything else → `nobody` /
 **Outbound (client → server):** local mounting user's uid → principal's server
 uid; reject/remap `chown` to IDs that cannot be resolved.
 
-**[DECISION — flagged for review] Cache storage.** The persistent client
-cache stores **server (wire) IDs**; rewriting happens on every FUSE return,
-not at store time. Consequence: an identity change (TTL refresh, re-auth)
-needs **no cache invalidation** — the rewrite layer is identity-agnostic and
-re-derives display IDs from the current session identity each time.
+**`raw_ids` mount option (for backups/admin tooling).** When set, the client
+**disables rewriting** and surfaces the server's real uids/gids unchanged. This
+is the supported way to preserve ownership through a backup: an admin principal
+with `dac_read` mounts with `raw_ids: true`, and `rsync -a`/`restic` see and
+restore real ownership. (A `passthrough` mount is the other way to get raw IDs;
+either is fine.) `raw_ids` composes with any mode.
+
+**[DECISION — flagged for review] Cache storage.** The persistent client cache
+stores **server (wire) IDs**; rewriting happens on every FUSE return, not at
+store time. Consequence: an identity change (TTL refresh, re-auth) needs **no
+cache invalidation**, and `raw_ids` is just "skip the rewrite step" over the
+same cached rows.
 
 ### 3.9 Client mount defaults
 
@@ -282,38 +299,38 @@ exposed as knobs.
 
 ## 4. Worked examples
 
-Running config: volume `team`, `mode: system`, with server accounts
-`alice(1001)`, `bob(1002)` both in group `developers(2000)`; `carol(1003)`
-with `dac_read`; `dave(1004)` with `dac_override`.
+Running config: volume `team`, `mode: system`, server accounts `alice(1001)`,
+`bob(1002)` both in group `developers(2000)`; `carol(1003)` with `dac_read`;
+`dave(1004)` with `dac_override`.
 
 ### 4.1 Alice writes, Bob reads (the cross-user scenario)
 
 Alice creates a file in a setgid `developers` dir → on disk `1001:2000`, mode
-`0664`. Bob (principal `bob`, resolved `1002`, member of `2000`) reads:
-evaluator checks group bits against Bob's `Gids` → group `rw` → **allowed**.
-Bob's `ls -l` shows `nobody:developers` (group name revealed because Bob is in
-it; Alice's name withheld). If Alice had used `0600`, the server returns
-**EACCES**.
+`0664`. Bob's request runs on a thread with `setgroups([…,2000])` +
+`setfsuid(1002)` + `setfsgid(1002)`; the **kernel** sees `2000` in Bob's group
+set and grants group `rw` → **read/write allowed**. Bob's `ls -l` shows
+`nobody:developers` (group name revealed because Bob is in it; Alice's name
+withheld). If Alice had used `0600`, the kernel returns **EACCES** directly.
 
 ### 4.2 Bob with `sudo`
 
 `sudo cat` makes the local FUSE caller `uid=0`, but `system` mode ignores the
-wire uid — the op is still evaluated as principal `bob`. **No escalation.**
-If Bob lacks server-side permission, `sudo` gets EACCES too.
+wire uid — the op runs as principal `bob`'s resolved creds. **No escalation.**
 
 ### 4.3 Carol backs up everything
 
-Carol authenticates as principal `carol` (`dac_read`). The evaluator
-short-circuits read/traverse checks → `{Allowed:true, Elevated:true}`;
-`AssumeUser` reads as root so the kernel permits it. `restic`/`rsync -a` reads
-every file including others' `0600` ones. Power came from the **principal**,
-not from running the backup tool as local root.
+Carol authenticates as principal `carol` (`dac_read`) and mounts with
+`raw_ids: true` (or uses a `passthrough` mount). Her requests run with
+`fsuid=0` + a `capset` that keeps `CAP_DAC_READ_SEARCH`, so the kernel lets her
+read/traverse every file including others' `0600` ones; `raw_ids` means
+`rsync -a`/`restic` see the **real** owners and preserve them faithfully. Power
+came from the **principal**, not from running the backup tool as local root.
 
 ### 4.4 My-LAN passthrough, `no_root_squash`
 
-Volume `mylan`, `passthrough`, `root_squash: false`. `sudo touch` on the
-client → file owned `0:0` (root) on the server, exactly as written. Behaves
-like local disk / NFS `no_root_squash`.
+Volume `mylan`, `passthrough`, `root_squash: false`. `sudo touch` on the client
+→ file owned `0:0` (root) on the server, exactly as written. Behaves like local
+disk / NFS `no_root_squash`.
 
 ## 5. Proto changes
 
@@ -321,102 +338,103 @@ like local disk / NFS `no_root_squash`.
 - `Owner`: add optional `user_name`, `group_name`.
 - `Caller.Owner`: preserved, documented advisory (authoritative only in
   `passthrough`).
-- No proto change for the user-space evaluator (server-internal).
 
 ## 6. Server changes
 
 - `pkg/common/config`: per-volume `mapping` block (`mode`, `uid`, `gid`,
   `users`, `groups`, `admin_groups`, `root_squash`, `anon_uid`); validation.
 - `pkg/server/service`: `IdentityResolver` interface + `squash`/`system`/
-  `static` implementations; `system` uses cgo-free NSS via `os/user`
-  (`Lookup`, `LookupGroupIds`).
+  `static` implementations; `system` uses `os/user` (`Lookup`,
+  `LookupGroupIds`).
 - New `IdentityResolverMiddleware`: resolves principal → `Identity`, stashes on
   context (mapped modes only).
-- New `PermissionEvalMiddleware` (Phase 2): user-space POSIX check + caps.
-- `AssumeUserMiddleware`: hardened — in mapped modes it consumes the resolved
-  identity, never the wire uid; honors the `Elevated` decision.
+- `AssumeUserMiddleware` (`pkg/server/io/middleware/asume_user.go`): extended
+  to set the **full** credentials — raw per-thread `setgroups(identity.Gids)`
+  in addition to the existing `setfsuid`/`setfsgid`; in mapped modes it
+  consumes the resolved identity, never the wire uid; handles the `dac_read`/
+  `dac_override` fsuid/`capset` paths.
 - `AuthService`: propagate authenticated principal onto the gRPC context.
-- `controller.createContext`: in mapped modes, build context from resolved
-  identity; in `passthrough`, from the wire caller (with `root_squash`
-  applied).
+- `controller.createContext`: in mapped modes build context from the resolved
+  identity; in `passthrough` from the wire caller (with `root_squash` applied).
 - `SessionService.WhoAmI` controller + service plumbing.
 
 ## 7. Client changes
 
 - `pkg/client/grpc`: call `WhoAmI` at mount; cache `Identity` (TTL); expose to
   FUSE layer.
-- `pkg/client/io`: rewrite IDs on attribute return; rewrite outgoing `Chown`.
+- `pkg/client/io`: rewrite IDs on attribute return; rewrite outgoing `Chown`;
+  honor the `raw_ids` mount option (skip rewrite).
 - `pkg/client/io/cache`: stores server IDs (per §3.8); no invalidation on
   identity change.
-- Mount defaults: `nosuid`, `nodev`, `allow_other=false`.
+- Mount defaults: `nosuid`, `nodev`, `allow_other=false`; new `raw_ids` flag.
 
 ## 8. Decisions flagged for the review gate
 
-These are **recommended defaults**, not yet locked — please confirm or adjust:
+Recommended defaults, not yet locked — please confirm or adjust:
 
-1. **Resolver emphasis:** `system` (NSS) is the recommended primary for
-   multi-user; `static` is the container/appliance fallback; `squash` is the
-   default; `passthrough` is opt-in. (You've locked: squash default,
-   passthrough real with `root_squash` both ways.)
-2. **Display fidelity (§3.6):** hybrid (reveal group names you're in, hide
+1. **Display fidelity (§3.6):** hybrid (reveal group names you're in, hide
    other users).
-3. **Capability set (§3.4):** `dac_read` + `dac_override` only. `chown_any` is
-   deferred (covered by `dac_override` for the admin case).
-4. **Cache storage (§3.8):** store server IDs, rewrite on return.
+2. **Cache storage (§3.8):** store server IDs, rewrite on return.
+
+*Resolved in discussion:* squash default; real passthrough with `root_squash`
+both ways; `WhoAmI` on `SessionService`; admin-via-capability not `sudo`;
+kernel-native enforcement (per-thread `setgroups`); backups via `raw_ids` or
+`passthrough`; capability set = `dac_read` + `dac_override` (`chown_any`
+deferred); server runs as root.
 
 ## 9. Phasing (one spec, two implementation plans, one PR each)
 
 Per the worktree-per-feature working agreement, each phase is its own worktree
-+ PR.
++ PR. The kernel-enforcement pivot removed the user-space evaluator, so the old
+"primary-group-only interim limitation" is **gone** — Phase 1 ships correct
+supplementary-group permissions from the start.
 
-1. **Phase 1 — identity foundation (PR 1).**
+1. **Phase 1 — identity foundation + correct permissions (PR 1).**
    - Config `mapping` schema + validation.
    - `IdentityResolver` (`squash`, `system`, `static`) + `passthrough` wiring
      with `root_squash` knob.
-   - `IdentityResolverMiddleware`; hardened `AssumeUserMiddleware`.
+   - `IdentityResolverMiddleware`; `AssumeUserMiddleware` extended with
+     per-thread `setgroups` (full supplementary groups) and hardened to ignore
+     the wire uid in mapped modes.
    - `WhoAmI` + client identity cache.
-   - Client-side UID/GID rewriting; symbolic names in `Owner`.
-   - Primary-group-only enforcement (documented interim limitation).
-   - **The 2026-05-14 draft's "interim safety patch" is folded in here**, not
-     shipped separately: in mapped modes the wire uid is ignored entirely
-     (subsuming the patch), and `passthrough` handles `uid==0` via
-     `root_squash`. (If Phase 1 slips by weeks, revisit shipping the ~5-line
-     `uid==0` guard standalone, gated to non-passthrough.)
-2. **Phase 2 — correct permissions (PR 2).**
-   - `PermissionEvalMiddleware`: supplementary groups, sticky-bit, setgid dirs.
-   - Capability set (`dac_read`, `dac_override`) + the `Elevated` privileged-IO
-     path; `admin_groups` derivation in `system` mode.
+   - Client-side UID/GID rewriting, `raw_ids` option, symbolic names in
+     `Owner`.
+2. **Phase 2 — admin capabilities (PR 2).**
+   - `dac_override` (keep `fsuid=0`; `fchown` cap-granted creates to the
+     principal) and `dac_read` (selective per-thread `capset` — verify first).
+   - `admin_groups` derivation in `system` mode.
 
 On Phase 2 ship, fold the durable record into
 `docs/design/identity-and-permissions.md` and prune this transient spec.
 
 ## 10. Testing
 
+- **Per-thread credential test (regression):** the §0 experiment promoted to a
+  real test — raw `setgroups` on a locked thread grants supplementary-group
+  access; a sibling thread with different groups is unaffected (no leak);
+  `setfsuid(nonzero)` drops fs-caps; `fsuid=0` retains `CAP_DAC_OVERRIDE`.
 - **Resolver unit tests** (testify suites): each mode maps a principal to the
-  expected identity; `system` mode against a fixture NSS lookup; `passthrough`
+  expected identity; `system` against a fixture NSS lookup; `passthrough`
   root_squash both ways.
-- **Evaluator unit tests:** owner/group/other matrices, supplementary-group
-  hits, sticky-bit unlink, setgid inheritance, cap short-circuit + `Elevated`.
-- **e2e (kubevirt VM, real FUSE):** the four worked examples in §4 as
-  end-to-end assertions; `sudo`-no-escalation; `no_root_squash` root-owned
-  write.
-- **`-race`** on the middleware chain (concurrent ops, `setfsuid` thread
-  pinning).
+- **e2e (kubevirt VM, real FUSE):** the four worked examples in §4 end-to-end,
+  including supplementary-group read/write, a POSIX-ACL'd file honored
+  correctly, sticky-bit unlink, setgid-dir inheritance, `sudo`-no-escalation,
+  `dac_read` + `raw_ids` backup preserving ownership, and `no_root_squash`
+  root-owned write.
+- **`-race`** on the middleware chain (concurrent ops across pinned threads).
 
 ## 11. Deferred / open questions
 
-- **POSIX ACL passthrough + evaluator awareness.** Mostly free via xattr, but
-  the evaluator must understand `system.posix_acl_*` for an accurate check.
-  Deferred to a follow-up; the evaluator ships mode-bits + sticky + setgid +
-  caps first.
-- **`chown_any` capability.** Deferred; `dac_override` covers the admin case.
-- **POSIX advisory locks** (`SetLk`/`GetLk`) — Phase 3, needs reconnect
+- **`chown_any` capability** — deferred; `dac_override` covers the admin case.
+- **POSIX advisory locks** (`SetLk`/`GetLk`) — Phase 3, needs a reconnect
   recovery story.
 - **Readdirplus** — independent perf win, ship separately.
 - **Multi-user mounts (`allow_other`)** — single-user is the only supported
   mode for the first release.
 - **Server-push identity invalidation** — TTL + auth-refresh is enough until a
   real use case appears.
+
+*(POSIX ACLs are intentionally NOT here — kernel enforcement handles them.)*
 
 ## 12. North-star acceptance test
 
