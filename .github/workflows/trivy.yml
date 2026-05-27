@@ -1,0 +1,43 @@
+name: Trivy image scan
+
+# Scans the published container image for OS/package CVEs. Runs on a schedule
+# (so newly-disclosed CVEs in an already-released image surface) and on demand.
+# Report-only: findings go to the Security tab, the run does not fail. To gate
+# releases instead, move a scan step into release.yml with exit-code: '1'.
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read # pull the image from ghcr
+  security-events: write # upload SARIF to the Security tab
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trivy scan of the published image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ghcr.io/gmountie/gmountie-server:latest
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true # only actionable (a fixed version exists) findings
+
+      - name: Upload results to the Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
