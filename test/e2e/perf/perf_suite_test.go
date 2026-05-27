@@ -59,7 +59,21 @@ type benchEnv struct {
 // that the Phase 3 final-review flagged as a follow-up.
 func setupBenchEnv(b *testing.B) *benchEnv {
 	b.Helper()
-	return setupBenchEnvWith(b)
+	// The default-config baseline must mirror what production actually runs.
+	// Production enables client readahead from config (see
+	// pkg/client/grpc/factory.go, which wires WithReadahead from cfg.Rpc),
+	// but the e2e harness builds the client from explicit clientOptions and
+	// does NOT read those config defaults — so without this the "baseline"
+	// would run readahead-off and misrepresent production. Wire the same
+	// default knobs (1 MiB chunk, window 4) so the baseline Bencher series
+	// reflects the shipped default and tracks the SP5 readahead win.
+	return setupBenchEnvWith(b,
+		utils.WithReadahead(
+			clientconfig.DefaultReadaheadChunkBytes,
+			clientconfig.DefaultReadaheadThreshold,
+			clientconfig.DefaultReadaheadWindow,
+		),
+	)
 }
 
 // setupBenchEnvOpt is setupBenchEnv with the SP4-A WAN tuning layered on:
