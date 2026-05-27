@@ -158,14 +158,21 @@ func (a *identityBoundFS) Truncate(name string, size uint64, context *fuse.Conte
 	return a.FileSystem.Truncate(name, size, context)
 }
 
-func (a *identityBoundFS) Access(name string, mode uint32, context *fuse.Context) (code fuse.Status) {
+func (a *identityBoundFS) Access(name string, mode uint32, context *fuse.Context) fuse.Status {
 	cleanup, err := changeIdentity(a.id)
 	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
+		log.Log.Error("failed to assume identity", zap.Error(err))
 		return fuse.EPERM
 	}
 	defer cleanup()
-	return a.FileSystem.Access(name, mode, context)
+	attr, st := a.FileSystem.GetAttr(name, context)
+	if !st.Ok() {
+		return st
+	}
+	if accessAllowed(attr, a.id, mode) {
+		return fuse.OK
+	}
+	return fuse.EACCES
 }
 
 func (a *identityBoundFS) Link(oldName string, newName string, context *fuse.Context) (code fuse.Status) {
