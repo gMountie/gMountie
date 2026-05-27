@@ -24,8 +24,11 @@ serviceAccount:
 podAnnotations: {}
 podLabels: {}
 
-podSecurityContext: {}
-  # fsGroup: 1000
+# fsGroup makes the ReadWriteOnce PVC group-writable by the non-root
+# container (runAsUser 1000). Without it the volume is root-owned and the
+# server cannot write its data dir.
+podSecurityContext:
+  fsGroup: 1000
 
 securityContext:
   runAsNonRoot: true
@@ -99,13 +102,16 @@ ingress:
     enabled: false
     secretName: ""
 
-resources: {}
-  # limits:
-  #   cpu: 1
-  #   memory: 512Mi
-  # requests:
-  #   cpu: 100m
-  #   memory: 128Mi
+# Conservative defaults for a single-node demo. A memory limit guards the
+# node against a runaway cache; no CPU limit (CPU limits throttle rather than
+# protect). Raise these for real workloads — cache size in particular drives
+# memory.
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
 
 # Additional in-tree volumes/mounts beyond the volume-data PVC + the
 # config ConfigMap that the chart wires automatically.
