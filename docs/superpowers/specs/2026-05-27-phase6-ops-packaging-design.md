@@ -86,11 +86,15 @@ state on `master` @ `1d637a3`:
 
 **Files:** `.goreleaser.yaml`, `.github/workflows/release.yml`.
 
-- **SBOM (both archive and image):**
+- **SBOM (archives only):**
   - `sboms:` block → SPDX attached to archives (syft default).
-  - Image SBOM → `cosign attest --type spdx --predicate <sbom> <image>@<digest>`
-    as a step after `goreleaser release` (image SBOM is what supply-chain
-    consumers look for).
+  - **Image SBOM attestation dropped.** A `cosign attest --type spdx
+    --predicate <syft-spdx>` step was tried (alpha.0/alpha.1) but cosign
+    mangles the SPDX predicate — v2.5.2 embeds it as a string (verifiable only
+    by v2.x), and adding `--new-bundle-format` produced an attestation no cosign
+    version can verify; v3's `attest` errors on the same predicate. The archive
+    SBOMs ship as release assets and the image is signed, so the in-registry
+    image SBOM isn't worth the breakage. Revisit with `actions/attest-sbom`.
 - **Keyless signing in goreleaser:**
   - `docker_signs:` → `cosign sign --yes ${artifact}@${digest}` (`artifacts: all`).
   - `signs:` → `cosign sign-blob --yes ...` over `checksum` artifacts.
@@ -99,8 +103,8 @@ state on `master` @ `1d637a3`:
   - Add `id-token: write` to the job `permissions` (currently only
     `contents: write`, `packages: write`).
   - Add a `sigstore/cosign-installer@v3` step before the GoReleaser action.
-- **Snapshots:** `--snapshot` does not push images, so `docker_signs` and the
-  image-attest step no-op naturally — no conditional needed.
+- **Snapshots:** `--snapshot` does not push images, so `docker_signs` no-ops
+  naturally — no conditional needed.
 
 ### Definition of done (testable)
 
@@ -116,16 +120,7 @@ state on `master` @ `1d637a3`:
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
     ghcr.io/gmountie/gmountie-server:<tag>
   ```
-- Image SBOM attestation verification succeeds with the same identity flags:
-  ```
-  cosign verify-attestation --type spdx \
-    --certificate-identity-regexp 'https://github.com/gMountie/gMountie/.github/workflows/release.yml@.*' \
-    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-    ghcr.io/gmountie/gmountie-server:<tag>
-  ```
-  The attest step writes `--new-bundle-format`, so current cosign (v3) verifies
-  it directly. (The first alpha, v0.5.0-alpha.0, was attested in the legacy
-  format before this fix and only verifies with cosign v2.x.)
+- (No image SBOM attestation DoD — feature dropped; see PR3 SBOM note.)
 - `goreleaser release --snapshot --clean` succeeds locally with the new
   SBOM/sign config present (signing steps skipped on snapshot).
 - The published release lists the per-archive `*.sbom.json`, `checksums.txt`,
