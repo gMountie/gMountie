@@ -2,14 +2,15 @@
 name: Deploy docs to GitHub Pages
 
 on:
-  # Runs on pushes targeting the default branch
-  push:
-    branches: ["master"]
-    paths:
-    - docs/**
-    - README.md
+  # Publish the docs site when a release (including a pre-release/alpha) is
+  # published. The deploy checks out the release tag so the live site always
+  # matches a released version, not whatever is currently on master.
+  release:
+    types: [published]
 
-  # Allows you to run this workflow manually from the Actions tab
+  # Allows you to run this workflow manually from the Actions tab (deploys the
+  # default branch). Kept as its own workflow precisely so it stays
+  # independently dispatchable.
   workflow_dispatch:
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
@@ -34,6 +35,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          # On a release event, check out the tagged commit so the published
+          # docs match the release. Empty on workflow_dispatch, which makes
+          # checkout fall back to the default branch.
+          ref: ${{ github.event.release.tag_name }}
       - name: Setup Pages
         uses: actions/configure-pages@v6
       - name: Upload artifact
