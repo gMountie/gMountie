@@ -53,9 +53,9 @@ func NewBackendClient(client grpcclient.Client, volume string) *BackendClient {
 // callerFromCtx returns a proto.Caller for the request, pulled from the
 // per-op ctx that go-fuse populates with the kernel-reported caller
 // (uid/gid/pid of the syscalling process). Stamping this correctly is
-// load-bearing: the server's AssumeUserMiddleware runs setfsuid /
-// setfsgid from these fields on every op, so a zero Caller would have
-// the server side run as root.
+// load-bearing: the server resolves these fields into an identity and runs
+// setfsuid / setfsgid / setgroups from it on every op, so a zero Caller would
+// have the server side run as root.
 //
 // The zero-Caller fallback covers the rare case where no Caller is in
 // ctx — typically unit tests with a bare context.Background(). It must
@@ -123,7 +123,7 @@ func joinPath(parent, name string) string {
 // cancellation aborts the in-flight RPC (gRPC Canceled) and surfaces a spurious
 // EIO on an otherwise-healthy readdir/stat (confirmed: the failures vanish under
 // GODEBUG=asyncpreemptoff=1). context.WithoutCancel keeps the caller's values
-// (the kernel uid/gid/pid that AssumeUserMiddleware reads) while ignoring its
+// (the kernel uid/gid/pid the server resolves into an identity) while ignoring its
 // cancellation, so the RPC runs to completion or its own timeout. Used by every
 // path-level metadata op (reads + mutations + Open/Create); ioCtx is the
 // fd-level sibling. The blocking lock wait (SetLkw) intentionally keeps the
