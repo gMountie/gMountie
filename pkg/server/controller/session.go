@@ -21,13 +21,14 @@ const keepalivePingInterval = 10 * time.Second
 
 type SessionController struct {
 	sessions service.SessionManager
+	volSvc   service.VolumeService
 	proto.UnimplementedSessionServiceServer
 }
 
 var _ proto.SessionServiceServer = (*SessionController)(nil)
 
-func NewSessionController(mgr service.SessionManager) *SessionController {
-	return &SessionController{sessions: mgr}
+func NewSessionController(mgr service.SessionManager, volSvc service.VolumeService) *SessionController {
+	return &SessionController{sessions: mgr, volSvc: volSvc}
 }
 
 func (c *SessionController) Register(server *grpc.Server) {
@@ -55,6 +56,19 @@ func (c *SessionController) Resume(_ context.Context, req *proto.SessionResumeRe
 		zap.String("session_id", req.SessionId),
 		zap.Bool("resumed", resumed))
 	return &proto.SessionResumeReply{Resumed: resumed}, nil
+}
+
+func (c *SessionController) WhoAmI(ctx context.Context, req *proto.WhoAmIRequest) (*proto.Identity, error) {
+	id, err := c.volSvc.ResolveIdentity(ctx, req.Volume, req.Caller)
+	if err != nil {
+		return nil, status.Errorf(codes.PermissionDenied, "whoami: %v", err)
+	}
+	return &proto.Identity{
+		Principal:  id.Principal,
+		Uid:        id.Uid,
+		PrimaryGid: id.Gid,
+		Gids:       id.Gids,
+	}, nil
 }
 
 func (c *SessionController) Keepalive(req *proto.KeepaliveRequest, stream proto.SessionService_KeepaliveServer) error {
