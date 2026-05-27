@@ -49,7 +49,12 @@ type PlotSpec struct {
 // Spec is the whole plots.yaml document.
 type Spec struct {
 	Defaults SpecDefaults `yaml:"defaults"`
-	Plots    []PlotSpec   `yaml:"plots"`
+	// Measures pins display units per measure, keyed by measure name or slug
+	// (e.g. "throughput": "megabytes / second (MB/s)"). Bencher auto-creates
+	// measures from the BMF report with a placeholder unit; this is how the
+	// axis labels stay correct and declarative. Optional.
+	Measures map[string]string `yaml:"measures"`
+	Plots    []PlotSpec        `yaml:"plots"`
 }
 
 // LoadSpec decodes a plots.yaml document.
@@ -281,6 +286,87 @@ func Plan(desired []ResolvedPlot, actual []Plot, prune bool) []Action {
 		}
 	}
 	return actions
+}
+
+// Measure is a live Bencher measure as returned by `bencher measure list`.
+type Measure struct {
+	UUID  string `json:"uuid"`
+	Name  string `json:"name"`
+	Slug  string `json:"slug"`
+	Units string `json:"units"`
+}
+
+// MeasureActionKind is what to do with one measure's units.
+type MeasureActionKind int
+
+const (
+	// MeasureNoop: live units already match the spec.
+	MeasureNoop MeasureActionKind = iota
+	// MeasureUpdateUnits: relabel the measure's display units.
+	MeasureUpdateUnits
+)
+
+func (k MeasureActionKind) String() string {
+	if k == MeasureUpdateUnits {
+		return "UNITS"
+	}
+	return "NOOP"
+}
+
+// MeasureAction is one unit of measure-units convergence.
+type MeasureAction struct {
+	Kind MeasureActionKind
+	Key  string // the measure name/slug as written in the spec
+	UUID string // resolved live measure UUID
+	From string // current units
+	To   string // desired units
+}
+
+// PlanMeasures diffs desired units (keyed by measure name or slug) against the
+// live measures and returns the relabels needed. A spec key that matches no live
+// measure is a hard error — measures are auto-created by reporting, so pinning
+// units for one that doesn't exist yet is a typo or a premature entry. Iteration
+// is over sorted keys so the plan is deterministic.
+func PlanMeasures(desired map[string]string, actual []Measure) ([]MeasureAction, error) {
+	bySlug := make(map[string]Measure, len(actual))
+	byName := make(map[string]Measure, len(actual))
+	for _, m := range actual {
+		bySlug[m.Slug] = m
+		byName[m.Name] = m
+	}
+
+	ks := make([]string, 0, len(desired))
+	for k := range desired {
+		ks = append(ks, k)
+	}
+	sort.Strings(ks)
+
+	var out []MeasureAction
+	for _, key := range ks {
+		m, ok := bySlug[key]
+		if !ok {
+			m, ok = byName[key]
+		}
+		if !ok {
+			return nil, fmt.Errorf("measures: unknown measure %q (live: %s)", key, measureKeys(actual))
+		}
+		want := desired[key]
+		if m.Units == want {
+			out = append(out, MeasureAction{Kind: MeasureNoop, Key: key, UUID: m.UUID, From: m.Units, To: want})
+		} else {
+			out = append(out, MeasureAction{Kind: MeasureUpdateUnits, Key: key, UUID: m.UUID, From: m.Units, To: want})
+		}
+	}
+	return out, nil
+}
+
+func measureKeys(ms []Measure) string {
+	out := make([]string, 0, len(ms))
+	for _, m := range ms {
+		out = append(out, m.Slug)
+	}
+	sort.Strings(out)
+	return strings.Join(out, ", ")
 }
 
 // contentDiffers reports the first dimension `plot update` can't change that

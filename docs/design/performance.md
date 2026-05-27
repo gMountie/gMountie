@@ -430,7 +430,15 @@ The diff/planner is a pure function in `test/e2e/perf/bmf/plotsync.go`
 benchmark/measure/branch/testbed/x-axis or boundary flags changed is recreated
 (create-new-then-delete-old); only title/window/index changes use `plot update`.
 
-### 4.5 Running the full CI pipeline locally
+**Measure units** are pinned in the same spec, under a `measures:` map keyed by
+measure name or slug (e.g. `throughput: "megabytes / second (MB/s)"`). Bencher
+auto-creates each measure from the BMF report with the placeholder unit
+`"Measure (units)"`, so without this the axis labels are wrong (the `throughput`
+axis read `operations / second` despite every value being MB/s). `plots sync`
+reconciles these alongside the plots via `bencher measure update`; a spec key
+matching no live measure is a hard error.
+
+### 4.6 Running the full CI pipeline locally
 
 ```bash
 # Build the BMF emitter
