@@ -27,23 +27,27 @@ import (
 type gMountieRoot struct {
 	fs.Inode
 
-	backend FileSystemBackend
+	backend  FileSystemBackend
+	rewriter *IDRewriter
 }
 
 // NewMountieRoot constructs the root inode wrapping a FileSystemBackend.
+// rewriter translates server uid/gid ↔ local uid/gid; pass nil for
+// passthrough (raw_ids mounts or when WhoAmI returned no identity).
 // Mount code passes the returned value to fs.Mount.
-func NewMountieRoot(backend FileSystemBackend) fs.InodeEmbedder {
-	return &gMountieRoot{backend: backend}
+func NewMountieRoot(backend FileSystemBackend, rewriter *IDRewriter) fs.InodeEmbedder {
+	return &gMountieRoot{backend: backend, rewriter: rewriter}
 }
 
 // gMountieNode is a non-root inode. Its path relative to the mount root
 // is derived on demand from the inode tree's current position (see
-// path()); never cache it. backend is shared with the root (set at
-// construction time).
+// path()); never cache it. backend and rewriter are shared with the root
+// (copied at construction time, matching the backend propagation pattern).
 type gMountieNode struct {
 	fs.Inode
 
-	backend FileSystemBackend
+	backend  FileSystemBackend
+	rewriter *IDRewriter
 }
 
 // path returns the inode's path relative to the mount root, with no
@@ -104,9 +108,11 @@ var (
 	_ fs.FileSetlkwer  = (*gMountieFile)(nil)
 )
 
-// setAttrFromBackend populates a fuse.Attr from a backend Attr. Used by
-// Getattr/Lookup/Create/Mkdir handlers.
-func setAttrFromBackend(dst *fuse.Attr, a *Attr) {
+// setAttrFromBackend populates a fuse.Attr from a backend Attr and applies
+// the mount's IDRewriter so the caller sees local display uid/gid rather than
+// raw server ids. rw may be nil (identity transform). Used by
+// Getattr/Lookup/Create/Mkdir/Setattr handlers.
+func setAttrFromBackend(dst *fuse.Attr, a *Attr, rw *IDRewriter) {
 	dst.Ino = a.Ino
 	dst.Size = a.Size
 	dst.Blocks = a.Blocks
@@ -122,6 +128,7 @@ func setAttrFromBackend(dst *fuse.Attr, a *Attr) {
 	dst.Gid = a.Gid
 	dst.Rdev = a.Rdev
 	dst.Blksize = a.Blksize
+	dst.Uid, dst.Gid = rw.Inbound(dst.Uid, dst.Gid)
 }
 
 // childPath joins the parent path with the child name. Uses path.Join
@@ -136,21 +143,22 @@ func childPath(parent, name string) string {
 // --- Lookup ---
 
 func (r *gMountieRoot) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	return lookupAt(ctx, &r.Inode, r.backend, "", name, out)
+	return lookupAt(ctx, &r.Inode, r.backend, r.rewriter, "", name, out)
 }
 
 func (n *gMountieNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	return lookupAt(ctx, &n.Inode, n.backend, n.path(), name, out)
+	return lookupAt(ctx, &n.Inode, n.backend, n.rewriter, n.path(), name, out)
 }
 
-func lookupAt(ctx context.Context, parentInode *fs.Inode, backend FileSystemBackend, parent, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+func lookupAt(ctx context.Context, parentInode *fs.Inode, backend FileSystemBackend, rw *IDRewriter, parent, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	a, st := backend.Lookup(ctx, parent, name)
 	if !st.Ok() {
 		return nil, syscall.Errno(st)
 	}
-	setAttrFromBackend(&out.Attr, a)
+	setAttrFromBackend(&out.Attr, a, rw)
 	child := parentInode.NewInode(ctx, &gMountieNode{
-		backend: backend,
+		backend:  backend,
+		rewriter: rw,
 	}, fs.StableAttr{
 		Mode: a.Mode,
 		Ino:  a.Ino,
@@ -187,30 +195,30 @@ func readdirAt(ctx context.Context, backend FileSystemBackend, p string) (fs.Dir
 // --- Getattr ---
 
 func (r *gMountieRoot) Getattr(ctx context.Context, _ fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	return getattrAt(ctx, r.backend, "", out)
+	return getattrAt(ctx, r.backend, r.rewriter, "", out)
 }
 
 func (n *gMountieNode) Getattr(ctx context.Context, _ fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	return getattrAt(ctx, n.backend, n.path(), out)
+	return getattrAt(ctx, n.backend, n.rewriter, n.path(), out)
 }
 
-func getattrAt(ctx context.Context, backend FileSystemBackend, p string, out *fuse.AttrOut) syscall.Errno {
+func getattrAt(ctx context.Context, backend FileSystemBackend, rw *IDRewriter, p string, out *fuse.AttrOut) syscall.Errno {
 	a, st := backend.Stat(ctx, p)
 	if !st.Ok() {
 		return syscall.Errno(st)
 	}
-	setAttrFromBackend(&out.Attr, a)
+	setAttrFromBackend(&out.Attr, a, rw)
 	return 0
 }
 
 // --- Setattr ---
 
 func (r *gMountieRoot) Setattr(ctx context.Context, _ fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
-	return setattrAt(ctx, r.backend, "", in, out)
+	return setattrAt(ctx, r.backend, r.rewriter, "", in, out)
 }
 
 func (n *gMountieNode) Setattr(ctx context.Context, _ fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
-	return setattrAt(ctx, n.backend, n.path(), in, out)
+	return setattrAt(ctx, n.backend, n.rewriter, n.path(), in, out)
 }
 
 // setattrAt dispatches on SetAttrIn.Valid flags: size -> Truncate, mode ->
@@ -219,7 +227,10 @@ func (n *gMountieNode) Setattr(ctx context.Context, _ fs.FileHandle, in *fuse.Se
 // in.GetATime()/GetMTime() return the resolved concrete time (UTIME_NOW is
 // already resolved to time.Now() by go-fuse); a false ok means the bit was
 // unset (UTIME_OMIT), so that timestamp is passed as nil and left unchanged.
-func setattrAt(ctx context.Context, backend FileSystemBackend, p string, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
+// rw.Outbound is applied to the local uid/gid before calling Chown so the
+// server receives the server-namespace ids; rw.Inbound is applied by
+// setAttrFromBackend on the final Stat result.
+func setattrAt(ctx context.Context, backend FileSystemBackend, rw *IDRewriter, p string, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
 	if sz, ok := in.GetSize(); ok {
 		if st := backend.Truncate(ctx, p, sz); !st.Ok() {
 			return syscall.Errno(st)
@@ -245,6 +256,7 @@ func setattrAt(ctx context.Context, backend FileSystemBackend, p string, in *fus
 				gid = a.Gid
 			}
 		}
+		uid, gid = rw.Outbound(uid, gid)
 		if st := backend.Chown(ctx, p, uid, gid); !st.Ok() {
 			return syscall.Errno(st)
 		}
@@ -267,7 +279,7 @@ func setattrAt(ctx context.Context, backend FileSystemBackend, p string, in *fus
 	if !st.Ok() {
 		return syscall.Errno(st)
 	}
-	setAttrFromBackend(&out.Attr, a)
+	setAttrFromBackend(&out.Attr, a, rw)
 	return 0
 }
 
@@ -292,14 +304,14 @@ func openAt(ctx context.Context, backend FileSystemBackend, p string, flags uint
 // --- Create ---
 
 func (r *gMountieRoot) Create(ctx context.Context, name string, flags, mode uint32, out *fuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
-	return createAt(ctx, &r.Inode, r.backend, "", name, flags, mode, out)
+	return createAt(ctx, &r.Inode, r.backend, r.rewriter, "", name, flags, mode, out)
 }
 
 func (n *gMountieNode) Create(ctx context.Context, name string, flags, mode uint32, out *fuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
-	return createAt(ctx, &n.Inode, n.backend, n.path(), name, flags, mode, out)
+	return createAt(ctx, &n.Inode, n.backend, n.rewriter, n.path(), name, flags, mode, out)
 }
 
-func createAt(ctx context.Context, parentInode *fs.Inode, backend FileSystemBackend, parent, name string, flags, mode uint32, out *fuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
+func createAt(ctx context.Context, parentInode *fs.Inode, backend FileSystemBackend, rw *IDRewriter, parent, name string, flags, mode uint32, out *fuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
 	handle, attr, st := backend.Create(ctx, parent, name, flags, mode)
 	if !st.Ok() {
 		return nil, nil, 0, syscall.Errno(st)
@@ -319,9 +331,10 @@ func createAt(ctx context.Context, parentInode *fs.Inode, backend FileSystemBack
 		}
 		attr = a
 	}
-	setAttrFromBackend(&out.Attr, attr)
+	setAttrFromBackend(&out.Attr, attr, rw)
 	child := parentInode.NewInode(ctx, &gMountieNode{
-		backend: backend,
+		backend:  backend,
+		rewriter: rw,
 	}, fs.StableAttr{
 		Mode: attr.Mode,
 		Ino:  attr.Ino,
@@ -332,14 +345,14 @@ func createAt(ctx context.Context, parentInode *fs.Inode, backend FileSystemBack
 // --- Mkdir ---
 
 func (r *gMountieRoot) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	return mkdirAt(ctx, &r.Inode, r.backend, "", name, mode, out)
+	return mkdirAt(ctx, &r.Inode, r.backend, r.rewriter, "", name, mode, out)
 }
 
 func (n *gMountieNode) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	return mkdirAt(ctx, &n.Inode, n.backend, n.path(), name, mode, out)
+	return mkdirAt(ctx, &n.Inode, n.backend, n.rewriter, n.path(), name, mode, out)
 }
 
-func mkdirAt(ctx context.Context, parentInode *fs.Inode, backend FileSystemBackend, parent, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+func mkdirAt(ctx context.Context, parentInode *fs.Inode, backend FileSystemBackend, rw *IDRewriter, parent, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	full := childPath(parent, name)
 	if st := backend.Mkdir(ctx, full, mode); !st.Ok() {
 		return nil, syscall.Errno(st)
@@ -350,9 +363,10 @@ func mkdirAt(ctx context.Context, parentInode *fs.Inode, backend FileSystemBacke
 	if !sst.Ok() {
 		return nil, syscall.Errno(sst)
 	}
-	setAttrFromBackend(&out.Attr, a)
+	setAttrFromBackend(&out.Attr, a, rw)
 	child := parentInode.NewInode(ctx, &gMountieNode{
-		backend: backend,
+		backend:  backend,
+		rewriter: rw,
 	}, fs.StableAttr{
 		Mode: a.Mode,
 		Ino:  a.Ino,

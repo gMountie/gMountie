@@ -117,7 +117,7 @@ func (m *VFSVolumeMounterImpl) Mount(volumeName string) error {
 		backend = cache.NewCachedBackend(backend, cache.ConfigFromClient(m.cache), p, m.client.Fs(), volumeName)
 	}
 	m.backends.Store(volumeName, backend)
-	volRoot := io.NewMountieRoot(backend)
+	volRoot := io.NewMountieRoot(backend, nil)
 	ctx := context.Background()
 	parent := &m.root.Inode
 	childInode := parent.NewPersistentInode(ctx, volRoot, gofs.StableAttr{Mode: fuse.S_IFDIR})
