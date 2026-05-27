@@ -26,9 +26,6 @@ type AuthService interface {
 // NewAuthServiceFromConfig creates a new AuthService from the config
 func NewAuthServiceFromConfig(cfg config.AuthConfig) AuthService {
 	switch cfg.GetType() {
-	case config.AuthConfigTypeNone:
-		log.Log.Warn("no authentication is enabled")
-		return &NoneAuthService{}
 	case config.AuthConfigTypeBasic:
 		// Create users map
 		// Switch case AuthConfigTypeBasic guarantees cfg is *BasicAuthConfig.
@@ -40,20 +37,24 @@ func NewAuthServiceFromConfig(cfg config.AuthConfig) AuthService {
 		log.Log.Info("basic authentication is enabled")
 		return NewBasicAuthService(users)
 	default:
-		return &NoneAuthService{}
+		// Unreachable: config parsing rejects unknown auth types. Fail closed
+		// (deny) rather than open, so a misconfiguration can never run unauthed.
+		log.Log.Error("unknown auth type; denying all requests")
+		return &denyAllAuthService{}
 	}
 }
 
 // --------------------------- Implementations ---------------------------
 
-// ----------- NoneAuthService -----------
+// ----------- denyAllAuthService -----------
 
-// NoneAuthService is a service that does not perform any authentication
-type NoneAuthService struct{}
+// denyAllAuthService fails closed for an unconfigured/unknown auth type. It is
+// unreachable in practice (config parsing rejects unknown types) but ensures a
+// misconfiguration denies rather than silently runs unauthenticated.
+type denyAllAuthService struct{}
 
-// Authorize always returns true
-func (a *NoneAuthService) Authorize(ctx context.Context, method string) (bool, *UserDetails, error) {
-	return true, &UserDetails{Username: "anonymous"}, nil
+func (denyAllAuthService) Authorize(_ context.Context, _ string) (bool, *UserDetails, error) {
+	return false, nil, status.Errorf(codes.Unauthenticated, "authentication is not configured")
 }
 
 // ----------- BasicAuthService -----------

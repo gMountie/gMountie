@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"gmountie/pkg/client/config"
 	"gmountie/pkg/client/metrics"
-	serverConfig "gmountie/pkg/server/config"
 	"gmountie/pkg/server/grpc/snappy"
 	"gmountie/pkg/utils/log"
 	"os"
@@ -82,10 +81,7 @@ func NewClientFromConfig(cfg *config.Config) (Client, error) {
 	metrics.SetCacheUnverifiedHook(m.CacheUnverifiedAdd)
 	opts = append(opts, WithUnaryInterceptors(UnaryClientInFlightInterceptor(m)))
 
-	switch c := authConfig.(type) {
-	case *serverConfig.NoneAuthConfig:
-		// Do nothing
-	case *config.BasicAuthConfig:
+	if c, ok := authConfig.(*config.BasicAuthConfig); ok {
 		opts = append(opts, WithBasicAuth(c.Username, c.Password))
 	}
 

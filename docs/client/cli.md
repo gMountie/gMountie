@@ -18,21 +18,16 @@ gmountie mount [flags] <mountpoint>
 |-------------|-------|----------------|---------------------------------|
 | --server    | -s    | 127.0.0.1:9449 | Server address and port         |
 | --volume    | -n    |                | Volume name to mount (required) |
-| --auth-type | -t    | none           | Authentication type             |
+| --auth-type | -t    | basic          | Authentication type             |
 | --username  | -u    |                | Username for basic auth         |
 | --password  | -p    |                | Password for basic auth         |
 | --verbose   | -v    | false          | Enable verbose logging          |
 
 ## Authentication Types
 
-The client supports two authentication methods:
+The client supports the following authentication method:
 
-1. None (no authentication)
-   ```bash
-   gmountie mount -s server:9449 -n volume -t none /mountpoint
-   ```
-
-2. Basic (username/password)
+1. Basic (username/password)
    ```bash
    gmountie mount -s server:9449 -n volume -t basic -u user -p pass /mountpoint
    ```

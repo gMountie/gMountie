@@ -82,24 +82,6 @@ func (s *FactoryTestSuite) TestNewClientFromConfig_NilConfig() {
 	s.Nil(client)
 }
 
-func (s *FactoryTestSuite) TestNewClientFromConfig_NoneAuth() {
-	host, port := s.hostPort()
-	cfg := &config.Config{
-		Server: &config.ServerConfig{
-			Address: host,
-			Port:    uint(port),
-		},
-		Auth: &serverConfig.NoneAuthConfig{},
-	}
-
-	client, err := NewClientFromConfig(cfg)
-	s.Require().NoError(err)
-	s.Require().NotNil(client)
-	defer client.Close()
-	s.Equal(s.endpoint(), client.GetEndpoint())
-	s.NotEmpty(client.SessionID(), "factory must establish a session")
-}
-
 func (s *FactoryTestSuite) TestNewClientFromConfig_BasicAuth() {
 	host, port := s.hostPort()
 	cfg := &config.Config{
@@ -139,7 +121,12 @@ func (s *FactoryTestSuite) TestNewClientFromConfig_TimeoutsApplied() {
 	host, port := s.hostPort()
 	cfg := &config.Config{
 		Server: &config.ServerConfig{Address: host, Port: uint(port)},
-		Auth:   &serverConfig.NoneAuthConfig{},
+		Auth: &config.BasicAuthConfig{
+			BasicAuthConfigUser: serverConfig.BasicAuthConfigUser{
+				Username: "testuser",
+				Password: "testpass",
+			},
+		},
 		Rpc: &config.RpcConfig{
 			TimeoutMeta:     2 * time.Second,
 			TimeoutIO:       90 * time.Second,
@@ -172,7 +159,12 @@ func (s *FactoryTestSuite) TestNewClientFromConfig_HandshakeFailureReturnsError(
 
 	cfg := &config.Config{
 		Server: &config.ServerConfig{Address: "127.0.0.1", Port: uint(port)},
-		Auth:   &serverConfig.NoneAuthConfig{},
+		Auth: &config.BasicAuthConfig{
+			BasicAuthConfigUser: serverConfig.BasicAuthConfigUser{
+				Username: "testuser",
+				Password: "testpass",
+			},
+		},
 	}
 
 	client, err := NewClientFromConfig(cfg)

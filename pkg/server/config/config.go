@@ -8,7 +8,6 @@ import (
 	"gmountie/pkg/utils/log"
 
 	"github.com/go-playground/validator/v10"
-	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 )
 
@@ -131,14 +130,6 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	err = validate.Struct(result)
 	if err != nil {
 		return nil, err
-	}
-
-	// Cross-field validation: resolver-backed modes require an authenticated
-	// principal. Fail closed here rather than silently resolving "anonymous".
-	for _, vol := range result.Volumes {
-		if err := ValidateMapping(vol.Mapping.Mode, result.Auth.GetType()); err != nil {
-			return nil, errors.Wrapf(err, "volume %q", vol.Name)
-		}
 	}
 
 	return &result, nil

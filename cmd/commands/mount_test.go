@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -41,11 +42,13 @@ func (s *MountCmdTestSuite) SetupTest() {
 
 func (s *MountCmdTestSuite) TearDownTest() {
 	volumeName = ""
-	serverAddr = ""
-	authType = "none"
+	serverAddr = "127.0.0.1:9449"
+	authType = "basic"
 	username = ""
 	password = ""
 	configFile = ""
+	// Reset cobra flag Changed state so each test starts with a clean slate.
+	mountCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
 	if s.tempDir != "" {
 		err := os.RemoveAll(s.tempDir)
 		s.Require().NoError(err)
@@ -101,6 +104,9 @@ func (s *MountCmdTestSuite) TestMountCmd_NonExistentMountPoint() {
 		nonExistentPath,
 		"--server", "127.0.0.1:9449",
 		"--volume", "test-volume",
+		"--auth-type", "basic",
+		"--username", "admin",
+		"--password", "admin",
 	})
 	err := s.cmd.Execute()
 
@@ -166,7 +172,9 @@ func (s *MountCmdTestSuite) TestMountCmd_FlagOverridesConfig() {
   port: 9449
   tls: false
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 `
 	s.Require().NoError(os.WriteFile(cfgPath, []byte(cfgYAML), 0o600))
 	s.cmd.SetArgs([]string{

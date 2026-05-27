@@ -29,30 +29,22 @@ func (s *AuthServiceBaseTestSuite) createContextWithBasicAuth(username, password
 	return metadata.NewIncomingContext(s.ctx, md)
 }
 
-// NoneAuthServiceTestSuite is the test suite for NoneAuthService
-type NoneAuthServiceTestSuite struct {
+// DenyAllAuthServiceTestSuite tests the fail-closed default auth service
+type DenyAllAuthServiceTestSuite struct {
 	AuthServiceBaseTestSuite
 	service AuthService
 }
 
-func (s *NoneAuthServiceTestSuite) SetupTest() {
+func (s *DenyAllAuthServiceTestSuite) SetupTest() {
 	s.AuthServiceBaseTestSuite.SetupTest()
-	s.service = &NoneAuthService{}
+	s.service = &denyAllAuthService{}
 }
 
-func (s *NoneAuthServiceTestSuite) TestAuthorize() {
-	// Test with empty context
+func (s *DenyAllAuthServiceTestSuite) TestAuthorize_DeniesWithError() {
 	authorized, details, err := s.service.Authorize(s.ctx, "test-method")
-	s.Require().NoError(err)
-	s.Assert().True(authorized)
-	s.Assert().Equal("anonymous", details.Username)
-
-	// Test with auth context (should still work)
-	ctx := s.createContextWithBasicAuth("user", "pass")
-	authorized, details, err = s.service.Authorize(ctx, "test-method")
-	s.Require().NoError(err)
-	s.Assert().True(authorized)
-	s.Assert().Equal("anonymous", details.Username)
+	s.Assert().False(authorized)
+	s.Assert().Nil(details)
+	s.Require().Error(err)
 }
 
 // BasicAuthServiceTestSuite is the test suite for BasicAuthService
@@ -125,12 +117,6 @@ type AuthServiceFactoryTestSuite struct {
 	suite.Suite
 }
 
-func (s *AuthServiceFactoryTestSuite) TestNewAuthServiceFromConfig_None() {
-	cfg := &config.NoneAuthConfig{}
-	service := NewAuthServiceFromConfig(cfg)
-	s.Assert().IsType(&NoneAuthService{}, service)
-}
-
 func (s *AuthServiceFactoryTestSuite) TestNewAuthServiceFromConfig_Basic() {
 	cfg := &config.BasicAuthConfig{
 		AuthConfigBase: config.AuthConfigBase{
@@ -145,8 +131,8 @@ func (s *AuthServiceFactoryTestSuite) TestNewAuthServiceFromConfig_Basic() {
 }
 
 // Test Runners
-func TestNoneAuthServiceTestSuite(t *testing.T) {
-	suite.Run(t, new(NoneAuthServiceTestSuite))
+func TestDenyAllAuthServiceTestSuite(t *testing.T) {
+	suite.Run(t, new(DenyAllAuthServiceTestSuite))
 }
 
 func TestBasicAuthServiceTestSuite(t *testing.T) {

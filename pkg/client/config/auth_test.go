@@ -12,17 +12,16 @@ type AuthConfigTestSuite struct {
 	suite.Suite
 }
 
-// Test successful parsing of "none" auth configuration
-func (s *AuthConfigTestSuite) TestParse_NoneAuth() {
+// Test that "none" auth type is rejected now that auth is mandatory
+func (s *AuthConfigTestSuite) TestParse_NoneAuth_Rejected() {
 	conf := `
 server:
   address: 127.0.0.1
 auth:
   type: none
 `
-	result, err := LoadConfigFromString(conf)
-	s.Require().NoError(err)
-	s.Assert().Equal(serverConfig.AuthConfigTypeNone, result.Auth.GetType())
+	_, err := LoadConfigFromString(conf)
+	s.Require().Error(err)
 }
 
 // Test successful parsing of basic auth configuration
@@ -89,12 +88,14 @@ auth:
 // Test validation of username/password requirements
 func (s *AuthConfigTestSuite) TestParse_EmptyCredentials() {
 	conf := `
+server:
+  address: 127.0.0.1
 auth:
   type: basic
   username: ""
   password: ""
 `
-	_, err := LoadConfigFromString(conf + minimalServerConfig)
+	_, err := LoadConfigFromString(conf)
 	s.Require().Error(err)
 }
 
@@ -131,7 +132,9 @@ var minimalServerConfig = `
 server:
   address: 127.0.0.1
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 `
 
 func TestAuthConfigTestSuite(t *testing.T) {
