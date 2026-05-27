@@ -77,3 +77,33 @@ func (s *BindIdentitySuite) TestBindIdentityReturnsFS() {
 	s.Require().NoError(err)
 	s.NotNil(fs)
 }
+
+func (s *BindIdentitySuite) TestBindIdentityPrivilegedWrapsIdentity() {
+	orig := identityEnforceable
+	defer func() { identityEnforceable = orig }()
+	identityEnforceable = func() bool { return true }
+
+	svc := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModeSquash, Uid: 1000, Gid: 1000})
+	bare, err := svc.GetVolumeFileSystem("v")
+	s.Require().NoError(err)
+	bound, err := svc.BindIdentity(context.Background(), "v", nil)
+	s.Require().NoError(err)
+	s.NotSame(bare, bound) // wrapped with the identity-bound FS
+}
+
+func (s *BindIdentitySuite) TestBindIdentityUnprivilegedReturnsBareFS() {
+	orig := identityEnforceable
+	defer func() { identityEnforceable = orig }()
+	identityEnforceable = func() bool { return false }
+
+	// static + no principal would normally fail closed, but when the process
+	// can't change creds, BindIdentity skips identity entirely and hands back
+	// the bare loopback so the unprivileged path stays usable (dev/CI).
+	svc := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModeStatic,
+		Users: map[string]config.StaticUser{"alice": {Uid: 1001, Gid: 1001}}})
+	bare, err := svc.GetVolumeFileSystem("v")
+	s.Require().NoError(err)
+	bound, err := svc.BindIdentity(context.Background(), "v", nil)
+	s.Require().NoError(err)
+	s.Same(bare, bound)
+}

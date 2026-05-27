@@ -169,15 +169,17 @@ func Start(ctx context.Context, cfg *config.Config) error {
 
 // warnIfIdentityEnforcementUnprivileged emits a loud startup warning when the
 // server is running unprivileged on Linux. The per-request identity-bound
-// filesystem (BindIdentity) sets the resolved identity's credentials via
-// setfsuid/setfsgid/setgroups on every op; those calls require root (or
-// CAP_SETUID+CAP_SETGID) and fail with EPERM otherwise, making every
-// filesystem operation fail. We warn rather than refuse to start so local
-// development without privileges remains possible.
+// filesystem sets the resolved identity's credentials via
+// setfsuid/setfsgid/setgroups, which require root (or CAP_SETUID+CAP_SETGID).
+// Without them, BindIdentity skips the identity layer and every operation runs
+// as the server's own user — i.e. permission enforcement is DISABLED. We warn
+// rather than refuse to start so local development without privileges remains
+// possible.
 func warnIfIdentityEnforcementUnprivileged() {
-	if runtime.GOOS == "linux" && syscall.Getuid() != 0 {
-		log.Log.Warn("server is not running as root; identity enforcement will fail",
+	if runtime.GOOS == "linux" && syscall.Geteuid() != 0 {
+		log.Log.Warn("server is not running as root; identity enforcement is DISABLED",
 			zap.String("detail", "per-request setfsuid/setfsgid/setgroups require root "+
-				"(or CAP_SETUID+CAP_SETGID); without them filesystem operations will fail with EPERM"))
+				"(or CAP_SETUID+CAP_SETGID); without them all operations run as the "+
+				"server's own user and per-principal permissions are NOT enforced"))
 	}
 }
