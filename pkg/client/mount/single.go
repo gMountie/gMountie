@@ -74,7 +74,7 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) error {
 		backend = cache.NewCachedBackend(backend, cache.ConfigFromClient(m.cache), p, m.client.Fs(), volume)
 	}
 	m.backends.Store(volume, backend)
-	root := io.NewMountieRoot(backend)
+	root := io.NewMountieRoot(backend, nil)
 	mountOpts := createMountOptions(m.client.GetEndpoint(), volume, m.fuse, maxWrite)
 	entryTimeout := time.Second
 	attrTimeout := time.Second
