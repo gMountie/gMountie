@@ -116,7 +116,7 @@ volumes:
 | Mode | Principal → identity | Use case |
 |---|---|---|
 | `squash` *(default)* | everyone → one fixed `{uid, gid}` | shared appliance volume; safe default |
-| `system` | principal name → real OS account (`getpwnam` + `getgrouplist`) | real multi-user; groups sync via server `/etc/group` / LDAP-SSSD |
+| `system` | principal name → real OS account via the system name service (`getent`/`id`) | real multi-user; groups sync via server `/etc/group` *and* LDAP/SSSD |
 | `static` | principal → config table `{uid, gid, gids, caps}` | locked-down server with no OS accounts for these principals |
 | `passthrough` | wire `{uid, gid}` verbatim | I control both ends / trusted LAN |
 
@@ -124,9 +124,15 @@ In every mode the resolved identity's full credentials are assumed in the
 kernel per request (§3.4) — there is no separate enforcement path per mode.
 `passthrough` simply takes the identity from the wire instead of a resolver.
 
-**`system` mode requires the server to resolve principals via NSS** — a real OS
-account, or LDAP/SSSD wired into NSS. A stripped container image will not have
-these entries; **containerized deployments use `static` or `squash`.**
+**`system` mode resolves against the server's OS name service.** Because the
+released server binary is built `CGO_ENABLED=0` (see `.goreleaser.yaml`), the
+pure-Go `os/user` would see only `/etc/passwd`/`/etc/group` and miss LDAP/SSSD.
+To honor the *full* name service (nsswitch, incl. LDAP/SSSD) the resolver
+**shells out to `getent passwd`/`getent group`/`id`**, which consult the system
+NSS regardless of the binary's cgo setting. Results are cached per session, so
+the per-resolve cost is negligible. Requires `getent`/`id` on the server
+(standard on Linux). A stripped container image with no accounts will not
+resolve principals; **containerized deployments use `static` or `squash`.**
 (Coordinate with the in-flight `phase6-dockerfile-compose` work: the
 docker-compose example should default to `squash` with an explicit uid/gid,
 replacing the `chmod 777` sidecar.)
@@ -166,7 +172,8 @@ per-thread on Linux, so this does not affect other in-flight requests.
 `AssumeUserMiddleware` (mapped modes), per request, on a `LockOSThread`-pinned
 thread:
 
-1. `setgroups(identity.Gids)` via **raw `SYS_setgroups`** (not Go's
+1. Snapshot the thread's current supplementary groups (for restore in step 5),
+   then `setgroups(identity.Gids)` via **raw `SYS_setgroups`** (not Go's
    broadcasting `syscall.Setgroups`) — installs the full supplementary set.
 2. `setfsgid(identity.Gid)`.
 3. `setfsuid(identity.Uid)` — this also **drops the fs-related capabilities**
@@ -175,8 +182,16 @@ thread:
 4. Run the loopback op. The kernel checks owner/group/other bits, the full
    group set, sticky-bit unlink rules, setgid-dir inheritance, and **POSIX
    ACLs** — all natively. Created files are owned by `identity.Uid:Gid`.
-5. Restore root creds on the cleanup path (existing thread-taint handling in
-   `asume_user.go` applies).
+   (Honoring POSIX ACLs requires the backing server filesystem to be mounted
+   with `acl` — default on most ext4/xfs today, but not guaranteed; documented
+   as a server prerequisite.)
+5. On cleanup, restore the thread's **original** credentials before unlocking:
+   `setfsuid`/`setfsgid` back to root **and** raw `setgroups` back to the group
+   list snapshotted in step 1. If any restore call fails, do **not**
+   `runtime.UnlockOSThread` — let the tainted thread die with the goroutine.
+   (The existing `asume_user.go` cleanup follows this rule for fsuid/fsgid only;
+   it **must be extended** to snapshot and restore the supplementary group list,
+   or threads return to the pool carrying the principal's groups.)
 
 Middleware order (mapped modes): `IdentityResolver → AssumeUser → loopback`.
 There is **no user-space permission evaluator** and **no separate `Lstat`
@@ -189,7 +204,9 @@ TOCTOU window.
   but skip `setfsuid`), so the thread retains `CAP_DAC_OVERRIDE` and the kernel
   permits anything. Verified (§0, worker C). For a *create* under
   `dac_override`, `fchown` the new file to `identity.Uid:Gid` afterward so the
-  admin does not silently leave root-owned files.
+  admin does not silently leave root-owned files. (Create-then-`fchown` is not
+  atomic: if the `fchown` fails after the create, a root-owned file remains — an
+  admin-path edge that is logged for manual cleanup; acceptable here.)
 - `dac_read` — read/traverse-only bypass. Keep `fsuid=0` but **`capset` the
   thread to drop `CAP_DAC_OVERRIDE`/`FOWNER`/`FSETID` while keeping
   `CAP_DAC_READ_SEARCH`**. Capabilities are per-thread, so this is feasible;
@@ -283,7 +300,9 @@ uid; reject/remap `chown` to IDs that cannot be resolved.
 is the supported way to preserve ownership through a backup: an admin principal
 with `dac_read` mounts with `raw_ids: true`, and `rsync -a`/`restic` see and
 restore real ownership. (A `passthrough` mount is the other way to get raw IDs;
-either is fine.) `raw_ids` composes with any mode.
+either is fine.) `raw_ids` composes with any mode. The opt-out is symmetric: the
+**outbound** path also passes through, so a `chown` is sent with its literal IDs
+(not rewritten) and a backup tool can restore ownership faithfully.
 
 **[DECISION — flagged for review] Cache storage.** The persistent client cache
 stores **server (wire) IDs**; rewriting happens on every FUSE return, not at
@@ -344,8 +363,8 @@ disk / NFS `no_root_squash`.
 - `pkg/common/config`: per-volume `mapping` block (`mode`, `uid`, `gid`,
   `users`, `groups`, `admin_groups`, `root_squash`, `anon_uid`); validation.
 - `pkg/server/service`: `IdentityResolver` interface + `squash`/`system`/
-  `static` implementations; `system` uses `os/user` (`Lookup`,
-  `LookupGroupIds`).
+  `static` implementations; `system` shells out to `getent`/`id` (binary is
+  `CGO_ENABLED=0`, so pure-Go `os/user` would miss LDAP/SSSD).
 - New `IdentityResolverMiddleware`: resolves principal → `Identity`, stashes on
   context (mapped modes only).
 - `AssumeUserMiddleware` (`pkg/server/io/middleware/asume_user.go`): extended
