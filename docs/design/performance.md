@@ -494,8 +494,8 @@ The performance-relevant knobs, their defaults, and where they live:
 
 - **Readahead window** — the number of `readahead_chunk_bytes` chunks the client
   keeps prefetched or in-flight ahead of the sequential read cursor. Controlled by
-  `rpc.readahead_window`. A window of 1 = one chunk in flight at a time (today's
-  conservative default).
+  `rpc.readahead_window` (default 4). A window of 1 = the legacy single-chunk-ahead
+  behaviour.
 
 - **Write coalescing** — the per-fd client-side buffer that accumulates contiguous
   small writes up to `rpc.write_coalesce_bytes` before issuing a `Write` RPC.
@@ -529,5 +529,5 @@ The performance-relevant knobs, their defaults, and where they live:
   `bencher run --adapter json` ingestion path. The project's BMF emitter lives in
   `test/e2e/perf/cmd/perfbmf/`.
 
-- **SP5** — the planned partial-consume readahead redesign (the WAN read win).
-  See §5.1.
+- **SP5** — the implemented partial-consume readahead redesign (the WAN read win).
+  See §2.5.

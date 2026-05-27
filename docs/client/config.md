@@ -57,8 +57,9 @@ defaults so dead-connection detection is symmetric in both directions.
 |-------------------------|----------|----------|-------------------------------------------------------------|
 | timeout\_meta           | duration | 5s       | Per-RPC timeout for metadata ops                            |
 | timeout\_io             | duration | 30s      | Per-RPC timeout for data ops (Read, Write, ...)             |
-| readahead\_chunk\_bytes | integer  | 65536    | Size of a single readahead fetch (0 disables readahead)     |
+| readahead\_chunk\_bytes | integer  | 1048576  | Size of a single readahead fetch / prefetch chunk (0 disables readahead) |
 | readahead\_threshold    | integer  | 3        | Sequential reads required before a prefetch is armed        |
+| readahead\_window       | integer  | 4        | Prefetch chunks kept in flight ahead of the cursor (range 1–64) |
 | write\_coalesce\_bytes  | integer  | 1048576  | Per-fd small-write coalescing threshold (0 disables)        |
 | max\_message\_bytes     | integer  | 16777216 | Cap on inbound/outbound gRPC message size (16 MiB default)  |
 
@@ -67,9 +68,12 @@ defaults so dead-connection detection is symmetric in both directions.
 
 `readahead_threshold` is validated to the range [1, 16]; smaller values
 arm prefetch sooner (more aggressive, more wasted fetches on
-random-access workloads), larger values delay arming. Setting
+random-access workloads), larger values delay arming. `readahead_window`
+is validated to [1, 64] and sets how many `readahead_chunk_bytes` chunks
+the client keeps in flight ahead of the cursor — raise it on
+high-RTT/high-bandwidth links to keep the read pipe full. Setting
 `readahead_chunk_bytes: 0` disables the readahead path entirely,
-regardless of threshold.
+regardless of threshold or window.
 
 `write_coalesce_bytes` is validated to the range [0, 16777216] (0 to
 16 MiB). 0 disables coalescing entirely so every Write call hits the
@@ -78,16 +82,25 @@ the common "many tiny appends" pattern (logs, build outputs, etc.).
 
 ### Readahead
 
-When sequential reads are detected on an fd, the client prefetches a
-single `readahead_chunk_bytes`-sized chunk one chunk ahead of the
-current offset. The next Read that lines up with the prefetched range
-is served from the in-memory ring without touching the network. There
-is at most one outstanding prefetch per fd; the ring is dropped on any
-non-sequential Read (backwards seek or gap), and the in-flight prefetch
-is cancelled when the fd is released.
+When sequential reads are detected on an fd (after `readahead_threshold`
+in-order reads), the client keeps up to `readahead_window`
+`readahead_chunk_bytes`-sized chunks in flight ahead of the cursor, each
+its own streaming Read RPC. gRPC multiplexes them over the one
+connection, so a deep window hides the per-fetch round-trip latency and
+keeps the read pipe full. Reads are served from the in-flight chunks
+without touching the network: a read of any size is satisfied by copying
+across one or more contiguous ready chunks, and a partially-read chunk
+is retained so the next sequential read continues from its tail. A read
+not yet fully prefetched falls through to a normal Read (never a short
+read). A non-sequential Read (backwards seek or gap) evicts chunks
+behind the new cursor and re-arms from there; in-flight prefetches are
+cancelled when the fd is released.
 
 The win shows up most clearly on high-RTT connections where each
-round-trip costs. Localhost is roughly neutral.
+round-trip costs — a deeper `readahead_window` scales read throughput
+toward the link bandwidth until the pipe is full. Localhost is roughly
+neutral; the default window of 4 is a starting point for ~50 ms links,
+raise it for longer/fatter pipes.
 
 ### Write Coalescing
 
