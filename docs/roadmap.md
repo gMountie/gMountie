@@ -291,13 +291,11 @@ When this phase opens, it gets its own design doc and decomposition.
 
 ## Near-term deferred performance levers
 
-These two items post-date the original spec and are the most valuable remaining WAN performance wins. They are tracked in [Performance § deferred levers](design/performance.md).
+These items post-date the original spec and are the most valuable remaining WAN performance wins. They are tracked in [Performance](design/performance.md).
 
-### SP5 — Partial-consume readahead redesign (WAN read throughput win)
+### SP5 — Partial-consume readahead redesign (WAN read throughput win) — **Done**
 
-The current readahead streams a fixed-size chunk; if the FUSE layer only consumes a sub-range, the remainder is discarded. This means `readahead_window > 1` is currently counterproductive (wasted bandwidth, increased memory pressure). The fix requires the readahead engine to serve sub-ranges from a fetched chunk and retain the unconsumed tail for the next FUSE read.
-
-**Until SP5 lands:** keep `readahead_window` at its default of 1. The full design is in [Performance § SP5](design/performance.md#51-sp5-partial-consume-readahead-redesign-wan-read-win).
+The readahead engine now serves partial/cross-chunk sub-ranges and retains the unconsumed tail, so a deep window of frame-sized fetches actually pipelines sequential reads over a high-RTT link (≈2× sequential-read throughput at the new default `readahead_window = 4` / `readahead_chunk_bytes = 1 MiB`). See [Performance § 2.5](design/performance.md). Remaining follow-up: pool the per-fd prefetch buffers if the allocation cost is flagged.
 
 ### Zero-copy `CodecV2` gRPC marshaling
 

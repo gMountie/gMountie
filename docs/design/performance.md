@@ -110,23 +110,32 @@ path; `WriteAndFlush` carries only the residual tail after streaming completes.
 ### 2.5 Client readahead and write coalescing
 
 **Readahead:** `pkg/client/io/readahead.go` tracks sequential access patterns
-per open file descriptor. When a sequential pattern is detected, it prefetches
-the next `readahead_window` chunks of `readahead_chunk_bytes` each in parallel,
-keeping that many Read RPCs in flight ahead of the consumer. Defaults:
-`readahead_window = 1` (one prefetch in flight), `readahead_chunk_bytes = 64 KiB`.
-A non-sequential `Observe` drops the window and re-arms from the new position.
+per open file descriptor. After `readahead_threshold` (default 3) strictly
+sequential reads it keeps up to `readahead_window` chunks of
+`readahead_chunk_bytes` in flight ahead of the consumer, each issued as its own
+streaming Read RPC. gRPC multiplexes these over the single HTTP/2 connection, so
+a deep window pipelines away the per-fetch round-trip latency — the WAN read
+win. Defaults: `readahead_window = 4`, `readahead_chunk_bytes = 1 MiB` (one
+server frame).
 
-The `readahead_window` knob exists to deepen the pipeline on high-BDP WAN links
-(bandwidth × round-trip delay); however, **deepening the window in isolation
-does not reliably improve throughput** — see §5 for the reason and the planned
-fix.
+`Serve` is **partial-consume, cross-chunk, full-or-miss**: it satisfies a read
+of any size by copying across one or more contiguous ready chunks, advances a
+per-chunk consumed cursor, and **retains partially-consumed chunks** so the next
+sequential read hits their tail — a chunk is dropped only once fully drained. A
+read not fully covered by ready chunks misses (side-effect-free) and falls to
+the synchronous Read, so FUSE reads are never short. A non-sequential `Observe`
+evicts chunks at/behind the new cursor (respecting partial consume) and re-arms
+from the new position.
 
-At `window=1` the client keeps at most one prefetch in flight and does not arm
-a prefetch when the FUSE read size exceeds `readahead_chunk_bytes`: a single
-chunk can never satisfy a larger read, so `Serve` cannot hit and the prefetch
-would be pure waste. Consequently readahead is a no-op for readers whose buffer
-exceeds the chunk size — making it effective for those readers is the SP5
-partial-consume redesign (§5.1), not this path.
+This is the SP5 redesign. Previously `Serve` was whole-chunk-or-miss with
+one-shot consume, so readahead was a no-op for any reader whose buffer differed
+from the chunk size, and deepening the window only wasted RPCs. Now a deep
+window of frame-sized fetches saturates the read pipe on a high-RTT link —
+measured ≈2× sequential-read throughput at `window=4` vs `window=1` over a
+50 ms / 100 Mbit profile, reaching ~70% of the link ceiling. Each retained
+chunk holds `readahead_chunk_bytes` until drained, so a deep window costs up to
+`window × chunk` per open fd (≈4 MiB at the defaults); pooling that buffer is a
+deferred follow-up (§5.1).
 
 **Write coalescing:** `pkg/client/io/coalesce.go` accumulates contiguous small
 writes per fd into a single buffer up to `write_coalesce_bytes` (default 1 MiB).
@@ -432,30 +441,16 @@ The dashboard jumped — what to check:
 
 ## 5. Deferred / future work
 
-### 5.1 SP5: partial-consume readahead redesign (WAN read win)
+### 5.1 Readahead prefetch-buffer pooling
 
-The current `Readahead` implementation prefetches chunks and serves them
-whole — a `Serve` call returns the entire chunk even if the consumer only needs
-a sub-range. A deep readahead window (`readahead_window > 1`) therefore fetches
-data the consumer never receives, wasting bandwidth and defeating the prefetch on
-a bandwidth-limited link.
-
-**Measured result** with `writeback_cache: true` and `readahead_window = 16`
-at 50 ms RTT / 100 Mbit: sequential read actually *regressed* measurably (the
-deep window's concurrent prefetches do not pipeline effectively in this
-configuration). **Recommendation: leave `readahead_window` at its default of 1
-until the partial-consume redesign lands.**
-
-The fix requires:
-
-1. Issuing large Read RPCs (e.g. 1 MiB per fetch instead of 64 KiB).
-2. A **partial-consume `Serve`**: serve sub-ranges from a fetched chunk, keep
-   the remainder in the window until drained rather than discarding it.
-3. A deep window + investigation of why concurrent prefetches do not overlap
-   effectively today.
-
-This redesign is the primary remaining lever for WAN read throughput before
-escalating to per-fd bidirectional streams.
+The partial-consume readahead (§2.5) retains each in-flight/ready chunk until it
+is fully drained or evicted, so a deep window holds up to `readahead_window ×
+readahead_chunk_bytes` per open fd, unpooled (≈4 MiB at the defaults). Each
+chunk buffer is allocated per prefetch (`doPrefetch`) and freed on
+drain/eviction. If the Bencher read-path allocation series flags this, pool
+them: a `sync.Pool` of chunk-sized slices on `Readahead`, taken in `Store` and
+returned at drain/eviction. The eviction-time return path is the non-trivial
+piece, so this is deferred until the measured cost justifies it.
 
 ### 5.2 Zero-copy `CodecV2` marshaling (serialization win)
 
@@ -470,8 +465,9 @@ The performance-relevant knobs, their defaults, and where they live:
 
 | Key | Default | Notes |
 |---|---|---|
-| `rpc.readahead_chunk_bytes` | `65536` (64 KiB) | Size of each prefetched chunk |
-| `rpc.readahead_window` | `1` | Chunks to keep prefetched/in-flight; do not deepen until SP5 lands |
+| `rpc.readahead_chunk_bytes` | `1048576` (1 MiB) | Size of each prefetched chunk (one server frame) |
+| `rpc.readahead_threshold` | `3` | Strictly-sequential reads before arming prefetch |
+| `rpc.readahead_window` | `4` | Chunks kept prefetched/in-flight; deepen on high-BDP links (range 1–64) |
 | `rpc.write_coalesce_bytes` | `1048576` (1 MiB) | Per-fd small-write coalescing buffer cap |
 | `rpc.compression` | `none` | `none` or `snappy`; default off — see §2.7 |
 | `rpc.keepalive.time` | `30s` | Ping interval on idle connection |
