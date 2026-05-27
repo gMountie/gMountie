@@ -68,8 +68,13 @@ jobs:
 
     # cosign signs release artifacts + images (keyless); syft generates the
     # SBOMs goreleaser attaches to archives and the image SBOM attested below.
+    # Pin the cosign binary. goreleaser's `signs` block uses sign-blob's
+    # --output-certificate/--output-signature, which cosign v3 removed; pinning
+    # v2.5.2 keeps the signing path stable until that block is migrated.
     - name: Install cosign
       uses: sigstore/cosign-installer@v3
+      with:
+        cosign-release: 'v2.5.2'
 
     - name: Install syft
       uses: anchore/sbom-action/download-syft@v0
@@ -123,7 +128,10 @@ jobs:
         img="ghcr.io/gmountie/gmountie-server:${tag}"
         echo "generating + attesting SBOM for $img"
         syft "$img" -o spdx-json=image.spdx.json
-        cosign attest --yes --type spdx --predicate image.spdx.json "$img"
+        # --new-bundle-format writes a Sigstore bundle (OCI referrers) instead
+        # of the legacy annotation format, so `cosign verify-attestation` on
+        # current cosign (v3) reads it without extra flags.
+        cosign attest --yes --new-bundle-format --type spdx --predicate image.spdx.json "$img"
 
     - name: Push Tags
       if: ${{  github.event.inputs.type == 'alpha' || github.event.inputs.type == 'production' }}
