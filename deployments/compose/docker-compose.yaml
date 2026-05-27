@@ -1,33 +1,41 @@
-version: '3.8'
+# `version:` is intentionally omitted — the Compose Specification dropped it
+# and modern `docker compose` warns when it is present.
 name: gmountie
 
 services:
   server:
-    image: ghcr.io/gmountie/gmountie-server:latest
+    image: ghcr.io/gmountie/gmountie-server:${GMOUNTIE_IMAGE_TAG:-latest}
     build:
       context: ../../
       dockerfile: Dockerfile
-      args:
-        - BIN_PATH=dist/gMountie_linux_amd64_v1/gMountie
+    # Run as the unprivileged uid baked into the image (matches the
+    # Dockerfile USER and the chart's runAsUser).
+    user: "1000:1000"
     command:
       - --config
       - /config.yaml
     depends_on:
-      - fix-permissions
+      # Wait for the one-shot chown to finish before the server starts, so the
+      # non-root process finds a writable data dir.
+      init-permissions:
+        condition: service_completed_successfully
     volumes:
       - data-volume:/data
     configs:
       - source: server-config
         target: /config.yaml
     ports:
-      - "9449:9449"
-      - "9090:9090"
+      - "${GRPC_PORT:-9449}:9449"
+      - "${METRICS_PORT:-9090}:9090"
 
-  fix-permissions:
-    image: alpine
-    command: chmod 777 /data
+  # One-shot: give the data volume to uid/gid 1000 (least privilege) instead
+  # of the old `chmod 777` sidecar. Runs as root, chowns, exits.
+  init-permissions:
+    image: alpine:3.20
+    command: chown 1000:1000 /data
     volumes:
       - data-volume:/data
+    restart: "no"
 
 volumes:
   data-volume:
