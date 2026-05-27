@@ -38,8 +38,8 @@ type MappingConfig struct {
 }
 
 type VolumeConfig struct {
-	Name    string        `validate:"required"`
-	Path    string        `validate:"required"`
+	Name string `validate:"required"`
+	Path string `validate:"required"`
 	// No `required` tag: a struct-value field is never the zero value at
 	// validate time, so it would be a no-op. The validator recurses into
 	// MappingConfig automatically, enforcing Mode's `oneof`.

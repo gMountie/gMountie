@@ -66,8 +66,8 @@ func (s *BoundFSCredsSuite) TestPerThreadGroupsEnforcedAndIsolated() {
 	go func() { defer wg.Done(); withoutErr = try([]uint32{9999}) }()
 	wg.Wait()
 
-	s.NoError(withErr, "thread with supp group 6000 should read")
-	s.ErrorIs(withoutErr, syscall.EACCES, "thread without 6000 should be denied (no leak)")
+	s.Require().NoError(withErr, "thread with supp group 6000 should read")
+	s.Require().ErrorIs(withoutErr, syscall.EACCES, "thread without 6000 should be denied (no leak)")
 }
 
 // TestCleanupRestoresOriginalGroups proves the cleanup path restores the
