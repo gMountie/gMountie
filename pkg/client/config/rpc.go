@@ -16,16 +16,19 @@ const (
 	// (Read, Write). Tuned for moderate-sized payloads over an internet link.
 	DefaultRpcTimeoutIO = 30 * time.Second
 	// DefaultReadaheadChunkBytes is the default size of a single readahead
-	// fetch issued by the client behind a sequential-read kernel hint.
-	DefaultReadaheadChunkBytes = 64 << 10
+	// fetch. 1 MiB matches the default FUSE max-write / server frame size, so
+	// each prefetch is one server frame and the server's frame-buffer pool is
+	// sized for it. Capped down by the Version handshake if the server
+	// advertises a smaller frame.
+	DefaultReadaheadChunkBytes = 1 << 20
 	// DefaultReadaheadThreshold is the number of strictly-sequential reads
-	// required before the client arms a one-chunk-ahead prefetch.
+	// required before the client arms prefetches.
 	DefaultReadaheadThreshold = 3
 	// DefaultReadaheadWindow is the number of readahead chunks kept in flight
-	// ahead of the cursor. 1 = today's single-chunk prefetch (LAN-tuned, no
-	// regression). WAN users raise it so window*chunk covers the
-	// bandwidth-delay product (e.g. 8-16 at ~50ms RTT / 100 Mbit).
-	DefaultReadaheadWindow = 1
+	// ahead of the cursor. 4 is a bandwidth-delay-product start for ~50 ms RTT
+	// / 100 Mbit; the knob ranges [1,64] so operators on longer/fatter pipes
+	// raise it. Each in-flight chunk is one concurrent Read RPC.
+	DefaultReadaheadWindow = 4
 	// DefaultWriteCoalesceBytes is the per-fd small-write coalescing
 	// threshold. Small contiguous writes accumulate until the buffer
 	// reaches this size (or Flush/Release/Fsync drains it). 0 disables

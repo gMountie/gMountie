@@ -301,8 +301,12 @@ auth:
 `
 	result, err := LoadConfigFromString(conf)
 	s.Require().NoError(err)
+	s.Assert().Equal(1<<20, result.Rpc.ReadaheadChunkBytes)
+	s.Assert().Equal(4, result.Rpc.ReadaheadWindow)
+	s.Assert().Equal(3, result.Rpc.ReadaheadThreshold) // unchanged
+	s.Assert().Equal(DefaultReadaheadChunkBytes, result.Rpc.ReadaheadChunkBytes)
 	s.Assert().Equal(DefaultReadaheadWindow, result.Rpc.ReadaheadWindow)
-	s.Assert().Equal(1, result.Rpc.ReadaheadWindow)
+	s.Assert().Equal(DefaultReadaheadThreshold, result.Rpc.ReadaheadThreshold)
 }
 
 func (s *ConfigTestSuite) TestParse_ReadaheadWindowOverride() {
