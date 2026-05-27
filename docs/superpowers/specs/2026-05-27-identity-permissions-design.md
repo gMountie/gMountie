@@ -580,6 +580,26 @@ threads). Per-thread credential changes use raw syscalls only.
   mode for the first release.
 - **Server-push identity invalidation** — TTL + auth-refresh is enough until a
   real use case appears.
+- **`Subscribe` per-path authorization** *(found during Phase 1a)* — the event
+  channel (`controller/subscribe.go` → `bus.Subscribe`) forwards every volume
+  event (path, new_path, version) to any authenticated subscriber regardless of
+  per-path permission. The subscribe gate only checks volume existence. A
+  metadata/path-leak via the event stream; pre-existing, not introduced by the
+  identity work. Gate subscriptions (and/or filter events) by the principal's
+  path access in a follow-up.
+- **`Caller` on `GetAttrIfChangedRequest`** *(found during Phase 1a)* — that RPC
+  is identity-bound with a nil caller, so in `passthrough` mode it resolves to
+  anon (root-squash) rather than the wire caller. Correct in mapped modes (ctx
+  principal). Add a `Caller` field to the request to make passthrough
+  cache-revalidation use the real wire identity.
+- **Dedicated mapped-mode identity e2e** — Phase 1a is proven at the unit level
+  (resolvers, BindIdentity, Access), at the kernel level on the VM
+  (`BoundFSCredsSuite`: per-thread setgroups enforcement + isolation + restore),
+  and end-to-end via the api/fs e2e suites running through `BindIdentity`
+  (passthrough). A dedicated e2e that authenticates as a real principal over
+  basic-auth and asserts a `static`/`system` volume enforces that principal's
+  uid/supplementary-groups end-to-end (the alice-writes/bob-reads scenario)
+  would close the last wire-level seam; add as a fast-follow.
 
 *(POSIX ACLs are intentionally NOT here — kernel enforcement handles them.)*
 
