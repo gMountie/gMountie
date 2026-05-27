@@ -1,7 +1,7 @@
 # Declarative definition of the Bencher dashboard plots for project gmountie.
 #
-# Apply with:  task perf:plots:diff   (dry-run, prints the plan)
-#              task perf:plots:sync    (converge the live dashboard)
+# Apply with:  task perf:plots:diff           (dry-run, prints the plan)
+#              task perf:plots:sync PRUNE=1    (converge; prune drops plots not here)
 # Implemented by `perfbmf plots sync` (test/e2e/perf/cmd/perfbmf, planner in
 # test/e2e/perf/bmf/plotsync.go). Requires the `bencher` CLI and, for an actual
 # sync, $BENCHER_API_TOKEN (read-only dry-run needs no token on a public project).
@@ -14,6 +14,10 @@
 #
 # Document order == dashboard index (top to bottom). Title is the match key:
 # renaming a plot here is a delete-then-create of that plot.
+#
+# Sequential plots are split read-vs-write and LAN-vs-WAN: each chart then shows
+# just one direction on one link — the plain + Opt variants across the 3 sizes
+# (6 lines), which is the before/after comparison, not noise.
 
 defaults:
   branch: master
@@ -22,25 +26,38 @@ defaults:
   x_axis: date_time
 
 plots:
-  - title: Sequential throughput (LAN)
+  # --- sequential throughput (MB/s), one direction per link ---
+  - title: Sequential read throughput (LAN)
     measure: throughput
-    benchmarks: ["Seq*MiB/lan"] # plain + Opt read/write, all sizes, LAN
-
-  - title: Sequential throughput (WAN)
+    benchmarks: ["SeqRead*MiB/lan"] # plain + Opt, all sizes
+  - title: Sequential write throughput (LAN)
     measure: throughput
-    benchmarks: ["Seq*MiB/wan"]
+    benchmarks: ["SeqWrite*MiB/lan"]
+  - title: Sequential read throughput (WAN)
+    measure: throughput
+    benchmarks: ["SeqRead*MiB/wan"]
+  - title: Sequential write throughput (WAN)
+    measure: throughput
+    benchmarks: ["SeqWrite*MiB/wan"]
 
+  # --- normalized overhead (% of the min(disk,link) ceiling) ---
+  - title: Normalized read overhead (LAN)
+    measure: throughput_pct_of_raw
+    benchmarks: ["SeqRead*MiB/lan"]
+  - title: Normalized write overhead (LAN)
+    measure: throughput_pct_of_raw
+    benchmarks: ["SeqWrite*MiB/lan"]
+  - title: Normalized read overhead (WAN)
+    measure: throughput_pct_of_raw
+    benchmarks: ["SeqRead*MiB/wan"]
+  - title: Normalized write overhead (WAN)
+    measure: throughput_pct_of_raw
+    benchmarks: ["SeqWrite*MiB/wan"]
+
+  # --- metadata + random + substrate (unchanged) ---
   - title: Metadata latency
     measure: latency
     benchmarks: ["Lookup/*", "OpenStatClose/*", "Readdir*/*"]
-
-  - title: Normalized overhead (% of raw)
-    measure: throughput_pct_of_raw
-    benchmarks: ["Seq*MiB/lan", "Seq*MiB/wan"]
-
-  - title: Substrate floor (disk/net MB/s)
-    measure: throughput
-    benchmarks: ["_substrate/disk_seq_*", "_substrate/net_bw_*"]
 
   - title: Random 4KiB I/O latency
     measure: latency
@@ -49,3 +66,7 @@ plots:
   - title: Random 4KiB I/O throughput
     measure: throughput
     benchmarks: ["Random*4KiB/*"]
+
+  - title: Substrate floor (disk/net MB/s)
+    measure: throughput
+    benchmarks: ["_substrate/disk_seq_*", "_substrate/net_bw_*"]
