@@ -8,6 +8,7 @@ import (
 	"context"
 	"gmountie/pkg/common"
 	"gmountie/pkg/proto"
+	"gmountie/pkg/server/service"
 
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	mock "github.com/stretchr/testify/mock"
@@ -227,6 +228,78 @@ func (_c *MockVolumeService_List_Call) Return(volumes []common.Volume, err error
 }
 
 func (_c *MockVolumeService_List_Call) RunAndReturn(run func() ([]common.Volume, error)) *MockVolumeService_List_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ResolveIdentity provides a mock function for the type MockVolumeService
+func (_mock *MockVolumeService) ResolveIdentity(ctx context.Context, volume string, caller *proto.Caller) (service.Identity, error) {
+	ret := _mock.Called(ctx, volume, caller)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ResolveIdentity")
+	}
+
+	var r0 service.Identity
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, *proto.Caller) (service.Identity, error)); ok {
+		return returnFunc(ctx, volume, caller)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, *proto.Caller) service.Identity); ok {
+		r0 = returnFunc(ctx, volume, caller)
+	} else {
+		r0 = ret.Get(0).(service.Identity)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, *proto.Caller) error); ok {
+		r1 = returnFunc(ctx, volume, caller)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockVolumeService_ResolveIdentity_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ResolveIdentity'
+type MockVolumeService_ResolveIdentity_Call struct {
+	*mock.Call
+}
+
+// ResolveIdentity is a helper method to define mock.On call
+//   - ctx context.Context
+//   - volume string
+//   - caller *proto.Caller
+func (_e *MockVolumeService_Expecter) ResolveIdentity(ctx interface{}, volume interface{}, caller interface{}) *MockVolumeService_ResolveIdentity_Call {
+	return &MockVolumeService_ResolveIdentity_Call{Call: _e.mock.On("ResolveIdentity", ctx, volume, caller)}
+}
+
+func (_c *MockVolumeService_ResolveIdentity_Call) Run(run func(ctx context.Context, volume string, caller *proto.Caller)) *MockVolumeService_ResolveIdentity_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 *proto.Caller
+		if args[2] != nil {
+			arg2 = args[2].(*proto.Caller)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockVolumeService_ResolveIdentity_Call) Return(identity service.Identity, err error) *MockVolumeService_ResolveIdentity_Call {
+	_c.Call.Return(identity, err)
+	return _c
+}
+
+func (_c *MockVolumeService_ResolveIdentity_Call) RunAndReturn(run func(ctx context.Context, volume string, caller *proto.Caller) (service.Identity, error)) *MockVolumeService_ResolveIdentity_Call {
 	_c.Call.Return(run)
 	return _c
 }

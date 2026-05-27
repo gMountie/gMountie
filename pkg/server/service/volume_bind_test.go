@@ -91,6 +91,13 @@ func (s *BindIdentitySuite) TestBindIdentityPrivilegedWrapsIdentity() {
 	s.NotSame(bare, bound) // wrapped with the identity-bound FS
 }
 
+func (s *BindIdentitySuite) TestResolveIdentityExported() {
+	svc := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModeSquash, Uid: 1000, Gid: 1000})
+	id, err := svc.ResolveIdentity(context.Background(), "v", nil)
+	s.Require().NoError(err)
+	s.Equal(uint32(1000), id.Uid)
+}
+
 func (s *BindIdentitySuite) TestBindIdentityUnprivilegedReturnsBareFS() {
 	orig := identityEnforceable
 	defer func() { identityEnforceable = orig }()
