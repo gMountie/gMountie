@@ -60,6 +60,10 @@ filesystem.
   and symbolic names in `Owner`.
 - Safe handling of client-root per mode; real `no_root_squash` passthrough as
   an explicit option.
+- **Volume confinement** — path resolution that cannot escape the volume root
+  via symlinks or `..` (§3.10). Lands as a prerequisite before identity work.
+- **Resolver robustness and fail-closed semantics** — injection-safe resolution,
+  timeouts, and a defined policy for unresolved principals (§3.11).
 
 **Deferred (see §11):** `chown_any` capability, POSIX advisory locks,
 readdirplus, multi-user mounts (`allow_other`), server-push identity
@@ -198,6 +202,13 @@ There is **no user-space permission evaluator** and **no separate `Lstat`
 check** — the single kernel-checked op is the enforcement, so there is no
 TOCTOU window.
 
+**`Access` is the one op the kernel won't check for us:** `access(2)` tests the
+**real** uid/gid, which stays root on the server, so the loopback's `Access`
+would always allow. The `Access` handler must instead evaluate the requested
+mode against the resolved identity (or be backed by `faccessat2`), rather than
+calling `access()`. Low-stakes (tools that ignore the hint and `open()` get the
+correct kernel denial), but it must not silently always-allow.
+
 **Capabilities** (admin bypass, decoupled from client `sudo`):
 
 - `dac_override` — **keep `fsuid=0`** for the op (steps 2–3 set groups/fsgid
@@ -285,7 +296,10 @@ names).
 ### 3.8 Client-side UID/GID rewriting, `raw_ids`, and cache interaction
 
 The client FUSE layer rewrites IDs at the attribute boundary, anchored to the
-session `Identity`:
+session `Identity`. Identity is **per-volume**, so the rewrite (and its cached
+`Identity`) is **scoped per backend** — the multi-volume mounter overlays
+several volumes under one root, each with its own principal/identity, and must
+not apply one volume's identity to another's attrs:
 
 **Inbound (server → client):** `attr.uid == identity.uid` → local mounting
 user's uid; `attr.gid == identity.primary_gid` → local gid; a gid the caller
@@ -315,6 +329,49 @@ same cached rows.
 `nosuid`, `nodev` always; `allow_other=false`, single-user mount (one mount =
 one principal's view); `entry_timeout`/`attr_timeout` left at FUSE defaults,
 exposed as knobs.
+
+### 3.10 Volume confinement (path-resolution safety) — PREREQUISITE
+
+The server's loopback FS is **path-based** and follows symlinks and `..`
+relative to the *server's* root, not the volume root. A client can create
+`evil -> /etc` (or send a `..`-laden path) and the server will operate outside
+the volume. Today this is bounded by the wire UID; once `dac_override` runs at
+`fsuid=0` (Phase 2), it becomes a **remote root-equivalent escape of the entire
+server box**, not just the volume.
+
+This is an independent, already-latent bug. It **ships as a prerequisite PR
+(Phase 0)** before any identity work, and `dac_override` must not ship until it
+is in place. Confinement is enforced at the path-resolution / `Open` boundary
+(the data path then rides the confined fd, per §3.4):
+
+- Resolve every wire path **beneath the volume root** with
+  `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)` (Linux ≥5.6), or refactor
+  the loopback to fd-relative `*at` ops anchored to a volume-root dirfd.
+- Reject absolute symlinks and traversal that would leave the root with
+  `EXDEV`/`EACCES`.
+
+**Not a small change** — it touches how the loopback resolves names. Scoped as
+its own PR precisely so it can be reviewed and tested in isolation.
+
+### 3.11 Resolver robustness, failure policy, and config validation
+
+- **Injection-safe:** the principal name comes from auth. `system` mode invokes
+  `getent`/`id` via **argv (never a shell string)**, and the principal is
+  validated against a strict charset before use.
+- **Blocking/timeouts:** `getent` under SSSD/NSCD can block. Resolution runs
+  with a **timeout + circuit-breaker**. A **permanent** unknown principal →
+  **deny (`EACCES`), never fall back** to squash/anon/root (fail closed). A
+  **transient** resolver failure (timeout, SSSD blip) does **not** tear down a
+  session whose identity is already cached — it serves the cached identity and
+  retries refresh later.
+- **Server-side identity cache:** resolved identities are cached server-side
+  (not just per client), keyed by `{volume, principal}` with a TTL, to avoid a
+  `getent` fork-storm across concurrent new sessions; refreshed on TTL and on
+  session resume.
+- **Auth is mandatory for mapped modes:** `system`/`static` resolve the
+  authenticated principal, so the server **refuses to start** with
+  `mode: system|static` combined with `auth: none`. `squash` (fixed identity)
+  and `passthrough` (wire identity) are the only modes valid without auth.
 
 ## 4. Worked examples
 
@@ -376,15 +433,25 @@ disk / NFS `no_root_squash`.
 - `controller.createContext`: in mapped modes build context from the resolved
   identity; in `passthrough` from the wire caller (with `root_squash` applied).
 - `SessionService.WhoAmI` controller + service plumbing.
+- `pkg/server/io` (Phase 0): confine path resolution to the volume root
+  (`openat2(RESOLVE_BENEATH|RESOLVE_NO_MAGICLINKS)` or fd-relative loopback).
+- Config validation: reject `mode: system|static` + `auth: none`; reject
+  `passthrough` `no_root_squash` only logs a warning (not a hard error).
+- `Access` handler: evaluate against the resolved identity, not `access(2)`.
+- Server-side identity cache keyed by `{volume, principal}` (TTL) with a resolve
+  timeout + circuit-breaker; `getent`/`id` invoked via argv (never a shell) with
+  a validated principal.
 
 ## 7. Client changes
 
-- `pkg/client/grpc`: call `WhoAmI` at mount; cache `Identity` (TTL); expose to
-  FUSE layer.
+- `pkg/client/grpc`: call `WhoAmI` at mount; cache `Identity` (TTL); re-fetch on
+  session resume; expose to the FUSE layer.
 - `pkg/client/io`: rewrite IDs on attribute return; rewrite outgoing `Chown`;
-  honor the `raw_ids` mount option (skip rewrite).
+  honor the `raw_ids` mount option (skip rewrite, **both** directions).
 - `pkg/client/io/cache`: stores server IDs (per §3.8); no invalidation on
   identity change.
+- Identity (and its cache) is **per-volume/per-backend** — the multi-volume
+  mounter must not cross-apply one volume's identity to another's attrs.
 - Mount defaults: `nosuid`, `nodev`, `allow_other=false`; new `raw_ids` flag.
 
 ## 8. Decisions flagged for the review gate
@@ -408,6 +475,11 @@ Per the worktree-per-feature working agreement, each phase is its own worktree
 "primary-group-only interim limitation" is **gone** — Phase 1 ships correct
 supplementary-group permissions from the start.
 
+0. **Phase 0 — volume confinement (PREREQUISITE PR, ships first).**
+   - Confine loopback path resolution to the volume root (§3.10). Independent of
+     identity; fixes a latent escape that becomes root-equivalent once
+     `dac_override` exists. **`dac_override` (Phase 2) must not ship before this
+     is merged.**
 1. **Phase 1 — identity foundation + correct permissions (PR 1).**
    - Config `mapping` schema + validation.
    - `IdentityResolver` (`squash`, `system`, `static`) + `passthrough` wiring
@@ -435,12 +507,25 @@ On Phase 2 ship, fold the durable record into
 - **Resolver unit tests** (testify suites): each mode maps a principal to the
   expected identity; `system` against a fixture NSS lookup; `passthrough`
   root_squash both ways.
+- **Confinement (Phase 0):** symlink-escape (`evil -> /etc/passwd`) and `..`
+  traversal attempts are rejected; a symlink *within* the volume still resolves.
+- **Resolver failure policy:** unknown principal → `EACCES` (fail closed);
+  `mode: system|static` + `auth: none` → server refuses to start; a simulated
+  resolver timeout serves the cached identity rather than tearing down a live
+  session.
+- **`Access` correctness:** `Access` denies where the resolved identity lacks
+  permission (does not always-allow as root).
 - **e2e (kubevirt VM, real FUSE):** the four worked examples in §4 end-to-end,
   including supplementary-group read/write, a POSIX-ACL'd file honored
   correctly, sticky-bit unlink, setgid-dir inheritance, `sudo`-no-escalation,
   `dac_read` + `raw_ids` backup preserving ownership, and `no_root_squash`
   root-owned write.
 - **`-race`** on the middleware chain (concurrent ops across pinned threads).
+
+**Implementation note (guardrail):** no code path may call Go's
+`syscall.Setuid`/`Setgid`/`Setgroups` (they broadcast across all threads via
+`AllThreadsSyscall` and would clobber the per-thread creds set on locked
+threads). Per-thread credential changes use raw syscalls only.
 
 ## 11. Deferred / open questions
 
