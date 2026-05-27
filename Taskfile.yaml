@@ -109,6 +109,35 @@ tasks:
     cmds:
       - goreleaser build --snapshot --clean
 
+  docs:install:
+    desc: Install the Docusaurus docs-site dependencies (website/).
+    dir: ./website
+    preconditions:
+      - sh: command -v npm >/dev/null
+        msg: "npm is required. Run 'task setup:system' (installs nodejs) or install Node 20+."
+    cmds:
+      - npm ci
+
+  docs:serve:
+    desc: Serve the docs locally with live reload (Docusaurus dev server, http://localhost:3000).
+    dir: ./website
+    preconditions:
+      - sh: command -v npm >/dev/null
+        msg: "npm is required. Run 'task setup:system' (installs nodejs) or install Node 20+."
+      - sh: '[ -d node_modules ]'
+        msg: "Docs deps not installed. Run 'task docs:install' first."
+    cmds:
+      - npm start
+
+  docs:build:
+    desc: Build the static docs site into website/build (what CI deploys to docs.gmountie.dev).
+    dir: ./website
+    preconditions:
+      - sh: '[ -d node_modules ]'
+        msg: "Docs deps not installed. Run 'task docs:install' first."
+    cmds:
+      - npm run build
+
   perf:install:
     desc: Install benchstat (golang.org/x/perf/cmd/benchstat).
     cmds:
