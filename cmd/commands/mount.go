@@ -47,6 +47,7 @@ var (
 	authType   string
 	username   string
 	password   string
+	rawIDs     bool
 	cfg        *config.Config
 )
 
@@ -132,7 +133,7 @@ var mountCmd = &cobra.Command{
 		}(c)
 
 		// Create mounter
-		mounter := mount.NewSingleVolumeMounter(c, cfg.FUSE, *cfg.Cache)
+		mounter := mount.NewSingleVolumeMounter(c, cfg.FUSE, *cfg.Cache, rawIDs)
 		defer func(mounter mount.SingleVolumeMounter) {
 			err := mounter.Close()
 			if err != nil {
@@ -163,5 +164,6 @@ func init() {
 	mountCmd.PersistentFlags().StringVarP(&authType, "auth-type", "t", "basic", "authentication type (basic)")
 	mountCmd.PersistentFlags().StringVarP(&username, "username", "u", "", "username for basic auth")
 	mountCmd.PersistentFlags().StringVarP(&password, "password", "p", "", "password for basic auth")
+	mountCmd.PersistentFlags().BoolVar(&rawIDs, "raw-ids", false, "expose server-side uids/gids unchanged (for backups/admin tooling)")
 	rootCmd.AddCommand(mountCmd)
 }

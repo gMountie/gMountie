@@ -1,6 +1,8 @@
 package mount
 
 import (
+	"context"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -9,6 +11,7 @@ import (
 	"gmountie/pkg/client/config"
 	"gmountie/pkg/client/grpc"
 	"gmountie/pkg/client/io"
+	"gmountie/pkg/proto"
 	"gmountie/pkg/utils/log"
 
 	gofs "github.com/hanwen/go-fuse/v2/fs"
@@ -29,6 +32,8 @@ type SingleVolumeMounterImpl struct {
 	client grpc.Client
 	fuse   *config.FUSEConfig
 	cache  config.CacheConfig
+	// rawIDs disables WhoAmI-based UID/GID rewriting when true.
+	rawIDs bool
 	mounts *xsync.MapOf[string, *fuse.Server]
 	// mountPaths tracks the local mountpoint per volume so Unmount
 	// can request a lazy fusermount3 -uz fallback if the regular
@@ -41,17 +46,30 @@ type SingleVolumeMounterImpl struct {
 // NewSingleVolumeMounter creates a new SingleVolumeMounterImpl. fuseCfg
 // must be non-nil; the client config layer guarantees this by treating
 // FUSE as a required block with defaults. cacheCfg is consumed by value
-// and only applied when cacheCfg.Enabled is true.
-func NewSingleVolumeMounter(client grpc.Client, fuseCfg *config.FUSEConfig, cacheCfg config.CacheConfig) SingleVolumeMounter {
+// and only applied when cacheCfg.Enabled is true. rawIDs disables
+// WhoAmI-based UID/GID rewriting (pass true for backup/admin use-cases
+// that need to preserve server-side ownership as-is).
+func NewSingleVolumeMounter(client grpc.Client, fuseCfg *config.FUSEConfig, cacheCfg config.CacheConfig, rawIDs bool) SingleVolumeMounter {
 	return &SingleVolumeMounterImpl{
 		client:     client,
 		fuse:       fuseCfg,
 		cache:      cacheCfg,
+		rawIDs:     rawIDs,
 		mounts:     xsync.NewMapOf[string, *fuse.Server](),
 		mountPaths: xsync.NewMapOf[string, string](),
 		persists:   xsync.NewMapOf[string, *persist.Persist](),
 		backends:   xsync.NewMapOf[string, io.FileSystemBackend](),
 	}
+}
+
+// identityFromProto converts a proto.Identity wire message to the
+// io.Identity type used by IDRewriter. Returns nil when p is nil, which
+// makes NewIDRewriter produce a nil (no-op) rewriter.
+func identityFromProto(p *proto.Identity) *io.Identity {
+	if p == nil {
+		return nil
+	}
+	return &io.Identity{Uid: p.Uid, Gid: p.PrimaryGid, Gids: p.Gids}
 }
 
 // Mount mounts a volume
@@ -74,7 +92,22 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) error {
 		backend = cache.NewCachedBackend(backend, cache.ConfigFromClient(m.cache), p, m.client.Fs(), volume)
 	}
 	m.backends.Store(volume, backend)
-	root := io.NewMountieRoot(backend, nil)
+
+	// Fetch the server identity so we can rewrite UIDs/GIDs to local values.
+	// raw_ids=true skips this and leaves the kernel seeing the raw server IDs.
+	var rewriter *io.IDRewriter
+	if !m.rawIDs {
+		ctx, cancel := context.WithTimeout(context.Background(), m.client.MetaTimeout())
+		defer cancel()
+		idResp, err := m.client.WhoAmI(ctx, volume)
+		if err != nil {
+			log.Log.Warn("WhoAmI failed, mounting with raw IDs", zap.String("volume", volume), zap.Error(err))
+		} else {
+			rewriter = io.NewIDRewriter(identityFromProto(idResp), uint32(os.Getuid()), uint32(os.Getgid()))
+		}
+	}
+
+	root := io.NewMountieRoot(backend, rewriter)
 	mountOpts := createMountOptions(m.client.GetEndpoint(), volume, m.fuse, maxWrite)
 	entryTimeout := time.Second
 	attrTimeout := time.Second

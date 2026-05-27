@@ -24,7 +24,9 @@ func NewAppContext(client grpc.Client, multiMountPath string, fuseCfg *config.FU
 	log.Log.Info("creating app context")
 	return &AppContext{
 		client:              client,
-		SingleVolumeMounter: mount.NewSingleVolumeMounter(client, fuseCfg, *cacheCfg),
+		// rawIDs=false: the programmatic/UI mount path keeps id rewriting on;
+		// raw_ids is a CLI opt-out (cmd/commands/mount.go) for now.
+		SingleVolumeMounter: mount.NewSingleVolumeMounter(client, fuseCfg, *cacheCfg, false),
 		MultiVolumeMounter:  mount.NewMultiVolumeMounter(client, multiMountPath, fuseCfg, *cacheCfg),
 		VolumeService:       service.NewVolumeService(client),
 	}
