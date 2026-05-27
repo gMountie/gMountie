@@ -17,6 +17,7 @@ builds:
     binary: gMountie
     flags:
       - -trimpath
+      - -buildvcs=true
     ldflags:
       - -s -w -X gmountie/pkg.version={{.Version}} -X gmountie/pkg.commit={{.Commit}} -X gmountie/pkg.date={{.Date}}
     goarch:
@@ -75,6 +76,40 @@ archives:
 checksum:
   name_template: 'checksums.txt'
   algorithm: sha256
+
+# SPDX SBOM per release archive (syft default). The container image SBOM is
+# generated + attested separately in the Release workflow — goreleaser has no
+# native docker SBOM step.
+sboms:
+  - id: archive
+    artifacts: archive
+
+# Keyless blob signing of the checksums file (Sigstore/Fulcio via the GitHub
+# Actions OIDC identity → Rekor). Signing the checksum transitively covers
+# every archive listed in it. Skipped on snapshot (--skip=sign).
+signs:
+  - id: checksum
+    cmd: cosign
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+# Keyless signing of the pushed container images + manifest lists. Snapshots
+# don't push, so this no-ops there with no conditional needed.
+docker_signs:
+  - cmd: cosign
+    artifacts: all
+    args:
+      - sign
+      - "${artifact}@${digest}"
+      - "--yes"
+    output: true
 
 release:
   ids:
