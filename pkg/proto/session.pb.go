@@ -285,11 +285,131 @@ func (*KeepalivePing) Descriptor() ([]byte, []int) {
 	return file_api_proto_session_proto_rawDescGZIP(), []int{5}
 }
 
+type WhoAmIRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Volume        string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
+	Caller        *Caller                `protobuf:"bytes,2,opt,name=caller,proto3" json:"caller,omitempty"` // wire identity; used by passthrough (advisory in mapped modes)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WhoAmIRequest) Reset() {
+	*x = WhoAmIRequest{}
+	mi := &file_api_proto_session_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WhoAmIRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WhoAmIRequest) ProtoMessage() {}
+
+func (x *WhoAmIRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_session_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WhoAmIRequest.ProtoReflect.Descriptor instead.
+func (*WhoAmIRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_session_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *WhoAmIRequest) GetVolume() string {
+	if x != nil {
+		return x.Volume
+	}
+	return ""
+}
+
+func (x *WhoAmIRequest) GetCaller() *Caller {
+	if x != nil {
+		return x.Caller
+	}
+	return nil
+}
+
+type Identity struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Principal     string                 `protobuf:"bytes,1,opt,name=principal,proto3" json:"principal,omitempty"`
+	Uid           uint32                 `protobuf:"varint,2,opt,name=uid,proto3" json:"uid,omitempty"`
+	PrimaryGid    uint32                 `protobuf:"varint,3,opt,name=primary_gid,json=primaryGid,proto3" json:"primary_gid,omitempty"`
+	Gids          []uint32               `protobuf:"varint,4,rep,packed,name=gids,proto3" json:"gids,omitempty"` // user_name (5) + group_names (6) are added in Phase 1b-2.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Identity) Reset() {
+	*x = Identity{}
+	mi := &file_api_proto_session_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Identity) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Identity) ProtoMessage() {}
+
+func (x *Identity) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_session_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Identity.ProtoReflect.Descriptor instead.
+func (*Identity) Descriptor() ([]byte, []int) {
+	return file_api_proto_session_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *Identity) GetPrincipal() string {
+	if x != nil {
+		return x.Principal
+	}
+	return ""
+}
+
+func (x *Identity) GetUid() uint32 {
+	if x != nil {
+		return x.Uid
+	}
+	return 0
+}
+
+func (x *Identity) GetPrimaryGid() uint32 {
+	if x != nil {
+		return x.PrimaryGid
+	}
+	return 0
+}
+
+func (x *Identity) GetGids() []uint32 {
+	if x != nil {
+		return x.Gids
+	}
+	return nil
+}
+
 var File_api_proto_session_proto protoreflect.FileDescriptor
 
 const file_api_proto_session_proto_rawDesc = "" +
 	"\n" +
-	"\x17api/proto/session.proto\x12\bgmountie\"\x16\n" +
+	"\x17api/proto/session.proto\x12\bgmountie\x1a\x16api/proto/common.proto\"\x16\n" +
 	"\x14SessionCreateRequest\"3\n" +
 	"\x12SessionCreateReply\x12\x1d\n" +
 	"\n" +
@@ -302,11 +422,21 @@ const file_api_proto_session_proto_rawDesc = "" +
 	"\x10KeepaliveRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"\x0f\n" +
-	"\rKeepalivePing2\xe4\x01\n" +
+	"\rKeepalivePing\"Q\n" +
+	"\rWhoAmIRequest\x12\x16\n" +
+	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
+	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\"o\n" +
+	"\bIdentity\x12\x1c\n" +
+	"\tprincipal\x18\x01 \x01(\tR\tprincipal\x12\x10\n" +
+	"\x03uid\x18\x02 \x01(\rR\x03uid\x12\x1f\n" +
+	"\vprimary_gid\x18\x03 \x01(\rR\n" +
+	"primaryGid\x12\x12\n" +
+	"\x04gids\x18\x04 \x03(\rR\x04gids2\x9b\x02\n" +
 	"\x0eSessionService\x12F\n" +
 	"\x06Create\x12\x1e.gmountie.SessionCreateRequest\x1a\x1c.gmountie.SessionCreateReply\x12F\n" +
 	"\x06Resume\x12\x1e.gmountie.SessionResumeRequest\x1a\x1c.gmountie.SessionResumeReply\x12B\n" +
-	"\tKeepalive\x12\x1a.gmountie.KeepaliveRequest\x1a\x17.gmountie.KeepalivePing0\x01B\vZ\tpkg/protob\x06proto3"
+	"\tKeepalive\x12\x1a.gmountie.KeepaliveRequest\x1a\x17.gmountie.KeepalivePing0\x01\x125\n" +
+	"\x06WhoAmI\x12\x17.gmountie.WhoAmIRequest\x1a\x12.gmountie.IdentityB\vZ\tpkg/protob\x06proto3"
 
 var (
 	file_api_proto_session_proto_rawDescOnce sync.Once
@@ -320,7 +450,7 @@ func file_api_proto_session_proto_rawDescGZIP() []byte {
 	return file_api_proto_session_proto_rawDescData
 }
 
-var file_api_proto_session_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_api_proto_session_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_api_proto_session_proto_goTypes = []any{
 	(*SessionCreateRequest)(nil), // 0: gmountie.SessionCreateRequest
 	(*SessionCreateReply)(nil),   // 1: gmountie.SessionCreateReply
@@ -328,19 +458,25 @@ var file_api_proto_session_proto_goTypes = []any{
 	(*SessionResumeReply)(nil),   // 3: gmountie.SessionResumeReply
 	(*KeepaliveRequest)(nil),     // 4: gmountie.KeepaliveRequest
 	(*KeepalivePing)(nil),        // 5: gmountie.KeepalivePing
+	(*WhoAmIRequest)(nil),        // 6: gmountie.WhoAmIRequest
+	(*Identity)(nil),             // 7: gmountie.Identity
+	(*Caller)(nil),               // 8: gmountie.Caller
 }
 var file_api_proto_session_proto_depIdxs = []int32{
-	0, // 0: gmountie.SessionService.Create:input_type -> gmountie.SessionCreateRequest
-	2, // 1: gmountie.SessionService.Resume:input_type -> gmountie.SessionResumeRequest
-	4, // 2: gmountie.SessionService.Keepalive:input_type -> gmountie.KeepaliveRequest
-	1, // 3: gmountie.SessionService.Create:output_type -> gmountie.SessionCreateReply
-	3, // 4: gmountie.SessionService.Resume:output_type -> gmountie.SessionResumeReply
-	5, // 5: gmountie.SessionService.Keepalive:output_type -> gmountie.KeepalivePing
-	3, // [3:6] is the sub-list for method output_type
-	0, // [0:3] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	8, // 0: gmountie.WhoAmIRequest.caller:type_name -> gmountie.Caller
+	0, // 1: gmountie.SessionService.Create:input_type -> gmountie.SessionCreateRequest
+	2, // 2: gmountie.SessionService.Resume:input_type -> gmountie.SessionResumeRequest
+	4, // 3: gmountie.SessionService.Keepalive:input_type -> gmountie.KeepaliveRequest
+	6, // 4: gmountie.SessionService.WhoAmI:input_type -> gmountie.WhoAmIRequest
+	1, // 5: gmountie.SessionService.Create:output_type -> gmountie.SessionCreateReply
+	3, // 6: gmountie.SessionService.Resume:output_type -> gmountie.SessionResumeReply
+	5, // 7: gmountie.SessionService.Keepalive:output_type -> gmountie.KeepalivePing
+	7, // 8: gmountie.SessionService.WhoAmI:output_type -> gmountie.Identity
+	5, // [5:9] is the sub-list for method output_type
+	1, // [1:5] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_session_proto_init() }
@@ -348,13 +484,14 @@ func file_api_proto_session_proto_init() {
 	if File_api_proto_session_proto != nil {
 		return
 	}
+	file_api_proto_common_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_session_proto_rawDesc), len(file_api_proto_session_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

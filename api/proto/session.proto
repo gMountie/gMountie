@@ -2,6 +2,8 @@ syntax = "proto3";
 package gmountie;
 option go_package = "pkg/proto";
 
+import "api/proto/common.proto";
+
 // SessionCreateRequest opens a new session on the server. The server allocates
 // a session_id (UUID v4) and returns it; the client must pass this id on every
 // subsequent file RPC and hold open a Keepalive stream for the session's
@@ -40,8 +42,22 @@ message KeepaliveRequest {
 message KeepalivePing {
 }
 
+message WhoAmIRequest {
+  string volume = 1;
+  Caller caller = 2;  // wire identity; used by passthrough (advisory in mapped modes)
+}
+
+message Identity {
+  string principal     = 1;
+  uint32 uid           = 2;
+  uint32 primary_gid   = 3;
+  repeated uint32 gids = 4;
+  // user_name (5) + group_names (6) are added in Phase 1b-2.
+}
+
 service SessionService {
   rpc Create (SessionCreateRequest) returns (SessionCreateReply);
   rpc Resume (SessionResumeRequest) returns (SessionResumeReply);
   rpc Keepalive (KeepaliveRequest) returns (stream KeepalivePing);
+  rpc WhoAmI (WhoAmIRequest) returns (Identity);
 }

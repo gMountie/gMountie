@@ -22,6 +22,7 @@ const (
 	SessionService_Create_FullMethodName    = "/gmountie.SessionService/Create"
 	SessionService_Resume_FullMethodName    = "/gmountie.SessionService/Resume"
 	SessionService_Keepalive_FullMethodName = "/gmountie.SessionService/Keepalive"
+	SessionService_WhoAmI_FullMethodName    = "/gmountie.SessionService/WhoAmI"
 )
 
 // SessionServiceClient is the client API for SessionService service.
@@ -31,6 +32,7 @@ type SessionServiceClient interface {
 	Create(ctx context.Context, in *SessionCreateRequest, opts ...grpc.CallOption) (*SessionCreateReply, error)
 	Resume(ctx context.Context, in *SessionResumeRequest, opts ...grpc.CallOption) (*SessionResumeReply, error)
 	Keepalive(ctx context.Context, in *KeepaliveRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[KeepalivePing], error)
+	WhoAmI(ctx context.Context, in *WhoAmIRequest, opts ...grpc.CallOption) (*Identity, error)
 }
 
 type sessionServiceClient struct {
@@ -80,6 +82,16 @@ func (c *sessionServiceClient) Keepalive(ctx context.Context, in *KeepaliveReque
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SessionService_KeepaliveClient = grpc.ServerStreamingClient[KeepalivePing]
 
+func (c *sessionServiceClient) WhoAmI(ctx context.Context, in *WhoAmIRequest, opts ...grpc.CallOption) (*Identity, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Identity)
+	err := c.cc.Invoke(ctx, SessionService_WhoAmI_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SessionServiceServer is the server API for SessionService service.
 // All implementations must embed UnimplementedSessionServiceServer
 // for forward compatibility.
@@ -87,6 +99,7 @@ type SessionServiceServer interface {
 	Create(context.Context, *SessionCreateRequest) (*SessionCreateReply, error)
 	Resume(context.Context, *SessionResumeRequest) (*SessionResumeReply, error)
 	Keepalive(*KeepaliveRequest, grpc.ServerStreamingServer[KeepalivePing]) error
+	WhoAmI(context.Context, *WhoAmIRequest) (*Identity, error)
 	mustEmbedUnimplementedSessionServiceServer()
 }
 
@@ -105,6 +118,9 @@ func (UnimplementedSessionServiceServer) Resume(context.Context, *SessionResumeR
 }
 func (UnimplementedSessionServiceServer) Keepalive(*KeepaliveRequest, grpc.ServerStreamingServer[KeepalivePing]) error {
 	return status.Error(codes.Unimplemented, "method Keepalive not implemented")
+}
+func (UnimplementedSessionServiceServer) WhoAmI(context.Context, *WhoAmIRequest) (*Identity, error) {
+	return nil, status.Error(codes.Unimplemented, "method WhoAmI not implemented")
 }
 func (UnimplementedSessionServiceServer) mustEmbedUnimplementedSessionServiceServer() {}
 func (UnimplementedSessionServiceServer) testEmbeddedByValue()                        {}
@@ -174,6 +190,24 @@ func _SessionService_Keepalive_Handler(srv interface{}, stream grpc.ServerStream
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SessionService_KeepaliveServer = grpc.ServerStreamingServer[KeepalivePing]
 
+func _SessionService_WhoAmI_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WhoAmIRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionServiceServer).WhoAmI(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionService_WhoAmI_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionServiceServer).WhoAmI(ctx, req.(*WhoAmIRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SessionService_ServiceDesc is the grpc.ServiceDesc for SessionService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -188,6 +222,10 @@ var SessionService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Resume",
 			Handler:    _SessionService_Resume_Handler,
+		},
+		{
+			MethodName: "WhoAmI",
+			Handler:    _SessionService_WhoAmI_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
