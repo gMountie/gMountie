@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"runtime"
+	"syscall"
 	"time"
 
 	"gmountie/pkg/common"
@@ -99,11 +101,27 @@ func (s *VolumeServiceImpl) BindIdentity(ctx context.Context, volume string, cal
 	if !ok {
 		return nil, errors.Errorf("volume %s not found", volume)
 	}
+	if !identityEnforceable() {
+		// Not privileged to change thread credentials (non-root dev/CI): run as
+		// the server's own user, with no identity layer. Matches the
+		// pre-identity behaviour (AssumeUser was only wired when root) so the
+		// unprivileged path stays usable; startup warns that enforcement is off.
+		// Production runs as root (the design's precondition).
+		return fs, nil
+	}
 	id, err := s.resolveIdentity(ctx, volume, caller)
 	if err != nil {
 		return nil, err
 	}
 	return io.NewIdentityBoundFS(fs, &io.Identity{Uid: id.Uid, Gid: id.Gid, Gids: id.Gids}), nil
+}
+
+// identityEnforceable reports whether the process can change thread credentials
+// (setfsuid/setfsgid/setgroups) — i.e. it is root on Linux. Without it the
+// bound FS would EPERM on every op, so BindIdentity skips it. Overridable in
+// tests.
+var identityEnforceable = func() bool {
+	return runtime.GOOS == "linux" && syscall.Geteuid() == 0
 }
 
 // resolveIdentity determines the effective identity for a request against a
