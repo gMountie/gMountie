@@ -112,8 +112,10 @@ docker_signs:
     output: true
 
 release:
-  ids:
-    - gMountie
+  # No `ids` filter: upload everything goreleaser produces for the release —
+  # archives, checksums, the per-archive SPDX SBOMs, and the keyless checksum
+  # signature/certificate. A restrictive `ids: [gMountie]` here previously
+  # dropped the SBOMs and signature from the uploaded assets.
   # Publish straight to the Releases page — no draft step. The Release
   # workflow is already gated on green CI for the commit, so a manual
   # "publish" click on top of that would just be ceremony.
