@@ -9,6 +9,8 @@ import (
 	"gmountie/pkg/server/config"
 	grpcServer "gmountie/pkg/server/grpc"
 	"net"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/pkg/errors"
@@ -171,6 +173,17 @@ func WithSquashVolume(uid, gid uint32) TestOptions {
 	return func(c *AppTestingContext) {
 		v, err := NewTestVolume(randstr.String(10), false)
 		if err != nil {
+			panic(err)
+		}
+		// The server squashes every caller to uid/gid and writes to the volume
+		// source dir as that identity. The harness builds the temp tree 0700
+		// root-owned, so the squash user can neither traverse the parent nor
+		// write the src dir — make the parent traversable and give src to the
+		// squash identity (else it hits EACCES).
+		if err := os.Chmod(filepath.Dir(v.GetSrcPath()), 0o755); err != nil {
+			panic(err)
+		}
+		if err := os.Chown(v.GetSrcPath(), int(uid), int(gid)); err != nil {
 			panic(err)
 		}
 		c.volumes = append(c.volumes, v)
