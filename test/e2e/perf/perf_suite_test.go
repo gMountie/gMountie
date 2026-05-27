@@ -88,9 +88,10 @@ func setupBenchEnvOpt(b *testing.B) *benchEnv {
 			MaxBackground:  clientconfig.DefaultFUSEMaxBackground,
 			WritebackCache: true,
 		}),
-		// chunk = the bench read buffer (256 KiB) so each FUSE read consumes
-		// exactly one readahead chunk (the one-shot-consume Serve needs
-		// chunk ~= read size); window 16 covers the WAN bandwidth-delay product.
+		// The Opt suite is an aggressive WAN variant, tracked as its own Bencher
+		// series distinct from the default-config baseline: a 256 KiB chunk with
+		// a deep window of 16 (the partial-consume Serve no longer needs
+		// chunk ~= read size), plus the kernel writeback cache above.
 		utils.WithReadahead(256<<10, 2, 16),
 	)
 }
