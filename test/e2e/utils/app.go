@@ -147,6 +147,16 @@ func WithReadahead(chunkBytes, threshold, window int) TestOptions {
 }
 
 // WithRandomTestVolume creates random test volume.
+// e2ePassthroughMapping returns the mapping used for e2e volumes: passthrough
+// with no_root_squash, i.e. the server assumes the wire caller's uid/gid
+// verbatim. This reproduces the pre-identity behaviour (the old
+// AssumeUserMiddleware assumed the wire uid when running as root), so existing
+// e2e assertions about ownership still hold. The e2e server runs as root.
+func e2ePassthroughMapping() config.MappingConfig {
+	noRootSquash := false
+	return config.MappingConfig{Mode: config.MappingModePassthrough, RootSquash: &noRootSquash}
+}
+
 func WithRandomTestVolume(randomfiles bool) TestOptions {
 	return func(c *AppTestingContext) {
 		v, err := NewTestVolume(randstr.String(10), randomfiles)
@@ -156,8 +166,9 @@ func WithRandomTestVolume(randomfiles bool) TestOptions {
 		c.volumes = append(c.volumes, v)
 		// Add in server config.
 		c.cfg.Volumes = append(c.cfg.Volumes, &config.VolumeConfig{
-			Name: v.Name,
-			Path: v.GetSrcPath(),
+			Name:    v.Name,
+			Path:    v.GetSrcPath(),
+			Mapping: e2ePassthroughMapping(),
 		})
 	}
 }
@@ -176,8 +187,9 @@ func WithExistingVolume(name, srcPath string) TestOptions {
 		}
 		c.volumes = append(c.volumes, v)
 		c.cfg.Volumes = append(c.cfg.Volumes, &config.VolumeConfig{
-			Name: v.Name,
-			Path: v.GetSrcPath(),
+			Name:    v.Name,
+			Path:    v.GetSrcPath(),
+			Mapping: e2ePassthroughMapping(),
 		})
 	}
 }
