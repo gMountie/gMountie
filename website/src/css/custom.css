@@ -1,0 +1,93 @@
+/**
+ * gMountie docs theme — "Bonded Courier".
+ * Maps Infima onto the design-system tokens (brand/design-system/colors_and_type.css):
+ * ember accent, paper/ink surfaces, Newsreader (display) + Geist (sans) + Geist Mono.
+ * A re-skin of the default theme, not a bespoke layout.
+ */
+
+:root {
+  /* Ember — the single bold accent */
+  --ifm-color-primary: #d9641c;
+  --ifm-color-primary-dark: #c35a19;
+  --ifm-color-primary-darker: #b85416;
+  --ifm-color-primary-darkest: #974514;
+  --ifm-color-primary-light: #de743a;
+  --ifm-color-primary-lighter: #e08049;
+  --ifm-color-primary-lightest: #e9a57b;
+
+  /* Paper (surfaces) + ink (text) */
+  --ifm-background-color: #fbf8f2;
+  --ifm-background-surface-color: #f4f0e6;
+  --ifm-font-color-base: #15120d;
+  --ifm-color-content-secondary: #6b6151;
+  --ifm-color-emphasis-200: #ece6d6;
+  --ifm-color-emphasis-300: #dfd7c2;
+  --ifm-toc-border-color: #dfd7c2;
+  --ifm-hr-border-color: #dfd7c2;
+
+  /* Type — Geist body, Newsreader headings, Geist Mono code */
+  --ifm-font-family-base: 'Geist', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+  --ifm-heading-font-family: 'Newsreader', 'Iowan Old Style', Georgia, serif;
+  --ifm-font-family-monospace: 'Geist Mono', 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+  --ifm-heading-font-weight: 460;
+  --ifm-h1-font-size: 2.6rem;
+
+  /* Code surfaces */
+  --ifm-code-font-size: 92%;
+  --ifm-code-background: #ece6d6;
+  --docusaurus-highlighted-code-line-bg: rgba(217, 100, 28, 0.12);
+
+  /* Navbar / footer */
+  --ifm-navbar-background-color: rgba(251, 248, 242, 0.85);
+  --ifm-footer-background-color: #15120d;
+}
+
+/* Dark mode — warm near-black, brighter ember signal */
+[data-theme='dark'] {
+  --ifm-color-primary: #ed7a33;
+  --ifm-color-primary-dark: #ea6b1b;
+  --ifm-color-primary-darker: #e26416;
+  --ifm-color-primary-darkest: #bb5212;
+  --ifm-color-primary-light: #f08a4d;
+  --ifm-color-primary-lighter: #f2935c;
+  --ifm-color-primary-lightest: #f6b488;
+
+  --ifm-background-color: #0e0c09;
+  --ifm-background-surface-color: #161310;
+  --ifm-font-color-base: #f4eedd;
+  --ifm-color-content-secondary: #8b826e;
+  --ifm-color-emphasis-200: #1f1a14;
+  --ifm-color-emphasis-300: #2e2820;
+  --ifm-toc-border-color: #2e2820;
+  --ifm-hr-border-color: #2e2820;
+
+  --ifm-code-background: #1f1a14;
+  --docusaurus-highlighted-code-line-bg: rgba(237, 122, 51, 0.15);
+
+  --ifm-navbar-background-color: rgba(14, 12, 9, 0.85);
+  --ifm-footer-background-color: #08070a;
+}
+
+/* Editorial headings — restrained Newsreader weights with brand tracking */
+h1 {
+  font-weight: 380;
+  letter-spacing: -0.028em;
+}
+h2 {
+  font-weight: 420;
+  letter-spacing: -0.02em;
+}
+
+/* Sticky header with a subtle blur, matching the design-system header */
+.navbar {
+  backdrop-filter: blur(10px) saturate(120%);
+  border-bottom: 1px solid var(--ifm-toc-border-color);
+}
+
+/* Mono eyebrow feel for sidebar category labels */
+.menu__link--sublist-caret,
+.theme-doc-sidebar-item-category > .menu__list-item-collapsible .menu__link {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+}
