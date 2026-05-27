@@ -173,8 +173,8 @@ thread handling the request and lets the **kernel** perform the permission
 check as part of the actual op. Verified feasible (§0): credentials are
 per-thread on Linux, so this does not affect other in-flight requests.
 
-`AssumeUserMiddleware` (mapped modes), per request, on a `LockOSThread`-pinned
-thread:
+An **identity-bound filesystem wrapper** (mapped modes) performs, per op, on a
+`LockOSThread`-pinned thread:
 
 1. Snapshot the thread's current supplementary groups (for restore in step 5),
    then `setgroups(identity.Gids)` via **raw `SYS_setgroups`** (not Go's
@@ -197,10 +197,37 @@ thread:
    it **must be extended** to snapshot and restore the supplementary group list,
    or threads return to the pool carrying the principal's groups.)
 
-Middleware order (mapped modes): `IdentityResolver → AssumeUser → loopback`.
 There is **no user-space permission evaluator** and **no separate `Lstat`
 check** — the single kernel-checked op is the enforcement, so there is no
 TOCTOU window.
+
+**Wiring (`fuse.Context` cannot carry identity).** go-fuse's `fuse.Context` is a
+fixed struct (`{uid, gid, pid, cancel}`) with no extensibility, and the pathfs
+middleware chain is baked per-volume at startup and only sees that struct.
+Supplementary gids and caps therefore **cannot** ride `fuse.Context`, so
+credential-setting cannot live in a `fuse.Context`-reading pathfs middleware
+(the original draft's plan). The resolved identity is threaded via
+`context.Context` instead, in two stages — and since **every path-resolving RPC
+is unary** (Read/Write are streams but ride the already-open fd and need no
+creds), a unary interceptor suffices:
+
+1. **Auth interceptor** (extended) stashes the authenticated `Principal` on the
+   request `context.Context` via a typed key (today it only logs the username
+   and drops it).
+2. **`VolumeService.BindIdentity(ctx, volume)`** resolves `principal + volume
+   mapping → Identity` (via the per-volume resolver + the server-side identity
+   cache, §3.11) and returns a **per-request identity-bound wrapper** over the
+   volume's loopback FS — one small struct holding the volume FS pointer + a
+   single `*Identity` (allocation-cheap; pinned by an `AllocsPerRun` test). The
+   wrapper runs the 5-step cred dance above on each op. Controllers call
+   `BindIdentity` in place of `GetVolumeFileSystem`. For `passthrough`,
+   `BindIdentity` derives the Identity from `proto.Caller` (with `root_squash`),
+   not from the ctx-principal.
+
+The current `AssumeUserMiddleware` (`pkg/server/io/middleware/asume_user.go`,
+wired only when `linux && uid==0`) is **subsumed by this wrapper and deleted** —
+its `setfsuid`/`setfsgid` mechanics move into the wrapper, extended with
+`setgroups`. No dead alternate path is left in the tree.
 
 **`Access` is the one op the kernel won't check for us:** `access(2)` tests the
 **real** uid/gid, which stays root on the server, so the loopback's `Access`
@@ -422,16 +449,20 @@ disk / NFS `no_root_squash`.
 - `pkg/server/service`: `IdentityResolver` interface + `squash`/`system`/
   `static` implementations; `system` shells out to `getent`/`id` (binary is
   `CGO_ENABLED=0`, so pure-Go `os/user` would miss LDAP/SSSD).
-- New `IdentityResolverMiddleware`: resolves principal → `Identity`, stashes on
-  context (mapped modes only).
-- `AssumeUserMiddleware` (`pkg/server/io/middleware/asume_user.go`): extended
-  to set the **full** credentials — raw per-thread `setgroups(identity.Gids)`
-  in addition to the existing `setfsuid`/`setfsgid`; in mapped modes it
-  consumes the resolved identity, never the wire uid; handles the `dac_read`/
-  `dac_override` fsuid/`capset` paths.
-- `AuthService`: propagate authenticated principal onto the gRPC context.
-- `controller.createContext`: in mapped modes build context from the resolved
-  identity; in `passthrough` from the wire caller (with `root_squash` applied).
+- **Auth interceptor** (`pkg/server/grpc/auth.go`): stash the authenticated
+  principal on `context.Context` via a typed key (today it only logs it).
+- **`VolumeService.BindIdentity(ctx, volume) → pathfs.FileSystem`**: resolves
+  `principal + volume mapping → Identity` (resolver + server-side cache) and
+  returns a per-request **identity-bound wrapper** over the volume's loopback FS.
+  For `passthrough`, derives the Identity from `proto.Caller` + `root_squash`.
+- **Identity-bound wrapper** (`pkg/server/io`, replaces `AssumeUserMiddleware`):
+  one struct holding `{fs, *Identity}` implementing `pathfs.FileSystem`; per op,
+  `LockOSThread` + raw `setgroups(Gids)` + `setfsgid` + `setfsuid` (or keep
+  `fsuid=0` for caps) + run op + restore-and-unlock. **Delete
+  `pkg/server/io/middleware/asume_user.go`** (subsumed).
+- **Controllers** (`fs.go`, `file.go`): call `BindIdentity(ctx, volume)` instead
+  of `GetVolumeFileSystem(volume)` for path ops. (Read/Write/fd ops keep using
+  the stored fd — no identity binding on the data path.)
 - `SessionService.WhoAmI` controller + service plumbing.
 - `pkg/server/io` (Phase 2): confine path resolution to the volume root
   (`openat2(RESOLVE_BENEATH|RESOLVE_NO_MAGICLINKS)` or fd-relative loopback).
@@ -468,32 +499,39 @@ kernel-native enforcement (per-thread `setgroups`); backups via `raw_ids` or
 deferred); server runs as root; volume confinement as Phase 2 (after identity,
 before caps) per the sequencing chosen 2026-05-27.
 
-## 9. Phasing (one spec, three implementation plans, one PR each)
+## 9. Phasing (one spec; Phase 1 splits into 1a/1b, then 2 and 3 — one PR each)
 
 Per the worktree-per-feature working agreement, each phase is its own worktree
 + PR. The kernel-enforcement pivot removed the user-space evaluator, so the old
 "primary-group-only interim limitation" is **gone** — Phase 1 ships correct
 supplementary-group permissions from the start.
 
-1. **Phase 1 — identity foundation + correct permissions (PR 1, ships first).**
-   - Config `mapping` schema + validation.
-   - `IdentityResolver` (`squash`, `system`, `static`) + `passthrough` wiring
-     with `root_squash` knob.
-   - `IdentityResolverMiddleware`; `AssumeUserMiddleware` extended with
-     per-thread `setgroups` (full supplementary groups) and hardened to ignore
-     the wire uid in mapped modes.
-   - `WhoAmI` + client identity cache.
-   - Client-side UID/GID rewriting, `raw_ids` option, symbolic names in
-     `Owner`.
+1. **Phase 1 — identity foundation + correct permissions.** Split into two PRs:
+
+   **Phase 1a — server-side identity & kernel enforcement (PR 1, ships first).**
+   - Config `mapping` schema + validation (incl. fail-closed + auth-required,
+     §3.11).
+   - `IdentityResolver` (`squash`, `system`, `static`) + `passthrough` Identity
+     derivation with `root_squash`.
+   - Auth interceptor stashes the principal on `context.Context`.
+   - `VolumeService.BindIdentity` + the identity-bound FS wrapper (raw
+     `setgroups` + `setfsuid`/`setfsgid` + restore); **delete
+     `AssumeUserMiddleware`**; controllers call `BindIdentity`.
+   - `Access` evaluated against the resolved identity.
+   - Server-side identity cache (resolve timeout, `getent`/`id` via argv).
    - **Safe without confinement:** mapped modes ignore the wire uid and the
-     kernel permission-checks as the (unprivileged) principal, so a symlink
-     escape is just a normal `EACCES`. The escape only turns dangerous under
-     `dac_override` (Phase 3).
-2. **Phase 2 — volume confinement (PR 2).**
+     kernel checks as the (unprivileged) principal, so a symlink escape is just
+     a normal `EACCES`; it only turns dangerous under `dac_override` (Phase 3).
+
+   **Phase 1b — `WhoAmI` + client local-feel (PR 2).**
+   - `WhoAmI` on `SessionService` + client identity cache.
+   - Client-side UID/GID rewriting (hybrid display), `raw_ids` option (both
+     directions), symbolic names in `Owner`, per-volume identity scoping.
+2. **Phase 2 — volume confinement (PR 3).**
    - `ConfinedLoopbackFileSystem` resolving every op beneath the volume root via
      `openat2(RESOLVE_BENEATH)` (§3.10). Independent of identity; fixes a latent
      escape. **Must merge before Phase 3.**
-3. **Phase 3 — admin capabilities (PR 3).**
+3. **Phase 3 — admin capabilities (PR 4).**
    - `dac_override` (keep `fsuid=0`; `fchown` cap-granted creates to the
      principal) and `dac_read` (selective per-thread `capset` — verify first).
    - `admin_groups` derivation in `system` mode.
