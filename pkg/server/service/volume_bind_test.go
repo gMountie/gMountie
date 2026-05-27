@@ -53,6 +53,16 @@ func (s *BindIdentitySuite) TestPassthroughRootSquashDefaultOn() {
 	s.Equal(uint32(65534), id.Uid)
 }
 
+func (s *BindIdentitySuite) TestPassthroughRootSquashUnsetAnonUsesNobody() {
+	// root_squash default-on, anon_uid unset (0): root MUST squash to nobody,
+	// never to 0 (which would make root_squash a silent no-op).
+	svc := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModePassthrough})
+	id, err := svc.resolveIdentity(context.Background(), "v", &proto.Caller{Owner: &proto.Owner{Uid: 0, Gid: 0}})
+	s.Require().NoError(err)
+	s.Equal(uint32(65534), id.Uid)
+	s.Equal(uint32(65534), id.Gid)
+}
+
 func (s *BindIdentitySuite) TestPassthroughNoRootSquashKeepsRoot() {
 	no := false
 	svc := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModePassthrough, RootSquash: &no})

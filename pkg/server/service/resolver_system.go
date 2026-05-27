@@ -20,15 +20,18 @@ func execRunner(ctx context.Context, name string, args ...string) ([]byte, error
 }
 
 // validPrincipal guards the value we pass as an argv element. Even though argv
-// avoids shell injection, we keep principals to a sane charset.
-var validPrincipal = regexp.MustCompile(`^[a-zA-Z0-9._@-]{1,64}$`)
+// avoids shell injection, we keep principals to a sane charset and forbid a
+// leading '-' so a principal can never be mistaken for a flag (e.g. "-G").
+var validPrincipal = regexp.MustCompile(`^[a-zA-Z0-9_@][a-zA-Z0-9._@-]{0,63}$`)
 
 type systemResolver struct {
 	run     commandRunner
 	timeout time.Duration
 }
 
-func NewSystemResolver() IdentityResolver { return newSystemResolverWithRunner(execRunner, 5*time.Second) }
+func NewSystemResolver() IdentityResolver {
+	return newSystemResolverWithRunner(execRunner, 5*time.Second)
+}
 
 func newSystemResolverWithRunner(run commandRunner, timeout time.Duration) *systemResolver {
 	return &systemResolver{run: run, timeout: timeout}

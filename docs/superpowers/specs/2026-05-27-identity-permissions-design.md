@@ -309,7 +309,9 @@ names).
   included) is fed straight into `setfsuid`.
 - **`passthrough`:** `root_squash` is a per-volume knob, **both directions**:
   - `root_squash: true` *(conservative default within passthrough)* — incoming
-    `uid==0` → `anon_uid` (default: the server's own UID, never 0).
+    `uid==0` → `anon_uid`. Since the server runs as root, "its own UID" is 0 and
+    therefore unsafe; when `anon_uid` is unset it **defaults to nobody (65534)**,
+    never 0, so root_squash can never silently become a no-op.
   - `root_squash: false` (`no_root_squash`) — wire `{uid, gid}` verbatim, root
     included; a `sudo`-write lands **root-owned** on the server. Full
     transparency for "I own both ends."
