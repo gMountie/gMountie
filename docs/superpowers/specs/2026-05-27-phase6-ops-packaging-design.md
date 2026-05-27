@@ -108,15 +108,28 @@ state on `master` @ `1d637a3`:
   container reports `healthy`.
 - `helm install` with default values produces a pod that passes its readiness
   probe and can write to its PVC (fsGroup verified).
-- After an alpha release, signature verification succeeds:
+- After an alpha release, signature verification succeeds (works on cosign v2
+  and v3 — the image signature is read across versions):
   ```
   cosign verify \
     --certificate-identity-regexp 'https://github.com/gMountie/gMountie/.github/workflows/release.yml@.*' \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
     ghcr.io/gmountie/gmountie-server:<tag>
   ```
+- Image SBOM attestation verification succeeds with the same identity flags:
+  ```
+  cosign verify-attestation --type spdx \
+    --certificate-identity-regexp 'https://github.com/gMountie/gMountie/.github/workflows/release.yml@.*' \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    ghcr.io/gmountie/gmountie-server:<tag>
+  ```
+  The attest step writes `--new-bundle-format`, so current cosign (v3) verifies
+  it directly. (The first alpha, v0.5.0-alpha.0, was attested in the legacy
+  format before this fix and only verifies with cosign v2.x.)
 - `goreleaser release --snapshot --clean` succeeds locally with the new
   SBOM/sign config present (signing steps skipped on snapshot).
+- The published release lists the per-archive `*.sbom.json`, `checksums.txt`,
+  and `checksums.txt.{sig,pem}` as assets (no `release.ids` filtering).
 
 ## Out of scope
 
