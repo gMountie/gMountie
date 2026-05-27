@@ -46,7 +46,7 @@ func (s *RpcServerTestSuite) TearDownTest() {
 func (s *RpcServerTestSuite) TestGetAttr() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK)
 
@@ -63,7 +63,7 @@ func (s *RpcServerTestSuite) TestGetAttr() {
 func (s *RpcServerTestSuite) TestMkdir() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().Mkdir("/test/path", uint32(0), mock.Anything).Return(fuse.OK)
 	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
@@ -86,7 +86,7 @@ func (s *RpcServerTestSuite) TestMkdir() {
 func (s *RpcServerTestSuite) TestRmdir() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().Rmdir("/test/path", mock.Anything).Return(fuse.OK)
 
@@ -108,7 +108,7 @@ func (s *RpcServerTestSuite) TestRmdir() {
 func (s *RpcServerTestSuite) TestRename() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().Rename("/old/path", "/new/path", mock.Anything).Return(fuse.OK)
 	mockFs.EXPECT().GetAttr("/new/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
@@ -131,7 +131,7 @@ func (s *RpcServerTestSuite) TestRename() {
 func (s *RpcServerTestSuite) TestOpenDir() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().OpenDir("/test/path", mock.Anything).Return([]fuse.DirEntry{}, fuse.OK)
 
@@ -148,7 +148,7 @@ func (s *RpcServerTestSuite) TestOpenDir() {
 func (s *RpcServerTestSuite) TestStatFs() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().StatFs("/test/path").Return(&fuse.StatfsOut{})
 
@@ -164,7 +164,7 @@ func (s *RpcServerTestSuite) TestStatFs() {
 func (s *RpcServerTestSuite) TestStatFs_NilReplyReturnsError() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().StatFs("/test/path").Return(nil)
 
@@ -181,7 +181,7 @@ func (s *RpcServerTestSuite) TestStatFs_NilReplyReturnsError() {
 func (s *RpcServerTestSuite) TestUnlink() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().Unlink("/test/path", mock.Anything).Return(fuse.OK)
 
@@ -203,7 +203,7 @@ func (s *RpcServerTestSuite) TestUnlink() {
 func (s *RpcServerTestSuite) TestAccess() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().Access("/test/path", uint32(0), mock.Anything).Return(fuse.OK)
 
@@ -217,10 +217,36 @@ func (s *RpcServerTestSuite) TestAccess() {
 	s.Assert().Equal(int32(fuse.OK), reply.Status)
 }
 
+// TestGetAttrBindsRequestIdentity asserts a path-op handler resolves its FS via
+// BindIdentity, forwarding the request's exact volume and caller.
+func (s *RpcServerTestSuite) TestGetAttrBindsRequestIdentity() {
+	mockFs := new(pathfs2.MockFileSystem)
+	caller := CreateCaller(1001, 2000, 4242)
+
+	var gotVolume string
+	var gotCaller *proto.Caller
+	s.fsService.EXPECT().
+		BindIdentity(mock.Anything, "testVolume", caller).
+		Run(func(_ context.Context, volume string, c *proto.Caller) {
+			gotVolume = volume
+			gotCaller = c
+		}).
+		Return(mockFs, nil)
+	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK)
+
+	request := &proto.GetAttrRequest{Volume: "testVolume", Path: "/test/path", Caller: caller}
+	_, err := s.server.GetAttr(context.Background(), request)
+
+	s.Require().NoError(err)
+	s.Assert().Equal("testVolume", gotVolume)
+	s.Require().NotNil(gotCaller)
+	s.Assert().Equal(caller, gotCaller)
+}
+
 func (s *RpcServerTestSuite) TestTruncate() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().Truncate("/test/path", uint64(0), mock.Anything).Return(fuse.OK)
 	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
@@ -243,7 +269,7 @@ func (s *RpcServerTestSuite) TestTruncate() {
 func (s *RpcServerTestSuite) TestChmod() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().Chmod("/test/path", uint32(0), mock.Anything).Return(fuse.OK)
 	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
@@ -266,7 +292,7 @@ func (s *RpcServerTestSuite) TestChmod() {
 func (s *RpcServerTestSuite) TestChown() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().Chown("/test/path", uint32(0), uint32(0), mock.Anything).Return(fuse.OK)
 	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
@@ -289,7 +315,7 @@ func (s *RpcServerTestSuite) TestChown() {
 func (s *RpcServerTestSuite) TestGetXAttr() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().GetXAttr("/test/path", "attribute", mock.Anything).Return([]byte("data"), fuse.OK)
 
@@ -305,7 +331,7 @@ func (s *RpcServerTestSuite) TestGetXAttr() {
 
 func (s *RpcServerTestSuite) TestMkdirEmptyRequestIDFails() {
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 
 	request := &proto.MkdirRequest{
 		Volume: "testVolume", Path: "/p", Mode: 0,
@@ -322,7 +348,7 @@ func (s *RpcServerTestSuite) TestMkdirEmptyRequestIDFails() {
 
 func (s *RpcServerTestSuite) TestMkdirDuplicateRequestIDReturnsCachedReply() {
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	mockFs.EXPECT().Mkdir("/p", uint32(0), mock.Anything).Return(fuse.OK).Once()
 	mockFs.EXPECT().GetAttr("/p", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
 
@@ -358,7 +384,7 @@ func (s *RpcServerTestSuite) TestUnlinkEmitsDeletedEvent() {
 	defer cancel()
 
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	mockFs.EXPECT().Unlink("/test/path", mock.Anything).Return(fuse.OK)
 
 	// Act.
@@ -385,8 +411,10 @@ func (s *RpcServerTestSuite) TestUnlinkEmitsDeletedEvent() {
 }
 
 func (s *RpcServerTestSuite) TestGetAttrIfChanged_NotModified() {
-	// Setup.
+	// Setup. GetAttr (a path op) binds identity; GetAttrIfChanged is
+	// identity-agnostic and resolves the FS via GetVolumeFileSystem.
 	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	ctx := context.Background()
 
@@ -475,7 +503,7 @@ func (s *RpcServerTestSuite) TestGetAttrIfChanged_ENOENT() {
 func (s *RpcServerTestSuite) TestUtimens() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	ctx := context.Background()
 	expectedMtime := time.Unix(1577836800, 0)
 	mockFs.EXPECT().Utimens(

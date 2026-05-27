@@ -59,7 +59,7 @@ func (r *RpcServerImpl) Register(server *grpc.Server) {
 }
 
 func (r *RpcServerImpl) GetAttr(ctx context.Context, request *proto.GetAttrRequest) (*proto.GetAttrReply, error) {
-	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
+	fs, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func (r *RpcServerImpl) Mkdir(ctx context.Context, request *proto.MkdirRequest) 
 	if err != nil {
 		return nil, err
 	}
-	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
+	fs, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +99,7 @@ func (r *RpcServerImpl) Rmdir(ctx context.Context, request *proto.RmdirRequest) 
 	if err != nil {
 		return nil, err
 	}
-	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
+	fs, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +117,7 @@ func (r *RpcServerImpl) Rename(ctx context.Context, request *proto.RenameRequest
 	if err != nil {
 		return nil, err
 	}
-	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
+	fs, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +132,7 @@ func (r *RpcServerImpl) Rename(ctx context.Context, request *proto.RenameRequest
 }
 
 func (r *RpcServerImpl) OpenDir(ctx context.Context, request *proto.OpenDirRequest) (*proto.OpenDirReply, error) {
-	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
+	fs, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +155,9 @@ func (r *RpcServerImpl) OpenDir(ctx context.Context, request *proto.OpenDirReque
 }
 
 func (r *RpcServerImpl) StatFs(ctx context.Context, request *proto.StatFsRequest) (*proto.StatFsReply, error) {
-	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
+	// StatFsRequest carries no Caller — statvfs is filesystem-wide and
+	// identity-agnostic. Bind under the volume's default identity (nil caller).
+	fs, err := r.fsService.BindIdentity(ctx, request.Volume, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +183,7 @@ func (r *RpcServerImpl) Unlink(ctx context.Context, request *proto.UnlinkRequest
 	if err != nil {
 		return nil, err
 	}
-	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
+	fs, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +197,7 @@ func (r *RpcServerImpl) Unlink(ctx context.Context, request *proto.UnlinkRequest
 }
 
 func (r *RpcServerImpl) Access(ctx context.Context, request *proto.AccessRequest) (*proto.AccessReply, error) {
-	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
+	fs, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +210,7 @@ func (r *RpcServerImpl) Truncate(ctx context.Context, request *proto.TruncateReq
 	if err != nil {
 		return nil, err
 	}
-	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
+	fs, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +228,7 @@ func (r *RpcServerImpl) Chmod(ctx context.Context, request *proto.ChmodRequest) 
 	if err != nil {
 		return nil, err
 	}
-	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
+	fs, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +246,7 @@ func (r *RpcServerImpl) Chown(ctx context.Context, request *proto.ChownRequest) 
 	if err != nil {
 		return nil, err
 	}
-	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
+	fs, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +274,7 @@ func (r *RpcServerImpl) Utimens(ctx context.Context, request *proto.UtimensReque
 	if err != nil {
 		return nil, err
 	}
-	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
+	fs, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +292,7 @@ func (r *RpcServerImpl) Utimens(ctx context.Context, request *proto.UtimensReque
 // ----- Extended attributes -----
 
 func (r *RpcServerImpl) GetXAttr(ctx context.Context, request *proto.GetXAttrRequest) (*proto.GetXAttrReply, error) {
-	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
+	fs, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
 		return nil, err
 	}

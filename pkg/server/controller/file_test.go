@@ -49,7 +49,7 @@ func (s *RpcFileServerTestSuite) TearDownTest() {
 func (s *RpcFileServerTestSuite) TestOpen() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().Open("/test/path", uint32(0), mock.Anything).Return(nodefs.NewDefaultFile(), fuse.OK)
 
@@ -66,7 +66,7 @@ func (s *RpcFileServerTestSuite) TestOpen() {
 func (s *RpcFileServerTestSuite) TestCreate() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	ctx := context.Background()
 	mockFs.EXPECT().Create("/test/path", uint32(0), uint32(0), mock.Anything).Return(nodefs.NewDefaultFile(), fuse.OK)
 	// GetAttr is called unconditionally on successful Create to populate reply.Attributes.
@@ -173,7 +173,7 @@ func (s *RpcFileServerTestSuite) TestFlush() {
 
 func (s *RpcFileServerTestSuite) TestOpenNonOkDoesNotRegisterFd() {
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	// Open returns a non-OK status.
 	mockFs.EXPECT().Open("/test/path", uint32(0), mock.Anything).
 		Return(nil, fuse.ENOENT)
@@ -196,7 +196,7 @@ func (s *RpcFileServerTestSuite) TestOpenNonOkDoesNotRegisterFd() {
 
 func (s *RpcFileServerTestSuite) TestCreateNonOkDoesNotRegisterFd() {
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	mockFs.EXPECT().Create("/p", uint32(0), uint32(0), mock.Anything).
 		Return(nil, fuse.EACCES)
 
@@ -229,7 +229,7 @@ func (s *RpcFileServerTestSuite) TestUnknownSessionReturnsError() {
 
 func (s *RpcFileServerTestSuite) TestOpenEmptyRequestIDFails() {
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 
 	request := &proto.OpenRequest{
 		Volume: "testVolume", Path: "/p", Flags: 0,
@@ -245,7 +245,7 @@ func (s *RpcFileServerTestSuite) TestOpenEmptyRequestIDFails() {
 
 func (s *RpcFileServerTestSuite) TestOpenDuplicateRequestIDReturnsCachedReply() {
 	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
 	mockFs.EXPECT().Open("/p", uint32(0), mock.Anything).
 		Return(nodefs.NewDefaultFile(), fuse.OK).Once()
 

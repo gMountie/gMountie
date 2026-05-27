@@ -68,7 +68,7 @@ func (r *RpcFileServerImpl) Open(ctx context.Context, request *proto.OpenRequest
 	if err != nil {
 		return nil, err
 	}
-	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
+	fs, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func (r *RpcFileServerImpl) Create(ctx context.Context, request *proto.CreateReq
 	if err != nil {
 		return nil, err
 	}
-	fs, err := r.fsService.GetVolumeFileSystem(request.Volume)
+	fs, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
 		return nil, err
 	}
