@@ -267,8 +267,7 @@ message Owner {
 }
 ```
 
-**[DECISION — flagged for review] Display fidelity.** Recommended default:
-**hybrid** — the server fills `group_name` for groups the caller is a member of
+**[DECISION — locked] Display fidelity.** **Hybrid** — the server fills `group_name` for groups the caller is a member of
 (so shared directories render sensibly) and `user_name` only for the caller's
 own identity; **all other users render as `nobody`** on the client. Reveals
 that a group exists but never leaks the server's full user list. Alternatives:
@@ -318,8 +317,8 @@ either is fine.) `raw_ids` composes with any mode. The opt-out is symmetric: the
 **outbound** path also passes through, so a `chown` is sent with its literal IDs
 (not rewritten) and a backup tool can restore ownership faithfully.
 
-**[DECISION — flagged for review] Cache storage.** The persistent client cache
-stores **server (wire) IDs**; rewriting happens on every FUSE return, not at
+**[DECISION — locked] Cache storage.** The persistent client cache stores
+**server (wire) IDs**; rewriting happens on every FUSE return, not at
 store time. Consequence: an identity change (TTL refresh, re-auth) needs **no
 cache invalidation**, and `raw_ids` is just "skip the rewrite step" over the
 same cached rows.
@@ -454,19 +453,18 @@ disk / NFS `no_root_squash`.
   mounter must not cross-apply one volume's identity to another's attrs.
 - Mount defaults: `nosuid`, `nodev`, `allow_other=false`; new `raw_ids` flag.
 
-## 8. Decisions flagged for the review gate
+## 8. Decisions (all locked, 2026-05-27)
 
-Recommended defaults, not yet locked — please confirm or adjust:
+1. **Display fidelity (§3.6):** hybrid — reveal `group_name` for groups the
+   caller is a member of, render other users as `nobody`.
+2. **Cache storage (§3.8):** store server IDs, rewrite on every FUSE return (no
+   invalidation on identity change).
 
-1. **Display fidelity (§3.6):** hybrid (reveal group names you're in, hide
-   other users).
-2. **Cache storage (§3.8):** store server IDs, rewrite on return.
-
-*Resolved in discussion:* squash default; real passthrough with `root_squash`
-both ways; `WhoAmI` on `SessionService`; admin-via-capability not `sudo`;
+Plus, from discussion: squash default; real passthrough with `root_squash` both
+ways; `WhoAmI` on `SessionService`; admin-via-capability not `sudo`;
 kernel-native enforcement (per-thread `setgroups`); backups via `raw_ids` or
 `passthrough`; capability set = `dac_read` + `dac_override` (`chown_any`
-deferred); server runs as root.
+deferred); server runs as root; volume confinement as the Phase 0 prerequisite.
 
 ## 9. Phasing (one spec, two implementation plans, one PR each)
 
