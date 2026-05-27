@@ -157,6 +157,31 @@ func e2ePassthroughMapping() config.MappingConfig {
 	return config.MappingConfig{Mode: config.MappingModePassthrough, RootSquash: &noRootSquash}
 }
 
+// e2eSquashMapping returns a squash mapping that pins every caller to the
+// given uid/gid on the server side, regardless of the authenticated principal.
+func e2eSquashMapping(uid, gid uint32) config.MappingConfig {
+	return config.MappingConfig{Mode: config.MappingModeSquash, Uid: uid, Gid: gid}
+}
+
+// WithSquashVolume appends a randomly named test volume whose Mapping is a
+// squash mapping pinned to uid/gid. No random files are pre-created; tests
+// create their own content. Use this in identity-rewrite tests where you
+// need the server to own files as a specific uid/gid.
+func WithSquashVolume(uid, gid uint32) TestOptions {
+	return func(c *AppTestingContext) {
+		v, err := NewTestVolume(randstr.String(10), false)
+		if err != nil {
+			panic(err)
+		}
+		c.volumes = append(c.volumes, v)
+		c.cfg.Volumes = append(c.cfg.Volumes, &config.VolumeConfig{
+			Name:    v.Name,
+			Path:    v.GetSrcPath(),
+			Mapping: e2eSquashMapping(uid, gid),
+		})
+	}
+}
+
 func WithRandomTestVolume(randomfiles bool) TestOptions {
 	return func(c *AppTestingContext) {
 		v, err := NewTestVolume(randstr.String(10), randomfiles)
