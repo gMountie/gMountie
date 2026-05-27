@@ -4,7 +4,20 @@
 // below) so the same files render on GitHub and on the built site. MDX (.mdx) is
 // available as an opt-in escape hatch for the rare page that wants components.
 
-import {themes as prismThemes} from 'prism-react-renderer';
+// Always-dark terminal code blocks with the brand's signal palette
+// (ember / pine / wire / mute), mirroring the docs UI kit's <pre>.
+const gmountieTerminal = {
+  plain: {color: '#F4EEDD', backgroundColor: '#0E0C09'},
+  styles: [
+    {types: ['comment', 'prolog', 'cdata'], style: {color: '#8B826E', fontStyle: 'italic'}},
+    {types: ['punctuation'], style: {color: '#9C927F'}},
+    {types: ['keyword', 'operator', 'tag', 'selector', 'atrule', 'important', 'rule'], style: {color: '#ED7A33'}},
+    {types: ['string', 'char', 'inserted', 'attr-value', 'attr-equals'], style: {color: '#8FB39C'}},
+    {types: ['number', 'boolean', 'constant', 'symbol', 'builtin', 'class-name', 'url'], style: {color: '#8FB0CB'}},
+    {types: ['function', 'function-variable', 'attr-name', 'variable', 'property'], style: {color: '#F4EEDD'}},
+    {types: ['deleted'], style: {color: '#D4736A'}},
+  ],
+};
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -127,8 +140,9 @@ const config = {
         copyright: `© ${new Date().getFullYear()} the gMountie project · Apache-2.0`,
       },
       prism: {
-        theme: prismThemes.oneLight,
-        darkTheme: prismThemes.oneDark,
+        // Same dark terminal in both modes — the kit's <pre> is always dark.
+        theme: gmountieTerminal,
+        darkTheme: gmountieTerminal,
         additionalLanguages: ['bash', 'yaml', 'toml', 'go', 'protobuf', 'json', 'docker'],
       },
     }),
