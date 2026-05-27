@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"os"
 	"time"
 
 	commongrpc "gmountie/pkg/common/grpc"
@@ -41,6 +42,9 @@ type Client interface {
 	// inherits from the Client. Bundling them keeps the interface from
 	// widening on every new per-file feature.
 	PerFileConfig() PerFileConfig
+	// WhoAmI returns the server-side identity the caller maps to on the given
+	// volume (used by the mount layer to set up id rewriting).
+	WhoAmI(ctx context.Context, volume string) (*proto.Identity, error)
 }
 
 // PerFileConfig bundles the runtime tuning knobs that each newly-opened
@@ -235,6 +239,20 @@ func (c *ClientImpl) IOTimeout() time.Duration {
 // instances inherit from this Client.
 func (c *ClientImpl) PerFileConfig() PerFileConfig {
 	return c.perFile
+}
+
+// WhoAmI asks the server which identity the current OS user maps to on the
+// given volume. The Caller is populated from os.Getuid / os.Getgid; this
+// method is called at mount time, outside any FUSE op, so there is no
+// FUSE context available.
+func (c *ClientImpl) WhoAmI(ctx context.Context, volume string) (*proto.Identity, error) {
+	return c.session.WhoAmI(ctx, &proto.WhoAmIRequest{
+		Volume: volume,
+		Caller: &proto.Caller{Owner: &proto.Owner{
+			Uid: uint32(os.Getuid()),
+			Gid: uint32(os.Getgid()),
+		}},
+	})
 }
 
 // getInterceptors returns the ClientImpl interceptors, including any

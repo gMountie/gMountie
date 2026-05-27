@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"testing"
 	"time"
 
@@ -232,4 +233,53 @@ func (s *SessionHandshakeTestSuite) TestEstablishKeepaliveFailureClearsSessionID
 
 func TestSessionHandshakeTestSuite(t *testing.T) {
 	suite.Run(t, new(SessionHandshakeTestSuite))
+}
+
+// ---------------------------------------------------------------------------
+// ClientImpl.WhoAmI
+// ---------------------------------------------------------------------------
+
+type ClientImplWhoAmITestSuite struct {
+	suite.Suite
+	sessionClient *mockProto.MockSessionServiceClient
+	client        *ClientImpl
+}
+
+func (s *ClientImplWhoAmITestSuite) SetupTest() {
+	s.sessionClient = mockProto.NewMockSessionServiceClient(s.T())
+	s.client = &ClientImpl{session: s.sessionClient}
+}
+
+func (s *ClientImplWhoAmITestSuite) TestWhoAmIReturnsIdentityFromServer() {
+	want := &proto.Identity{Uid: 1001, PrimaryGid: 1001, Gids: []uint32{1001}}
+
+	s.sessionClient.EXPECT().
+		WhoAmI(mock.Anything, mock.MatchedBy(func(req *proto.WhoAmIRequest) bool {
+			return req.Volume == "v" &&
+				req.Caller != nil &&
+				req.Caller.Owner != nil &&
+				req.Caller.Owner.Uid == uint32(os.Getuid()) &&
+				req.Caller.Owner.Gid == uint32(os.Getgid())
+		})).
+		Return(want, nil).Once()
+
+	got, err := s.client.WhoAmI(context.Background(), "v")
+	s.Require().NoError(err)
+	s.Assert().Equal(want, got)
+}
+
+func (s *ClientImplWhoAmITestSuite) TestWhoAmIPropagatesServerError() {
+	s.sessionClient.EXPECT().
+		WhoAmI(mock.Anything, mock.MatchedBy(func(req *proto.WhoAmIRequest) bool {
+			return req.Volume == "myvol" && req.Caller != nil
+		})).
+		Return(nil, errors.New("server unavailable")).Once()
+
+	got, err := s.client.WhoAmI(context.Background(), "myvol")
+	s.Require().Error(err)
+	s.Assert().Nil(got)
+}
+
+func TestClientImplWhoAmITestSuite(t *testing.T) {
+	suite.Run(t, new(ClientImplWhoAmITestSuite))
 }
