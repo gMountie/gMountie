@@ -39,7 +39,12 @@ func (s *ServerAppTestSuite) TestStart_ContextCancellationShutsDownGracefully() 
 				PermitWithoutStream: config.DefaultKeepalivePermitWithoutStream,
 			},
 		},
-		Auth:    &config.NoneAuthConfig{},
+		Auth: &config.BasicAuthConfig{
+			AuthConfigBase: config.AuthConfigBase{Type: config.AuthConfigTypeBasic},
+			Users: []config.BasicAuthConfigUser{
+				{Username: "admin", Password: "admin"},
+			},
+		},
 		Volumes: []*config.VolumeConfig{},
 	}
 

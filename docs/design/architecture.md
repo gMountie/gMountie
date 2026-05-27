@@ -255,10 +255,8 @@ The client distinguishes the two: a gRPC error is the wire failing
 
 ## 7. Authentication
 
-Two modes today, both at the gRPC interceptor layer:
+All requests are authenticated. The supported mode today, at the gRPC interceptor layer:
 
-- `none` — no auth interceptor, all requests accepted. Useful for
-  local testing.
 - `basic` — username/password against a configured user list. The
   authenticated principal is the basic-auth user; today it isn't yet
   used for permission decisions (those still come from the wire UID/GID

@@ -19,7 +19,10 @@ server:
   address: 0.0.0.0
   port: 8000
 auth:
-  type: none	
+  type: basic
+  users:
+  - username: admin
+    password: admin
 volumes:
   - name: test
     path: /tmp
@@ -35,7 +38,7 @@ func (s *ConfigTestSuite) TestParse_Full_Server() {
 	s.Require().NoError(err)
 	s.Assert().Equal("0.0.0.0", result.Server.Address)
 	s.Assert().Equal(uint(8000), result.Server.Port)
-	s.Assert().Equal(AuthConfigTypeNone, result.Auth.GetType())
+	s.Assert().Equal(AuthConfigTypeBasic, result.Auth.GetType())
 	s.Assert().True(result.Server.Metrics)
 }
 
@@ -188,7 +191,10 @@ server:
   address: "0.0.0.0"
   port: 9449
 auth:
-  type: none
+  type: basic
+  users:
+  - username: admin
+    password: admin
 volumes:
   - name: test
     path: /tmp
@@ -204,7 +210,10 @@ server:
   address: "0.0.0.0"
   port: 9449
 auth:
-  type: none
+  type: basic
+  users:
+  - username: admin
+    password: admin
 volumes:
   - name: test
     path: /tmp
@@ -220,7 +229,10 @@ server:
   port: 9449
   metrics_addr: "127.0.0.1:9091"
 auth:
-  type: none
+  type: basic
+  users:
+  - username: admin
+    password: admin
 volumes:
   - name: test
     path: /tmp
@@ -236,7 +248,10 @@ server:
   address: "0.0.0.0"
   port: 9449
 auth:
-  type: none
+  type: basic
+  users:
+  - username: admin
+    password: admin
 volumes:
   - name: test
     path: /tmp
@@ -258,7 +273,10 @@ server:
   address: "0.0.0.0"
   port: 9449
 auth:
-  type: none
+  type: basic
+  users:
+  - username: admin
+    password: admin
 volumes:
   - name: test
     path: /tmp
@@ -281,7 +299,10 @@ server:
     min_time: 5s
     permit_without_stream: false
 auth:
-  type: none
+  type: basic
+  users:
+  - username: admin
+    password: admin
 volumes:
   - name: test
     path: /tmp
@@ -300,7 +321,10 @@ server:
   address: "0.0.0.0"
   port: 9449
 auth:
-  type: none
+  type: basic
+  users:
+  - username: admin
+    password: admin
 volumes:
   - name: test
     path: /tmp
@@ -318,7 +342,10 @@ server:
   subscribe_buffer_size: 512
   subscribe_heartbeat_interval: 30s
 auth:
-  type: none
+  type: basic
+  users:
+  - username: admin
+    password: admin
 volumes:
   - name: test
     path: /tmp
@@ -336,7 +363,10 @@ server:
   address: "0.0.0.0"
   port: 9449
 auth:
-  type: none
+  type: basic
+  users:
+  - username: admin
+    password: admin
 volumes:
   - name: test
     path: /tmp

@@ -242,20 +242,13 @@ cache:
 
 The `auth` section configures client authentication:
 
-| Option   | Type   | Required        | Description                             |
-|----------|--------|-----------------|-----------------------------------------|
-| type     | string | yes             | Authentication type ("none" or "basic") |
-| username | string | yes (for basic) | Username for basic auth                 |
-| password | string | yes (for basic) | Password for basic auth                 |
+| Option   | Type   | Required | Description                   |
+|----------|--------|----------|-------------------------------|
+| type     | string | yes      | Authentication type ("basic") |
+| username | string | yes      | Username for basic auth       |
+| password | string | yes      | Password for basic auth       |
 
-### None Authentication
-
-Disables authentication (not recommended for production):
-
-```yaml
-auth:
-  type: none
-```
+Authentication is required; every client must supply credentials.
 
 ### Basic Authentication
 

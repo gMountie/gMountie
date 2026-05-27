@@ -18,7 +18,9 @@ server:
   port: 9449
   tls: false
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 `
 	result, err := LoadConfigFromString(conf)
 	s.Require().NoError(err)
@@ -33,7 +35,9 @@ func (s *ServerConfigTestSuite) TestParse_Defaults() {
 server:
   address: 127.0.0.1
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 `
 	result, err := LoadConfigFromString(conf)
 	s.Require().NoError(err)
@@ -49,7 +53,9 @@ server:
   address: not-an-ip
   port: 9449
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 `
 	_, err := LoadConfigFromString(conf)
 	s.Require().Error(err)
@@ -61,7 +67,9 @@ server:
   address: 0.0.0.0
   port: -1
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 `
 	_, err := LoadConfigFromString(conf)
 	s.Require().Error(err)
@@ -72,7 +80,9 @@ func (s *ServerConfigTestSuite) TestParse_MissingServerSection() {
 someother:
   key: value
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 `
 	_, err := LoadConfigFromString(conf)
 	s.Require().Error(err)
@@ -86,7 +96,9 @@ server:
   port: 9449
   tls: true
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 `
 	result, err := LoadConfigFromString(conf)
 	s.Require().NoError(err)

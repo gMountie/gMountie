@@ -35,12 +35,10 @@ func NewAuthFromConfig(v *viper.Viper) (serverConfig.AuthConfig, error) {
 	var auth serverConfig.AuthConfig
 	var err error
 	switch v.GetString("type") {
-	case "none":
-		auth = serverConfig.NewNoneAuthConfig(v)
 	case "basic":
 		auth, err = NewBasicAuthConfig(v)
 	default:
-		return nil, fmt.Errorf("invalid auth type: %s", v.GetString("type"))
+		return nil, fmt.Errorf("invalid auth type: %q (only 'basic' is supported)", v.GetString("type"))
 	}
 
 	if err != nil {

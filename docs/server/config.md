@@ -17,8 +17,11 @@ Basic example:
 server:
   address: 0.0.0.0
   port: 9449
-authentication:
-  type: none
+auth:
+  type: basic
+  users:
+    - username: admin
+      password: admin
 volumes:
   - name: shared
     path: /shared
@@ -79,19 +82,12 @@ server:
 
 The `auth` section configures user authentication:
 
-| Option | Type   | Required        | Description                             |
-|--------|--------|-----------------|-----------------------------------------|
-| type   | string | yes             | Authentication type ("none" or "basic") |
-| users  | array  | yes (for basic) | List of user credentials                |
+| Option | Type   | Required | Description                   |
+|--------|--------|----------|-------------------------------|
+| type   | string | yes      | Authentication type ("basic") |
+| users  | array  | yes      | List of user credentials      |
 
-### None Authentication
-
-Disables authentication (not recommended for production):
-
-```yaml
-auth:
-  type: none
-```
+Authentication is required; every server must configure at least one user.
 
 ### Basic Authentication
 

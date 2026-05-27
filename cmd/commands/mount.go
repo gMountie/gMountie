@@ -66,7 +66,7 @@ var mountCmd = &cobra.Command{
 		// Precedence (highest first):
 		//   1. Explicitly-passed CLI flags (cmd.Flags().Changed(name) == true)
 		//   2. Values read from the file passed via --config / -c
-		//   3. Flag default values (--server 127.0.0.1:9449, --auth-type none)
+		//   3. Flag default values (--server 127.0.0.1:9449, --auth-type basic)
 		//
 		// (3) only applies when no config file was loaded; once a config
 		// file is in play, the file's values must not be silently shadowed
@@ -160,7 +160,7 @@ var mountCmd = &cobra.Command{
 func init() {
 	mountCmd.PersistentFlags().StringVarP(&serverAddr, "server", "s", "127.0.0.1:9449", "server address")
 	mountCmd.PersistentFlags().StringVarP(&volumeName, "volume", "n", "", "volume name")
-	mountCmd.PersistentFlags().StringVarP(&authType, "auth-type", "t", "none", "authentication type (none, basic)")
+	mountCmd.PersistentFlags().StringVarP(&authType, "auth-type", "t", "basic", "authentication type (basic)")
 	mountCmd.PersistentFlags().StringVarP(&username, "username", "u", "", "username for basic auth")
 	mountCmd.PersistentFlags().StringVarP(&password, "password", "p", "", "password for basic auth")
 	rootCmd.AddCommand(mountCmd)

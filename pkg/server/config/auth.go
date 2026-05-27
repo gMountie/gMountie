@@ -10,7 +10,6 @@ import (
 type AuthConfigType string
 
 const (
-	AuthConfigTypeNone  AuthConfigType = "none"
 	AuthConfigTypeBasic AuthConfigType = "basic"
 )
 
@@ -36,12 +35,10 @@ func NewFromConfig(v *viper.Viper) (AuthConfig, error) {
 	var auth AuthConfig
 	var err error
 	switch v.GetString("type") {
-	case "none":
-		auth = NewNoneAuthConfig(v)
 	case "basic":
 		auth, err = NewBasicAuthConfig(v)
 	default:
-		return nil, fmt.Errorf("invalid auth type: %s", v.GetString("type"))
+		return nil, fmt.Errorf("invalid auth type: %q (only 'basic' is supported)", v.GetString("type"))
 	}
 
 	if err != nil {
@@ -49,27 +46,6 @@ func NewFromConfig(v *viper.Viper) (AuthConfig, error) {
 	}
 
 	return auth, nil
-}
-
-// ------------- NoneAuthConfig -------------
-
-// NoneAuthConfig is a struct that holds the configuration for the none auth
-type NoneAuthConfig struct {
-	AuthConfigBase
-}
-
-// NewNoneAuthConfig creates a new NoneAuthConfig with defaults
-func NewNoneAuthConfig(v *viper.Viper) *NoneAuthConfig {
-	return &NoneAuthConfig{
-		AuthConfigBase: AuthConfigBase{
-			Type: AuthConfigTypeNone,
-		},
-	}
-}
-
-// GetType returns the type of the auth configuration
-func (n *NoneAuthConfig) GetType() AuthConfigType {
-	return AuthConfigTypeNone
 }
 
 // ------------- BasicAuthConfig -------------

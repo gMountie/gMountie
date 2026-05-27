@@ -21,13 +21,17 @@ server:
   port: 9449
   tls: false
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 `
 	s.minimalConf = `
 server:
   address: 127.0.0.1
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 `
 }
 
@@ -40,7 +44,7 @@ func (s *ConfigTestSuite) TestString() {
 	s.Require().NoError(err)
 	s.Assert().Contains(str, "address: 0.0.0.0")
 	s.Assert().Contains(str, "port: 9449")
-	s.Assert().Contains(str, "type: none")
+	s.Assert().Contains(str, "type: basic")
 }
 
 // Test Save() function
@@ -84,7 +88,9 @@ server:
   address: 127.0.0.1
   port: 9449
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 `
 	result, err := LoadConfigFromString(conf)
 	s.Require().NoError(err)
@@ -100,7 +106,9 @@ server:
   address: 127.0.0.1
   port: 9449
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 rpc:
   timeout_meta: 2s
   timeout_io: 1m
@@ -120,7 +128,9 @@ server:
   address: 127.0.0.1
   port: 9449
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 `
 	result, err := LoadConfigFromString(conf)
 	s.Require().NoError(err)
@@ -133,7 +143,9 @@ server:
   address: 127.0.0.1
   port: 9449
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 rpc:
   compression: snappy
 `
@@ -148,7 +160,9 @@ server:
   address: 127.0.0.1
   port: 9449
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 rpc:
   compression: gzip
 `
@@ -164,7 +178,9 @@ server:
   address: 127.0.0.1
   port: 9449
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 `
 	result, err := LoadConfigFromString(conf)
 	s.Require().NoError(err)
@@ -181,7 +197,9 @@ server:
   address: 127.0.0.1
   port: 9449
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 fuse:
   max_write_bytes: 524288
   max_background: 128
@@ -201,7 +219,9 @@ server:
   address: 127.0.0.1
   port: 9449
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 fuse:
   max_write_bytes: 1024
 `
@@ -217,7 +237,9 @@ server:
   address: 127.0.0.1
   port: 9449
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 `
 	result, err := LoadConfigFromString(conf)
 	s.Require().NoError(err)
@@ -258,7 +280,9 @@ server:
   address: 127.0.0.1
   port: 9449
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 cache:
   enabled: true
   memory_max_bytes: 536870912
@@ -297,7 +321,9 @@ server:
   address: 127.0.0.1
   port: 9449
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 `
 	result, err := LoadConfigFromString(conf)
 	s.Require().NoError(err)
@@ -315,7 +341,9 @@ server:
   address: 127.0.0.1
   port: 9449
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 rpc:
   readahead_window: 12
 `
@@ -330,7 +358,9 @@ server:
   address: 127.0.0.1
   port: 9449
 auth:
-  type: none
+  type: basic
+  username: admin
+  password: admin
 rpc:
   readahead_window: 0
 `
