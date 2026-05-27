@@ -212,9 +212,13 @@ See [Caching & Consistency](design/caching-and-consistency.md) for the design, c
 
 ---
 
-## Phase 6 — Operations and packaging — **Planned**
+## Phase 6 — Operations and packaging — **Done**
 
 **Goal:** the artifacts we ship are deployable by a careful operator.
+
+See [Operations & Packaging](design/operations-and-packaging.md) for the
+shipped design (hardened non-root image, Helm `fsGroup`/resource defaults,
+compose hygiene, keyless release signing + SBOMs).
 
 **In scope:**
 

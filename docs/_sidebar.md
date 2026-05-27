@@ -13,3 +13,4 @@
   * [Caching & Consistency](design/caching-and-consistency.md)
   * [Performance](design/performance.md)
   * [Identity & Permissions](design/identity-and-permissions.md)
+  * [Operations & Packaging](design/operations-and-packaging.md)
