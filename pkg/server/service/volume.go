@@ -139,13 +139,23 @@ func passthroughIdentity(m config.MappingConfig, caller *proto.Caller) Identity 
 	}
 	squashRoot := m.RootSquash == nil || *m.RootSquash // default true
 	if squashRoot && uid == 0 {
-		uid = m.AnonUid
+		anon := m.AnonUid
+		if anon == 0 {
+			// Never squash root TO root. The server runs as root, so its own
+			// uid (0) is not a safe anon; fall back to nobody, matching NFS.
+			anon = defaultAnonUid
+		}
+		uid = anon
 		if gid == 0 {
-			gid = m.AnonUid
+			gid = anon
 		}
 	}
 	return Identity{Uid: uid, Gid: gid, Gids: []uint32{gid}}
 }
+
+// defaultAnonUid is the "nobody" id used for root_squash when anon_uid is not
+// configured. Guarantees root is never squashed to a privileged identity.
+const defaultAnonUid = 65534
 
 // addFileSystem adds a filesystem to the volume service.
 func (s *VolumeServiceImpl) addFileSystem(name string, fs pathfs.FileSystem) {

@@ -36,7 +36,11 @@ func (i *AuthInterceptor) Unary() grpc.UnaryServerInterceptor {
 	}
 }
 
-// Stream returns a StreamServerInterceptor
+// Stream returns a StreamServerInterceptor. It authenticates but does not stash
+// the principal on the context: streaming RPCs are the data path (Read/Write
+// ride an already-open fd) or control (Subscribe/Keepalive) and do no
+// identity-bound path resolution. A future streaming path op would need the
+// principal stashed here (and the stream's context wrapped) to be enforced.
 func (i *AuthInterceptor) Stream() grpc.StreamServerInterceptor {
 	return func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		ok, _, err := i.authService.Authorize(stream.Context(), info.FullMethod)
