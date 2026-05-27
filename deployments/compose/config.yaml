@@ -6,8 +6,12 @@ server:
 auth:
   type: basic
   users:
+    # !!! DEMO ONLY — CHANGE before exposing this server to any network !!!
+    # gMountie has no env-var override for basic-auth users, so edit this file
+    # (or mount your own config) before deploying. Passwords are compared in
+    # plaintext today (see Phase 7 — security hardening).
     - username: admin
-      password: admin
+      password: CHANGE_ME_BEFORE_DEPLOY
 
 volumes:
   - name: data
