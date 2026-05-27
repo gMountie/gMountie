@@ -406,6 +406,30 @@ Available `_substrate/*` series: `disk_seq_read`, `disk_seq_write`,
 post-release-tag; Bencher sends an alert on threshold breach, but the release
 stands. The perf job never blocks a release.
 
+### 4.5 Declarative dashboard plots
+
+The Bencher dashboard *plots* (the pinned charts on the project's Perf page) are
+defined declaratively in **`scripts/perf/plots.yaml`** and reconciled by
+`perfbmf plots sync`. This exists because `bencher plot update` cannot change a
+plot's benchmark or measure set — and new benchmarks never auto-join a plot — so
+without a reconciler the dashboard silently drifts from reality each time a
+benchmark is added.
+
+The spec references benchmarks by **name glob** (`path.Match`, `*` does not cross
+`/`), e.g. `Seq*MiB/lan`, so a future `SeqReadOpt128MiB/lan` is folded into the
+right plot on the next sync with no manual UUID edits. Document order is the
+dashboard index; the plot title is the match key.
+
+- `task perf:plots:diff` — dry-run; prints the plan (read-only, no token needed).
+- `task perf:plots:sync` — converge the live dashboard (needs `$BENCHER_API_TOKEN`;
+  `PRUNE=1` also deletes live plots absent from the spec — off by default so
+  ad-hoc plots made in the web UI survive).
+
+The diff/planner is a pure function in `test/e2e/perf/bmf/plotsync.go`
+(unit-tested); the executor shells out to the `bencher` CLI. A plot whose
+benchmark/measure/branch/testbed/x-axis or boundary flags changed is recreated
+(create-new-then-delete-old); only title/window/index changes use `plot update`.
+
 ### 4.5 Running the full CI pipeline locally
 
 ```bash

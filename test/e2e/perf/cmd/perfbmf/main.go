@@ -9,6 +9,9 @@
 //	perfbmf emit --substrate substrate.json \
 //	    --bench-lan lan.txt --bench-wan wan.txt [--out report.bmf.json]
 //	    Produce the BMF document.
+//	perfbmf plots sync [--spec scripts/perf/plots.yaml] [--project p] \
+//	    [--dry-run] [--prune]
+//	    Reconcile the live Bencher dashboard plots to match the YAML spec.
 package main
 
 import (
@@ -24,7 +27,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fail("usage: perfbmf <cpuprobe|substrate|emit> ...")
+		fail("usage: perfbmf <cpuprobe|substrate|emit|plots> ...")
 	}
 	switch os.Args[1] {
 	case "cpuprobe":
@@ -33,6 +36,8 @@ func main() {
 		substrate(os.Args[2:])
 	case "emit":
 		emit(os.Args[2:])
+	case "plots":
+		plots(os.Args[2:])
 	default:
 		fail("unknown subcommand %q", os.Args[1])
 	}

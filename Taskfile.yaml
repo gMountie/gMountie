@@ -173,3 +173,13 @@ tasks:
     cmds:
       - bash scripts/perf/run.sh
 
+  perf:plots:diff:
+    desc: 'Dry-run: show how the live Bencher dashboard differs from scripts/perf/plots.yaml. Reads $BENCHER_PROJECT, or pass PROJECT=. Read-only (no token needed on a public project).'
+    cmds:
+      - go run ./test/e2e/perf/cmd/perfbmf/ plots sync --dry-run {{if .PROJECT}}--project {{.PROJECT}}{{end}}
+
+  perf:plots:sync:
+    desc: 'Converge the live Bencher dashboard plots to scripts/perf/plots.yaml. Needs $BENCHER_API_TOKEN (+ $BENCHER_PROJECT or PROJECT=). Set PRUNE=1 to delete live plots absent from the spec.'
+    cmds:
+      - go run ./test/e2e/perf/cmd/perfbmf/ plots sync {{if .PROJECT}}--project {{.PROJECT}}{{end}} {{if .PRUNE}}--prune{{end}}
+
