@@ -5,7 +5,9 @@
 package service
 
 import (
+	"context"
 	"gmountie/pkg/common"
+	"gmountie/pkg/proto"
 
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	mock "github.com/stretchr/testify/mock"
@@ -36,6 +38,80 @@ type MockVolumeService_Expecter struct {
 
 func (_m *MockVolumeService) EXPECT() *MockVolumeService_Expecter {
 	return &MockVolumeService_Expecter{mock: &_m.Mock}
+}
+
+// BindIdentity provides a mock function for the type MockVolumeService
+func (_mock *MockVolumeService) BindIdentity(ctx context.Context, volume string, caller *proto.Caller) (pathfs.FileSystem, error) {
+	ret := _mock.Called(ctx, volume, caller)
+
+	if len(ret) == 0 {
+		panic("no return value specified for BindIdentity")
+	}
+
+	var r0 pathfs.FileSystem
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, *proto.Caller) (pathfs.FileSystem, error)); ok {
+		return returnFunc(ctx, volume, caller)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, *proto.Caller) pathfs.FileSystem); ok {
+		r0 = returnFunc(ctx, volume, caller)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(pathfs.FileSystem)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, *proto.Caller) error); ok {
+		r1 = returnFunc(ctx, volume, caller)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockVolumeService_BindIdentity_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'BindIdentity'
+type MockVolumeService_BindIdentity_Call struct {
+	*mock.Call
+}
+
+// BindIdentity is a helper method to define mock.On call
+//   - ctx context.Context
+//   - volume string
+//   - caller *proto.Caller
+func (_e *MockVolumeService_Expecter) BindIdentity(ctx interface{}, volume interface{}, caller interface{}) *MockVolumeService_BindIdentity_Call {
+	return &MockVolumeService_BindIdentity_Call{Call: _e.mock.On("BindIdentity", ctx, volume, caller)}
+}
+
+func (_c *MockVolumeService_BindIdentity_Call) Run(run func(ctx context.Context, volume string, caller *proto.Caller)) *MockVolumeService_BindIdentity_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 *proto.Caller
+		if args[2] != nil {
+			arg2 = args[2].(*proto.Caller)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockVolumeService_BindIdentity_Call) Return(fileSystem pathfs.FileSystem, err error) *MockVolumeService_BindIdentity_Call {
+	_c.Call.Return(fileSystem, err)
+	return _c
+}
+
+func (_c *MockVolumeService_BindIdentity_Call) RunAndReturn(run func(ctx context.Context, volume string, caller *proto.Caller) (pathfs.FileSystem, error)) *MockVolumeService_BindIdentity_Call {
+	_c.Call.Return(run)
+	return _c
 }
 
 // GetVolumeFileSystem provides a mock function for the type MockVolumeService
