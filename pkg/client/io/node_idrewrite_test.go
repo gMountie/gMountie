@@ -51,8 +51,8 @@ func (s *NodeIDRewriteSuite) TestGetattr_InboundRewrite() {
 	out := &fuse.AttrOut{}
 	errno := rootAsIDRW[fs.NodeGetattrer](s).Getattr(context.Background(), nil, out)
 	s.Require().Equal(syscall.Errno(0), errno)
-	s.Assert().Equal(uint32(500), out.Attr.Uid, "uid should be rewritten to local")
-	s.Assert().Equal(uint32(500), out.Attr.Gid, "gid should be rewritten to local")
+	s.Assert().Equal(uint32(500), out.Uid, "uid should be rewritten to local")
+	s.Assert().Equal(uint32(500), out.Gid, "gid should be rewritten to local")
 }
 
 // TestGetattr_OtherUser_MapsToNobody verifies that attrs belonging to a
@@ -64,8 +64,8 @@ func (s *NodeIDRewriteSuite) TestGetattr_OtherUser_MapsToNobody() {
 	out := &fuse.AttrOut{}
 	errno := rootAsIDRW[fs.NodeGetattrer](s).Getattr(context.Background(), nil, out)
 	s.Require().Equal(syscall.Errno(0), errno)
-	s.Assert().Equal(uint32(65534), out.Attr.Uid, "foreign uid should map to nobody")
-	s.Assert().Equal(uint32(65534), out.Attr.Gid, "foreign gid should map to nobody")
+	s.Assert().Equal(uint32(65534), out.Uid, "foreign uid should map to nobody")
+	s.Assert().Equal(uint32(65534), out.Gid, "foreign gid should map to nobody")
 }
 
 // TestSetattr_OutboundChownRewrite verifies that when the caller sets owner to
@@ -88,8 +88,8 @@ func (s *NodeIDRewriteSuite) TestSetattr_OutboundChownRewrite() {
 	errno := rootAsIDRW[fs.NodeSetattrer](s).Setattr(context.Background(), nil, in, out)
 	s.Require().Equal(syscall.Errno(0), errno)
 	// Inbound rewrite also fires on the trailing Stat, confirming the full path.
-	s.Assert().Equal(uint32(500), out.Attr.Uid, "returned uid should be local after inbound rewrite")
-	s.Assert().Equal(uint32(500), out.Attr.Gid, "returned gid should be local after inbound rewrite")
+	s.Assert().Equal(uint32(500), out.Uid, "returned uid should be local after inbound rewrite")
+	s.Assert().Equal(uint32(500), out.Gid, "returned gid should be local after inbound rewrite")
 }
 
 func TestNodeIDRewriteSuite(t *testing.T) {
