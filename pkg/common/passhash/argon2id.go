@@ -37,15 +37,30 @@ var errMalformedHash = errors.New("passhash: malformed PHC string")
 // from crypto/rand and is fresh per call; two Hashes of the same password
 // return different strings.
 func Hash(password string) (string, error) {
+	return hashWith(password, defaultMemory, defaultTime, defaultThreads)
+}
+
+// HashFast is Hash with deliberately weak parameters (m=1 MiB, t=1, p=1) —
+// fast enough for test fixtures and CI under coverage instrumentation but
+// completely unsuitable for storing real credentials. The PHC string it
+// returns encodes the weak parameters so Verify reads them back and the
+// roundtrip works against the same Verify implementation that production
+// uses. Test code (test/e2e/utils/app.go, etc.) calls this; production
+// code calls Hash.
+func HashFast(password string) (string, error) {
+	return hashWith(password, 1024, 1, 1)
+}
+
+func hashWith(password string, memory, time uint32, threads uint8) (string, error) {
 	salt := make([]byte, saltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("passhash: read salt: %w", err)
 	}
-	sum := argon2.IDKey([]byte(password), salt, defaultTime, defaultMemory, defaultThreads, keyLen)
+	sum := argon2.IDKey([]byte(password), salt, time, memory, threads, keyLen)
 	enc := base64.RawStdEncoding
 	return fmt.Sprintf("%s%s$m=%d,t=%d,p=%d$%s$%s",
 		phcPrefix, phcVersionTag,
-		defaultMemory, defaultTime, defaultThreads,
+		memory, time, threads,
 		enc.EncodeToString(salt), enc.EncodeToString(sum)), nil
 }
 

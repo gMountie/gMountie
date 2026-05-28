@@ -21,7 +21,7 @@ type BasicAuthSuite struct {
 
 func mustHash(t *testing.T, s string) string {
 	t.Helper()
-	h, err := passhash.Hash(s)
+	h, err := passhash.HashFast(s)
 	if err != nil {
 		t.Fatalf("passhash.Hash: %v", err)
 	}

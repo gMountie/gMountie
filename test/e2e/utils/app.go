@@ -80,7 +80,7 @@ type TestOptions func(*AppTestingContext)
 // the plaintext password is passed through to the client options unchanged.
 func WithBasicAuth(username, password string) TestOptions {
 	return func(c *AppTestingContext) {
-		h, err := passhash.Hash(password)
+		h, err := passhash.HashFast(password)
 		if err != nil {
 			panic("WithBasicAuth: hash password: " + err.Error())
 		}
