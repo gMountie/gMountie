@@ -168,10 +168,30 @@ func (c *ConfinedLoopbackFileSystem) Access(name string, mode uint32, _ *fuse.Co
 		return errnoToStatus(err)
 	}
 	defer func() { _ = unix.Close(parentFd) }()
-	if err := unix.Faccessat(parentFd, leaf, mode, 0); err != nil {
+	// Faccessat with flags=0 follows symlinks the normal way — which would
+	// happily resolve a symlink whose target lives OUTSIDE the volume root,
+	// since the leaf op is not openat2-guarded. Resolve the (followed) target
+	// through openat2 RESOLVE_BENEATH first; that rejects any cross-root
+	// resolve as EXDEV/ELOOP before we ever check access on a real path.
+	leafFd, err := unix.Openat2(parentFd, leaf, &unix.OpenHow{
+		Flags:   unix.O_PATH | unix.O_CLOEXEC,
+		Resolve: resolveHow,
+	})
+	if err != nil {
+		return errnoToStatus(err)
+	}
+	defer func() { _ = unix.Close(leafFd) }()
+	if err := unix.Faccessat(unix.AT_FDCWD, procFdPath(leafFd), mode, 0); err != nil {
 		return errnoToStatus(err)
 	}
 	return fuse.OK
+}
+
+// procFdPath returns the /proc/self/fd/N path for an O_PATH fd. Used by ops
+// whose syscall has no fd-only variant (faccessat, fchmodat, *xattr) so the
+// kernel operates on the fd's referent without re-walking the path.
+func procFdPath(fd int) string {
+	return fmt.Sprintf("/proc/self/fd/%d", fd)
 }
 
 func (c *ConfinedLoopbackFileSystem) Chmod(name string, mode uint32, _ *fuse.Context) fuse.Status {
@@ -180,7 +200,18 @@ func (c *ConfinedLoopbackFileSystem) Chmod(name string, mode uint32, _ *fuse.Con
 		return errnoToStatus(err)
 	}
 	defer func() { _ = unix.Close(parentFd) }()
-	if err := unix.Fchmodat(parentFd, leaf, mode, 0); err != nil {
+	// Same symlink-escape concern as Access: Fchmodat with flags=0 follows
+	// links unguarded. Resolve via openat2 RESOLVE_BENEATH first so any
+	// cross-root target trips EXDEV before chmod touches the inode.
+	leafFd, err := unix.Openat2(parentFd, leaf, &unix.OpenHow{
+		Flags:   unix.O_PATH | unix.O_CLOEXEC,
+		Resolve: resolveHow,
+	})
+	if err != nil {
+		return errnoToStatus(err)
+	}
+	defer func() { _ = unix.Close(leafFd) }()
+	if err := unix.Fchmodat(unix.AT_FDCWD, procFdPath(leafFd), mode, 0); err != nil {
 		return errnoToStatus(err)
 	}
 	return fuse.OK
