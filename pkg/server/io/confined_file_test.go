@@ -87,6 +87,23 @@ func (s *ConfinedFileSuite) TestCreateInTree() {
 	s.True(info.Mode().IsRegular())
 }
 
+// TestCreateAcceptsLibcMode: FUSE forwards the caller's full mode value
+// including the file-type bits (libc supplies `S_IFREG | 0o644 = 0o100644`
+// for a regular-file open). openat2 strictly rejects file-type bits in
+// how->mode with EINVAL — without masking, every FUSE write hit EINVAL
+// (regressed cache e2e in CI run 26583955243). Create masks to perms only.
+func (s *ConfinedFileSuite) TestCreateAcceptsLibcMode() {
+	const libcMode = 0o100644 // S_IFREG | 0o644 — what libc actually passes
+	f, st := s.fs.Create("libc.txt", uint32(os.O_WRONLY), libcMode, nil)
+	s.Require().Equal(fuse.OK, st, "S_IFREG in mode must not trip openat2")
+	s.Require().NotNil(f)
+	f.Flush()
+	f.Release()
+	info, err := os.Stat(s.dir + "/libc.txt")
+	s.Require().NoError(err)
+	s.True(info.Mode().IsRegular())
+}
+
 // TestCreateEscape verifies that escape paths are denied on Create.
 func (s *ConfinedFileSuite) TestCreateEscape() {
 	f, st := s.fs.Create("../../tmp/evil.txt", uint32(os.O_WRONLY), 0o644, nil)

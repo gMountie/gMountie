@@ -35,11 +35,17 @@ const resolveHow = unix.RESOLVE_BENEATH |
 // All escape attempts (".." past root, absolute symlinks, magic links,
 // crossing mount points) return unix.EXDEV or unix.ELOOP — never a real fd.
 func resolveBeneath(rootFd int, name string) (parentFd int, leaf string, err error) {
+	// gMountie's wire convention treats paths as relative to the volume root,
+	// and the client may send them with or without a leading slash (e.g. the
+	// Compound batch sends "/foo/bar", FUSE pathfs sends "foo/bar"). Strip
+	// the slash up front so both forms address the same in-tree file.
+	name = strings.TrimPrefix(name, "/")
+
 	// Reject any path that attempts to escape via ".." before path.Clean has a
 	// chance to swallow the traversal. Without this guard, "../../etc/passwd"
 	// cleans to "etc/passwd" — a valid relative path the kernel would happily
 	// resolve within the root, silently defeating the security boundary.
-	if strings.HasPrefix(name, "..") || strings.Contains(name, "/../") || strings.HasPrefix(name, "/") {
+	if strings.HasPrefix(name, "..") || strings.Contains(name, "/../") {
 		return -1, "", unix.EXDEV
 	}
 
@@ -403,9 +409,13 @@ func (c *ConfinedLoopbackFileSystem) Create(name string, flags, mode uint32, _ *
 		return nil, errnoToStatus(err)
 	}
 	defer func() { _ = unix.Close(parentFd) }()
+	// openat2 strictly rejects file-type bits (S_IFMT) in how->mode — only the
+	// 12 permission/sticky/setuid/setgid bits are allowed. FUSE forwards the
+	// caller's full mode (often S_IFREG | 0o644 from libc), so we mask down
+	// before handing it to the kernel.
 	fd, err := unix.Openat2(parentFd, leaf, &unix.OpenHow{
 		Flags:   uint64(flags) | unix.O_CREAT | unix.O_CLOEXEC,
-		Mode:    uint64(mode),
+		Mode:    uint64(mode) & 0o7777,
 		Resolve: resolveHow,
 	})
 	if err != nil {
