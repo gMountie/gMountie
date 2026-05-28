@@ -10,7 +10,7 @@
   [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 </div>
 
-**gMountie mounts a directory from a remote server and makes it behave like a local folder — over the public internet, no VPN, and without falling apart when the network hiccups.** It's built on [FUSE](https://www.kernel.org/doc/html/latest/filesystems/fuse.html) and [gRPC](https://grpc.io): a `gMountie serve` process exposes folders as named **volumes**, and a `gMountie mount` client mounts one locally and proxies every filesystem call to the server.
+**gmountie mounts a directory from a remote server and makes it behave like a local folder — over the public internet, no VPN, and without falling apart when the network hiccups.** It's built on [FUSE](https://www.kernel.org/doc/html/latest/filesystems/fuse.html) and [gRPC](https://grpc.io): a `gmountie serve` process exposes folders as named **volumes**, and a `gmountie mount` client mounts one locally and proxies every filesystem call to the server.
 
 ## Why gMountie? 🤔
 
@@ -57,7 +57,7 @@ volumes:
 ```
 
 ```bash
-gMountie serve -c config.yaml
+gmountie serve -c config.yaml
 ```
 
 ### 3. Mount it from a client
@@ -66,7 +66,7 @@ No config file needed — point the client at the server and pick a volume:
 
 ```bash
 mkdir -p ~/mnt/shared
-gMountie mount ~/mnt/shared \
+gmountie mount ~/mnt/shared \
   --server your-server.example:9449 \
   --auth-type basic --username admin --password change-me \
   --volume shared
@@ -89,7 +89,7 @@ Reads and writes now flow to the server, are cached locally, and the mount rides
 - **Push-based invalidation** (a server `Subscribe` stream) keeps clients coherent — close-to-open consistency across multiple clients
 
 **Simple & observable**
-- One binary, two commands: `gMountie serve` and `gMountie mount`
+- One binary, two commands: `gmountie serve` and `gmountie mount`
 - Prometheus metrics, health/readiness endpoints, structured logs, and basic authentication
 
 ## How It Works 🏗️
@@ -97,7 +97,7 @@ Reads and writes now flow to the server, are cached locally, and the mount rides
 ```
      your machine                                    remote server
 ┌─────────────────────┐        gRPC over HTTP/2     ┌─────────────────────┐
-│   gMountie mount     │ ◀─────────────────────────▶ │    gMountie serve    │
+│   gmountie mount     │ ◀─────────────────────────▶ │    gmountie serve    │
 │  FUSE mount point    │   metadata · data · events  │  real folders        │
 │  + local cache       │                             │  exposed as volumes  │
 └─────────────────────┘                             └─────────────────────┘

@@ -1,0 +1,82 @@
+---
+title: Sessions & reconnect
+sidebar_label: Sessions & reconnect
+description: How gMountie survives flaky links — keepalive, idempotent RPCs, and what happens when the network drops mid-read.
+---
+
+# Sessions & reconnect
+
+**The internet drops packets, NATs rebind, and ISPs reassign IPs. gMountie is built to ride that out: a brief disconnect stalls reads rather than returning `EIO`, and most operations are safe to retry.** Three mechanisms cooperate to make that work.
+
+## 1 · Keepalive — detecting a dead path quickly
+
+gRPC HTTP/2 keepalive pings run in **both directions**:
+
+- The **client** pings the server every `rpc.keepalive.time` (default 30 s) and waits up to `rpc.keepalive.timeout` (default 10 s) for an ACK.
+- The **server** does the symmetric thing on its side using `server.keepalive.time` / `timeout`.
+
+If the ACK doesn't come back, the connection is torn down and the next RPC observes `Unavailable`. Default ~40 s end-to-end (30 s interval + 10 s timeout). That's much faster than the kernel's default TCP timeouts (minutes), so a dead path surfaces while the user is still at their terminal.
+
+```yaml
+# client
+rpc:
+  keepalive:
+    time: 15s        # tighter detection
+    timeout: 5s
+    permit_without_stream: true
+
+# server
+server:
+  keepalive:
+    time: 15s
+    timeout: 5s
+    min_time: 5s
+```
+
+`min_time` on the server is a defence against pathologically chatty clients — it's the floor on how fast a client may ping. Match it to your `time` on the client.
+
+## 2 · Idempotent RPCs — safe to retry
+
+Where possible, RPCs are written so retrying is a no-op on success:
+
+- **`Read(volume, fd, offset, length)`** — pure function of inputs.
+- **`Write(volume, fd, offset, bytes)`** — offset is explicit, no hidden cursor.
+- **`Lookup`, `Getattr`, `Readdir`** — observation-only.
+
+The client's retry layer (`avast/retry-go`) wraps these with bounded exponential backoff. On a transient `Unavailable` / `DeadlineExceeded` it retries quietly; on a logical error (`NotFound`, `PermissionDenied`, `InvalidArgument`) it surfaces immediately.
+
+Operations with side effects that *aren't* safely retryable (e.g. `Mkdir` after the directory already exists, `Unlink` after the file was concurrently deleted) aren't blindly retried — the client returns the underlying error and lets the caller decide.
+
+## 3 · Stable file handles — opens survive a blip
+
+When the client opens a file, the server allocates an fd in a per-connection session. If the underlying TCP/HTTP-2 connection drops and the client reconnects:
+
+- The client reattaches its existing fds; reads/writes resume from where they were.
+- The application above FUSE doesn't see the blip — the kernel was holding pending syscalls.
+
+This is what lets a `tail -f` over a flaky link **stall** during the drop and resume on its own, instead of failing the file handle.
+
+## What the user sees
+
+| Situation                                       | Outward symptom                                                                      |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------ |
+| ~5 s blip (NAT rebind, brief Wi-Fi drop)        | Pending syscalls stall. Connection re-establishes silently. No error visible.        |
+| Server reboot, ~30 s outage                     | Same as above if it comes back within keepalive window. Otherwise…                   |
+| Outage longer than keepalive (~40 s default)    | Next syscall returns `EIO`. Mount remains; new attempts retry. Server back → recovery. |
+| Server permanently gone (intentional shutdown)  | `EIO` until you `umount` and re-mount somewhere else.                                |
+
+:::tip[Tuning for your network]
+The defaults target consumer-internet flakiness (~40 s detection). If your link is reliable LAN, leave them alone. If it's satellite or cellular with bursts of loss, **raise** `timeout` so you don't tear down a connection that would have recovered. If you need fail-fast for an automation pipeline, **lower** `time` and `timeout`.
+:::
+
+## What it isn't
+
+- **Not a VPN.** There's no tunnel layer; reconnection re-establishes the same gRPC connection, not a session over a different transport.
+- **Not multi-server failover.** A mount targets one server. If that server is gone, you re-mount elsewhere — there's no built-in failover yet.
+- **Not write-replay.** A coalesced write that hit the server **and** got an ACK is durable; a coalesced write that the client dropped on the floor during a disconnect is lost. Applications that need durability call `Flush` or `Fsync` — see [Client config — Write Coalescing](../client/config.md#write-coalescing).
+
+## Go deeper
+
+- [Design — Architecture](../design/architecture.md) — session-state model, the exact retry budget, error-mapping table.
+- [Wire protocol](./wire-protocol.mdx) — where keepalive lives in the stack.
+- [Cache & consistency](./cache.mdx) — how the cache handles a missed invalidation across a disconnect.

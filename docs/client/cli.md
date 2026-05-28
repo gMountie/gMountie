@@ -1,8 +1,12 @@
-# Client CLI Options
+---
+title: Client CLI
+sidebar_label: CLI
+description: Flags for `gmountie mount` — the client entry point. CLI flags override the corresponding fields in client.yaml.
+---
 
-The gMountie client provides the `mount` command for connecting to remote
-filesystems
-with various configuration options.
+# Client CLI
+
+`gmountie mount` connects to a server, opens a FUSE mount, and proxies every filesystem call to the server. CLI flags override the matching fields in **[client.yaml](./config.md)**, so you can keep the bulk of your settings in the config and override per-invocation.
 
 ## Basic Usage
 
@@ -14,14 +18,26 @@ gmountie mount [flags] <mountpoint>
 
 ## Command Flags
 
-| Flag        | Short | Default        | Description                     |
-|-------------|-------|----------------|---------------------------------|
-| --server    | -s    | 127.0.0.1:9449 | Server address and port         |
-| --volume    | -n    |                | Volume name to mount (required) |
-| --auth-type | -t    | basic          | Authentication type             |
-| --username  | -u    |                | Username for basic auth         |
-| --password  | -p    |                | Password for basic auth         |
-| --verbose   | -v    | false          | Enable verbose logging          |
+| Flag         | Short | Default        | Description                                                                            |
+|--------------|-------|----------------|----------------------------------------------------------------------------------------|
+| `--server`   | `-s`  | 127.0.0.1:9449 | Server address and port.                                                               |
+| `--volume`   | `-n`  | _(required)_   | Volume name to mount.                                                                  |
+| `--auth-type`| `-t`  | basic          | Authentication scheme. Only `basic` is supported today.                                |
+| `--username` | `-u`  | _(required)_   | Username for basic auth.                                                                |
+| `--password` | `-p`  | _(required)_   | Password for basic auth.                                                                |
+| `--raw-ids`  |       | false          | Expose the server's raw uid/gid on file metadata instead of mapping to the local user. |
+| `--verbose`  | `-v`  | false          | Enable verbose (debug-level) logging.                                                   |
+| `--config`   | `-c`  |                | Path to client.yaml. CLI flags override fields in this file.                            |
+
+### `--raw-ids`
+
+By default, file uids and gids the server reports are mapped to the **invoking user** on the client — `ls -l` shows your username on every file. With `--raw-ids`, the client passes the server's raw uid/gid through. Useful when:
+
+- you're backing up the volume and need server-side ownership preserved,
+- you're an admin debugging "why does this file claim to be owned by `nobody`?",
+- you have matching uids on both ends and want the local user to be irrelevant.
+
+For day-to-day mounts, leave it off.
 
 ## Authentication Types
 
@@ -92,4 +108,4 @@ To unmount a filesystem:
 ## See Also
 
 - [Client Configuration](client/config.md) - Detailed configuration file options
-- [Quickstart Guide](quickstart.md) - Getting started with gMountie
+- [Quickstart Guide](quickstart.mdx) - Getting started with gMountie

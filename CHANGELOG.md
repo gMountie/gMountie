@@ -20,7 +20,7 @@ The work that will ship in the next `v0.3.0-alpha.x` cut. Tracks `develop`.
 Operators who explicitly set any of these in `~/.config/gmountie/client.yaml` need to update:
 
 - **`cache.max_size_bytes` removed.** Replaced by two independent caps: `cache.memory_max_bytes` (256 MiB default) and `cache.disk_max_bytes` (10 GiB default). Sub-spec C made the cache a two-tier memory + disk structure with separate budgets — one cap can no longer express both.
-- **`cache.enabled` default flipped to `true`.** Anyone running `gMountie mount` with no cache config now gets the cache turned on. To opt out: set `cache.enabled: false` explicitly. Cache directory defaults to `$XDG_CACHE_HOME/gmountie`.
+- **`cache.enabled` default flipped to `true`.** Anyone running `gmountie mount` with no cache config now gets the cache turned on. To opt out: set `cache.enabled: false` explicitly. Cache directory defaults to `$XDG_CACHE_HOME/gmountie`.
 - **`cache.attr_ttl` / `cache.dir_ttl` / `cache.negative_ttl` defaults relaxed.** Previously 5 s / 5 s / 2 s when TTL was the only freshness signal; now 5 min / 5 min / 30 s with Subscribe push handling fast invalidation. Zero on any TTL disables that tier for operators who fully trust Subscribe.
 - **Wire protocol additions, no removals.** `Attr.version` is new (server-packed from mtime+size+ctime). `GetAttrIfChanged` and `Subscribe` are new RPCs on `RpcFs`. Older clients ignore the new field and don't open the new streams — they still work, just without push-driven invalidation.
 

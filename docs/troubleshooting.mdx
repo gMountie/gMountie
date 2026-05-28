@@ -1,0 +1,163 @@
+---
+id: troubleshooting
+title: Troubleshooting
+sidebar_label: Troubleshooting
+description: Common gMountie problems and what to check first — mount failures, connection errors, permission issues, performance regressions.
+---
+
+# Troubleshooting
+
+**Read top to bottom on first hit, or jump to the symptom.** Most issues fall into four buckets: the mount itself didn't come up, the connection won't establish, files behave wrong inside the mount, or things are slower than they should be.
+
+## Quick triage
+
+```bash
+# Server reachable from the client?
+nc -zv <server-host> 9449
+
+# Client mounted?
+mount | grep gmountie
+
+# Look at the mount log — gmountie mount logs to stderr; run with -v for debug.
+gmountie mount -v -c client.yaml
+```
+
+If the server prints `serving on :9449` and `nc` connects but the mount still fails, the issue is auth, volume, or FUSE — keep reading.
+
+## Mount failures
+
+### `fusermount3: command not found` (or `fuse: device not found`)
+
+The client side needs `fuse3` installed and `/dev/fuse` available.
+
+```bash
+# Debian / Ubuntu
+sudo apt install fuse3
+
+# Verify
+ls -l /dev/fuse        # should exist
+fusermount3 --version  # should print
+```
+
+:::note[Root / `user_allow_other`]
+gMountie mounts as the invoking user, not root. If you see `fusermount3: option allow_other only allowed if 'user_allow_other' is set in /etc/fuse.conf`, you don't need that flag — gMountie doesn't pass `allow_other` by default. If a script of yours does, either remove it or set `user_allow_other` in `/etc/fuse.conf`.
+:::
+
+### `mount: <path>: file exists` or `transport endpoint is not connected`
+
+A stale mount is still registered at the same path. Unmount it before re-mounting:
+
+```bash
+umount /mnt/shared                   # normal
+fusermount3 -u /mnt/shared           # FUSE-aware
+sudo umount -l /mnt/shared           # lazy — last resort
+```
+
+### `mountpoint must be an empty directory`
+
+The directory you're mounting at has content. Either pick an empty path or move the contents:
+
+```bash
+ls /mnt/shared                       # must be empty
+mkdir -p /mnt/shared                 # create one if missing
+```
+
+## Connection errors
+
+### `Unavailable: connection refused`
+
+The server isn't listening where the client is looking.
+
+- Confirm the server process is running: `pgrep -a gmountie`.
+- Confirm the server's `address` / `port` (from `server.yaml`) match the `--server` flag the client passes.
+- Confirm a firewall isn't blocking the port — `sudo ufw status`, `iptables -L`, cloud SG rules.
+
+### `Unavailable: dial timeout` or sudden `EIO` after a working mount
+
+The TCP path went away — NAT rebind, ISP IP change, server reboot, network hiccup. gMountie's keepalive surfaces this as `Unavailable` within ~40 s by default ([sessions & reconnect](./concepts/sessions-and-reconnect.mdx) explains the timing).
+
+- For brief blips, **reads stall instead of failing**; let it ride.
+- If the server actually died, reads return `EIO` on the next syscall. Restart the server, the mount auto-recovers (file handles opened before the blip stay valid).
+
+:::tip
+Tighten or loosen detection with `server.keepalive` and `rpc.keepalive` — see the [server](./server/config.md) and [client](./client/config.md) config pages.
+:::
+
+### `Unauthenticated` / `PermissionDenied`
+
+The auth handshake failed.
+
+- Confirm `auth.type: basic` on both sides — it's the only scheme today.
+- Confirm `username` / `password` match an entry in the server's `auth.users` list.
+- The client always supplies credentials; there is no anonymous mode (the previous `auth: none` was removed).
+
+## Permission and ownership issues
+
+### Files show up owned by `nobody` (uid 65534) or by the wrong user
+
+gMountie maps the server's uid/gid to the client's invoking user by default. If you see `nobody:nobody`, the mapping fell back because something on the server side couldn't be resolved.
+
+- Run the client with `--raw-ids` to see the **server's actual uid/gid** for each file. That tells you what the server thinks.
+- Reconcile by matching uids on both ends (or use `--raw-ids` permanently if you want server-side semantics — typical for backups and admin tools).
+
+### `Permission denied` on a write the local user "should" be able to do
+
+The check happens **on the server**, against the file's real owner in the volume's directory. Local-mode semantics don't apply: a `chmod 600` file owned by uid 1001 on the server is unwritable by uid 1002 on the client even if both look like "you" locally. Either fix the file's permissions/owner on the server, or remap with `--raw-ids` + a matching uid.
+
+## Performance feels wrong
+
+### "It's slow"
+
+First — **measure**. Cold first reads cross the wire; subsequent reads of the same file (and the same directory) hit the [cache](./concepts/cache.mdx) if it's enabled:
+
+```bash
+# Time the same listing twice in a row
+time ls /mnt/shared > /dev/null       # cold
+time ls /mnt/shared > /dev/null       # warm — should be sub-ms
+```
+
+If the warm read isn't fast, the cache may be off. In `client.yaml`:
+
+```yaml
+cache:
+  enabled: true
+```
+
+### Sequential reads are slower than expected on a high-RTT link
+
+The readahead window is sized for ~50 ms RTT by default. On longer links, raise it:
+
+```yaml
+rpc:
+  readahead_window: 8        # default 4; range 1–64
+  readahead_chunk_bytes: 1048576  # 1 MiB — match the server's frame_size_bytes
+```
+
+See [Client configuration](./client/config.md) for the full readahead model.
+
+### Many tiny writes saturate the wire
+
+Write coalescing should be batching them — confirm `rpc.write_coalesce_bytes > 0`. The default 1 MiB absorbs typical "append a line, append a line" patterns.
+
+```yaml
+rpc:
+  write_coalesce_bytes: 1048576   # 1 MiB; 0 disables, max 16 MiB
+```
+
+:::warning[Durability after coalescing]
+Coalesced writes return optimistically. If your application needs a write **observed by another reader** before continuing, it must `Flush` or close the fd. A buffered write that fails surfaces as `EIO` on the next `Flush` / `Fsync`.
+:::
+
+## When the above doesn't help
+
+Capture a verbose log from one mount session and open an issue with it attached:
+
+```bash
+gmountie mount -v -c client.yaml 2> /tmp/gmountie-mount.log
+```
+
+Include the server's startup output too, the client OS / kernel (`uname -a`), `fuse3` version, and a one-line description of what you did and what happened.
+
+<Pacer pose="pointing" action="Open an issue" href="https://github.com/gMountie/gMountie/issues">
+  Hit a wall? Pacer triages the issue tracker weekly — a clean log goes a long way.
+</Pacer>

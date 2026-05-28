@@ -14,7 +14,7 @@ builds:
       - linux
     id: gMountie
     main: cmd/main.go
-    binary: gMountie
+    binary: gmountie
     flags:
       - -trimpath
       - -buildvcs=true
