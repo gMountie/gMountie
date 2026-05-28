@@ -783,8 +783,13 @@ func (x *GetAttrIfChangedReply) GetAttrs() *Attr {
 }
 
 type SubscribeRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Volume        string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Volume string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
+	// Caller carries the wire identity so the server can filter events by
+	// per-path access — a subscriber must not learn the existence of paths
+	// it has no read access to. The server binds identity once at stream
+	// start and Access-checks every event before forwarding.
+	Caller        *Caller `protobuf:"bytes,2,opt,name=caller,proto3" json:"caller,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -824,6 +829,13 @@ func (x *SubscribeRequest) GetVolume() string {
 		return x.Volume
 	}
 	return ""
+}
+
+func (x *SubscribeRequest) GetCaller() *Caller {
+	if x != nil {
+		return x.Caller
+	}
+	return nil
 }
 
 type SubscribeEvent struct {
@@ -2699,9 +2711,10 @@ const file_api_proto_fs_proto_rawDesc = "" +
 	"\x06caller\x18\x04 \x01(\v2\x10.gmountie.CallerR\x06caller\"`\n" +
 	"\x15GetAttrIfChangedReply\x12!\n" +
 	"\fnot_modified\x18\x01 \x01(\bR\vnotModified\x12$\n" +
-	"\x05attrs\x18\x02 \x01(\v2\x0e.gmountie.AttrR\x05attrs\"*\n" +
+	"\x05attrs\x18\x02 \x01(\v2\x0e.gmountie.AttrR\x05attrs\"T\n" +
 	"\x10SubscribeRequest\x12\x16\n" +
-	"\x06volume\x18\x01 \x01(\tR\x06volume\"\xe7\x01\n" +
+	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
+	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\"\xe7\x01\n" +
 	"\x0eSubscribeEvent\x121\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x1d.gmountie.SubscribeEvent.KindR\x04kind\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x19\n" +
@@ -2928,70 +2941,71 @@ var file_api_proto_fs_proto_depIdxs = []int32{
 	3,  // 2: gmountie.GetAttrReply.attributes:type_name -> gmountie.Attr
 	39, // 3: gmountie.GetAttrIfChangedRequest.caller:type_name -> gmountie.Caller
 	3,  // 4: gmountie.GetAttrIfChangedReply.attrs:type_name -> gmountie.Attr
-	0,  // 5: gmountie.SubscribeEvent.kind:type_name -> gmountie.SubscribeEvent.Kind
-	39, // 6: gmountie.OpenDirRequest.caller:type_name -> gmountie.Caller
-	1,  // 7: gmountie.OpenDirReply.entries:type_name -> gmountie.DirEntry
-	39, // 8: gmountie.UnlinkRequest.caller:type_name -> gmountie.Caller
-	39, // 9: gmountie.AccessRequest.caller:type_name -> gmountie.Caller
-	39, // 10: gmountie.TruncateRequest.caller:type_name -> gmountie.Caller
-	39, // 11: gmountie.ChownRequest.caller:type_name -> gmountie.Caller
-	39, // 12: gmountie.ChmodRequest.caller:type_name -> gmountie.Caller
-	39, // 13: gmountie.UtimensRequest.caller:type_name -> gmountie.Caller
-	2,  // 14: gmountie.UtimensRequest.atime:type_name -> gmountie.FileTime
-	2,  // 15: gmountie.UtimensRequest.mtime:type_name -> gmountie.FileTime
-	39, // 16: gmountie.MkdirRequest.caller:type_name -> gmountie.Caller
-	39, // 17: gmountie.RmdirRequest.caller:type_name -> gmountie.Caller
-	39, // 18: gmountie.RenameRequest.caller:type_name -> gmountie.Caller
-	39, // 19: gmountie.GetXAttrRequest.caller:type_name -> gmountie.Caller
-	6,  // 20: gmountie.CompoundOp.get_attr:type_name -> gmountie.GetAttrRequest
-	4,  // 21: gmountie.CompoundOp.stat_fs:type_name -> gmountie.StatFsRequest
-	12, // 22: gmountie.CompoundOp.open_dir:type_name -> gmountie.OpenDirRequest
-	16, // 23: gmountie.CompoundOp.access:type_name -> gmountie.AccessRequest
-	32, // 24: gmountie.CompoundOp.get_xattr:type_name -> gmountie.GetXAttrRequest
-	7,  // 25: gmountie.CompoundReply.get_attr:type_name -> gmountie.GetAttrReply
-	5,  // 26: gmountie.CompoundReply.stat_fs:type_name -> gmountie.StatFsReply
-	13, // 27: gmountie.CompoundReply.open_dir:type_name -> gmountie.OpenDirReply
-	17, // 28: gmountie.CompoundReply.access:type_name -> gmountie.AccessReply
-	33, // 29: gmountie.CompoundReply.get_xattr:type_name -> gmountie.GetXAttrReply
-	34, // 30: gmountie.CompoundRequest.ops:type_name -> gmountie.CompoundOp
-	35, // 31: gmountie.CompoundBatch.replies:type_name -> gmountie.CompoundReply
-	6,  // 32: gmountie.RpcFs.GetAttr:input_type -> gmountie.GetAttrRequest
-	4,  // 33: gmountie.RpcFs.StatFs:input_type -> gmountie.StatFsRequest
-	12, // 34: gmountie.RpcFs.OpenDir:input_type -> gmountie.OpenDirRequest
-	14, // 35: gmountie.RpcFs.Unlink:input_type -> gmountie.UnlinkRequest
-	16, // 36: gmountie.RpcFs.Access:input_type -> gmountie.AccessRequest
-	18, // 37: gmountie.RpcFs.Truncate:input_type -> gmountie.TruncateRequest
-	20, // 38: gmountie.RpcFs.Chown:input_type -> gmountie.ChownRequest
-	22, // 39: gmountie.RpcFs.Chmod:input_type -> gmountie.ChmodRequest
-	24, // 40: gmountie.RpcFs.Utimens:input_type -> gmountie.UtimensRequest
-	26, // 41: gmountie.RpcFs.Mkdir:input_type -> gmountie.MkdirRequest
-	28, // 42: gmountie.RpcFs.Rmdir:input_type -> gmountie.RmdirRequest
-	30, // 43: gmountie.RpcFs.Rename:input_type -> gmountie.RenameRequest
-	32, // 44: gmountie.RpcFs.GetXAttr:input_type -> gmountie.GetXAttrRequest
-	36, // 45: gmountie.RpcFs.Compound:input_type -> gmountie.CompoundRequest
-	8,  // 46: gmountie.RpcFs.GetAttrIfChanged:input_type -> gmountie.GetAttrIfChangedRequest
-	10, // 47: gmountie.RpcFs.Subscribe:input_type -> gmountie.SubscribeRequest
-	7,  // 48: gmountie.RpcFs.GetAttr:output_type -> gmountie.GetAttrReply
-	5,  // 49: gmountie.RpcFs.StatFs:output_type -> gmountie.StatFsReply
-	13, // 50: gmountie.RpcFs.OpenDir:output_type -> gmountie.OpenDirReply
-	15, // 51: gmountie.RpcFs.Unlink:output_type -> gmountie.UnlinkReply
-	17, // 52: gmountie.RpcFs.Access:output_type -> gmountie.AccessReply
-	19, // 53: gmountie.RpcFs.Truncate:output_type -> gmountie.TruncateReply
-	21, // 54: gmountie.RpcFs.Chown:output_type -> gmountie.ChownReply
-	23, // 55: gmountie.RpcFs.Chmod:output_type -> gmountie.ChmodReply
-	25, // 56: gmountie.RpcFs.Utimens:output_type -> gmountie.UtimensReply
-	27, // 57: gmountie.RpcFs.Mkdir:output_type -> gmountie.MkdirReply
-	29, // 58: gmountie.RpcFs.Rmdir:output_type -> gmountie.RmdirReply
-	31, // 59: gmountie.RpcFs.Rename:output_type -> gmountie.RenameReply
-	33, // 60: gmountie.RpcFs.GetXAttr:output_type -> gmountie.GetXAttrReply
-	37, // 61: gmountie.RpcFs.Compound:output_type -> gmountie.CompoundBatch
-	9,  // 62: gmountie.RpcFs.GetAttrIfChanged:output_type -> gmountie.GetAttrIfChangedReply
-	11, // 63: gmountie.RpcFs.Subscribe:output_type -> gmountie.SubscribeEvent
-	48, // [48:64] is the sub-list for method output_type
-	32, // [32:48] is the sub-list for method input_type
-	32, // [32:32] is the sub-list for extension type_name
-	32, // [32:32] is the sub-list for extension extendee
-	0,  // [0:32] is the sub-list for field type_name
+	39, // 5: gmountie.SubscribeRequest.caller:type_name -> gmountie.Caller
+	0,  // 6: gmountie.SubscribeEvent.kind:type_name -> gmountie.SubscribeEvent.Kind
+	39, // 7: gmountie.OpenDirRequest.caller:type_name -> gmountie.Caller
+	1,  // 8: gmountie.OpenDirReply.entries:type_name -> gmountie.DirEntry
+	39, // 9: gmountie.UnlinkRequest.caller:type_name -> gmountie.Caller
+	39, // 10: gmountie.AccessRequest.caller:type_name -> gmountie.Caller
+	39, // 11: gmountie.TruncateRequest.caller:type_name -> gmountie.Caller
+	39, // 12: gmountie.ChownRequest.caller:type_name -> gmountie.Caller
+	39, // 13: gmountie.ChmodRequest.caller:type_name -> gmountie.Caller
+	39, // 14: gmountie.UtimensRequest.caller:type_name -> gmountie.Caller
+	2,  // 15: gmountie.UtimensRequest.atime:type_name -> gmountie.FileTime
+	2,  // 16: gmountie.UtimensRequest.mtime:type_name -> gmountie.FileTime
+	39, // 17: gmountie.MkdirRequest.caller:type_name -> gmountie.Caller
+	39, // 18: gmountie.RmdirRequest.caller:type_name -> gmountie.Caller
+	39, // 19: gmountie.RenameRequest.caller:type_name -> gmountie.Caller
+	39, // 20: gmountie.GetXAttrRequest.caller:type_name -> gmountie.Caller
+	6,  // 21: gmountie.CompoundOp.get_attr:type_name -> gmountie.GetAttrRequest
+	4,  // 22: gmountie.CompoundOp.stat_fs:type_name -> gmountie.StatFsRequest
+	12, // 23: gmountie.CompoundOp.open_dir:type_name -> gmountie.OpenDirRequest
+	16, // 24: gmountie.CompoundOp.access:type_name -> gmountie.AccessRequest
+	32, // 25: gmountie.CompoundOp.get_xattr:type_name -> gmountie.GetXAttrRequest
+	7,  // 26: gmountie.CompoundReply.get_attr:type_name -> gmountie.GetAttrReply
+	5,  // 27: gmountie.CompoundReply.stat_fs:type_name -> gmountie.StatFsReply
+	13, // 28: gmountie.CompoundReply.open_dir:type_name -> gmountie.OpenDirReply
+	17, // 29: gmountie.CompoundReply.access:type_name -> gmountie.AccessReply
+	33, // 30: gmountie.CompoundReply.get_xattr:type_name -> gmountie.GetXAttrReply
+	34, // 31: gmountie.CompoundRequest.ops:type_name -> gmountie.CompoundOp
+	35, // 32: gmountie.CompoundBatch.replies:type_name -> gmountie.CompoundReply
+	6,  // 33: gmountie.RpcFs.GetAttr:input_type -> gmountie.GetAttrRequest
+	4,  // 34: gmountie.RpcFs.StatFs:input_type -> gmountie.StatFsRequest
+	12, // 35: gmountie.RpcFs.OpenDir:input_type -> gmountie.OpenDirRequest
+	14, // 36: gmountie.RpcFs.Unlink:input_type -> gmountie.UnlinkRequest
+	16, // 37: gmountie.RpcFs.Access:input_type -> gmountie.AccessRequest
+	18, // 38: gmountie.RpcFs.Truncate:input_type -> gmountie.TruncateRequest
+	20, // 39: gmountie.RpcFs.Chown:input_type -> gmountie.ChownRequest
+	22, // 40: gmountie.RpcFs.Chmod:input_type -> gmountie.ChmodRequest
+	24, // 41: gmountie.RpcFs.Utimens:input_type -> gmountie.UtimensRequest
+	26, // 42: gmountie.RpcFs.Mkdir:input_type -> gmountie.MkdirRequest
+	28, // 43: gmountie.RpcFs.Rmdir:input_type -> gmountie.RmdirRequest
+	30, // 44: gmountie.RpcFs.Rename:input_type -> gmountie.RenameRequest
+	32, // 45: gmountie.RpcFs.GetXAttr:input_type -> gmountie.GetXAttrRequest
+	36, // 46: gmountie.RpcFs.Compound:input_type -> gmountie.CompoundRequest
+	8,  // 47: gmountie.RpcFs.GetAttrIfChanged:input_type -> gmountie.GetAttrIfChangedRequest
+	10, // 48: gmountie.RpcFs.Subscribe:input_type -> gmountie.SubscribeRequest
+	7,  // 49: gmountie.RpcFs.GetAttr:output_type -> gmountie.GetAttrReply
+	5,  // 50: gmountie.RpcFs.StatFs:output_type -> gmountie.StatFsReply
+	13, // 51: gmountie.RpcFs.OpenDir:output_type -> gmountie.OpenDirReply
+	15, // 52: gmountie.RpcFs.Unlink:output_type -> gmountie.UnlinkReply
+	17, // 53: gmountie.RpcFs.Access:output_type -> gmountie.AccessReply
+	19, // 54: gmountie.RpcFs.Truncate:output_type -> gmountie.TruncateReply
+	21, // 55: gmountie.RpcFs.Chown:output_type -> gmountie.ChownReply
+	23, // 56: gmountie.RpcFs.Chmod:output_type -> gmountie.ChmodReply
+	25, // 57: gmountie.RpcFs.Utimens:output_type -> gmountie.UtimensReply
+	27, // 58: gmountie.RpcFs.Mkdir:output_type -> gmountie.MkdirReply
+	29, // 59: gmountie.RpcFs.Rmdir:output_type -> gmountie.RmdirReply
+	31, // 60: gmountie.RpcFs.Rename:output_type -> gmountie.RenameReply
+	33, // 61: gmountie.RpcFs.GetXAttr:output_type -> gmountie.GetXAttrReply
+	37, // 62: gmountie.RpcFs.Compound:output_type -> gmountie.CompoundBatch
+	9,  // 63: gmountie.RpcFs.GetAttrIfChanged:output_type -> gmountie.GetAttrIfChangedReply
+	11, // 64: gmountie.RpcFs.Subscribe:output_type -> gmountie.SubscribeEvent
+	49, // [49:65] is the sub-list for method output_type
+	33, // [33:49] is the sub-list for method input_type
+	33, // [33:33] is the sub-list for extension type_name
+	33, // [33:33] is the sub-list for extension extendee
+	0,  // [0:33] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_fs_proto_init() }

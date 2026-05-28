@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"path"
 	"time"
 
@@ -46,8 +47,16 @@ type subscribeConsumer struct {
 
 func newSubscribeConsumer(client proto.RpcFsClient, volume string, cache subscribeBackendOps, validity *validityTracker) *subscribeConsumer {
 	c := &subscribeConsumer{client: client, volume: volume, cache: cache, validity: validity}
+	// Capture the mounter's local identity once: Subscribe is a long-lived
+	// background loop with no per-op FUSE ctx (matches the WhoAmI pattern in
+	// pkg/client/grpc/client.go). The server uses this Caller to bind a
+	// per-principal identity and filter events by per-path access.
+	caller := &proto.Caller{Owner: &proto.Owner{
+		Uid: uint32(os.Getuid()),
+		Gid: uint32(os.Getgid()),
+	}}
 	c.open = func(ctx context.Context) (subscribeStream, error) {
-		return client.Subscribe(ctx, &proto.SubscribeRequest{Volume: volume}, grpc.WaitForReady(true))
+		return client.Subscribe(ctx, &proto.SubscribeRequest{Volume: volume, Caller: caller}, grpc.WaitForReady(true))
 	}
 	return c
 }
