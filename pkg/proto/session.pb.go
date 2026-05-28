@@ -342,7 +342,9 @@ type Identity struct {
 	Principal     string                 `protobuf:"bytes,1,opt,name=principal,proto3" json:"principal,omitempty"`
 	Uid           uint32                 `protobuf:"varint,2,opt,name=uid,proto3" json:"uid,omitempty"`
 	PrimaryGid    uint32                 `protobuf:"varint,3,opt,name=primary_gid,json=primaryGid,proto3" json:"primary_gid,omitempty"`
-	Gids          []uint32               `protobuf:"varint,4,rep,packed,name=gids,proto3" json:"gids,omitempty"` // user_name (5) + group_names (6) are added in Phase 1b-2.
+	Gids          []uint32               `protobuf:"varint,4,rep,packed,name=gids,proto3" json:"gids,omitempty"`
+	UserName      string                 `protobuf:"bytes,5,opt,name=user_name,json=userName,proto3" json:"user_name,omitempty"`
+	GroupNames    map[uint32]string      `protobuf:"bytes,6,rep,name=group_names,json=groupNames,proto3" json:"group_names,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -405,6 +407,20 @@ func (x *Identity) GetGids() []uint32 {
 	return nil
 }
 
+func (x *Identity) GetUserName() string {
+	if x != nil {
+		return x.UserName
+	}
+	return ""
+}
+
+func (x *Identity) GetGroupNames() map[uint32]string {
+	if x != nil {
+		return x.GroupNames
+	}
+	return nil
+}
+
 var File_api_proto_session_proto protoreflect.FileDescriptor
 
 const file_api_proto_session_proto_rawDesc = "" +
@@ -425,13 +441,19 @@ const file_api_proto_session_proto_rawDesc = "" +
 	"\rKeepalivePing\"Q\n" +
 	"\rWhoAmIRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
-	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\"o\n" +
+	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\"\x90\x02\n" +
 	"\bIdentity\x12\x1c\n" +
 	"\tprincipal\x18\x01 \x01(\tR\tprincipal\x12\x10\n" +
 	"\x03uid\x18\x02 \x01(\rR\x03uid\x12\x1f\n" +
 	"\vprimary_gid\x18\x03 \x01(\rR\n" +
 	"primaryGid\x12\x12\n" +
-	"\x04gids\x18\x04 \x03(\rR\x04gids2\x9b\x02\n" +
+	"\x04gids\x18\x04 \x03(\rR\x04gids\x12\x1b\n" +
+	"\tuser_name\x18\x05 \x01(\tR\buserName\x12C\n" +
+	"\vgroup_names\x18\x06 \x03(\v2\".gmountie.Identity.GroupNamesEntryR\n" +
+	"groupNames\x1a=\n" +
+	"\x0fGroupNamesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\rR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x012\x9b\x02\n" +
 	"\x0eSessionService\x12F\n" +
 	"\x06Create\x12\x1e.gmountie.SessionCreateRequest\x1a\x1c.gmountie.SessionCreateReply\x12F\n" +
 	"\x06Resume\x12\x1e.gmountie.SessionResumeRequest\x1a\x1c.gmountie.SessionResumeReply\x12B\n" +
@@ -450,7 +472,7 @@ func file_api_proto_session_proto_rawDescGZIP() []byte {
 	return file_api_proto_session_proto_rawDescData
 }
 
-var file_api_proto_session_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_api_proto_session_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_api_proto_session_proto_goTypes = []any{
 	(*SessionCreateRequest)(nil), // 0: gmountie.SessionCreateRequest
 	(*SessionCreateReply)(nil),   // 1: gmountie.SessionCreateReply
@@ -460,23 +482,25 @@ var file_api_proto_session_proto_goTypes = []any{
 	(*KeepalivePing)(nil),        // 5: gmountie.KeepalivePing
 	(*WhoAmIRequest)(nil),        // 6: gmountie.WhoAmIRequest
 	(*Identity)(nil),             // 7: gmountie.Identity
-	(*Caller)(nil),               // 8: gmountie.Caller
+	nil,                          // 8: gmountie.Identity.GroupNamesEntry
+	(*Caller)(nil),               // 9: gmountie.Caller
 }
 var file_api_proto_session_proto_depIdxs = []int32{
-	8, // 0: gmountie.WhoAmIRequest.caller:type_name -> gmountie.Caller
-	0, // 1: gmountie.SessionService.Create:input_type -> gmountie.SessionCreateRequest
-	2, // 2: gmountie.SessionService.Resume:input_type -> gmountie.SessionResumeRequest
-	4, // 3: gmountie.SessionService.Keepalive:input_type -> gmountie.KeepaliveRequest
-	6, // 4: gmountie.SessionService.WhoAmI:input_type -> gmountie.WhoAmIRequest
-	1, // 5: gmountie.SessionService.Create:output_type -> gmountie.SessionCreateReply
-	3, // 6: gmountie.SessionService.Resume:output_type -> gmountie.SessionResumeReply
-	5, // 7: gmountie.SessionService.Keepalive:output_type -> gmountie.KeepalivePing
-	7, // 8: gmountie.SessionService.WhoAmI:output_type -> gmountie.Identity
-	5, // [5:9] is the sub-list for method output_type
-	1, // [1:5] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	9, // 0: gmountie.WhoAmIRequest.caller:type_name -> gmountie.Caller
+	8, // 1: gmountie.Identity.group_names:type_name -> gmountie.Identity.GroupNamesEntry
+	0, // 2: gmountie.SessionService.Create:input_type -> gmountie.SessionCreateRequest
+	2, // 3: gmountie.SessionService.Resume:input_type -> gmountie.SessionResumeRequest
+	4, // 4: gmountie.SessionService.Keepalive:input_type -> gmountie.KeepaliveRequest
+	6, // 5: gmountie.SessionService.WhoAmI:input_type -> gmountie.WhoAmIRequest
+	1, // 6: gmountie.SessionService.Create:output_type -> gmountie.SessionCreateReply
+	3, // 7: gmountie.SessionService.Resume:output_type -> gmountie.SessionResumeReply
+	5, // 8: gmountie.SessionService.Keepalive:output_type -> gmountie.KeepalivePing
+	7, // 9: gmountie.SessionService.WhoAmI:output_type -> gmountie.Identity
+	6, // [6:10] is the sub-list for method output_type
+	2, // [2:6] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_session_proto_init() }
@@ -491,7 +515,7 @@ func file_api_proto_session_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_session_proto_rawDesc), len(file_api_proto_session_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
