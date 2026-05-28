@@ -3,12 +3,10 @@ id: home
 title: gMountie
 sidebar_label: Home
 slug: /
-hide_title: true
+description: A network filesystem that mounts remote storage anywhere over the internet. No VPN.
 ---
 
-<p align="center" style="margin: 1.5rem 0 0.5rem;">
-  <span class="wordmark" style="font-size: 64px;"><span class="g">g</span>Mountie</span>
-</p>
+# gMountie
 
 **Mount a directory from a remote server and use it like a local folder — over the public internet, no VPN, and without falling apart when the network hiccups.** gMountie is built on [FUSE](https://www.kernel.org/doc/html/latest/filesystems/fuse.html) and [gRPC](https://grpc.io): a `gMountie serve` process exposes folders as named **volumes**, and a `gMountie mount` client mounts one locally and proxies every filesystem call to the server.
 

@@ -1,20 +1,23 @@
+// Swizzle (--wrap): appends a Pacer mascot card under the right-side TOC.
+// From the design's template/src/theme/TOC/index.js, with one integration change:
+// TOC + Pacer are wrapped in .toc-pinned so the card pins with the TOC in real
+// Docusaurus (a plain sibling scrolls away — the inner TOC sticky is neutralized
+// in custom.css §21).
+
 import React from 'react';
 import TOC from '@theme-original/TOC';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 
-// Wraps the stock right-column TOC and appends the "Pacer" mascot card from the
-// docs UI kit (community nudge). Wrapping (not ejecting) keeps us on the upstream
-// component so it survives Docusaurus upgrades.
 export default function TOCWrapper(props) {
-  // TOC + Pacer share one sticky wrapper so the card pins with "On this page"
-  // instead of scrolling away (the inner TOC's own sticky is neutralized in CSS).
+  const mascot = useBaseUrl('img/mascot-thinking.svg');
   return (
     <div className="toc-pinned">
       <TOC {...props} />
-      <div className="pacer-card">
-        <img src="/img/mascot-thinking.svg" alt="" width={92} height={92} />
-        <p>Stuck on something? Open an issue — the maintainers triage weekly.</p>
-        <a href="https://github.com/gMountie/gMountie/issues">Open an issue →</a>
-      </div>
+      <aside className="pacer-card">
+        <img src={mascot} alt="" />
+        <p>Stuck on something? Pacer triages the issue tracker on Tuesdays.</p>
+        <a href="https://github.com/gMountie/gMountie/issues">Open an issue ↗</a>
+      </aside>
     </div>
   );
 }

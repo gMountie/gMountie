@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="gMountie monogram">
+  <rect x="4" y="4" width="120" height="120" rx="22" fill="#D9641C"></rect>
+  <rect x="4.5" y="4.5" width="119" height="119" rx="21.5" fill="none" stroke="#15120D" stroke-opacity="0.10" stroke-width="1"></rect>
+  
+  <path d="M 22 90 L 48 38 L 64 64 L 84 30 L 106 90 Z" fill="#FBF8F2"></path>
+  
+  <rect x="22" y="98" width="84" height="6" rx="2" fill="#FBF8F2"></rect>
+</svg>

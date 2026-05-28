@@ -1,29 +1,26 @@
 // @ts-check
 // Docusaurus config for the gMountie docs site (docs.gmountie.dev).
-// Docs content lives in ../docs as plain CommonMark Markdown (see markdown.format
-// below) so the same files render on GitHub and on the built site. MDX (.mdx) is
-// available as an opt-in escape hatch for the rare page that wants components.
+// Theme = the gMountie design-system docs theme (src/css/custom.css + Pacer).
+// Docs content lives in ../docs as plain CommonMark (markdown.format:'detect') so
+// the same files render on GitHub; `.mdx` is the opt-in escape hatch (e.g. <Pacer>,
+// admonitions). The TOC-swizzle Pacer card appears on every page regardless.
 
-// Always-dark terminal code blocks with the brand's signal palette
-// (ember / pine / wire / mute), mirroring the docs UI kit's <pre>.
-const gmountieTerminal = {
-  plain: {color: '#F4EEDD', backgroundColor: '#0E0C09'},
-  styles: [
-    {types: ['comment', 'prolog', 'cdata'], style: {color: '#8B826E', fontStyle: 'italic'}},
-    {types: ['punctuation'], style: {color: '#9C927F'}},
-    {types: ['keyword', 'operator', 'tag', 'selector', 'atrule', 'important', 'rule'], style: {color: '#ED7A33'}},
-    {types: ['string', 'char', 'inserted', 'attr-value', 'attr-equals'], style: {color: '#8FB39C'}},
-    {types: ['number', 'boolean', 'constant', 'symbol', 'builtin', 'class-name', 'url'], style: {color: '#8FB0CB'}},
-    {types: ['function', 'function-variable', 'attr-name', 'variable', 'property'], style: {color: '#F4EEDD'}},
-    {types: ['deleted'], style: {color: '#D4736A'}},
-  ],
-};
+// Prism token colors calibrated to the gMountie ember/lake palette (from the design).
+const prismTokenStyles = [
+  {types: ['comment', 'prolog', 'cdata'], style: {color: '#8B826E', fontStyle: 'italic'}},
+  {types: ['punctuation', 'operator'], style: {color: '#C9C1AB'}},
+  {types: ['property', 'tag', 'boolean', 'number', 'constant', 'symbol', 'deleted'], style: {color: '#ED7A33'}},
+  {types: ['selector', 'attr-name', 'string', 'char', 'builtin', 'inserted'], style: {color: '#8FB0CB'}},
+  {types: ['atrule', 'attr-value', 'keyword'], style: {color: '#ED7A33'}},
+  {types: ['function', 'class-name'], style: {color: '#8FB39C'}},
+  {types: ['regex', 'important', 'variable'], style: {color: '#F4A36E'}},
+];
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: 'gMountie',
-  tagline: 'Mount remote storage anywhere over the internet — no VPN.',
-  favicon: 'img/favicon.ico',
+  tagline: 'Mount remote storage anywhere over the internet. No VPN.',
+  favicon: 'img/mark.svg',
 
   future: {v4: true},
 
@@ -33,12 +30,10 @@ const config = {
   organizationName: 'gMountie',
   projectName: 'gMountie',
 
-  // Surface bad cross-references rather than silently 404 — kept at 'warn' through
-  // the docsify→Docusaurus migration; tighten to 'throw' once links are settled.
   onBrokenLinks: 'warn',
   onBrokenAnchors: 'warn',
 
-  // Parse `.md` as CommonMark (plain, portable, GitHub-renderable) and `.mdx` as MDX.
+  // Parse `.md` as CommonMark (portable, GitHub-renderable); `.mdx` opts into MDX.
   markdown: {
     format: 'detect',
     hooks: {
@@ -47,10 +42,6 @@ const config = {
   },
 
   i18n: {defaultLocale: 'en', locales: ['en']},
-
-  stylesheets: [
-    'https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Geist:wght@100..900&family=Geist+Mono:wght@100..900&display=swap',
-  ],
 
   presets: [
     [
@@ -99,27 +90,25 @@ const config = {
   themeConfig:
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
+      image: 'img/og-card.svg',
       colorMode: {
-        defaultMode: 'dark',
+        defaultMode: 'light',
         respectPrefersColorScheme: true,
+      },
+      docs: {
+        sidebar: {hideable: false, autoCollapseCategories: false},
       },
       navbar: {
         title: 'gMountie',
-        logo: {alt: 'gMountie', src: 'img/logo.svg'},
+        logo: {alt: 'gMountie', src: 'img/mark.svg', width: 26, height: 26},
         items: [
-          // Link back to the OSS landing site, like the kit header's "gMountie ↗".
-          {href: 'https://gmountie.dev', label: 'gMountie ↗', position: 'right'},
-          {
-            href: 'https://github.com/gMountie/gMountie',
-            label: 'GitHub',
-            position: 'right',
-          },
-          // NOTE: re-add `{type: 'docsVersionDropdown', position: 'right'}` here
-          // once the first version is cut (`npm run docusaurus docs:version <v>`).
+          {type: 'docSidebar', sidebarId: 'docs', position: 'left', label: 'Docs'},
+          {href: 'https://github.com/gMountie/gMountie/releases', label: 'Releases', position: 'left'},
+          {href: 'https://github.com/gMountie/gMountie', label: 'GitHub', position: 'right'},
         ],
       },
       footer: {
-        style: 'dark',
+        style: 'light',
         links: [
           {
             title: 'Docs',
@@ -130,22 +119,31 @@ const config = {
             ],
           },
           {
-            title: 'Project',
+            title: 'Community',
             items: [
               {label: 'GitHub', href: 'https://github.com/gMountie/gMountie'},
               {label: 'Issues', href: 'https://github.com/gMountie/gMountie/issues'},
+              {label: 'Discussions', href: 'https://github.com/gMountie/gMountie/discussions'},
+            ],
+          },
+          {
+            title: 'Project',
+            items: [
               {label: 'Releases', href: 'https://github.com/gMountie/gMountie/releases'},
+              {label: 'Security', href: 'https://github.com/gMountie/gMountie/security'},
+              {label: 'License — Apache-2.0', href: 'https://github.com/gMountie/gMountie/blob/master/LICENSE'},
             ],
           },
         ],
-        copyright: `© ${new Date().getFullYear()} the gMountie project · Apache-2.0`,
+        copyright: `© ${new Date().getFullYear()} the gMountie project · network filesystem · Apache-2.0`,
       },
       prism: {
-        // Same dark terminal in both modes — the kit's <pre> is always dark.
-        theme: gmountieTerminal,
-        darkTheme: gmountieTerminal,
-        additionalLanguages: ['bash', 'yaml', 'toml', 'go', 'protobuf', 'json', 'docker'],
+        // Dark terminal in both modes — the CLI is the canonical view of gMountie.
+        theme: {plain: {color: '#F4EEDD', backgroundColor: '#0E0C09'}, styles: prismTokenStyles},
+        darkTheme: {plain: {color: '#F4EEDD', backgroundColor: '#08070A'}, styles: prismTokenStyles},
+        additionalLanguages: ['bash', 'diff', 'json', 'toml', 'yaml', 'go', 'protobuf', 'docker'],
       },
+      tableOfContents: {minHeadingLevel: 2, maxHeadingLevel: 3},
     }),
 };
 
