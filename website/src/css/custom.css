@@ -1341,3 +1341,27 @@ pre.mermaid,
 [data-theme='dark'] .mermaid .task2, [data-theme='dark'] .mermaid .task3 { fill: var(--paper-3) !important; }
 [data-theme='dark'] .mermaid .note { fill: rgba(237, 122, 51, 0.14) !important; }
 
+
+/* ---------- §20 Bencher perf embeds (docs/performance.mdx) ----------
+ * Bencher's /embed canvas leaves ~20 px of padding below the chart even
+ * with key=false & embed_header=false, so the iframe shows a thin
+ * scrollbar. We can't `scrolling="no"` (Docusaurus's MDX strips the
+ * deprecated attribute), and CSS on the <iframe> can't suppress its
+ * own scrollbar for cross-origin content. Wrap-and-clip is the
+ * standard trick: the wrapper sets the visible height and clips
+ * overflow; the iframe is given enough extra height to absorb the
+ * Bencher padding so the chart sits flush against the bottom.
+ */
+.perf-embed {
+  height: 540px;
+  overflow: hidden;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 8px;
+  margin: 0 0 1rem 0;
+}
+.perf-embed > iframe {
+  width: 100%;
+  height: 580px;
+  border: 0;
+  display: block;
+}
