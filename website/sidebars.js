@@ -1,8 +1,8 @@
 // @ts-check
-// Hand-authored sidebar, ported from the old docsify `docs/_sidebar.md`.
-// Doc IDs are file paths under ../docs without the extension.
-// Categories are non-collapsible so they render as the kit's flat, uppercase
-// mono section labels (styled in custom.css) rather than collapsible accordions.
+// Hand-authored sidebar for the real gMountie docs. Doc IDs are file paths under
+// ../docs without the extension. Categories use `collapsed: false` (expanded, with
+// the design's mono uppercase section labels + custom chevron — matches the design
+// template's sidebar treatment).
 
 /** @type {import('@docusaurus/plugin-content-docs').SidebarsConfig} */
 const sidebars = {
@@ -12,20 +12,20 @@ const sidebars = {
     {
       type: 'category',
       label: 'Server',
-      collapsible: false,
+      collapsed: false,
       items: ['server/cli', 'server/config'],
     },
     {
       type: 'category',
       label: 'Client',
-      collapsible: false,
+      collapsed: false,
       items: ['client/cli', 'client/config'],
     },
     'roadmap',
     {
       type: 'category',
       label: 'Design',
-      collapsible: false,
+      collapsed: false,
       items: [
         'design/architecture',
         'design/caching-and-consistency',
