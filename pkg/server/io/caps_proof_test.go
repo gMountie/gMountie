@@ -13,10 +13,10 @@ import (
 
 // Linux capability bit numbers — stable ABI.
 const (
-	capDACOverride    = 1
-	capDACReadSearch  = 2
-	capSetGID         = 6
-	capSetUID         = 7
+	capDACOverride   = 1
+	capDACReadSearch = 2
+	capSetGID        = 6
+	capSetUID        = 7
 )
 
 // capMask returns the uint32 bitmask for capability bit n (bits 0–31 → lo word).

@@ -190,6 +190,18 @@ func (s *SessionHandshakeTestSuite) TestKeepaliveResumeFailureFallsBackToCreate(
 		return handshake.SessionID() == "xyz-789"
 	}, time.Second, 10*time.Millisecond, "session id must update after fallback Create")
 
+	// Same race window as TestKeepaliveStreamErrorTriggersResume: once
+	// close(block) returns Recv from EOF, the loop may fire one more
+	// Resume/Create/Keepalive cycle before streamCancel takes effect.
+	// Pre-register permissive expectations so testify's reflective
+	// diagnostic has nothing to inspect alongside the cancel.
+	s.sessionClient.EXPECT().Resume(mock.Anything, mock.Anything).
+		Return(&proto.SessionResumeReply{Resumed: true}, nil).Maybe()
+	s.sessionClient.EXPECT().Create(mock.Anything, mock.Anything).
+		Return(&proto.SessionCreateReply{SessionId: "xyz-789"}, nil).Maybe()
+	s.sessionClient.EXPECT().Keepalive(mock.Anything, mock.Anything).
+		Return(stream2, nil).Maybe()
+
 	close(block)
 	s.Require().NoError(handshake.Close())
 }
