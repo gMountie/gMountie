@@ -7,10 +7,18 @@ import (
 	"github.com/spf13/viper"
 )
 
+// BasicAuthConfigUser holds the cleartext credentials the client sends to
+// the server over TLS. This is deliberately separate from the server-side
+// BasicAuthConfigUser (which stores an argon2id hash, not a plaintext password).
+type BasicAuthConfigUser struct {
+	Username string `validate:"required"`
+	Password string `validate:"required"`
+}
+
 // BasicAuthConfig is a struct that holds the configuration for the basic auth user
 type BasicAuthConfig struct {
-	Type                             serverConfig.AuthConfigType `validate:"required"`
-	serverConfig.BasicAuthConfigUser `yaml:",inline"`
+	Type             serverConfig.AuthConfigType `validate:"required"`
+	BasicAuthConfigUser `yaml:",inline"`
 }
 
 func (b BasicAuthConfig) GetType() serverConfig.AuthConfigType {
@@ -19,7 +27,7 @@ func (b BasicAuthConfig) GetType() serverConfig.AuthConfigType {
 
 // NewBasicAuthConfig creates a new BasicAuthConfig with defaults
 func NewBasicAuthConfig(v *viper.Viper) (*BasicAuthConfig, error) {
-	var user serverConfig.BasicAuthConfigUser
+	var user BasicAuthConfigUser
 	if err := v.Unmarshal(&user); err != nil {
 		return nil, err
 	}

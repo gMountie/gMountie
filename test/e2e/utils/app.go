@@ -7,6 +7,7 @@ import (
 	clientConfig "gmountie/pkg/client/config"
 	grpcClient "gmountie/pkg/client/grpc"
 	clienttls "gmountie/pkg/client/tls"
+	"gmountie/pkg/common/passhash"
 	"gmountie/pkg/server"
 	"gmountie/pkg/server/config"
 	grpcServer "gmountie/pkg/server/grpc"
@@ -75,13 +76,19 @@ type AppTestingContext struct {
 type TestOptions func(*AppTestingContext)
 
 // WithBasicAuth sets the basic authentication for the testing context.
+// The password is hashed with argon2id before being stored in the server config;
+// the plaintext password is passed through to the client options unchanged.
 func WithBasicAuth(username, password string) TestOptions {
 	return func(c *AppTestingContext) {
+		h, err := passhash.Hash(password)
+		if err != nil {
+			panic("WithBasicAuth: hash password: " + err.Error())
+		}
 		// Set the server basic auth
 		c.cfg.Auth = &config.BasicAuthConfig{
 			Users: []config.BasicAuthConfigUser{
 				{
-					Username: username, Password: password,
+					Username: username, PasswordHash: h,
 				},
 			},
 		}

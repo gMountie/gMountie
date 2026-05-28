@@ -7,6 +7,11 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
+// testAdminPHC is a pre-generated argon2id PHC string used in YAML fixtures
+// throughout this file. It hashes the string "admin" with a fixed all-zero
+// salt so it is deterministic and passes IsHashed without requiring Hash().
+const testAdminPHC = "$argon2id$v=19$m=65536,t=3,p=4$AAAAAAAAAAAAAAAAAAAAAA$5u/nk9QnWzMnHQ7LHnzNBwZmJvH2tXG7dBbJGT7C7Ho"
+
 type ConfigTestSuite struct {
 	suite.Suite
 	fullConf string
@@ -22,7 +27,7 @@ auth:
   type: basic
   users:
   - username: admin
-    password: admin
+    password_hash: ` + testAdminPHC + `
 volumes:
   - name: test
     path: /tmp
@@ -55,6 +60,9 @@ func (s *ConfigTestSuite) TestParse_Full_Volumes() {
 
 // TestParse_BasicAuthConfig
 func (s *ConfigTestSuite) TestParse_BasicAuthConfig() {
+	// Pre-generated argon2id PHC for "test" (salt AAAAAAAAAAAAAAAAAAAAAA).
+	const testPHC = "$argon2id$v=19$m=65536,t=3,p=4$AAAAAAAAAAAAAAAAAAAAAA$5u/nk9QnWzMnHQ7LHnzNBwZmJvH2tXG7dBbJGT7C7Ho"
+
 	// Setup.
 	conf := `
 server:
@@ -65,7 +73,7 @@ auth:
   type: basic
   users:
   - username: test
-    password: test
+    password_hash: ` + testPHC + `
 volumes:
   - name: test
     path: /tmp
@@ -78,7 +86,7 @@ volumes:
 	s.Assert().Equal(AuthConfigTypeBasic, result.Auth.GetType())
 	s.Assert().Len(result.Auth.(*BasicAuthConfig).Users, 1)
 	s.Assert().Equal("test", result.Auth.(*BasicAuthConfig).Users[0].Username)
-	s.Assert().Equal("test", result.Auth.(*BasicAuthConfig).Users[0].Password)
+	s.Assert().Equal(testPHC, result.Auth.(*BasicAuthConfig).Users[0].PasswordHash)
 }
 
 // TestParse_BasicAuthConfig_Invalid
@@ -194,7 +202,7 @@ auth:
   type: basic
   users:
   - username: admin
-    password: admin
+    password_hash: ` + testAdminPHC + `
 volumes:
   - name: test
     path: /tmp
@@ -213,7 +221,7 @@ auth:
   type: basic
   users:
   - username: admin
-    password: admin
+    password_hash: ` + testAdminPHC + `
 volumes:
   - name: test
     path: /tmp
@@ -232,7 +240,7 @@ auth:
   type: basic
   users:
   - username: admin
-    password: admin
+    password_hash: ` + testAdminPHC + `
 volumes:
   - name: test
     path: /tmp
@@ -251,7 +259,7 @@ auth:
   type: basic
   users:
   - username: admin
-    password: admin
+    password_hash: ` + testAdminPHC + `
 volumes:
   - name: test
     path: /tmp
@@ -276,7 +284,7 @@ auth:
   type: basic
   users:
   - username: admin
-    password: admin
+    password_hash: ` + testAdminPHC + `
 volumes:
   - name: test
     path: /tmp
@@ -302,7 +310,7 @@ auth:
   type: basic
   users:
   - username: admin
-    password: admin
+    password_hash: ` + testAdminPHC + `
 volumes:
   - name: test
     path: /tmp
@@ -324,7 +332,7 @@ auth:
   type: basic
   users:
   - username: admin
-    password: admin
+    password_hash: ` + testAdminPHC + `
 volumes:
   - name: test
     path: /tmp
@@ -345,7 +353,7 @@ auth:
   type: basic
   users:
   - username: admin
-    password: admin
+    password_hash: ` + testAdminPHC + `
 volumes:
   - name: test
     path: /tmp
@@ -366,7 +374,7 @@ auth:
   type: basic
   users:
   - username: admin
-    password: admin
+    password_hash: ` + testAdminPHC + `
 volumes:
   - name: test
     path: /tmp
