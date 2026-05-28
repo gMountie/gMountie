@@ -246,9 +246,14 @@ correct kernel denial), but it must not silently always-allow.
   atomic: if the `fchown` fails after the create, a root-owned file remains — an
   admin-path edge that is logged for manual cleanup; acceptable here.)
 - `dac_read` — read/traverse-only bypass. Keep `fsuid=0` but **`capset` the
-  thread to drop `CAP_DAC_OVERRIDE`/`FOWNER`/`FSETID` while keeping
-  `CAP_DAC_READ_SEARCH`**. Capabilities are per-thread, so this is feasible;
-  the exact `capset` is a Phase 3 task to verify before relying on it.
+  thread to drop `CAP_DAC_OVERRIDE`/`FOWNER`/`FSETID` from the EFFECTIVE
+  set while keeping `CAP_DAC_READ_SEARCH`**. Capabilities are per-thread,
+  so this is feasible; verified empirically in Phase 3 (`caps_proof_test.go`,
+  kernel 6.8). **Important: PERMITTED is monotonically non-increasing on
+  Linux — once a cap is dropped from PERMITTED it cannot be re-raised, even
+  by `CAP_SETPCAP`. We therefore drop only from EFFECTIVE and restore by
+  re-raising EFFECTIVE; PERMITTED stays intact for the lifetime of the
+  thread.**
 
 Both cap paths require the **server to run as root** (or hold the matching
 Linux file-capabilities) — an accepted precondition.
