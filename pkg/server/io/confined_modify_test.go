@@ -91,7 +91,7 @@ func (s *ConfinedModifySuite) TestTruncateGrow() {
 	s.Equal(fuse.OK, st)
 	data, err := os.ReadFile(filepath.Join(s.rootDir, "ok.txt"))
 	s.Require().NoError(err)
-	s.Equal(10, len(data))
+	s.Len(data, 10)
 	s.Equal([]byte("hi"), data[:2])
 	s.Equal(make([]byte, 8), data[2:])
 }
