@@ -101,9 +101,12 @@ const config = {
       navbar: {
         title: 'gMountie',
         logo: {alt: 'gMountie', src: 'img/mark.svg', width: 26, height: 26},
+        // Right side renders in order: search → GitHub, then the (swizzled,
+        // labeled) color-mode toggle is auto-appended last — matching the template.
         items: [
           {type: 'docSidebar', sidebarId: 'docs', position: 'left', label: 'Docs'},
           {href: 'https://github.com/gMountie/gMountie/releases', label: 'Releases', position: 'left'},
+          {type: 'search', position: 'right'},
           {href: 'https://github.com/gMountie/gMountie', label: 'GitHub', position: 'right'},
         ],
       },

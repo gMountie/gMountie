@@ -964,3 +964,41 @@ table code { font-size: 12.5px; }
   overflow: visible;
   top: auto;
 }
+
+/* ------------------------------------------------------------
+   22. NAVBAR — match the template exactly
+   ------------------------------------------------------------ */
+/* Brand wordmark is not underlined */
+.navbar__brand,
+.navbar__brand:hover,
+.navbar__title { text-decoration: none; }
+
+/* No external-link "open in new tab" icon on navbar links (Releases / GitHub) */
+.navbar [class*="iconExternalLink"] { display: none; }
+
+/* Rectangular, labeled, two-state color-mode toggle (swizzled ColorModeToggle) */
+.theme-toggle {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg-meta);
+  cursor: pointer;
+  margin-left: 0.5rem;
+  line-height: 1.4;
+}
+.theme-toggle:hover { border-color: var(--ember); color: var(--ember-deep); }
+[data-theme='dark'] .theme-toggle:hover { color: var(--ember); }
+
+/* ------------------------------------------------------------
+   23. BREADCRUMB — drop the home crumb
+   Docusaurus's first breadcrumb is an icon-only Home link; the theme hides
+   that icon, leaving an empty crumb that still emits a "·" separator (an
+   orphaned leading separator). The design's breadcrumb has no home crumb, so
+   hide the whole first item — breadcrumbs then start at the first real crumb.
+   ------------------------------------------------------------ */
+.breadcrumbs__item:first-child { display: none; }
