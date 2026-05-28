@@ -33,6 +33,10 @@ type AppTestingContext struct {
 	// tls is the per-context ephemeral TLS cert/key used by the test server.
 	// Generated in NewAppTestingContext; T6 uses ExpectedFingerprint for TOFU tests.
 	tls *EphemeralTLS
+	// clientTLSConfig holds the caller's TLS verification policy for the client.
+	// Default is {Verify: ModeInsecure}; WithClientTLS overrides before
+	// NewAppTestingContext builds the gRPC dial credentials.
+	clientTLSConfig clienttls.Config
 	// userClientOptions holds only the caller-supplied client options
 	// (auth, interceptors, timeouts). Does NOT include the bufconn/TCP
 	// dialer added by setupTransport. NewSiblingClient builds its own
@@ -143,6 +147,23 @@ func WithCache(cfg clientConfig.CacheConfig) TestOptions {
 func WithFUSEConfig(cfg clientConfig.FUSEConfig) TestOptions {
 	return func(c *AppTestingContext) {
 		c.fuseCfg = &cfg
+	}
+}
+
+// WithClientTLS overrides the client-side TLS verification policy for this
+// test context. The default is {Verify: "insecure"} so existing tests keep
+// working; pass a TLSConfig with Verify: "tofu" or "verify" to exercise the
+// Phase 7 PR 1 TLS verification paths. The option is applied before
+// NewAppTestingContext builds the gRPC dial credentials, so it wins.
+func WithClientTLS(cfg clientConfig.TLSConfig) TestOptions {
+	return func(c *AppTestingContext) {
+		c.clientTLSConfig = clienttls.Config{
+			Mode:                cfg.Verify,
+			CAFile:              cfg.CAFile,
+			ExpectedFingerprint: cfg.ExpectedFingerprint,
+			ServerName:          cfg.ServerName,
+			KnownHostsPath:      cfg.KnownHostsPath,
+		}
 	}
 }
 
@@ -301,7 +322,12 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 		MaxBackground:  clientConfig.DefaultFUSEMaxBackground,
 		WritebackCache: clientConfig.DefaultFUSEWritebackCache,
 	}
-	// Apply the options
+	// Default client TLS to insecure so existing tests keep working.
+	// WithClientTLS overrides this before options are applied.
+	appCtx.clientTLSConfig = clienttls.Config{
+		Mode: clienttls.ModeInsecure,
+	}
+	// Apply the options; WithClientTLS may replace clientTLSConfig.
 	for _, opt := range options {
 		opt(appCtx)
 	}
@@ -332,11 +358,21 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 	})
 	appCtx.serverOptions = append(appCtx.serverOptions, grpcServer.WithCredentials(serverCreds))
 
-	// Client: skip chain verification against the self-signed test cert.
-	clientTLSCfg, err := clienttls.BuildConfig(clienttls.Config{
-		Endpoint: "127.0.0.1:0",
-		Mode:     clienttls.ModeInsecure,
-	})
+	// Build client TLS credentials from clientTLSConfig (defaulted to insecure;
+	// WithClientTLS may have replaced it with tofu/verify). The endpoint for TOFU
+	// key resolution is the real TCP listener address when useTCP is set, so that
+	// known_hosts entries written in tests use the same key the verifier will look
+	// up. For bufconn contexts the endpoint is a synthetic string (the TOFU key is
+	// unused because the cert is per-test and the known_hosts path is a tempdir).
+	tlsCfgForClient := appCtx.clientTLSConfig
+	if tlsCfgForClient.Endpoint == "" {
+		if appCtx.tcpListener != nil {
+			tlsCfgForClient.Endpoint = appCtx.tcpListener.Addr().String()
+		} else {
+			tlsCfgForClient.Endpoint = "127.0.0.1:0"
+		}
+	}
+	clientTLSCfg, err := clienttls.BuildConfig(tlsCfgForClient)
 	if err != nil {
 		return nil, errors.Wrap(err, "build client TLS config for test harness")
 	}
@@ -408,6 +444,27 @@ func (c *AppTestingContext) GetClient() grpcClient.Client {
 // GetVolumes returns the test volumes.
 func (c *AppTestingContext) GetVolumes() []*TestVolume {
 	return c.volumes
+}
+
+// GetTLSFingerprint returns the SHA256 fingerprint of the server's ephemeral
+// TLS certificate (format "SHA256:<43 base64 raw chars>"). Used by TLS e2e
+// tests to build explicit pin assertions without re-reading the cert from disk.
+func (c *AppTestingContext) GetTLSFingerprint() string {
+	if c.tls == nil {
+		return ""
+	}
+	return c.tls.ExpectedFingerprint
+}
+
+// GetEndpoint returns the raw "host:port" TCP address for the test server.
+// Only meaningful when useTCP is set (WithTCPTransport); returns "" for
+// in-memory bufconn contexts. TLS e2e tests that need to pre-seed a
+// known_hosts entry at a specific address use this value as the key.
+func (c *AppTestingContext) GetEndpoint() string {
+	if c.tcpListener != nil {
+		return c.tcpListener.Addr().String()
+	}
+	return ""
 }
 
 // NewSiblingClient creates an independent gRPC client that connects to
