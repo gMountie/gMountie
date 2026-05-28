@@ -22,7 +22,7 @@ func (s *WrapMountErrorTestSuite) TearDownTest() {
 }
 
 func (s *WrapMountErrorTestSuite) TestNilPassesThrough() {
-	s.Nil(wrapMountError(nil))
+	s.NoError(wrapMountError(nil))
 }
 
 func (s *WrapMountErrorTestSuite) TestLinuxNeverWraps() {
@@ -58,7 +58,7 @@ func (s *WrapMountErrorTestSuite) TestDarwinMissingProviderWraps() {
 		"exec: \"mount_macfuse\": executable file not found in $PATH",
 		"open /dev/macfuse0: no such file or directory",
 		"open /dev/osxfuse0: no such file or directory",
-		"MACFUSE failed to load",        // ensures case-insensitive matching
+		"MACFUSE failed to load", // ensures case-insensitive matching
 		"fork/exec /usr/local/bin/mount_osxfuse: no such file or directory",
 	}
 
@@ -67,7 +67,7 @@ func (s *WrapMountErrorTestSuite) TestDarwinMissingProviderWraps() {
 			in := errors.New(msg)
 			out := wrapMountError(in)
 
-			s.Require().NotNil(out)
+			s.Require().Error(out)
 			s.NotSame(in, out, "matching error should be wrapped, not returned as-is")
 
 			text := out.Error()
