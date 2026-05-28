@@ -193,6 +193,52 @@ volumes:
 
 If you don't include `mapping`, the volume gets `mode: squash` with `uid: 0` / `gid: 0` — pick something else unless you mean it.
 
+#### Admin capabilities (`dac_read_search`, `dac_override`)
+
+A principal can be granted one of two POSIX capabilities so service accounts can list/read or modify everything on a volume regardless of file ownership. Enforcement is kernel-native via per-thread `capset`. Both require the **server to run as root**.
+
+| Capability         | Effect                                                                                          |
+|--------------------|-------------------------------------------------------------------------------------------------|
+| `dac_read_search`  | Read and traverse any path on the volume regardless of mode bits. **Cannot write**.             |
+| `dac_override`     | Read, traverse, **and modify** any path. New entries created during the op are `fchown`ed to the principal so admin writes don't silently leave root-owned files. |
+
+In `static` mode you grant caps per user:
+
+```yaml title="static — per-user admin caps"
+volumes:
+  - name: shared
+    path: /srv/shared
+    mapping:
+      mode: static
+      users:
+        alice:
+          uid: 1001
+          gid: 1001
+        backup:
+          uid: 1500
+          gid: 1500
+          caps: [dac_read_search]   # backup can read everything, can't modify
+        ops-admin:
+          uid: 1501
+          gid: 1501
+          caps: [dac_override]      # break-glass write access
+```
+
+In `system` mode you grant caps to **server-side group memberships**, so adding a user to a real OS group (e.g. `wheel`, `backup`) is enough:
+
+```yaml title="system — admin caps via server group membership"
+volumes:
+  - name: team
+    path: /srv/team
+    mapping:
+      mode: system
+      admin_groups:
+        dac_override:    [wheel]
+        dac_read_search: [backup]
+```
+
+`squash` and `passthrough` ignore caps. See **[Concepts → Identity & ownership](../concepts/identity.mdx#admin-capabilities)** for the threat model.
+
 ## Example Configuration
 
 Here's an example configuration file that enables basic authentication and

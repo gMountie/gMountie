@@ -31,6 +31,10 @@ One-line definitions. Cross-linked into the rest of the docs — when you hit an
 
 ## D
 
+**`dac_override`** — Admin capability. Granted per principal in `static` mode (`caps:`) or per server-group in `system` mode (`admin_groups:`); lets the principal read, traverse, AND modify any path on the volume regardless of mode bits. Created entries are `fchown`ed to the principal. Requires the server to run as root. See [Identity & ownership — Admin capabilities](./concepts/identity.mdx#admin-capabilities).
+
+**`dac_read_search`** — Admin capability. Like `dac_override` but read-only: reads and traverses bypass DAC, writes still return `EACCES`. Right cap for backup runners and audit accounts.
+
 **`dirent`** — Directory entry. A `(name, inode)` pair returned by `readdir`.
 
 ## E
