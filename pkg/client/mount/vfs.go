@@ -219,6 +219,8 @@ func (m *VFSVolumeMounterImpl) mountMemFS(path string) error {
 		EntryTimeout: &entryTimeout,
 		AttrTimeout:  &attrTimeout,
 	}
+	// wrapMountError isn't applied here: VFSVolumeMounter is desktop-UI-only
+	// (Phase 8, deferred). Wire it in when the UI gains macOS support.
 	server, err := gofs.Mount(path, m.root, fsOpts)
 	if err != nil {
 		log.Log.Error("mounting the root filesystem failed", zap.Error(err))

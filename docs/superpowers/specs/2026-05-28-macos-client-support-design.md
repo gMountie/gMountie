@@ -46,7 +46,7 @@ Goreleaser produces four archives per release: `linux/amd64`, `linux/arm64`, `da
 |---|---|
 | `cmd/commands/serve.go` | First line: `//go:build linux`. |
 | `cmd/commands/serve_test.go` | Same `//go:build linux` tag. |
-| `pkg/client/mount/mount_error.go` *(new)* | `func wrapMountError(err error) error`. If `currentGOOS == "darwin"` and the error matches a missing-FUSE-provider pattern (`/dev/macfuse`, `/dev/osxfuse`, `mount_macfuse`, "no such file or directory", "executable file not found"), wrap with: *"FUSE driver missing — install macFUSE (https://macfuse.io) or FUSE-T (https://www.fuse-t.org/) before mounting on macOS"*. Otherwise pass through. `var currentGOOS = runtime.GOOS` so the test can flip it. |
+| `pkg/client/mount/mount_error.go` *(new)* | `func wrapMountError(err error) error`. If `currentGOOS == "darwin"` and the error matches a missing-FUSE-provider pattern (`macfuse`, `osxfuse`, `mount_macfuse`, `/dev/macfuse`, `/dev/osxfuse`), wrap with: *"FUSE driver missing — install macFUSE (https://macfuse.io) or FUSE-T (https://www.fuse-t.org/) before mounting on macOS"*. Otherwise pass through. `var currentGOOS = runtime.GOOS` so the test can flip it. |
 | `pkg/client/mount/mount_error_test.go` *(new)* | Table-driven: `(goos, err) → expected`. Covers linux+any, darwin+matching-pattern, darwin+unrelated, nil. Pure Go, runs on the existing Linux CI. |
 | `pkg/client/mount/single.go` | Wrap the FUSE-mount error path with `wrapMountError(err)` at the boundary where the error surfaces to the user. Exact call site to be located during implementation (the function that performs `server.Mount` / `fs.Mount`). |
 | `.goreleaser.yaml` | Replace the existing TODO under `goos:` with `- darwin`. |
