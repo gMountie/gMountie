@@ -9,7 +9,9 @@ type Identity struct {
 	Uid       uint32
 	Gid       uint32   // primary
 	Gids      []uint32 // supplementary, MUST include Gid
-	Caps      []string // Phase 3 (dac_read/dac_override); empty in 1a
+	Caps       []string          // Phase 3 (dac_read/dac_override); empty in 1a
+	UserName   string            // populated by resolvers in 1b-2 (empty in 1a/1b-1)
+	GroupNames map[uint32]string // gid -> name, for groups the caller is in
 }
 
 // ErrPrincipalNotFound is returned by resolvers when a principal cannot be
