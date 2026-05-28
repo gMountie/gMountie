@@ -37,14 +37,15 @@ func (r *IDRewriter) Inbound(uid, gid uint32) (uint32, uint32) {
 	if uid == r.id.Uid {
 		outUID = r.localUID
 	}
-	switch {
-	case gid == r.id.Gid:
+	switch gid {
+	case r.id.Gid:
 		outGID = r.localGID
 	default:
-		outGID = nobodyID
+		// outGID stays nobodyID unless the file's gid is one the caller is in,
+		// in which case it passes through unchanged (shared-group rendering).
 		for _, g := range r.id.Gids {
 			if g == gid {
-				outGID = gid // shared-group: pass through unchanged
+				outGID = gid
 				break
 			}
 		}

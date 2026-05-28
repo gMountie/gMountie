@@ -36,14 +36,14 @@ func (s *ToProtoAttrSuite) TestFillsUserNameAndGroupForOwnFile() {
 
 func (s *ToProtoAttrSuite) TestUserNameHiddenForOthersGroupShownIfMember() {
 	p := toProtoAttr(mkAttr(9999, 2000), mkID())
-	s.Equal("", p.Owner.UserName) // never leak other users' names
+	s.Empty(p.Owner.UserName) // never leak other users' names
 	s.Equal("developers", p.Owner.GroupName)
 }
 
 func (s *ToProtoAttrSuite) TestGroupHiddenWhenNotMember() {
 	p := toProtoAttr(mkAttr(9999, 3000), mkID())
-	s.Equal("", p.Owner.UserName)
-	s.Equal("", p.Owner.GroupName)
+	s.Empty(p.Owner.UserName)
+	s.Empty(p.Owner.GroupName)
 }
 
 func (s *ToProtoAttrSuite) TestNilIdentityYieldsNoNames() {

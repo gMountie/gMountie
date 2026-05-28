@@ -22,8 +22,8 @@ func (r *staticResolver) Resolve(principal string) (Identity, error) {
 		}
 	}
 	return Identity{
-		Principal:  principal,
-		Uid:        u.Uid, Gid: u.Gid, Gids: gids, Caps: u.Caps,
+		Principal: principal,
+		Uid:       u.Uid, Gid: u.Gid, Gids: gids, Caps: u.Caps,
 		UserName:   principal,
 		GroupNames: groupNames,
 	}, nil

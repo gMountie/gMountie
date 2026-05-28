@@ -5,10 +5,10 @@ import "github.com/pkg/errors"
 // Identity is the resolved server-side identity of a principal on a volume.
 // Caps is carried for Phase 3 (admin capabilities); it is unused in Phase 1a.
 type Identity struct {
-	Principal string
-	Uid       uint32
-	Gid       uint32   // primary
-	Gids      []uint32 // supplementary, MUST include Gid
+	Principal  string
+	Uid        uint32
+	Gid        uint32            // primary
+	Gids       []uint32          // supplementary, MUST include Gid
 	Caps       []string          // Phase 3 (dac_read/dac_override); empty in 1a
 	UserName   string            // populated by resolvers in 1b-2 (empty in 1a/1b-1)
 	GroupNames map[uint32]string // gid -> name, for groups the caller is in
