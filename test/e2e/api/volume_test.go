@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"gmountie/pkg/server/principal"
 	"gmountie/test/e2e/utils"
 	"testing"
 
@@ -32,7 +33,13 @@ func (s *VolumeAPITestSuite) SetupSuite() {
 func (s *VolumeAPITestSuite) TestListFiles() {
 	clientVolumes, err := s.testAppCtx.GetClientApp().VolumeService.GetVolumes(context.Background())
 	s.Require().NoError(err)
-	serverVolumes, err := s.testAppCtx.GetServerApp().VolumeService.List(context.Background())
+	// VolumeService.List filters by the authenticated principal (Phase 7 ACL).
+	// The client dials authenticated as "test", so the server-side view we
+	// compare against must be resolved for that same principal — a bare
+	// context.Background() carries no principal and (correctly) yields no
+	// volumes under the fail-closed ACL.
+	ctx := principal.WithPrincipal(context.Background(), "test")
+	serverVolumes, err := s.testAppCtx.GetServerApp().VolumeService.List(ctx)
 
 	s.Require().NoError(err)
 	s.Assert().Equal(clientVolumes, serverVolumes)
