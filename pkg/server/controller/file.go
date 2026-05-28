@@ -99,7 +99,7 @@ func (r *RpcFileServerImpl) Create(ctx context.Context, request *proto.CreateReq
 			reply.Fd = sess.RegisterFile(request.Path, file)
 			r.metrics.OpenFilesInc(request.Volume, request.SessionId)
 			if attr, gst := fs.GetAttr(request.Path, createContext(ctx, request.Caller)); gst.Ok() {
-				reply.Attributes = toProtoAttr(attr)
+				reply.Attributes = toProtoAttr(attr, resolveIdentityOrNil(ctx, r.fsService, request.Volume, request.Caller))
 				r.bus.Emit(request.Volume, request.Path, serverio.VersionFromAttr(attr), serverio.KindMutated)
 			} else {
 				r.bus.Emit(request.Volume, request.Path, 0, serverio.KindMutated)
@@ -415,7 +415,10 @@ func (r *RpcFileServerImpl) WriteAndFlush(ctx context.Context, req *proto.WriteA
 	// it only feeds the bus version. A future client that consumes final_attr
 	// for a caller-scoped view would need a Caller field on WriteAndFlushRequest.
 	if attr, gst := fs.GetAttr(entry.Path, createContext(ctx, nil)); gst.Ok() {
-		reply.FinalAttr = toProtoAttr(attr)
+		// WriteAndFlushRequest carries no Caller — pass nil here, same as the
+		// stat above. final_attr is currently advisory; a future client that
+		// consumes the names will need a Caller field on the request.
+		reply.FinalAttr = toProtoAttr(attr, nil)
 		if st == fuse.OK {
 			r.bus.Emit(req.Volume, entry.Path, serverio.VersionFromAttr(attr), serverio.KindMutated)
 		}

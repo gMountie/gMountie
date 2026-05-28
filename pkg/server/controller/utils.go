@@ -4,25 +4,70 @@ import (
 	"context"
 	"gmountie/pkg/proto"
 	serverio "gmountie/pkg/server/io"
+	"gmountie/pkg/server/service"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
 // toProtoAttr maps a server-side FUSE Attr to the wire Attr, including the
 // derived version. nil in -> nil out.
-func toProtoAttr(a *fuse.Attr) *proto.Attr {
+//
+// id is the caller's resolved server-side identity, used to fill the hybrid
+// Owner.user_name / Owner.group_name fields per §3.6:
+//   - user_name is set IFF the file is owned by the caller (a.Uid == id.Uid);
+//     we never leak other users' names through stat.
+//   - group_name is set IFF the file's gid has a name in id.GroupNames AND the
+//     caller is a member of that group (a.Gid is in id.Gids).
+//
+// A nil id (e.g. ResolveIdentity failed, or the call has no caller) is safe:
+// no names are filled and the wire shape is identical to the pre-1b-2 reply.
+func toProtoAttr(a *fuse.Attr, id *service.Identity) *proto.Attr {
 	if a == nil {
 		return nil
+	}
+	owner := &proto.Owner{Uid: a.Uid, Gid: a.Gid}
+	if id != nil {
+		if a.Uid == id.Uid {
+			owner.UserName = id.UserName
+		}
+		if name, ok := id.GroupNames[a.Gid]; ok && groupMember(id.Gids, a.Gid) {
+			owner.GroupName = name
+		}
 	}
 	return &proto.Attr{
 		Ino: a.Ino, Size: a.Size, Blocks: a.Blocks,
 		Atime: a.Atime, Mtime: a.Mtime, Ctime: a.Ctime,
 		Atimensec: a.Atimensec, Mtimensec: a.Mtimensec, Ctimensec: a.Ctimensec,
 		Mode: a.Mode, Nlink: a.Nlink,
-		Owner: &proto.Owner{Uid: a.Uid, Gid: a.Gid},
+		Owner: owner,
 		Rdev:  a.Rdev, Blksize: a.Blksize, Padding: a.Padding,
 		Version: serverio.VersionFromAttr(a),
 	}
+}
+
+// groupMember reports whether gid appears in gids. Identity.Gids is typically
+// short (primary + a handful of supplementary groups), so a linear scan is
+// cheaper than building a set.
+func groupMember(gids []uint32, gid uint32) bool {
+	for _, g := range gids {
+		if g == gid {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveIdentityOrNil is the best-effort identity lookup used by attr-returning
+// handlers to feed toProtoAttr. ResolveIdentity is served from the per-volume
+// TTL identity cache so this is cheap on the hot path. A failure here MUST NOT
+// block the attr return — we drop the names and continue. Returns nil on any
+// error.
+func resolveIdentityOrNil(ctx context.Context, svc service.VolumeService, volume string, caller *proto.Caller) *service.Identity {
+	id, err := svc.ResolveIdentity(ctx, volume, caller)
+	if err != nil {
+		return nil
+	}
+	return &id
 }
 
 // createContext creates a new fuse.Context from the given context.Context.
