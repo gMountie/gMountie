@@ -18,7 +18,7 @@ type ServerOpsConfigSuite struct {
 
 func mustHashOps(t *testing.T, s string) string {
 	t.Helper()
-	h, err := passhash.Hash(s)
+	h, err := passhash.HashFast(s)
 	if err != nil {
 		t.Fatalf("passhash.Hash: %v", err)
 	}

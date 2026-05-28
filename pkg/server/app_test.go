@@ -16,7 +16,7 @@ import (
 // mustHashApp hashes s with argon2id and fails the test on error.
 func mustHashApp(t *testing.T, s string) string {
 	t.Helper()
-	h, err := passhash.Hash(s)
+	h, err := passhash.HashFast(s)
 	if err != nil {
 		t.Fatal(err)
 	}
