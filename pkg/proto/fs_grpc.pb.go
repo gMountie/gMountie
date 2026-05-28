@@ -31,6 +31,8 @@ const (
 	RpcFs_Mkdir_FullMethodName            = "/gmountie.RpcFs/Mkdir"
 	RpcFs_Rmdir_FullMethodName            = "/gmountie.RpcFs/Rmdir"
 	RpcFs_Rename_FullMethodName           = "/gmountie.RpcFs/Rename"
+	RpcFs_Readlink_FullMethodName         = "/gmountie.RpcFs/Readlink"
+	RpcFs_Symlink_FullMethodName          = "/gmountie.RpcFs/Symlink"
 	RpcFs_GetXAttr_FullMethodName         = "/gmountie.RpcFs/GetXAttr"
 	RpcFs_Compound_FullMethodName         = "/gmountie.RpcFs/Compound"
 	RpcFs_GetAttrIfChanged_FullMethodName = "/gmountie.RpcFs/GetAttrIfChanged"
@@ -53,6 +55,8 @@ type RpcFsClient interface {
 	Mkdir(ctx context.Context, in *MkdirRequest, opts ...grpc.CallOption) (*MkdirReply, error)
 	Rmdir(ctx context.Context, in *RmdirRequest, opts ...grpc.CallOption) (*RmdirReply, error)
 	Rename(ctx context.Context, in *RenameRequest, opts ...grpc.CallOption) (*RenameReply, error)
+	Readlink(ctx context.Context, in *ReadlinkRequest, opts ...grpc.CallOption) (*ReadlinkReply, error)
+	Symlink(ctx context.Context, in *SymlinkRequest, opts ...grpc.CallOption) (*SymlinkReply, error)
 	GetXAttr(ctx context.Context, in *GetXAttrRequest, opts ...grpc.CallOption) (*GetXAttrReply, error)
 	Compound(ctx context.Context, in *CompoundRequest, opts ...grpc.CallOption) (*CompoundBatch, error)
 	GetAttrIfChanged(ctx context.Context, in *GetAttrIfChangedRequest, opts ...grpc.CallOption) (*GetAttrIfChangedReply, error)
@@ -187,6 +191,26 @@ func (c *rpcFsClient) Rename(ctx context.Context, in *RenameRequest, opts ...grp
 	return out, nil
 }
 
+func (c *rpcFsClient) Readlink(ctx context.Context, in *ReadlinkRequest, opts ...grpc.CallOption) (*ReadlinkReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReadlinkReply)
+	err := c.cc.Invoke(ctx, RpcFs_Readlink_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *rpcFsClient) Symlink(ctx context.Context, in *SymlinkRequest, opts ...grpc.CallOption) (*SymlinkReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SymlinkReply)
+	err := c.cc.Invoke(ctx, RpcFs_Symlink_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *rpcFsClient) GetXAttr(ctx context.Context, in *GetXAttrRequest, opts ...grpc.CallOption) (*GetXAttrReply, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetXAttrReply)
@@ -252,6 +276,8 @@ type RpcFsServer interface {
 	Mkdir(context.Context, *MkdirRequest) (*MkdirReply, error)
 	Rmdir(context.Context, *RmdirRequest) (*RmdirReply, error)
 	Rename(context.Context, *RenameRequest) (*RenameReply, error)
+	Readlink(context.Context, *ReadlinkRequest) (*ReadlinkReply, error)
+	Symlink(context.Context, *SymlinkRequest) (*SymlinkReply, error)
 	GetXAttr(context.Context, *GetXAttrRequest) (*GetXAttrReply, error)
 	Compound(context.Context, *CompoundRequest) (*CompoundBatch, error)
 	GetAttrIfChanged(context.Context, *GetAttrIfChangedRequest) (*GetAttrIfChangedReply, error)
@@ -301,6 +327,12 @@ func (UnimplementedRpcFsServer) Rmdir(context.Context, *RmdirRequest) (*RmdirRep
 }
 func (UnimplementedRpcFsServer) Rename(context.Context, *RenameRequest) (*RenameReply, error) {
 	return nil, status.Error(codes.Unimplemented, "method Rename not implemented")
+}
+func (UnimplementedRpcFsServer) Readlink(context.Context, *ReadlinkRequest) (*ReadlinkReply, error) {
+	return nil, status.Error(codes.Unimplemented, "method Readlink not implemented")
+}
+func (UnimplementedRpcFsServer) Symlink(context.Context, *SymlinkRequest) (*SymlinkReply, error) {
+	return nil, status.Error(codes.Unimplemented, "method Symlink not implemented")
 }
 func (UnimplementedRpcFsServer) GetXAttr(context.Context, *GetXAttrRequest) (*GetXAttrReply, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetXAttr not implemented")
@@ -551,6 +583,42 @@ func _RpcFs_Rename_Handler(srv interface{}, ctx context.Context, dec func(interf
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RpcFs_Readlink_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReadlinkRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RpcFsServer).Readlink(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RpcFs_Readlink_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RpcFsServer).Readlink(ctx, req.(*ReadlinkRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RpcFs_Symlink_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SymlinkRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RpcFsServer).Symlink(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RpcFs_Symlink_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RpcFsServer).Symlink(ctx, req.(*SymlinkRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _RpcFs_GetXAttr_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetXAttrRequest)
 	if err := dec(in); err != nil {
@@ -670,6 +738,14 @@ var RpcFs_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Rename",
 			Handler:    _RpcFs_Rename_Handler,
+		},
+		{
+			MethodName: "Readlink",
+			Handler:    _RpcFs_Readlink_Handler,
+		},
+		{
+			MethodName: "Symlink",
+			Handler:    _RpcFs_Symlink_Handler,
 		},
 		{
 			MethodName: "GetXAttr",

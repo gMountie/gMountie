@@ -131,6 +131,37 @@ func (r *RpcServerImpl) Rename(ctx context.Context, request *proto.RenameRequest
 	})
 }
 
+func (r *RpcServerImpl) Readlink(ctx context.Context, request *proto.ReadlinkRequest) (*proto.ReadlinkReply, error) {
+	// Read-only path op, identity-bound like Access. Returns the link target
+	// verbatim — confinement is enforced when something tries to FOLLOW it,
+	// not when reading the link string itself.
+	fs, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	if err != nil {
+		return nil, err
+	}
+	target, st := fs.Readlink(request.Path, createContext(ctx, request.Caller))
+	return &proto.ReadlinkReply{Target: target, Status: int32(st)}, nil
+}
+
+func (r *RpcServerImpl) Symlink(ctx context.Context, request *proto.SymlinkRequest) (*proto.SymlinkReply, error) {
+	sess, err := resolveSession(r.sessions, request.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	fs, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	if err != nil {
+		return nil, err
+	}
+	return withIdempotency(sess, request.RequestId, func() (*proto.SymlinkReply, error) {
+		s := fs.Symlink(request.Target, request.LinkPath, createContext(ctx, request.Caller))
+		if s == fuse.OK {
+			r.bus.Emit(request.Volume, request.LinkPath,
+				r.versionAfter(ctx, fs, request.LinkPath, request.Caller), serverio.KindMutated)
+		}
+		return &proto.SymlinkReply{Status: int32(s)}, nil
+	})
+}
+
 func (r *RpcServerImpl) OpenDir(ctx context.Context, request *proto.OpenDirRequest) (*proto.OpenDirReply, error) {
 	fs, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {

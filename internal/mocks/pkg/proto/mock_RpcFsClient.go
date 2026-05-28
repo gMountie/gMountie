@@ -822,6 +822,93 @@ func (_c *MockRpcFsClient_OpenDir_Call) RunAndReturn(run func(ctx context.Contex
 	return _c
 }
 
+// Readlink provides a mock function for the type MockRpcFsClient
+func (_mock *MockRpcFsClient) Readlink(ctx context.Context, in *proto.ReadlinkRequest, opts ...grpc.CallOption) (*proto.ReadlinkReply, error) {
+	// grpc.CallOption
+	_va := make([]interface{}, len(opts))
+	for _i := range opts {
+		_va[_i] = opts[_i]
+	}
+	var _ca []interface{}
+	_ca = append(_ca, ctx, in)
+	_ca = append(_ca, _va...)
+	ret := _mock.Called(_ca...)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Readlink")
+	}
+
+	var r0 *proto.ReadlinkReply
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.ReadlinkRequest, ...grpc.CallOption) (*proto.ReadlinkReply, error)); ok {
+		return returnFunc(ctx, in, opts...)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.ReadlinkRequest, ...grpc.CallOption) *proto.ReadlinkReply); ok {
+		r0 = returnFunc(ctx, in, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proto.ReadlinkReply)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.ReadlinkRequest, ...grpc.CallOption) error); ok {
+		r1 = returnFunc(ctx, in, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockRpcFsClient_Readlink_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Readlink'
+type MockRpcFsClient_Readlink_Call struct {
+	*mock.Call
+}
+
+// Readlink is a helper method to define mock.On call
+//   - ctx context.Context
+//   - in *proto.ReadlinkRequest
+//   - opts ...grpc.CallOption
+func (_e *MockRpcFsClient_Expecter) Readlink(ctx interface{}, in interface{}, opts ...interface{}) *MockRpcFsClient_Readlink_Call {
+	return &MockRpcFsClient_Readlink_Call{Call: _e.mock.On("Readlink",
+		append([]interface{}{ctx, in}, opts...)...)}
+}
+
+func (_c *MockRpcFsClient_Readlink_Call) Run(run func(ctx context.Context, in *proto.ReadlinkRequest, opts ...grpc.CallOption)) *MockRpcFsClient_Readlink_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *proto.ReadlinkRequest
+		if args[1] != nil {
+			arg1 = args[1].(*proto.ReadlinkRequest)
+		}
+		var arg2 []grpc.CallOption
+		variadicArgs := make([]grpc.CallOption, len(args)-2)
+		for i, a := range args[2:] {
+			if a != nil {
+				variadicArgs[i] = a.(grpc.CallOption)
+			}
+		}
+		arg2 = variadicArgs
+		run(
+			arg0,
+			arg1,
+			arg2...,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFsClient_Readlink_Call) Return(readlinkReply *proto.ReadlinkReply, err error) *MockRpcFsClient_Readlink_Call {
+	_c.Call.Return(readlinkReply, err)
+	return _c
+}
+
+func (_c *MockRpcFsClient_Readlink_Call) RunAndReturn(run func(ctx context.Context, in *proto.ReadlinkRequest, opts ...grpc.CallOption) (*proto.ReadlinkReply, error)) *MockRpcFsClient_Readlink_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Rename provides a mock function for the type MockRpcFsClient
 func (_mock *MockRpcFsClient) Rename(ctx context.Context, in *proto.RenameRequest, opts ...grpc.CallOption) (*proto.RenameReply, error) {
 	// grpc.CallOption
@@ -1166,6 +1253,93 @@ func (_c *MockRpcFsClient_Subscribe_Call) Return(serverStreamingClient grpc.Serv
 }
 
 func (_c *MockRpcFsClient_Subscribe_Call) RunAndReturn(run func(ctx context.Context, in *proto.SubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[proto.SubscribeEvent], error)) *MockRpcFsClient_Subscribe_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Symlink provides a mock function for the type MockRpcFsClient
+func (_mock *MockRpcFsClient) Symlink(ctx context.Context, in *proto.SymlinkRequest, opts ...grpc.CallOption) (*proto.SymlinkReply, error) {
+	// grpc.CallOption
+	_va := make([]interface{}, len(opts))
+	for _i := range opts {
+		_va[_i] = opts[_i]
+	}
+	var _ca []interface{}
+	_ca = append(_ca, ctx, in)
+	_ca = append(_ca, _va...)
+	ret := _mock.Called(_ca...)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Symlink")
+	}
+
+	var r0 *proto.SymlinkReply
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.SymlinkRequest, ...grpc.CallOption) (*proto.SymlinkReply, error)); ok {
+		return returnFunc(ctx, in, opts...)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.SymlinkRequest, ...grpc.CallOption) *proto.SymlinkReply); ok {
+		r0 = returnFunc(ctx, in, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proto.SymlinkReply)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.SymlinkRequest, ...grpc.CallOption) error); ok {
+		r1 = returnFunc(ctx, in, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockRpcFsClient_Symlink_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Symlink'
+type MockRpcFsClient_Symlink_Call struct {
+	*mock.Call
+}
+
+// Symlink is a helper method to define mock.On call
+//   - ctx context.Context
+//   - in *proto.SymlinkRequest
+//   - opts ...grpc.CallOption
+func (_e *MockRpcFsClient_Expecter) Symlink(ctx interface{}, in interface{}, opts ...interface{}) *MockRpcFsClient_Symlink_Call {
+	return &MockRpcFsClient_Symlink_Call{Call: _e.mock.On("Symlink",
+		append([]interface{}{ctx, in}, opts...)...)}
+}
+
+func (_c *MockRpcFsClient_Symlink_Call) Run(run func(ctx context.Context, in *proto.SymlinkRequest, opts ...grpc.CallOption)) *MockRpcFsClient_Symlink_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *proto.SymlinkRequest
+		if args[1] != nil {
+			arg1 = args[1].(*proto.SymlinkRequest)
+		}
+		var arg2 []grpc.CallOption
+		variadicArgs := make([]grpc.CallOption, len(args)-2)
+		for i, a := range args[2:] {
+			if a != nil {
+				variadicArgs[i] = a.(grpc.CallOption)
+			}
+		}
+		arg2 = variadicArgs
+		run(
+			arg0,
+			arg1,
+			arg2...,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFsClient_Symlink_Call) Return(symlinkReply *proto.SymlinkReply, err error) *MockRpcFsClient_Symlink_Call {
+	_c.Call.Return(symlinkReply, err)
+	return _c
+}
+
+func (_c *MockRpcFsClient_Symlink_Call) RunAndReturn(run func(ctx context.Context, in *proto.SymlinkRequest, opts ...grpc.CallOption) (*proto.SymlinkReply, error)) *MockRpcFsClient_Symlink_Call {
 	_c.Call.Return(run)
 	return _c
 }
