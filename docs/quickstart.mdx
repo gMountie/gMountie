@@ -10,8 +10,10 @@ description: Serve a folder from one machine and mount it on another in about 90
 **One binary on the host, one on the client, a directory you can `ls` over the internet — no VPN.** The same `gmountie` binary plays both roles. End-to-end is about 90 seconds.
 
 :::note[Prerequisites]
-- Linux on both ends. Server runs on amd64 or arm64; the client mounts via FUSE.
-- `fuse3` installed on the client (`apt install fuse3` on Debian/Ubuntu).
+- **Server:** Linux on amd64 or arm64.
+- **Client:** Linux *or* macOS. FUSE on the client:
+  - Linux: `fuse3` (`apt install fuse3` on Debian/Ubuntu).
+  - macOS: [macFUSE](https://macfuse.io) *or* [FUSE-T](https://www.fuse-t.org/).
 - A folder you want to share on the server, plus an empty mount point on the client.
 :::
 
@@ -24,7 +26,7 @@ git clone https://github.com/gMountie/gMountie && cd gMountie
 go build -o gmountie ./cmd
 ```
 
-Or grab a `gmountie_linux_*.tar.gz` from the [releases page](https://github.com/gMountie/gMountie/releases). The binary is `gmountie` (lowercase); it's both the server and the client.
+Or grab the release archive for your platform from the [releases page](https://github.com/gMountie/gMountie/releases) — `gmountie_linux_*.tar.gz` for Linux, `gmountie_darwin_*.tar.gz` for the macOS client. The binary is `gmountie` (lowercase); on Linux it's both the server and the client, and on macOS it's the client (the `serve` subcommand is Linux-only).
 
 ## 2 · Start the server
 
