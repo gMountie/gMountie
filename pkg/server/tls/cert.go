@@ -165,6 +165,13 @@ func LoadOrGenerate(certPath, keyPath, host string) (tls.Certificate, []byte, st
 	return parsedCert, certPEM, fp, nil
 }
 
+// LoadCertOnly reads only the cert PEM file. Used by callers (e.g. the
+// `gmountie fingerprint` subcommand) that need to fingerprint without
+// also requiring the private key on disk.
+func LoadCertOnly(certPath string) ([]byte, error) {
+	return os.ReadFile(certPath)
+}
+
 // Fingerprint returns the SSH-style SHA-256 fingerprint of a PEM-encoded
 // certificate: "SHA256:<base64-raw-no-padding>".
 //
