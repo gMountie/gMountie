@@ -3,8 +3,10 @@ package gmountie;
 option go_package = "pkg/proto";
 
 message Owner {
-  uint32 uid = 1;
-  uint32 gid = 2;
+  uint32 uid        = 1;
+  uint32 gid        = 2;
+  string user_name  = 3;  // caller's own uid only (hybrid display)
+  string group_name = 4;  // groups the caller is a member of
 }
 
 message Caller {

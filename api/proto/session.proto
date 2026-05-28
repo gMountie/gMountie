@@ -48,11 +48,12 @@ message WhoAmIRequest {
 }
 
 message Identity {
-  string principal     = 1;
-  uint32 uid           = 2;
-  uint32 primary_gid   = 3;
-  repeated uint32 gids = 4;
-  // user_name (5) + group_names (6) are added in Phase 1b-2.
+  string principal            = 1;
+  uint32 uid                  = 2;
+  uint32 primary_gid          = 3;
+  repeated uint32 gids        = 4;
+  string user_name            = 5;
+  map<uint32, string> group_names = 6;
 }
 
 service SessionService {

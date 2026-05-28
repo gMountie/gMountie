@@ -25,6 +25,8 @@ type Owner struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Uid           uint32                 `protobuf:"varint,1,opt,name=uid,proto3" json:"uid,omitempty"`
 	Gid           uint32                 `protobuf:"varint,2,opt,name=gid,proto3" json:"gid,omitempty"`
+	UserName      string                 `protobuf:"bytes,3,opt,name=user_name,json=userName,proto3" json:"user_name,omitempty"`    // caller's own uid only (hybrid display)
+	GroupName     string                 `protobuf:"bytes,4,opt,name=group_name,json=groupName,proto3" json:"group_name,omitempty"` // groups the caller is a member of
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -71,6 +73,20 @@ func (x *Owner) GetGid() uint32 {
 		return x.Gid
 	}
 	return 0
+}
+
+func (x *Owner) GetUserName() string {
+	if x != nil {
+		return x.UserName
+	}
+	return ""
+}
+
+func (x *Owner) GetGroupName() string {
+	if x != nil {
+		return x.GroupName
+	}
+	return ""
 }
 
 type Caller struct {
@@ -129,10 +145,13 @@ var File_api_proto_common_proto protoreflect.FileDescriptor
 
 const file_api_proto_common_proto_rawDesc = "" +
 	"\n" +
-	"\x16api/proto/common.proto\x12\bgmountie\"+\n" +
+	"\x16api/proto/common.proto\x12\bgmountie\"g\n" +
 	"\x05Owner\x12\x10\n" +
 	"\x03uid\x18\x01 \x01(\rR\x03uid\x12\x10\n" +
-	"\x03gid\x18\x02 \x01(\rR\x03gid\"A\n" +
+	"\x03gid\x18\x02 \x01(\rR\x03gid\x12\x1b\n" +
+	"\tuser_name\x18\x03 \x01(\tR\buserName\x12\x1d\n" +
+	"\n" +
+	"group_name\x18\x04 \x01(\tR\tgroupName\"A\n" +
 	"\x06Caller\x12%\n" +
 	"\x05owner\x18\x01 \x01(\v2\x0f.gmountie.OwnerR\x05owner\x12\x10\n" +
 	"\x03pid\x18\x02 \x01(\rR\x03pidB\vZ\tpkg/protob\x06proto3"
