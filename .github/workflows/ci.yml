@@ -135,14 +135,17 @@ jobs:
         run: task test:race
 
   build-darwin:
-    # Cross-compile regression guard for client-side macOS support. Scoped to
-    # ./pkg/client/... for now — ./cmd/... pulls in pkg/server/io/bound_fs.go,
-    # which uses Linux-only syscall.Setfsuid/Setfsgid and won't compile on
-    # darwin. Once that file is build-tagged for !linux (currently being edited
-    # in the identity-permissions worktree, hands off), expand this to
-    # `go build ./cmd/...` and uncomment `- darwin` in .goreleaser.yaml.
+    # Cross-compile regression guard for the macOS client. cmd/ compiles on
+    # darwin because cmd/commands/serve.go is //go:build linux — the server
+    # subcommand and the Linux-only syscalls it pulls in stay out of the
+    # darwin build. Run on both arches so an amd64-only or arm64-only Linux
+    # syscall regression still gets caught.
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v6
       - name: Setup Go
@@ -150,10 +153,10 @@ jobs:
         with:
           go-version-file: 'go.mod'
           cache-dependency-path: 'go.sum'
-      - name: Cross-compile darwin/arm64 (client)
+      - name: Cross-compile darwin/${{ matrix.goarch }}
         env:
           GOOS: darwin
-          GOARCH: arm64
+          GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '0'
-        run: go build ./pkg/client/...
+        run: go build ./cmd/...
 
