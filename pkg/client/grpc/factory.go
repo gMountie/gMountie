@@ -75,6 +75,7 @@ func NewClientFromConfig(cfg *config.Config) (Client, error) {
 		CAFile:              tlsServer.TLS.CAFile,
 		ExpectedFingerprint: tlsServer.TLS.ExpectedFingerprint,
 		ServerName:          tlsServer.TLS.ServerName,
+		KnownHostsPath:      tlsServer.TLS.KnownHostsPath,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "build client TLS config")

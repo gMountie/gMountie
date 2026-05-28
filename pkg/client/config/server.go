@@ -17,8 +17,9 @@ type TLSConfig struct {
 	Verify              string `mapstructure:"verify" validate:"omitempty,oneof=verify tofu insecure"`
 	ExpectedFingerprint string `mapstructure:"expected_fingerprint"`
 	ServerName          string `mapstructure:"server_name"`
-	CertFile            string `mapstructure:"cert_file"` // mTLS, reserved for PR 3
-	KeyFile             string `mapstructure:"key_file"`  // mTLS, reserved for PR 3
+	KnownHostsPath      string `mapstructure:"known_hosts_path"` // override default XDG path; used by TOFU tests
+	CertFile            string `mapstructure:"cert_file"`        // mTLS, reserved for PR 3
+	KeyFile             string `mapstructure:"key_file"`         // mTLS, reserved for PR 3
 }
 
 // ServerConfig is a struct that holds the configuration for the server
