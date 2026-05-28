@@ -128,6 +128,24 @@ volumes:
 
 Use this when the client is trusted (your own machine, a backup runner) and you need server-side ownership to follow the client's idea of ownership. `root_squash` (NFS-style) keeps client-root from being able to write as server-root by default.
 
+## Admin capabilities
+
+Two POSIX-style capabilities let service accounts bypass per-file DAC checks on a volume without becoming server-root. Granted per-principal in `static` mode (`caps:`) or per-server-group in `system` mode (`admin_groups:`).
+
+| Capability         | What it bypasses                                                                                      |
+|--------------------|--------------------------------------------------------------------------------------------------------|
+| `dac_read_search`  | Read and traverse any path on the volume regardless of mode bits. Writes are still denied.            |
+| `dac_override`     | Read, traverse, and modify. New entries created during the op are `fchown`ed to the principal so admin writes don't leave root-owned files. |
+
+Enforcement is kernel-native via per-thread `capset`: only the OS thread handling that one request bypasses DAC, leaving every other in-flight request running as its normal identity. The server must run as root for caps to engage; without root, caps are silently ignored and every principal runs unprivileged.
+
+Use cases:
+
+- **`dac_read_search`** is the right cap for backup runners and read-only audit accounts: full visibility, no write surface.
+- **`dac_override`** is the break-glass write cap: migration tooling, mass-`chown` scripts, anything that legitimately needs to touch everyone's files. Created entries land owned by the admin principal (not root), so subsequent `ls -l` correctly shows the admin as the originator.
+
+Configuration lives in **[Server reference → Identity mapping](../server/config.md#admin-capabilities-dac_read_search-dac_override)**.
+
 ## The client side — WhoAmI and `--raw-ids`
 
 On mount, the client calls a `WhoAmI` RPC against the server. The server replies with **"as I see you on this volume, you are uid X, gid Y, groups [...]"** — the result of running the chosen mapping mode against your authenticated identity.
