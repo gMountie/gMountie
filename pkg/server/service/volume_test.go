@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"gmountie/pkg/server/config"
 	"testing"
 
@@ -33,8 +34,8 @@ func (s *VolumeServiceTestSuite) SetupTest() {
 }
 
 func (s *VolumeServiceTestSuite) TestList() {
-	// Test
-	volumes, err := s.service.List()
+	// Test — no auth config, so all volumes are visible regardless of principal
+	volumes, err := s.service.List(context.Background())
 
 	// Verify
 	s.Require().NoError(err)
@@ -89,7 +90,7 @@ func (s *VolumeServiceTestSuite) TestNewVolumeService_EmptyVolumes() {
 	// Test
 	service, err := NewVolumeService(emptyConfig)
 	s.Require().NoError(err)
-	volumes, err := service.List()
+	volumes, err := service.List(context.Background())
 
 	// Verify
 	s.Require().NoError(err)
@@ -116,8 +117,10 @@ func (s *VolumeServiceTestSuite) TestNewVolumeService_MultipleMiddleware() {
 }
 
 func (s *VolumeServiceTestSuite) TestVolumeService_VolumeListConsistency() {
-	// Test initial state
-	volumes, err := s.service.List()
+	ctx := context.Background()
+
+	// Test initial state — no auth config, all volumes visible
+	volumes, err := s.service.List(ctx)
 	s.Require().NoError(err)
 	initialCount := len(volumes)
 
@@ -129,7 +132,7 @@ func (s *VolumeServiceTestSuite) TestVolumeService_VolumeListConsistency() {
 	}
 
 	// Verify list remains unchanged
-	volumesAfter, err := s.service.List()
+	volumesAfter, err := s.service.List(ctx)
 	s.Require().NoError(err)
 	s.Assert().Len(volumesAfter, initialCount)
 	s.Assert().Equal(volumes, volumesAfter)

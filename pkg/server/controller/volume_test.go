@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/pkg/errors"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -28,7 +29,7 @@ func (s *VolumeServiceTestSuite) TestList_Success() {
 		{Name: "volume1"},
 		{Name: "volume2"},
 	}
-	s.service.On("List").Return(expectedVolumes, nil)
+	s.service.On("List", mock.Anything).Return(expectedVolumes, nil)
 
 	// Test
 	reply, err := s.server.List(context.Background(), &proto.VolumeListRequest{})
@@ -44,7 +45,7 @@ func (s *VolumeServiceTestSuite) TestList_Success() {
 
 func (s *VolumeServiceTestSuite) TestList_EmptyList() {
 	// Setup
-	s.service.On("List").Return([]common.Volume{}, nil)
+	s.service.On("List", mock.Anything).Return([]common.Volume{}, nil)
 
 	// Test
 	reply, err := s.server.List(context.Background(), &proto.VolumeListRequest{})
@@ -59,7 +60,7 @@ func (s *VolumeServiceTestSuite) TestList_EmptyList() {
 func (s *VolumeServiceTestSuite) TestList_ServiceError() {
 	// Setup
 	expectedError := errors.New("test")
-	s.service.On("List").Return(nil, expectedError)
+	s.service.On("List", mock.Anything).Return(nil, expectedError)
 
 	// Test
 	reply, err := s.server.List(context.Background(), &proto.VolumeListRequest{})

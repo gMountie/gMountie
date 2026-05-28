@@ -56,12 +56,25 @@ func NewFromConfig(v *viper.Viper) (AuthConfig, error) {
 type BasicAuthConfigUser struct {
 	Username     string `validate:"required"`
 	PasswordHash string `mapstructure:"password_hash" validate:"required"`
+	// Volumes is the explicit list of volume names this user may access.
+	// Empty/unset means use the default policy (default_allow). Explicit []
+	// means no volume access regardless of default_allow.
+	Volumes []string `mapstructure:"volumes"`
 }
 
 // BasicAuthConfig is a struct that holds the configuration for the basic auth
 type BasicAuthConfig struct {
 	AuthConfigBase
 	Users []BasicAuthConfigUser `validate:"required,dive"`
+	// DefaultAllow controls access for principals that have no explicit volumes
+	// list. nil (unset) is treated as true for backwards compatibility.
+	DefaultAllow *bool `mapstructure:"default_allow"`
+}
+
+// DefaultAllowOrTrue returns the effective default_allow value.
+// nil (unset in config) is treated as true for backwards compatibility.
+func (c *BasicAuthConfig) DefaultAllowOrTrue() bool {
+	return c.DefaultAllow == nil || *c.DefaultAllow
 }
 
 // NewBasicAuthConfig creates a new BasicAuthConfig with defaults

@@ -14,14 +14,16 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	"github.com/pkg/errors"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const defaultIdentityTTL = 60 * time.Second
 
 // VolumeService is a service that manages volumes.
 type VolumeService interface {
-	// List lists all volumes.
-	List() ([]common.Volume, error)
+	// List lists all volumes accessible to the principal in ctx.
+	List(ctx context.Context) ([]common.Volume, error)
 	// GetVolumeFileSystem gets the filesystem for a volume.
 	GetVolumeFileSystem(name string) (pathfs.FileSystem, error)
 	// BindIdentity resolves the request's identity for a volume and returns a
@@ -30,6 +32,9 @@ type VolumeService interface {
 	// ResolveIdentity resolves the request's server-side identity for a volume
 	// (principal from ctx for mapped modes; wire caller for passthrough).
 	ResolveIdentity(ctx context.Context, volume string, caller *proto.Caller) (Identity, error)
+	// PrincipalCanAccess returns nil if the principal in ctx is allowed to
+	// access the named volume, or a PermissionDenied status error otherwise.
+	PrincipalCanAccess(ctx context.Context, volume string) error
 }
 
 type VolumeServiceOptions func(*VolumeServiceImpl)
@@ -42,25 +47,43 @@ func WithMiddleware(middleware ...io.Middleware) VolumeServiceOptions {
 
 // VolumeServiceImpl is an implementation of the VolumeService interface.
 type VolumeServiceImpl struct {
-	config      *config.Config
-	filesystems map[string]pathfs.FileSystem
-	middleware  []io.Middleware
-	resolvers   map[string]IdentityResolver
-	mappings    map[string]config.MappingConfig
+	config         *config.Config
+	filesystems    map[string]pathfs.FileSystem
+	middleware     []io.Middleware
+	resolvers      map[string]IdentityResolver
+	mappings       map[string]config.MappingConfig
+	aclByPrincipal map[string][]string // principal → explicit volume list (nil value = unset)
+	defaultAllow   bool                // effective default_allow from auth config
+	aclEnabled     bool                // true when an auth config with users is present
 }
 
 // NewVolumeService creates a new VolumeService.
 func NewVolumeService(cfg *config.Config, options ...VolumeServiceOptions) (VolumeService, error) {
 	fs := make(map[string]pathfs.FileSystem)
 	svc := &VolumeServiceImpl{
-		config:      cfg,
-		filesystems: fs,
-		middleware:  make([]io.Middleware, 0),
-		resolvers:   make(map[string]IdentityResolver),
-		mappings:    make(map[string]config.MappingConfig),
+		config:         cfg,
+		filesystems:    fs,
+		middleware:     make([]io.Middleware, 0),
+		resolvers:      make(map[string]IdentityResolver),
+		mappings:       make(map[string]config.MappingConfig),
+		aclByPrincipal: make(map[string][]string),
+		defaultAllow:   true,
+		aclEnabled:     false,
 	}
 	for _, option := range options {
 		option(svc)
+	}
+	// Build ACL model from auth config when available.
+	if cfg.Auth != nil {
+		if bac, ok := cfg.Auth.(*config.BasicAuthConfig); ok {
+			svc.aclEnabled = true
+			svc.defaultAllow = bac.DefaultAllowOrTrue()
+			for _, u := range bac.Users {
+				if u.Volumes != nil {
+					svc.aclByPrincipal[u.Username] = u.Volumes
+				}
+			}
+		}
 	}
 	for _, v := range cfg.Volumes {
 		localFS, err := io.NewLocalFilesystem(v.Path)
@@ -83,11 +106,15 @@ func NewVolumeService(cfg *config.Config, options ...VolumeServiceOptions) (Volu
 	return svc, nil
 }
 
-// List lists all volumes.
-func (s *VolumeServiceImpl) List() ([]common.Volume, error) {
+// List lists all volumes accessible to the principal in ctx.
+// Volumes for which PrincipalCanAccess returns an error are silently excluded
+// so that a caller with restricted access sees only their volumes, not an error.
+func (s *VolumeServiceImpl) List(ctx context.Context) ([]common.Volume, error) {
 	volumes := make([]common.Volume, 0)
 	for _, v := range s.config.Volumes {
-		volumes = append(volumes, common.Volume{Name: v.Name})
+		if s.PrincipalCanAccess(ctx, v.Name) == nil {
+			volumes = append(volumes, common.Volume{Name: v.Name})
+		}
 	}
 	return volumes, nil
 }
@@ -101,9 +128,41 @@ func (s *VolumeServiceImpl) GetVolumeFileSystem(name string) (pathfs.FileSystem,
 	return fs, nil
 }
 
+// PrincipalCanAccess returns nil if the authenticated principal in ctx is
+// permitted to access the named volume. When no auth config is present (ACL
+// not enabled), all accesses are allowed regardless of principal. When ACL is
+// enabled and the principal has an explicit volume list, membership is checked;
+// otherwise the default_allow policy applies.
+func (s *VolumeServiceImpl) PrincipalCanAccess(ctx context.Context, volume string) error {
+	// No auth configured → no restrictions; allow everything.
+	if !s.aclEnabled {
+		return nil
+	}
+	p, ok := principal.FromContext(ctx)
+	if !ok || p == "" {
+		return status.Errorf(codes.PermissionDenied, "no authenticated principal for volume %q", volume)
+	}
+	if list, hasList := s.aclByPrincipal[p]; hasList {
+		for _, v := range list {
+			if v == volume {
+				return nil
+			}
+		}
+		return status.Errorf(codes.PermissionDenied, "principal %q is not granted volume %q", p, volume)
+	}
+	// No explicit list → default policy.
+	if s.defaultAllow {
+		return nil
+	}
+	return status.Errorf(codes.PermissionDenied, "principal %q has no volume grants (default_allow=false)", p)
+}
+
 // BindIdentity resolves the request's identity for a volume and returns a
 // per-request identity-bound filesystem wrapping the volume's loopback.
 func (s *VolumeServiceImpl) BindIdentity(ctx context.Context, volume string, caller *proto.Caller) (pathfs.FileSystem, error) {
+	if err := s.PrincipalCanAccess(ctx, volume); err != nil {
+		return nil, err
+	}
 	fs, ok := s.filesystems[volume]
 	if !ok {
 		return nil, errors.Errorf("volume %s not found", volume)
