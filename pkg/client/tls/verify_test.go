@@ -12,6 +12,26 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
+// writeTempKeypair writes certPEM and keyPEM to temp files in dir and returns
+// the cert path and key path.
+func writeTempKeypair(t interface {
+	Helper()
+	TempDir() string
+	Fatalf(format string, args ...interface{})
+}, certPEM, keyPEM []byte) (certPath, keyPath string) {
+	t.Helper()
+	dir := t.TempDir()
+	certPath = filepath.Join(dir, "client.crt")
+	keyPath = filepath.Join(dir, "client.key")
+	if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
+		t.Fatalf("write cert: %v", err)
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+	return certPath, keyPath
+}
+
 // VerifyTestSuite tests BuildConfig and pinVerifier using forged rawCerts.
 // No real network connection is needed — we call VerifyPeerCertificate
 // directly with DER bytes produced by servertls.Generate.
@@ -161,6 +181,65 @@ func (s *VerifyTestSuite) TestTLSVersionIsAtLeast13() {
 		s.Require().NoError(err)
 		s.Equal(uint16(tls.VersionTLS13), cfg.MinVersion, "mode=%s", mode)
 	}
+}
+
+// TestClientCertPresentedWhenConfigured — when CertFile and KeyFile are set,
+// BuildConfig populates Certificates with exactly one entry.
+func (s *VerifyTestSuite) TestClientCertPresentedWhenConfigured() {
+	certPEM, keyPEM, err := servertls.Generate("client.example")
+	s.Require().NoError(err)
+
+	certPath, keyPath := writeTempKeypair(s.T(), certPEM, keyPEM)
+
+	cfg, err := BuildConfig(Config{Mode: ModeInsecure, Endpoint: "x:1", CertFile: certPath, KeyFile: keyPath})
+	s.Require().NoError(err)
+	s.Len(cfg.Certificates, 1, "expected exactly one client certificate")
+}
+
+// TestNoClientCertByDefault — when CertFile/KeyFile are not set, Certificates
+// must be empty.
+func (s *VerifyTestSuite) TestNoClientCertByDefault() {
+	cfg, err := BuildConfig(Config{Mode: ModeInsecure, Endpoint: "x:1"})
+	s.Require().NoError(err)
+	s.Empty(cfg.Certificates)
+}
+
+// TestClientCertRequiresBothPaths — supplying only CertFile (no KeyFile) must
+// return an error that mentions "both cert_file and key_file".
+func (s *VerifyTestSuite) TestClientCertRequiresBothPaths() {
+	certPEM, _, err := servertls.Generate("client.example")
+	s.Require().NoError(err)
+
+	dir := s.T().TempDir()
+	certPath := filepath.Join(dir, "client.crt")
+	s.Require().NoError(os.WriteFile(certPath, certPEM, 0o600))
+
+	cfg, err := BuildConfig(Config{Mode: ModeInsecure, Endpoint: "x:1", CertFile: certPath})
+	s.Require().Error(err)
+	s.Contains(err.Error(), "both cert_file and key_file")
+	s.Nil(cfg)
+}
+
+// TestClientCertComposesWithTOFU — client cert population is orthogonal to the
+// server-verification mode; verify it works with TOFU too.
+func (s *VerifyTestSuite) TestClientCertComposesWithTOFU() {
+	certPEM, keyPEM, err := servertls.Generate("client.example")
+	s.Require().NoError(err)
+
+	certPath, keyPath := writeTempKeypair(s.T(), certPEM, keyPEM)
+
+	khPath := filepath.Join(s.T().TempDir(), "known_hosts")
+	cfg, err := BuildConfig(Config{
+		Mode:           ModeTOFU,
+		Endpoint:       "server.example:9449",
+		KnownHostsPath: khPath,
+		CertFile:       certPath,
+		KeyFile:        keyPath,
+	})
+	s.Require().NoError(err)
+	s.True(cfg.InsecureSkipVerify, "TOFU sets InsecureSkipVerify")
+	s.NotNil(cfg.VerifyPeerCertificate, "TOFU installs VerifyPeerCertificate callback")
+	s.Len(cfg.Certificates, 1, "client cert must be present alongside TOFU")
 }
 
 func TestVerifyTestSuite(t *testing.T) {
