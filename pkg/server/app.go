@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"net"
 	"os"
 	"path/filepath"
@@ -131,11 +132,32 @@ func Start(ctx context.Context, cfg *config.Config) error {
 			NextProtos:   []string{"h2"},
 			Certificates: []tls.Certificate{cert},
 		}
+		// mTLS: require + verify client certificates against the configured CA.
+		if cfg.Auth.GetType() == config.AuthConfigTypeMTLS {
+			if cfg.Server.TLS.ClientCAFile == "" {
+				return errors.New("auth.type: mtls requires server.tls.client_ca_file")
+			}
+			caPEM, err := os.ReadFile(cfg.Server.TLS.ClientCAFile)
+			if err != nil {
+				return errors.Wrap(err, "read client CA file")
+			}
+			pool := x509.NewCertPool()
+			if !pool.AppendCertsFromPEM(caPEM) {
+				return errors.New("server.tls.client_ca_file: no valid PEM certificates found")
+			}
+			tlsCfg.ClientCAs = pool
+			tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
+			log.Log.Info("mTLS client authentication enabled",
+				zap.String("client_ca_file", cfg.Server.TLS.ClientCAFile))
+		}
 		serverCreds = credentials.NewTLS(tlsCfg)
 		log.Log.Info("server TLS enabled",
 			zap.String("cert_path", certPath),
 			zap.String("fingerprint", fp))
 	} else {
+		if cfg.Auth.GetType() == config.AuthConfigTypeMTLS {
+			return errors.New("auth.type: mtls is incompatible with server.tls.disabled")
+		}
 		if !isLoopback(bind) {
 			return errors.Errorf("server.tls.disabled=true requires a loopback bind address (got %q)", bind)
 		}
