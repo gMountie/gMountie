@@ -33,6 +33,11 @@ type RpcFileServerTestSuite struct {
 
 func (s *RpcFileServerTestSuite) SetupTest() {
 	s.fsService = new(mockservice.MockVolumeService)
+	// Default permissive stub for ResolveIdentity — Create now consults it to
+	// fill Owner.user_name/group_name on the post-create stat. Tests that care
+	// about the names can override via .On("ResolveIdentity", ...).
+	s.fsService.On("ResolveIdentity", mock.Anything, mock.Anything, mock.Anything).
+		Return(service.Identity{}, nil).Maybe()
 	s.sessionMgr = service.NewSessionManager(service.SessionManagerOptions{})
 	sid, err := s.sessionMgr.Create()
 	s.Require().NoError(err)

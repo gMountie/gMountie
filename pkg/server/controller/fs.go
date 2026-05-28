@@ -70,7 +70,7 @@ func (r *RpcServerImpl) GetAttr(ctx context.Context, request *proto.GetAttrReque
 		}, nil
 	}
 	reply := &proto.GetAttrReply{
-		Attributes: toProtoAttr(attr),
+		Attributes: toProtoAttr(attr, resolveIdentityOrNil(ctx, r.fsService, request.Volume, request.Caller)),
 		Status:     int32(status),
 	}
 	return reply, nil
@@ -333,6 +333,9 @@ func (r *RpcServerImpl) GetAttrIfChanged(ctx context.Context, request *proto.Get
 	}
 	return &proto.GetAttrIfChangedReply{
 		NotModified: false,
-		Attrs:       toProtoAttr(attr),
+		// GetAttrIfChangedRequest carries no Caller — pass nil here, matching
+		// the BindIdentity(nil) call above. The names are best-effort; the
+		// client can re-stat through GetAttr when it needs them.
+		Attrs: toProtoAttr(attr, nil),
 	}, nil
 }

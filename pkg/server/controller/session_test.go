@@ -60,7 +60,14 @@ func (s *SessionControllerTestSuite) TestResumeUnknownSession() {
 
 func (s *SessionControllerTestSuite) TestWhoAmI() {
 	s.volSvc.EXPECT().ResolveIdentity(mock.Anything, "v", mock.Anything).
-		Return(service.Identity{Principal: "alice", Uid: 1001, Gid: 1001, Gids: []uint32{1001, 2000}}, nil)
+		Return(service.Identity{
+			Principal:  "alice",
+			Uid:        1001,
+			Gid:        1001,
+			Gids:       []uint32{1001, 2000},
+			UserName:   "alice",
+			GroupNames: map[uint32]string{2000: "developers"},
+		}, nil)
 	ctx := principal.WithPrincipal(context.Background(), "alice")
 	reply, err := s.controller.WhoAmI(ctx, &proto.WhoAmIRequest{Volume: "v"})
 	s.Require().NoError(err)
@@ -68,6 +75,8 @@ func (s *SessionControllerTestSuite) TestWhoAmI() {
 	s.Equal(uint32(1001), reply.Uid)
 	s.Equal(uint32(1001), reply.PrimaryGid)
 	s.ElementsMatch([]uint32{1001, 2000}, reply.Gids)
+	s.Equal("alice", reply.UserName)
+	s.Equal("developers", reply.GroupNames[2000])
 }
 
 func TestSessionControllerTestSuite(t *testing.T) {

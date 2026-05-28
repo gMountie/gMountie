@@ -68,6 +68,8 @@ func (c *SessionController) WhoAmI(ctx context.Context, req *proto.WhoAmIRequest
 		Uid:        id.Uid,
 		PrimaryGid: id.Gid,
 		Gids:       id.Gids,
+		UserName:   id.UserName,
+		GroupNames: id.GroupNames,
 	}, nil
 }
 
