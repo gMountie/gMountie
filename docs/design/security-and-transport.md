@@ -1,0 +1,188 @@
+# Security and Transport
+
+**Status:** Shipped (Phase 7, PRs #53–#55, 2026-05-29)
+**Last updated:** 2026-05-29
+
+The durable record of gMountie's transport security, credential storage,
+and access-control model — what makes it deployable on a non-trusted
+network. The brainstorm spec that drove the design has been pruned now
+that the work has shipped; the per-PR implementation plans in
+`docs/superpowers/plans/2026-05-29-phase7-*.md` preserve the historical
+task-by-task record.
+
+## 1. The one principle
+
+**Plaintext never leaves the loopback.** Everything outside `127.0.0.1`
+— gRPC traffic, basic-auth credentials, password storage at rest, ops
+endpoints, reflection metadata — is encrypted, hashed, authenticated,
+or bound to localhost. There is no permissive default that requires the
+operator to flip a switch to be safe; the zero-config first run already
+lands on TLS.
+
+## 2. Transport — server TLS
+
+Every gRPC connection is TLS-terminated. Config (`server.tls`):
+
+```yaml
+server:
+  tls:
+    cert_file: /etc/gmountie/server.crt   # omit → auto-generate (§2.1)
+    key_file:  /etc/gmountie/server.key
+    client_ca_file: /etc/gmountie/clients-ca.crt  # set → enables mTLS (§6)
+    min_version: "1.3"                    # default; validated to {1.2,1.3}
+    disabled: false                       # dev-only escape (§2.3)
+```
+
+`pkg/server/grpc.NewServer` takes the credentials via a `WithCredentials`
+option; the bootstrap in `pkg/server/app.go` builds the `tls.Config`
+(`MinVersion: TLS1.3`, `NextProtos: ["h2"]`) before the listener binds.
+Cert rotation is by restart (SIGHUP reload deferred).
+
+### 2.1 Auto-generated cert — the SSH host-key pattern
+
+When `cert_file`/`key_file` are unset and TLS is not disabled, the server
+generates a self-signed cert on **first** startup (`pkg/server/tls`):
+
+- ECDSA P-256, SHA-256, 10-year validity. CN = bind hostname (or
+  `gmountie-server`); SAN includes the hostname + bound IP literals.
+- Stored at `$XDG_STATE_HOME/gmountie/server.{crt,key}` (key `0600`,
+  cert `0644`). Systemd installs get `/var/lib/gmountie/` via
+  `StateDirectory=gmountie`.
+- The SHA-256 fingerprint (`SHA256:<base64>`, SSH form) is logged once
+  at startup.
+- Subsequent starts load the existing files — no regeneration (rotate by
+  deleting + restarting). **An operator-provided `cert_file` wins** and
+  skips auto-gen entirely, so Let's Encrypt / internal-CA setups override
+  cleanly with no code-path divergence.
+
+### 2.2 `gmountie fingerprint`
+
+A read-only subcommand prints the fingerprint of the cert the server
+would present (config `cert_file` if set, else the auto-gen path). One
+machine-readable line by default (`expected_fingerprint: $(ssh host
+gmountie fingerprint)`); `--verbose` adds subject/issuer/validity. Never
+auto-generates — inspection must not mutate state. Shares the cert-load
+helper with `serve`.
+
+### 2.3 `tls.disabled`
+
+Local-dev escape only: starts plaintext, logs a recurring WARN, and the
+listener **refuses any non-loopback bind**. Incompatible with mTLS
+(startup error).
+
+## 3. Transport — client verification
+
+Config (`server.tls` on the client):
+
+```yaml
+server:
+  tls:
+    ca_file: /etc/gmountie/server-ca.crt  # empty → system roots
+    verify: verify                        # verify | tofu | insecure
+    expected_fingerprint: ""              # static pin (SHA256:…)
+    server_name: ""                       # empty → derive from endpoint
+    cert_file: ""                         # mTLS client cert (§6)
+    key_file:  ""
+```
+
+Three verification modes (`pkg/client/tls.BuildConfig`):
+
+- **`verify`** (default) — strict chain validation against `ca_file` or
+  the system trust store. An optional `expected_fingerprint` adds a
+  leaf-cert SHA-256 pin on top.
+- **`tofu`** — trust on first use. The client pins the server's leaf-cert
+  fingerprint to `$XDG_STATE_HOME/gmountie/known_hosts` (keyed by
+  endpoint) on first connect, and refuses on any later mismatch ("cert
+  fingerprint changed; … remove the entry … and re-pin"). The recommended
+  pairing with auto-generated server certs — strictly safer than
+  `insecure`, no CA distribution needed. SSH's exact pattern.
+- **`insecure`** — skip verification; explicit prototyping escape, loud
+  WARN.
+
+`BasicAuthCredentials.RequireTransportSecurity()` is `true`, so basic
+auth over plaintext fails at dial time rather than leaking the password.
+
+## 4. Credentials at rest — argon2id
+
+Basic-auth passwords are stored as argon2id PHC strings
+(`$argon2id$v=19$m=65536,t=3,p=4$<salt>$<hash>`), parameters m=64 MiB /
+t=3 / p=4 (OWASP 2026). `pkg/common/passhash` owns `Hash`/`Verify`
+(constant-time)/`IsHashed`.
+
+- **`gmountie genpass`** reads a password (no-echo on a TTY, double-entry
+  confirm) and prints the PHC string to paste into config.
+- **Startup is fail-closed:** any `password_hash` not starting with
+  `$argon2id$` aborts startup pointing at `gmountie genpass`. No silent
+  acceptance of plaintext.
+- First-run default config writes a *hashed* `admin` password with a
+  `# CHANGE ME` comment — onboarding still "just works" but the weak
+  credential is discoverable.
+
+## 5. Server surface hardening
+
+- **Ops endpoints** (`/metrics`, `/healthz`, `/readyz`, `/version`,
+  `/debug/pprof`) bind to `127.0.0.1:9090` by default (`server.ops.addr`).
+  An optional `server.ops.auth` block (`type: basic|none`, argon2id
+  `users`) gates them; `auth.type: none` on a **non-loopback** addr is a
+  startup error. Unknown-user requests run a sentinel-hash verify to keep
+  auth latency uniform (no user-existence timing leak). `/debug/pprof`
+  also stays behind the existing `server.pprof` flag.
+- **gRPC reflection** is opt-in: `server.grpc.reflection` defaults to
+  `false`, so production doesn't expose the service surface to anonymous
+  callers.
+- **DoS limits** under `server.grpc.limits`: `max_recv_message_size`
+  (16 MiB), `max_concurrent_streams` (256), `max_connection_idle` (5m),
+  `max_connection_age` (0 = unlimited; long-lived sessions are the norm).
+  Idle/age fold into the gRPC keepalive parameters.
+
+## 6. mTLS
+
+`auth.type: mtls` makes the **verified client certificate** the identity.
+The TLS layer does the cryptographic check: when mTLS is selected the
+server sets `ClientCAs` (from `server.tls.client_ca_file`, required) and
+`ClientAuth: RequireAndVerifyClientCert`. `mtlsAuthService` then extracts
+the principal from the verified leaf — **CN, or the first DNS SAN when CN
+is empty**. The client presents its cert via `cert_file`/`key_file`
+(loaded into `tls.Config.Certificates`, orthogonal to how it verifies the
+*server*). mTLS users carry only `volumes:` (no `password_hash`). mTLS is
+incompatible with `tls.disabled`.
+
+## 7. Per-user volume ACL
+
+Restricts which volumes a principal may list, mount, or call.
+
+- `auth.users[].volumes: [<name>…]` — explicit grant. Empty/unset = the
+  default policy; explicit `[]` = no access.
+- `auth.default_allow` (default `true` = compat). Set `false` for
+  fail-closed: a principal with no explicit list gets nothing.
+- **Single enforcement point:** `VolumeService.PrincipalCanAccess(ctx,
+  volume) error` (returns `PermissionDenied`), folded into the top of
+  `BindIdentity` so every FS op is covered, plus `List(ctx)` filtering
+  and the `WhoAmI` path. The principal comes from `principal.FromContext`
+  (set by the auth interceptor from the basic-auth username or the mTLS
+  cert CN). A request with no authenticated principal is denied.
+
+## 8. Threat model — out of scope
+
+- A compromised server binary (same model as NFS/SSHFS).
+- TLS side channels beyond standard Go hardening.
+- An operator with config write access (can always reset creds / disable
+  TLS).
+
+## 9. Deferred follow-ups
+
+- **OIDC / JWT** auth (JWKS cache, key rotation, audience) — schedule
+  once mTLS has real-deployment mileage.
+- **Per-connection byte-rate limit** — the size + concurrency caps cover
+  the basic DoS shape; bytes/sec matters for multi-tenant shared servers.
+- **OS-keyring client credential storage** (libsecret) — today the client
+  reads passwords from YAML; shares the desktop-UI scope problem (Phase 8).
+
+## 10. North-star acceptance
+
+A server bound to `0.0.0.0:9244`, TLS-terminated, `default_allow: false`,
+operated under steady authenticated traffic plus `nmap`/`testssl.sh` and
+an attacker who knows the proto surface but holds no credentials, leaks
+**zero unauthenticated bytes** off the loopback, **zero plaintext
+credentials** in logs or config, and grants **zero volume access** to a
+principal not explicitly listed.

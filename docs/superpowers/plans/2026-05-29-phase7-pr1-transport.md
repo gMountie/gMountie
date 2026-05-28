@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go stdlib `crypto/tls`, `crypto/x509`, `crypto/ecdsa`, `crypto/elliptic`; `google.golang.org/grpc/credentials`; XDG via `github.com/adrg/xdg` (already a dep); cobra CLI.
 
-**Reference:** `docs/superpowers/specs/2026-05-29-phase7-security-hardening-design.md` §3.1 (server TLS), §3.1.1 (auto-gen), §3.1.2 (fingerprint CLI), §3.2 (client modes + TOFU). Decisions #1, #7, #9, #10, #11 locked.
+**Reference:** the Phase 7 brainstorm spec (pruned on ship; see `docs/design/security-and-transport.md`).1 (server TLS), §3.1.1 (auto-gen), §3.1.2 (fingerprint CLI), §3.2 (client modes + TOFU). Decisions #1, #7, #9, #10, #11 locked.
 
 ---
 

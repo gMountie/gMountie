@@ -59,6 +59,7 @@ const sidebars = {
         'design/caching-and-consistency',
         'design/performance',
         'design/identity-and-permissions',
+        'design/security-and-transport',
         'design/operations-and-packaging',
       ],
     },
