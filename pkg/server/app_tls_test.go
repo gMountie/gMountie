@@ -75,7 +75,7 @@ func (s *AppTLSSuite) TestHostFromBind() {
 		{"example.com:9244", "example.com"},
 		{":9244", "gmountie-server"},
 		{"0.0.0.0:9244", "gmountie-server"},
-		{":::9244", "gmountie-server"},  // IPv6 wildcard with port
+		{":::9244", "gmountie-server"}, // IPv6 wildcard with port
 		{"10.0.0.1:9244", "10.0.0.1"},
 		{"127.0.0.1:9244", "127.0.0.1"},
 		{"", "gmountie-server"},

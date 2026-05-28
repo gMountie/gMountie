@@ -8,6 +8,7 @@ import (
 
 	servertls "gmountie/pkg/server/tls"
 
+	"github.com/adrg/xdg"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/suite"
@@ -29,6 +30,9 @@ func (s *FingerprintCmdSuite) SetupTest() {
 	s.xdgRestore = os.Getenv("XDG_STATE_HOME")
 	dir := s.T().TempDir()
 	s.Require().NoError(os.Setenv("XDG_STATE_HOME", dir))
+	// xdg caches StateHome at package init; Reload re-reads the env so the
+	// fresh tempdir actually takes effect for this test run.
+	xdg.Reload()
 
 	s.buf = new(bytes.Buffer)
 	s.root = &cobra.Command{Use: "root"}
@@ -39,6 +43,7 @@ func (s *FingerprintCmdSuite) SetupTest() {
 
 func (s *FingerprintCmdSuite) TearDownTest() {
 	_ = os.Setenv("XDG_STATE_HOME", s.xdgRestore)
+	xdg.Reload()
 	viper.Reset()
 }
 

@@ -2,7 +2,6 @@ package tls
 
 import (
 	"crypto/ecdsa"
-	stdtls "crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"os"
@@ -61,7 +60,7 @@ func (s *CertSuite) TestLoadFromDisk() {
 	s.Require().NoError(err)
 	s.Equal(certPEM, gotPEM)
 	s.NotNil(cert.PrivateKey)
-	_ = stdtls.Certificate(cert) // sanity: compiles into a tls.Certificate
+	// cert is already a stdtls.Certificate (Load's return type) — no conversion needed.
 }
 
 func (s *CertSuite) TestLoadOrGenerate_FirstStartCreatesFiles() {

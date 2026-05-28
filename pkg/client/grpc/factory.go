@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"gmountie/pkg/client/config"
 	"gmountie/pkg/client/metrics"
+	clienttls "gmountie/pkg/client/tls"
 	"gmountie/pkg/server/grpc/snappy"
 	"gmountie/pkg/utils/log"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -61,6 +63,25 @@ func NewClientFromConfig(cfg *config.Config) (Client, error) {
 		}
 		opts = append(opts, WithDialOptions(dialOpts))
 	}
+
+	// Build TLS transport credentials unconditionally. The verify mode
+	// defaults to "verify" (full chain check) when empty; "insecure" skips
+	// it for local dev/testing.
+	tlsServer := cfg.Server
+	endpoint := createEndpoint(tlsServer)
+	tlsCfg, err := clienttls.BuildConfig(clienttls.Config{
+		Endpoint:            endpoint,
+		Mode:                tlsServer.TLS.Verify,
+		CAFile:              tlsServer.TLS.CAFile,
+		ExpectedFingerprint: tlsServer.TLS.ExpectedFingerprint,
+		ServerName:          tlsServer.TLS.ServerName,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "build client TLS config")
+	}
+	opts = append(opts, WithDialOptions([]grpc.DialOption{
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+	}))
 
 	// Build and register client metrics once per factory call. Register
 	// tolerates AlreadyRegisteredError so tests building multiple clients

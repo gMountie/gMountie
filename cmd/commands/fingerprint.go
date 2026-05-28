@@ -51,7 +51,7 @@ func runFingerprint(cmd *cobra.Command, _ []string) error {
 
 	out := cmd.OutOrStdout()
 	if !fingerprintVerbose {
-		fmt.Fprintln(out, fp)
+		_, _ = fmt.Fprintln(out, fp)
 		return nil
 	}
 
@@ -63,12 +63,12 @@ func runFingerprint(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("parse cert at %s: %w", certPath, err)
 	}
-	fmt.Fprintf(out, "Path:        %s\n", certPath)
-	fmt.Fprintf(out, "Subject:     %s\n", c.Subject)
-	fmt.Fprintf(out, "Issuer:      %s\n", c.Issuer)
-	fmt.Fprintf(out, "NotBefore:   %s\n", c.NotBefore.UTC().Format("2006-01-02 15:04:05 UTC"))
-	fmt.Fprintf(out, "NotAfter:    %s\n", c.NotAfter.UTC().Format("2006-01-02 15:04:05 UTC"))
-	fmt.Fprintf(out, "Fingerprint: %s\n", fp)
+	_, _ = fmt.Fprintf(out, "Path:        %s\n", certPath)
+	_, _ = fmt.Fprintf(out, "Subject:     %s\n", c.Subject)
+	_, _ = fmt.Fprintf(out, "Issuer:      %s\n", c.Issuer)
+	_, _ = fmt.Fprintf(out, "NotBefore:   %s\n", c.NotBefore.UTC().Format("2006-01-02 15:04:05 UTC"))
+	_, _ = fmt.Fprintf(out, "NotAfter:    %s\n", c.NotAfter.UTC().Format("2006-01-02 15:04:05 UTC"))
+	_, _ = fmt.Fprintf(out, "Fingerprint: %s\n", fp)
 	return nil
 }
 

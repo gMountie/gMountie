@@ -12,7 +12,6 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // Client is the interface for the gRPC Client.
@@ -269,17 +268,16 @@ func (c *ClientImpl) getInterceptors() []grpc.UnaryClientInterceptor {
 	return append(base, c.extraInterceptors...)
 }
 
-// getDialOptions returns the dial options
+// getDialOptions returns the dial options. Transport credentials must be
+// provided via WithDialOptions (see factory.go); there is no insecure fallback.
 func (c *ClientImpl) getDialOptions() []grpc.DialOption {
 	opts := []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		//grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})),
 		grpc.WithChainUnaryInterceptor(
 			c.getInterceptors()...,
 		),
 	}
 
-	// Append the dial options
+	// Append the dial options (includes transport credentials from factory).
 	opts = append(opts, c.dialOptions...)
 	return opts
 }

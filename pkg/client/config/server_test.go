@@ -16,7 +16,6 @@ func (s *ServerConfigTestSuite) TestParse_FullServer() {
 server:
   address: 0.0.0.0
   port: 9449
-  tls: false
 auth:
   type: basic
   username: admin
@@ -26,7 +25,8 @@ auth:
 	s.Require().NoError(err)
 	s.Assert().Equal("0.0.0.0", result.Server.Address)
 	s.Assert().Equal(uint(9449), result.Server.Port)
-	s.Assert().False(result.Server.TLS)
+	// TLS defaults: empty Verify is treated as "verify" by client/tls.BuildConfig.
+	s.Assert().Empty(result.Server.TLS.Verify)
 }
 
 // Test default values
@@ -43,7 +43,7 @@ auth:
 	s.Require().NoError(err)
 	s.Assert().Equal("127.0.0.1", result.Server.Address)
 	s.Assert().Equal(uint(9449), result.Server.Port) // Should use default port
-	s.Assert().False(result.Server.TLS)              // Should default to false
+	s.Assert().Empty(result.Server.TLS.Verify)       // empty == "verify" at dial time
 }
 
 // Test validation cases
@@ -88,13 +88,20 @@ auth:
 	s.Require().Error(err)
 }
 
-// Test TLS specific cases
-func (s *ServerConfigTestSuite) TestParse_WithTLS() {
+// TestParse_TLSStructFields verifies the TLSConfig struct (Phase 7 PR 1)
+// parses each field cleanly. The old `tls: true|false` toggle is gone —
+// TLS is always on at the wire layer; the struct controls how the client
+// verifies the server.
+func (s *ServerConfigTestSuite) TestParse_TLSStructFields() {
 	conf := `
 server:
   address: 0.0.0.0
   port: 9449
-  tls: true
+  tls:
+    verify: tofu
+    expected_fingerprint: SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGH
+    ca_file: /etc/gmountie/ca.crt
+    server_name: gmountie.example.com
 auth:
   type: basic
   username: admin
@@ -102,7 +109,10 @@ auth:
 `
 	result, err := LoadConfigFromString(conf)
 	s.Require().NoError(err)
-	s.Assert().True(result.Server.TLS)
+	s.Assert().Equal("tofu", result.Server.TLS.Verify)
+	s.Assert().Equal("SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGH", result.Server.TLS.ExpectedFingerprint)
+	s.Assert().Equal("/etc/gmountie/ca.crt", result.Server.TLS.CAFile)
+	s.Assert().Equal("gmountie.example.com", result.Server.TLS.ServerName)
 }
 
 func TestServerConfigTestSuite(t *testing.T) {

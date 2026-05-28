@@ -44,12 +44,12 @@ func Generate(host string) (certPEM, keyPEM []byte, err error) {
 
 	now := time.Now()
 	tmpl := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: bare},
-		NotBefore:    now,
-		NotAfter:     now.Add(10 * 365 * 24 * time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyAgreement,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: bare},
+		NotBefore:             now,
+		NotAfter:              now.Add(10 * 365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyAgreement,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 	}
 
@@ -138,7 +138,7 @@ func LoadOrGenerate(certPath, keyPath, host string) (tls.Certificate, []byte, st
 		return tls.Certificate{}, nil, "", err
 	}
 	if _, err = keyFile.Write(keyPEM); err != nil {
-		keyFile.Close()
+		_ = keyFile.Close()
 		return tls.Certificate{}, nil, "", err
 	}
 	if err = keyFile.Close(); err != nil {
