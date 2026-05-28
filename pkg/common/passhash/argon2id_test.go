@@ -45,10 +45,10 @@ func (s *Argon2idSuite) TestVerify_RejectsMalformedHash() {
 	cases := []string{
 		"",
 		"not-a-hash",
-		"$argon2id$",                              // missing fields
-		"$argon2id$v=19$m=65536,t=3,p=4$",         // missing salt + hash
-		"$argon2id$v=19$m=BAD,t=3,p=4$YWFh$YmJi",  // malformed param
-		"$bcrypt$something",                        // wrong algorithm
+		"$argon2id$",                             // missing fields
+		"$argon2id$v=19$m=65536,t=3,p=4$",        // missing salt + hash
+		"$argon2id$v=19$m=BAD,t=3,p=4$YWFh$YmJi", // malformed param
+		"$bcrypt$something",                      // wrong algorithm
 	}
 	for _, c := range cases {
 		ok, err := Verify(c, "x")

@@ -115,8 +115,11 @@ func (s *Server) Serve() error {
 	// Register the gRPC health service. Always on — probes don't depend
 	// on the metrics toggle.
 	s.HealthService.Register(s.server)
-	// Add reflection.
-	reflection.Register(s.server)
+	// Add reflection only when explicitly enabled — off by default so
+	// production deployments don't expose the service surface to anonymous callers.
+	if s.config != nil && s.config.Server != nil && s.config.Server.GRPC.Reflection {
+		reflection.Register(s.server)
+	}
 	// Log enabled services.
 	for name := range s.server.GetServiceInfo() {
 		log.Log.Info("gRPC service is enabled", zap.String("service", name))
@@ -206,21 +209,46 @@ func (s *Server) getOptions() []grpc.ServerOption {
 	// Wire keepalive + message-size guards from config. The server pings idle
 	// connections every Time and tears them down after Timeout without an ack.
 	// EnforcementPolicy keeps overly chatty clients honest. MaxRecv/SendMsgSize
-	// caps protect against runaway payloads.
+	// caps protect against runaway payloads. MaxConnectionIdle/Age from
+	// GRPC.Limits are folded into the same ServerParameters so there is only
+	// ever one KeepaliveParams option and the fields don't clobber each other.
 	if s.config != nil && s.config.Server != nil {
 		srv := s.config.Server
+		kaParams := keepalive.ServerParameters{
+			Time:    srv.Keepalive.Time,
+			Timeout: srv.Keepalive.Timeout,
+		}
+		if srv.GRPC.Limits.MaxConnectionIdle > 0 {
+			kaParams.MaxConnectionIdle = srv.GRPC.Limits.MaxConnectionIdle
+		}
+		if srv.GRPC.Limits.MaxConnectionAge > 0 {
+			kaParams.MaxConnectionAge = srv.GRPC.Limits.MaxConnectionAge
+		}
 		opts = append(opts,
-			grpc.KeepaliveParams(keepalive.ServerParameters{
-				Time:    srv.Keepalive.Time,
-				Timeout: srv.Keepalive.Timeout,
-			}),
+			grpc.KeepaliveParams(kaParams),
 			grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 				MinTime:             srv.Keepalive.MinTime,
 				PermitWithoutStream: srv.Keepalive.PermitWithoutStream,
 			}),
-			grpc.MaxRecvMsgSize(srv.MaxMessageBytes),
-			grpc.MaxSendMsgSize(srv.MaxMessageBytes),
 		)
+		// Legacy MaxMessageBytes still drives both directions when set; the new
+		// GRPC.Limits.MaxRecvMessageSize knob below overrides only the recv
+		// side. Skip on zero so test configs and unconfigured servers don't
+		// end up with a 0-byte cap that rejects all traffic.
+		if srv.MaxMessageBytes > 0 {
+			opts = append(opts,
+				grpc.MaxRecvMsgSize(srv.MaxMessageBytes),
+				grpc.MaxSendMsgSize(srv.MaxMessageBytes),
+			)
+		}
+		// Append per-connection DoS guards: MaxRecvMessageSize and
+		// MaxConcurrentStreams. KeepaliveParams for Idle/Age are already
+		// folded into kaParams above; limitsServerOptions skips them here.
+		limCfg := config.LimitsConfig{
+			MaxRecvMessageSize:  srv.GRPC.Limits.MaxRecvMessageSize,
+			MaxConcurrentStreams: srv.GRPC.Limits.MaxConcurrentStreams,
+		}
+		opts = append(opts, limitsServerOptions(limCfg)...)
 	}
 	return opts
 }

@@ -71,11 +71,11 @@ func Verify(phc, password string) (bool, error) {
 	enc := base64.RawStdEncoding
 	salt, err := enc.DecodeString(parts[4])
 	if err != nil {
-		return false, fmt.Errorf("%w: decode salt: %v", errMalformedHash, err)
+		return false, fmt.Errorf("%w: decode salt: %w", errMalformedHash, err)
 	}
 	want, err := enc.DecodeString(parts[5])
 	if err != nil {
-		return false, fmt.Errorf("%w: decode hash: %v", errMalformedHash, err)
+		return false, fmt.Errorf("%w: decode hash: %w", errMalformedHash, err)
 	}
 	got := argon2.IDKey([]byte(password), salt, time, mem, threads, uint32(len(want)))
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
@@ -99,7 +99,7 @@ func parseParams(s string) (mem, time uint32, threads uint8, err error) {
 		}
 		v, perr := strconv.ParseUint(kv[1], 10, 32)
 		if perr != nil {
-			return 0, 0, 0, fmt.Errorf("%w: param %q: %v", errMalformedHash, f, perr)
+			return 0, 0, 0, fmt.Errorf("%w: param %q: %w", errMalformedHash, f, perr)
 		}
 		switch kv[0] {
 		case "m":
