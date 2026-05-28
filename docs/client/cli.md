@@ -6,7 +6,7 @@ description: Flags for `gmountie mount` — the client entry point. CLI flags ov
 
 # Client CLI
 
-`gmountie mount` connects to a server, opens a FUSE mount, and proxies every filesystem call to the server. CLI flags override the matching fields in **[client.yaml](./config.md)**, so you can keep the bulk of your settings in the config and override per-invocation.
+`gmountie mount` connects to a server, opens a FUSE mount, and proxies every filesystem call to the server. CLI flags override the matching fields in **[client.yaml](./config.md)**, so you can keep the bulk of your settings in the config and override per-invocation. The mount call is identical on Linux and macOS; on macOS the client needs [macFUSE](https://macfuse.io) or [FUSE-T](https://www.fuse-t.org/) installed first.
 
 ## Basic Usage
 
