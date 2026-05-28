@@ -8,7 +8,7 @@
 
 **Tech Stack:** Same as 1b-1. testify suites.
 
-**Reference spec:** `docs/superpowers/specs/2026-05-27-identity-permissions-design.md` §3.5 (Identity message), §3.6 (hybrid display fidelity, **locked**), §3.8 (client rewriting).
+**Reference (historical):** the brainstorm spec that drove this plan has been pruned now that the identity feature has shipped; see `docs/design/identity-and-permissions.md` for the durable as-shipped record.
 
 **Scope (this plan):** server-side name plumbing end-to-end (resolvers → Identity → WhoAmI → Owner via `toProtoAttr`), plus the small client `Inbound` refinement for shared-group gids. **Out of scope:** name-aware UI display (clients that want server group names beyond raw gids can read `Owner.group_name`; FUSE itself only carries numeric ids), VFS multi-volume rewriter (still deferred), identity refresh on resume.
 

@@ -20,7 +20,7 @@ type StaticUser struct {
 }
 
 // MappingConfig declares how a volume maps the authenticated principal to a
-// server-side identity. See docs/superpowers/specs/2026-05-27-identity-permissions-design.md §3.2.
+// server-side identity. See docs/design/identity-and-permissions.md §2.
 type MappingConfig struct {
 	Mode MappingMode `mapstructure:"mode" validate:"required,oneof=squash static system passthrough"`
 

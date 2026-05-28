@@ -3,11 +3,11 @@
 **Status:** Shipped (Phase 1a → 3, 2026-05-28)
 **Last updated:** 2026-05-28
 
-This is the as-shipped record of gMountie's identity model. The deep-dive
-brainstorm spec at
-`docs/superpowers/specs/2026-05-27-identity-permissions-design.md` covers
-the rationale and rejected alternatives; this document is the durable
-summary you should read first.
+This is the durable record of gMountie's identity model. The brainstorm
+spec that drove the design has been pruned now that the feature has
+shipped; the per-phase implementation plans in
+`docs/superpowers/plans/2026-05-27..29-identity-*.md` preserve the
+historical task-by-task record.
 
 ## 1. The one principle
 
@@ -95,7 +95,22 @@ planted symlink. Phase 2 ships before Phase 3 for exactly this reason.
 symlink → /etc/passwd be access-checkable or chmod-able through the
 volume.
 
-## 5. Client-side rendering
+## 5. Display fidelity — hybrid name rendering
+
+`Owner` carries optional `user_name` and `group_name` (separately, `Identity`
+carries `user_name` and a `group_names` map). The server fills these per the
+**hybrid rule**:
+
+- `user_name` is populated only for the caller's **own** identity.
+- `group_name` is populated for groups the caller is a **member of** —
+  shared-directory `ls -l` renders sensibly.
+- Everyone and everything else renders as `nobody:nogroup` on the client.
+
+Net effect: shared groups are visible (you can see the file is `developers`-
+owned because you're in `developers`), but the server's full user list is
+never leaked through attribute reads.
+
+## 6. Client-side rendering
 
 The server resolves identity per request; the client needs to know
 "who am I on this volume" once at mount time so `ls -l` shows local
@@ -111,7 +126,7 @@ uids and FUSE-emitted Chown ops carry the right wire uid.
 - If `WhoAmI` fails, the mount succeeds with raw ids (graceful
   degradation — no rewrite is better than no mount).
 
-## 6. Cache & subscribe — identity-scoped
+## 7. Cache & subscribe — identity-scoped
 
 - `GetAttrIfChangedRequest` carries `Caller` so passthrough cache
   revalidation uses the wire identity instead of anon-squashing.
@@ -121,7 +136,7 @@ uids and FUSE-emitted Chown ops carry the right wire uid.
   see. Heartbeats always pass. Renames require both old and new
   paths to be accessible.
 
-## 7. Symlinks
+## 8. Symlinks
 
 Server's confined FS implements `Readlink`/`Symlink`; the client
 exposes them via go-fuse's `NodeReadlinker`/`NodeSymlinker` so the
@@ -130,7 +145,27 @@ side, `Readlink` is identity-bound but no session (read-only metadata);
 `Symlink` uses the standard session + idempotency + MUTATED event
 emit shape.
 
-## 8. Deferred (still on the list)
+## 9. Resolver robustness — fail-closed, injection-safe, auth-required
+
+- **Auth is mandatory for mapped modes.** A server configured with
+  `mode: system` or `mode: static` refuses to start without an auth
+  config — there is no authenticated principal to resolve, and silently
+  squashing to anon would defeat the whole model. `squash` (fixed
+  identity) and `passthrough` (wire identity) are the only modes valid
+  without auth.
+- **Injection-safe.** The `system` resolver invokes `getent`/`id` via
+  argv (never a shell string), and validates the principal against a
+  strict charset before use.
+- **Fail closed.** A permanent unresolved principal returns `EACCES` —
+  there is no fallback to squash, anon, or root. A transient resolver
+  failure on a session whose identity is already cached serves the
+  cached identity and retries refresh later; the session is not torn
+  down.
+- **Server-side identity cache.** Resolved identities are cached keyed
+  by `{volume, principal}` with a TTL so a `getent` fork-storm across
+  concurrent sessions never happens.
+
+## 10. Deferred (still on the list)
 
 - **POSIX advisory locks** (`SetLk`/`GetLk`) — needs a reconnect
   recovery story.
@@ -147,7 +182,7 @@ emit shape.
 - **Server-push identity invalidation** — TTL + auth-refresh covers
   the use cases we have.
 
-## 9. Acceptance — alice writes, bob reads
+## 11. Acceptance — alice writes, bob reads
 
 The wire-level seam test (`test/e2e/api/`) authenticates as a real
 principal over basic-auth and asserts:
