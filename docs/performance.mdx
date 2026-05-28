@@ -4,6 +4,21 @@ sidebar_label: Performance
 description: Live performance graphs from the gMountie Bencher dashboard — sequential throughput, random I/O latency, and metadata latency on LAN and WAN profiles.
 ---
 
+{/*
+  Each <iframe src> below encodes the actual rendering parameters
+  (branches, testbeds, benchmarks, measures) — *not* just `?plot=<uuid>`.
+  Bencher's /embed view only auto-renders when the dataset is fully
+  specified in the URL; `?plot=<uuid>` lands the viewer on an empty
+  selector instead. To refresh these URLs after a plots.yaml rotation:
+
+    bencher plot list gmountie-tfkojd8g --per-page 50 | jq '.[] | select(.title=="<title>")'
+
+  …then assemble branches+testbeds+benchmarks(comma-joined)+measures from
+  the JSON. UUIDs are stable across plot rebuilds as long as the title
+  doesn't change (plot:sync re-creates by title; benchmarks/measures
+  are keyed by Bencher's own name resolver).
+*/}
+
 # Performance
 
 Live charts from the gMountie [Bencher](https://bencher.dev/) dashboard. Every tagged release runs the same fio-based benchmark suite against a fixed perf pod, and the results land on these plots — so what you see below is the **current** state of the codebase, not a snapshot frozen in a README.
@@ -24,10 +39,10 @@ The testbed (`gmountie-perf-pod`) is a single fixed machine — it gives you tre
 The headline number. Driven by the [readahead window](./client/config.md#readahead) — chunk size × number of in-flight chunks. The `Opt` variants use the partial-consume + cross-chunk path that landed in [#0f1dd8e](https://github.com/gMountie/gMountie/commit/0f1dd8e); the gap between plain and Opt is the value of that work.
 
 <iframe
-  src="https://bencher.dev/perf/gmountie-tfkojd8g/embed?plot=3fde69e9-291d-4160-8ba0-e577dc03b953"
+  src="https://bencher.dev/perf/gmountie-tfkojd8g/embed?branches=853a39b8-4457-4eb6-9034-a76ae4a7ddf2&testbeds=13f59f73-aec4-48aa-9309-ff4d53007995&benchmarks=491d1dd7-aa49-48cf-98eb-75016d31d21e,492feb29-9bd3-4cc9-80be-fce0a825401c,528e7ff5-c05d-4c19-858b-f925dbcf0c86,5d154d19-d110-4cd4-b23f-033ffc07a449,5e0d3ed9-5cdc-4792-8d13-a7392c8df642,92a246ca-f514-4c64-89b2-183b3ce1ad98&measures=7d1d664f-8410-4de6-85d7-fd74546be6de&clear=true&tab=plots&key=true&embed_logo=false&embed_header=false&embed_title="
   title="Sequential read throughput (LAN)"
   width="100%"
-  height="480"
+  height="540"
   loading="lazy"
   style={{border: '1px solid var(--ifm-color-emphasis-300)', borderRadius: '8px'}}
 ></iframe>
@@ -39,10 +54,10 @@ The headline number. Driven by the [readahead window](./client/config.md#readahe
 The mirror of the read plot, exercising the [readahead and write coalescing](./design/performance.md#25-client-readahead-and-write-coalescing) path. Bounded by the disk's sustained-write floor on the server, which the [substrate floor plot](https://bencher.dev/perf/gmountie-tfkojd8g?plot=0d776c9d-4981-43d9-9a74-010a0f39e397) gives the absolute ceiling for.
 
 <iframe
-  src="https://bencher.dev/perf/gmountie-tfkojd8g/embed?plot=c59873b0-9378-40bd-a017-21791aad5eee"
+  src="https://bencher.dev/perf/gmountie-tfkojd8g/embed?branches=853a39b8-4457-4eb6-9034-a76ae4a7ddf2&testbeds=13f59f73-aec4-48aa-9309-ff4d53007995&benchmarks=113ef917-0307-4b7e-b4ab-7b8f901a73ee,1e5a043d-2b34-4d00-bbcb-cdba48329924,33b8783e-d19f-4878-a36c-8f2e20cb3021,42e7b27c-4e96-441f-a0dc-58ac04f72881,6729b224-e2bd-4f9c-b26a-35f524359ec5,aa06fb6a-6481-4723-9896-7bdb6c691d12&measures=7d1d664f-8410-4de6-85d7-fd74546be6de&clear=true&tab=plots&key=true&embed_logo=false&embed_header=false&embed_title="
   title="Sequential write throughput (LAN)"
   width="100%"
-  height="480"
+  height="540"
   loading="lazy"
   style={{border: '1px solid var(--ifm-color-emphasis-300)', borderRadius: '8px'}}
 ></iframe>
@@ -54,10 +69,10 @@ The mirror of the read plot, exercising the [readahead and write coalescing](./d
 Tail behaviour on small, scattered I/O. The harness tracks **central latency** per benchmark (nanoseconds), not a percentile — Bencher's threshold system uses iterative t-tests on the central tendency. For percentile breakdowns, run [`task perf:bench:fs`](https://github.com/gMountie/gMountie/blob/master/test/e2e/perf/) locally; the fio reports include p99 inline.
 
 <iframe
-  src="https://bencher.dev/perf/gmountie-tfkojd8g/embed?plot=280b6a65-10be-4428-b90d-eb62c5a6086b"
+  src="https://bencher.dev/perf/gmountie-tfkojd8g/embed?branches=853a39b8-4457-4eb6-9034-a76ae4a7ddf2&testbeds=13f59f73-aec4-48aa-9309-ff4d53007995&benchmarks=914196e6-025c-453a-bb26-7f4b41de975c,dda03273-5b64-4a6e-925a-2bce08e339e4,da7b3648-3a32-4a3e-ab97-42295b97a0e6,5b7e70d4-8670-4a43-b573-f4a5e1e6122b&measures=76bb32d2-aa50-4c6e-9a14-b8433cdeb26f&clear=true&tab=plots&key=true&embed_logo=false&embed_header=false&embed_title="
   title="Random 4 KiB I/O latency"
   width="100%"
-  height="480"
+  height="540"
   loading="lazy"
   style={{border: '1px solid var(--ifm-color-emphasis-300)', borderRadius: '8px'}}
 ></iframe>
@@ -69,10 +84,10 @@ Tail behaviour on small, scattered I/O. The harness tracks **central latency** p
 `Lookup`, `OpenStatClose`, `Readdir*` — exercises the [dirent cache](./concepts/cache.mdx) and the negative-cache TTL. Cold cache vs. hot cache show up as two regimes; the suite covers both.
 
 <iframe
-  src="https://bencher.dev/perf/gmountie-tfkojd8g/embed?plot=54ef745a-e1fb-4287-8c7d-4a2f78c06ff7"
+  src="https://bencher.dev/perf/gmountie-tfkojd8g/embed?branches=853a39b8-4457-4eb6-9034-a76ae4a7ddf2&testbeds=13f59f73-aec4-48aa-9309-ff4d53007995&benchmarks=faa63835-770c-4503-bc18-5a32265b9501,f3d33ded-6280-44cc-8c71-e344fd8be3d6,e0d26040-e79e-4b2d-95e7-769be9f4d742,444ef0a2-a1e9-4f2c-baff-5dfababfdabc,f1360ca5-1e0b-49d6-973c-745bb51f2232,912cbd57-c912-4590-a7cd-32d291082604&measures=76bb32d2-aa50-4c6e-9a14-b8433cdeb26f&clear=true&tab=plots&key=true&embed_logo=false&embed_header=false&embed_title="
   title="Metadata latency"
   width="100%"
-  height="480"
+  height="540"
   loading="lazy"
   style={{border: '1px solid var(--ifm-color-emphasis-300)', borderRadius: '8px'}}
 ></iframe>
