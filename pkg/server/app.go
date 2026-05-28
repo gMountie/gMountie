@@ -17,6 +17,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/credentials"
 
+	"gmountie/pkg/common/passhash"
 	"gmountie/pkg/server/config"
 	"gmountie/pkg/server/controller"
 	"gmountie/pkg/server/grpc"
@@ -157,9 +158,19 @@ func Start(ctx context.Context, cfg *config.Config) error {
 		grpcOpts...,
 	)
 
+	// Validate ops config before binding any socket.
+	if err := validateOpsConfig(cfg.Server.Ops); err != nil {
+		return errors.Wrap(err, "ops config")
+	}
+
 	// Build the ops HTTP server (/metrics, /healthz, /readyz, /version).
 	readiness := ops.PathReadinessChecker{Path: firstVolumePath(cfg)}
-	opsServer := ops.NewServer(cfg.Server.MetricsAddr, readiness, cfg.Server.Pprof)
+	opsServer := ops.NewServer(
+		cfg.Server.Ops.Addr,
+		readiness,
+		cfg.Server.Pprof,
+		ops.NewBasicAuth(cfg.Server.Ops.Auth.Users),
+	)
 	go opsServer.Start()
 
 	serveErr := make(chan error, 1)
@@ -253,6 +264,40 @@ func hostFromBind(bind string) string {
 		return "gmountie-server"
 	}
 	return host
+}
+
+// validateOpsConfig checks the ops config for unsafe combinations at startup.
+// Rules:
+//   - auth.type: none is only allowed on loopback addresses.
+//   - auth.type: basic requires at least one user and every user's PasswordHash
+//     must be a valid argon2id PHC string.
+func validateOpsConfig(ops config.OpsConfig) error {
+	authType := ops.Auth.Type
+	if authType == "" || authType == "none" {
+		if !isLoopback(ops.Addr) {
+			return errors.Errorf(
+				"server.ops.addr %q requires server.ops.auth.type: basic "+
+					"(only loopback addresses can run without auth)",
+				ops.Addr,
+			)
+		}
+		return nil
+	}
+	if authType == "basic" {
+		if len(ops.Auth.Users) == 0 {
+			return errors.New("server.ops.auth.type: basic requires at least one entry in server.ops.auth.users")
+		}
+		for i, u := range ops.Auth.Users {
+			if !passhash.IsHashed(u.PasswordHash) {
+				return errors.Errorf(
+					"server.ops.auth.users[%d].password_hash must be a $argon2id$ PHC string; "+
+						"run 'gmountie genpass' and paste the output",
+					i,
+				)
+			}
+		}
+	}
+	return nil
 }
 
 // isLoopback returns true when the bind addr is on 127.0.0.0/8 or [::1]. Used

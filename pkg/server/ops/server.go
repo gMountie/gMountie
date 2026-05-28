@@ -22,11 +22,12 @@ type Server struct {
 // NewServer constructs an ops server bound to addr that delegates
 // readiness checks to readiness. enablePprof flips the /debug/pprof/*
 // handlers on; off by default because pprof leaks goroutine names and
-// can stall the runtime under large captures. The underlying
-// *http.Server is built synchronously here so Stop always has a
-// non-nil target regardless of goroutine scheduling between Start and
-// Stop.
-func NewServer(addr string, readiness ReadinessChecker, enablePprof bool) *Server {
+// can stall the runtime under large captures. auth gates all endpoints
+// with HTTP Basic auth when non-nil; pass nil for the auth.type: none
+// path. The underlying *http.Server is built synchronously here so Stop
+// always has a non-nil target regardless of goroutine scheduling between
+// Start and Stop.
+func NewServer(addr string, readiness ReadinessChecker, enablePprof bool, auth *BasicAuth) *Server {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.Handle("/healthz", LivenessHandler())
@@ -44,7 +45,7 @@ func NewServer(addr string, readiness ReadinessChecker, enablePprof bool) *Serve
 		mux.HandleFunc("/debug/pprof/", pprof.Index)
 	}
 	return &Server{
-		server: &http.Server{Addr: addr, Handler: mux},
+		server: &http.Server{Addr: addr, Handler: auth.Wrap(mux)},
 	}
 }
 
