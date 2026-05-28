@@ -48,6 +48,6 @@ func (s *ToProtoAttrSuite) TestGroupHiddenWhenNotMember() {
 
 func (s *ToProtoAttrSuite) TestNilIdentityYieldsNoNames() {
 	p := toProtoAttr(mkAttr(1001, 1001), nil)
-	s.Equal("", p.Owner.UserName)
-	s.Equal("", p.Owner.GroupName)
+	s.Empty(p.Owner.UserName)
+	s.Empty(p.Owner.GroupName)
 }
