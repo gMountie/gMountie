@@ -135,6 +135,12 @@ type FileSystemBackend interface {
 	Unlink(ctx context.Context, path string) fuse.Status
 	// Rename moves a file/directory.
 	Rename(ctx context.Context, oldPath, newPath string) fuse.Status
+	// Readlink returns the target string of the symbolic link at path.
+	Readlink(ctx context.Context, path string) (string, fuse.Status)
+	// Symlink creates a new symbolic link at linkPath pointing at target.
+	// The target string is stored verbatim — confinement is enforced at
+	// resolve time, not at create time.
+	Symlink(ctx context.Context, target, linkPath string) fuse.Status
 	// Truncate changes a file's length.
 	Truncate(ctx context.Context, path string, size uint64) fuse.Status
 	// Chmod changes file permissions.

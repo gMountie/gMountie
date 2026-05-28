@@ -246,6 +246,46 @@ func (b *BackendClient) Access(ctx context.Context, path string, mode uint32) fu
 	return fuse.Status(res.Status)
 }
 
+// Readlink returns the target string of a symbolic link. Idempotent.
+func (b *BackendClient) Readlink(ctx context.Context, path string) (string, fuse.Status) {
+	ctx2, cancel := b.metaCtx(ctx)
+	defer cancel()
+	res, err := retryableCall(ctx2, "Readlink", func(ctx context.Context) (*proto.ReadlinkReply, error) {
+		return b.client.Fs().Readlink(ctx, &proto.ReadlinkRequest{
+			Volume: b.volume, Caller: callerFromCtx(ctx), Path: path,
+		})
+	})
+	if err != nil || res == nil {
+		log.Log.Error("error in call: Readlink", zap.String("path", path), zap.Error(err))
+		return "", fuse.EIO
+	}
+	return res.Target, fuse.Status(res.Status)
+}
+
+// Symlink creates a new symbolic link at linkPath pointing at target.
+// Mutating — request_id stamped outside retry for idempotency.
+func (b *BackendClient) Symlink(ctx context.Context, target, linkPath string) fuse.Status {
+	ctx2, cancel := b.metaCtx(ctx)
+	defer cancel()
+	requestID := uuid.NewString()
+	res, err := retryableCall(ctx2, "Symlink", func(ctx context.Context) (*proto.SymlinkReply, error) {
+		return b.client.Fs().Symlink(ctx, &proto.SymlinkRequest{
+			Volume:    b.volume,
+			Caller:    callerFromCtx(ctx),
+			Target:    target,
+			LinkPath:  linkPath,
+			SessionId: b.client.SessionID(),
+			RequestId: requestID,
+		})
+	})
+	if err != nil || res == nil {
+		log.Log.Error("error in call: Symlink",
+			zap.String("link_path", linkPath), zap.String("target", target), zap.Error(err))
+		return fuse.EIO
+	}
+	return fuse.Status(res.Status)
+}
+
 // StatFs returns filesystem statistics for the volume containing path.
 func (b *BackendClient) StatFs(ctx context.Context, path string) (*StatFs, fuse.Status) {
 	ctx2, cancel := b.metaCtx(ctx)

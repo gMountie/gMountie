@@ -141,6 +141,19 @@ message AccessReply {
   int32 status = 1;
 }
 
+// ReadlinkRequest reads the target string of a symbolic link. Read-only:
+// no session / request_id (the kernel calls Readlink during pathwalk).
+message ReadlinkRequest {
+  string volume = 1;
+  Caller caller = 2;
+  string path = 3;
+}
+
+message ReadlinkReply {
+  string target = 1;
+  int32 status = 2;
+}
+
 message TruncateRequest {
   string volume = 1;
   Caller caller = 2;
@@ -233,6 +246,22 @@ message RenameReply {
   int32 status = 1;
 }
 
+// SymlinkRequest creates a new symbolic link `link_path` whose target is
+// `target` (stored verbatim — confinement at resolve-time, not at create-
+// time, mirrors the on-disk semantics). Write op: session + request_id.
+message SymlinkRequest {
+  string volume = 1;
+  Caller caller = 2;
+  string target = 3;      // what the link points to (any string; inert until followed)
+  string link_path = 4;   // the new dirent to create within the volume tree
+  string request_id = 5;
+  string session_id = 6;
+}
+
+message SymlinkReply {
+  int32 status = 1;
+}
+
 message GetXAttrRequest {
   string volume = 1;
   Caller caller = 2;
@@ -296,6 +325,8 @@ service RpcFs {
   rpc Mkdir (MkdirRequest) returns (MkdirReply);
   rpc Rmdir (RmdirRequest) returns (RmdirReply);
   rpc Rename (RenameRequest) returns (RenameReply);
+  rpc Readlink (ReadlinkRequest) returns (ReadlinkReply);
+  rpc Symlink (SymlinkRequest) returns (SymlinkReply);
   rpc GetXAttr (GetXAttrRequest) returns (GetXAttrReply);
   rpc Compound (CompoundRequest) returns (CompoundBatch);
   rpc GetAttrIfChanged (GetAttrIfChangedRequest) returns (GetAttrIfChangedReply);

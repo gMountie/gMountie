@@ -557,6 +557,39 @@ func (s *RpcServerTestSuite) TestUtimens() {
 	s.Assert().Equal(int32(fuse.OK), reply.Status)
 }
 
+func (s *RpcServerTestSuite) TestReadlink() {
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
+	mockFs.EXPECT().Readlink("/link", mock.Anything).Return("real.txt", fuse.OK)
+
+	reply, err := s.server.Readlink(context.Background(), &proto.ReadlinkRequest{
+		Volume: "testVolume",
+		Caller: CreateCaller(0, 0, 0),
+		Path:   "/link",
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.OK), reply.Status)
+	s.Equal("real.txt", reply.Target)
+}
+
+func (s *RpcServerTestSuite) TestSymlink() {
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
+	mockFs.EXPECT().Symlink("../target", "/link", mock.Anything).Return(fuse.OK)
+	mockFs.EXPECT().GetAttr("/link", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
+
+	reply, err := s.server.Symlink(context.Background(), &proto.SymlinkRequest{
+		Volume:    "testVolume",
+		Caller:    CreateCaller(0, 0, 0),
+		Target:    "../target",
+		LinkPath:  "/link",
+		SessionId: s.sessionID,
+		RequestId: "test-req-symlink",
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.OK), reply.Status)
+}
+
 func TestRpcServerTestSuite(t *testing.T) {
 	suite.Run(t, new(RpcServerTestSuite))
 }

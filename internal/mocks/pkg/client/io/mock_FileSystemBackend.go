@@ -1160,6 +1160,72 @@ func (_c *MockFileSystemBackend_Read_Call) RunAndReturn(run func(ctx context.Con
 	return _c
 }
 
+// Readlink provides a mock function for the type MockFileSystemBackend
+func (_mock *MockFileSystemBackend) Readlink(ctx context.Context, path string) (string, fuse.Status) {
+	ret := _mock.Called(ctx, path)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Readlink")
+	}
+
+	var r0 string
+	var r1 fuse.Status
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (string, fuse.Status)); ok {
+		return returnFunc(ctx, path)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) string); ok {
+		r0 = returnFunc(ctx, path)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) fuse.Status); ok {
+		r1 = returnFunc(ctx, path)
+	} else {
+		r1 = ret.Get(1).(fuse.Status)
+	}
+	return r0, r1
+}
+
+// MockFileSystemBackend_Readlink_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Readlink'
+type MockFileSystemBackend_Readlink_Call struct {
+	*mock.Call
+}
+
+// Readlink is a helper method to define mock.On call
+//   - ctx context.Context
+//   - path string
+func (_e *MockFileSystemBackend_Expecter) Readlink(ctx interface{}, path interface{}) *MockFileSystemBackend_Readlink_Call {
+	return &MockFileSystemBackend_Readlink_Call{Call: _e.mock.On("Readlink", ctx, path)}
+}
+
+func (_c *MockFileSystemBackend_Readlink_Call) Run(run func(ctx context.Context, path string)) *MockFileSystemBackend_Readlink_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockFileSystemBackend_Readlink_Call) Return(s string, status fuse.Status) *MockFileSystemBackend_Readlink_Call {
+	_c.Call.Return(s, status)
+	return _c
+}
+
+func (_c *MockFileSystemBackend_Readlink_Call) RunAndReturn(run func(ctx context.Context, path string) (string, fuse.Status)) *MockFileSystemBackend_Readlink_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Release provides a mock function for the type MockFileSystemBackend
 func (_mock *MockFileSystemBackend) Release(ctx context.Context, fh io.FileHandle) fuse.Status {
 	ret := _mock.Called(ctx, fh)
@@ -1619,6 +1685,69 @@ func (_c *MockFileSystemBackend_StatFs_Call) Return(statFs *io.StatFs, status fu
 }
 
 func (_c *MockFileSystemBackend_StatFs_Call) RunAndReturn(run func(ctx context.Context, path string) (*io.StatFs, fuse.Status)) *MockFileSystemBackend_StatFs_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Symlink provides a mock function for the type MockFileSystemBackend
+func (_mock *MockFileSystemBackend) Symlink(ctx context.Context, target string, linkPath string) fuse.Status {
+	ret := _mock.Called(ctx, target, linkPath)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Symlink")
+	}
+
+	var r0 fuse.Status
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) fuse.Status); ok {
+		r0 = returnFunc(ctx, target, linkPath)
+	} else {
+		r0 = ret.Get(0).(fuse.Status)
+	}
+	return r0
+}
+
+// MockFileSystemBackend_Symlink_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Symlink'
+type MockFileSystemBackend_Symlink_Call struct {
+	*mock.Call
+}
+
+// Symlink is a helper method to define mock.On call
+//   - ctx context.Context
+//   - target string
+//   - linkPath string
+func (_e *MockFileSystemBackend_Expecter) Symlink(ctx interface{}, target interface{}, linkPath interface{}) *MockFileSystemBackend_Symlink_Call {
+	return &MockFileSystemBackend_Symlink_Call{Call: _e.mock.On("Symlink", ctx, target, linkPath)}
+}
+
+func (_c *MockFileSystemBackend_Symlink_Call) Run(run func(ctx context.Context, target string, linkPath string)) *MockFileSystemBackend_Symlink_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockFileSystemBackend_Symlink_Call) Return(status fuse.Status) *MockFileSystemBackend_Symlink_Call {
+	_c.Call.Return(status)
+	return _c
+}
+
+func (_c *MockFileSystemBackend_Symlink_Call) RunAndReturn(run func(ctx context.Context, target string, linkPath string) fuse.Status) *MockFileSystemBackend_Symlink_Call {
 	_c.Call.Return(run)
 	return _c
 }

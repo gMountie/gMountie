@@ -374,6 +374,64 @@ func mkdirAt(ctx context.Context, parentInode *fs.Inode, backend FileSystemBacke
 	return child, 0
 }
 
+// --- Symlink / Readlink ---
+
+// Symlink creates a new symbolic link `name` whose target is `target` (an
+// arbitrary string — confinement enforces on resolve, not on creation).
+// Returns the new inode so the kernel can populate its dentry. Both root
+// and node variants forward through symlinkAt, mirroring mkdirAt.
+func (r *gMountieRoot) Symlink(ctx context.Context, target, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	return symlinkAt(ctx, &r.Inode, r.backend, r.rewriter, "", target, name, out)
+}
+
+func (n *gMountieNode) Symlink(ctx context.Context, target, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	return symlinkAt(ctx, &n.Inode, n.backend, n.rewriter, n.path(), target, name, out)
+}
+
+func symlinkAt(ctx context.Context, parentInode *fs.Inode, backend FileSystemBackend, rw *IDRewriter, parent, target, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	full := childPath(parent, name)
+	if st := backend.Symlink(ctx, target, full); !st.Ok() {
+		return nil, syscall.Errno(st)
+	}
+	// Backend Symlink doesn't return attrs; Stat for the EntryOut so the
+	// kernel can populate its dentry. The new entry is the link itself
+	// (S_IFLNK), not the target.
+	a, sst := backend.Stat(ctx, full)
+	if !sst.Ok() {
+		return nil, syscall.Errno(sst)
+	}
+	setAttrFromBackend(&out.Attr, a, rw)
+	child := parentInode.NewInode(ctx, &gMountieNode{
+		backend:  backend,
+		rewriter: rw,
+	}, fs.StableAttr{
+		Mode: a.Mode,
+		Ino:  a.Ino,
+	})
+	return child, 0
+}
+
+// Readlink returns the link's target string. The kernel calls this during
+// pathwalk when it encounters S_IFLNK; without it FUSE returns EOPNOTSUPP
+// and every symlink under the mount is unfollowable.
+func (r *gMountieRoot) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
+	// Root is the volume root; reading it as a link is nonsensical but
+	// keep the symmetry with other root ops.
+	return readlinkAt(ctx, r.backend, "")
+}
+
+func (n *gMountieNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
+	return readlinkAt(ctx, n.backend, n.path())
+}
+
+func readlinkAt(ctx context.Context, backend FileSystemBackend, path string) ([]byte, syscall.Errno) {
+	target, st := backend.Readlink(ctx, path)
+	if !st.Ok() {
+		return nil, syscall.Errno(st)
+	}
+	return []byte(target), 0
+}
+
 // --- Rmdir / Unlink ---
 
 func (r *gMountieRoot) Rmdir(ctx context.Context, name string) syscall.Errno {

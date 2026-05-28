@@ -371,6 +371,28 @@ func (b *cachedBackend) Access(ctx context.Context, p string, mode uint32) fuse.
 	return b.inner.Access(ctx, p, mode)
 }
 
+// Readlink is a pass-through. The link target is content of the link inode,
+// not the inode's attrs — it's small (PATH_MAX) and rarely re-read, so we
+// don't add a target cache yet.
+func (b *cachedBackend) Readlink(ctx context.Context, p string) (string, fuse.Status) {
+	return b.inner.Readlink(ctx, p)
+}
+
+// Symlink creates a new dirent (the link). Invalidates the parent dir +
+// attr caches like Mkdir, and drops any negative-cached entry for the new
+// path so a follow-up Lookup re-reads.
+func (b *cachedBackend) Symlink(ctx context.Context, target, linkPath string) fuse.Status {
+	st := b.inner.Symlink(ctx, target, linkPath)
+	if st != fuse.OK {
+		return st
+	}
+	parent := pathParent(linkPath)
+	b.dir.invalidate(parent)
+	b.attr.invalidate(parent)
+	b.attr.invalidate(linkPath)
+	return fuse.OK
+}
+
 func (b *cachedBackend) StatFs(ctx context.Context, p string) (*io.StatFs, fuse.Status) {
 	return b.inner.StatFs(ctx, p)
 }
