@@ -33,6 +33,24 @@ func newBackendReadStreamStub(t *testing.T, frames ...*proto.ReadFrame) *mockPro
 	return stub
 }
 
+// newBackendReadStreamStubOptional is like newBackendReadStreamStub but each
+// frame is optional (at-most-once, in order) rather than required. Use it for
+// streams handed to ASYNC prefetch goroutines: the test asserts how many Read
+// RPCs were issued (a counter), not that every prefetch goroutine fully drains
+// its stream before the test returns. A goroutine still mid-drain at test end
+// would otherwise leave a strict .Once() Recv expectation unmet and fail
+// AssertExpectations at cleanup — the source of a recurring -race flake in
+// TestReadFillsPrefetchWindow. Times(1) preserves ordered sequential frames
+// (data → ok → EOF) and caps each at one call; Maybe() makes them not-required.
+func newBackendReadStreamStubOptional(t *testing.T, frames ...*proto.ReadFrame) *mockProto.MockRpcFile_ReadClient {
+	stub := mockProto.NewMockRpcFile_ReadClient(t)
+	for _, f := range frames {
+		stub.EXPECT().Recv().Return(f, nil).Times(1).Maybe()
+	}
+	stub.EXPECT().Recv().Return(nil, stdio.EOF).Maybe()
+	return stub
+}
+
 // backendWriteStreamStub captures every WriteFrame sent through the
 // streaming Write client and returns the configured WriteReply / error
 // on CloseAndRecv. Send copies the data slice since real gRPC marshals
@@ -1039,7 +1057,12 @@ func (s *BackendClientTestSuite) TestReadFillsPrefetchWindow() {
 		RunAndReturn(func(_ context.Context, _ *proto.ReadRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[proto.ReadFrame], error) {
 			readCount.Add(1)
 			data := make([]byte, chunkBytes)
-			stub := newBackendReadStreamStub(s.T(),
+			// Optional-frame stub: prefetch streams run in async goroutines that
+			// may still be draining when the test returns (it only waits for the
+			// Read RPC *count*, not per-stream drainage). Strict .Once() frames
+			// would fail AssertExpectations for an in-flight prefetch — the -race
+			// flake. See newBackendReadStreamStubOptional.
+			stub := newBackendReadStreamStubOptional(s.T(),
 				&proto.ReadFrame{Data: data, Status: int32(fuse.OK)},
 				&proto.ReadFrame{Status: int32(fuse.OK)},
 			)
