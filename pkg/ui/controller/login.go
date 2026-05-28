@@ -71,12 +71,21 @@ func (l *LoginControllerImpl) Login(loginInfo LogInInfo) (bool, error) {
 		zap.Uint("port", loginInfo.Port),
 		zap.String("username", loginInfo.Username),
 	)
+	// Phase 7 PR 1: the client always dials TLS; the LoginInfo.TLS bool now
+	// only selects "skip verification" (the old "no TLS" semantic maps to
+	// "TLS but trust anything"). Surfacing verify/tofu/insecure properly is
+	// Phase 8 UI work — for now keep the boolean's user-facing meaning
+	// ("Use TLS = on by default; toggle off for self-signed/dev").
+	tlsCfg := clientConfig.TLSConfig{}
+	if !loginInfo.TLS {
+		tlsCfg.Verify = "insecure"
+	}
 	// Update the config
 	cfg := clientConfig.Config{
 		Server: &clientConfig.ServerConfig{
 			Address: loginInfo.Address,
 			Port:    loginInfo.Port,
-			TLS:     loginInfo.TLS,
+			TLS:     tlsCfg,
 		},
 		Auth: &clientConfig.BasicAuthConfig{
 			Type: config.AuthConfigTypeBasic,
