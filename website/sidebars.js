@@ -29,6 +29,7 @@ const sidebars = {
         'concepts/wire-protocol',
         'concepts/cache',
         'concepts/sessions-and-reconnect',
+        'concepts/identity',
       ],
     },
     'troubleshooting',

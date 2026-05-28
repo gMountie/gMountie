@@ -93,16 +93,36 @@ The auth handshake failed.
 
 ## Permission and ownership issues
 
+The visible owner of a file depends on the volume's **[mapping mode](./concepts/identity.mdx)** on the server (`squash` / `static` / `system` / `passthrough`) and whether the client is using `--raw-ids`. When something looks wrong, the fastest first move is to switch on `--raw-ids` to see what the server actually thinks.
+
 ### Files show up owned by `nobody` (uid 65534) or by the wrong user
 
-gMountie maps the server's uid/gid to the client's invoking user by default. If you see `nobody:nobody`, the mapping fell back because something on the server side couldn't be resolved.
+The client rewrites `ls -l` based on a `WhoAmI` reply from the server. If that reply doesn't match a file's actual uid/gid, the rewrite falls back and you see the raw value — often `nobody` (65534) on systems with that anonymous account.
 
-- Run the client with `--raw-ids` to see the **server's actual uid/gid** for each file. That tells you what the server thinks.
-- Reconcile by matching uids on both ends (or use `--raw-ids` permanently if you want server-side semantics — typical for backups and admin tools).
+Causes, in order of likelihood:
+
+- **Mapping mode and your principal don't match.** In `static` mode, a file owned by `bob` (uid 1002) on the server shows up unrewritten if you authenticated as `alice` — `alice` won't be rewritten *to* `bob`. That's correct: the file isn't yours.
+- **`passthrough` with `root_squash`.** Files written by client-root land as `anon_uid` (usually 65534) on the server. Listings of those files show `nobody`. Either turn off root_squash on that volume or write as a non-root user.
+- **`system` mode where the user doesn't exist on the server.** The server replies with the anonymous identity; everything shows as `nobody`. Add the user to the server's NSS, or switch the volume to `static` with an explicit entry.
+
+First debugging move:
+
+```bash
+gmountie mount … --raw-ids        # see the raw uids the server reports
+```
+
+Then cross-reference against the volume's `mapping` block in `server.yaml`.
 
 ### `Permission denied` on a write the local user "should" be able to do
 
-The check happens **on the server**, against the file's real owner in the volume's directory. Local-mode semantics don't apply: a `chmod 600` file owned by uid 1001 on the server is unwritable by uid 1002 on the client even if both look like "you" locally. Either fix the file's permissions/owner on the server, or remap with `--raw-ids` + a matching uid.
+The check runs **on the server**, against the **resolved** identity for your volume — not against your client uid. The local view (`ls -l` showing your username after the rewrite) doesn't grant permission; the server's actual file mode and ownership do.
+
+Two common shapes:
+
+- **`squash` mapping** — everyone becomes the configured `uid`/`gid`. If that uid doesn't have write permission on the file, *nobody* mounted on this volume can write it. Either widen the file's permissions or change the mapping so the right principal lands on the right uid.
+- **`static` or `system` mapping** — the file is owned by someone other than your resolved identity. `ls -l --raw-ids` shows the real uid; reconcile by adjusting file ownership on the server, the mapping table, or the user's group membership.
+
+When in doubt: `--raw-ids` + the volume's mapping block in `server.yaml`. The combination tells you exactly what identity the server is acting as.
 
 ## Performance feels wrong
 

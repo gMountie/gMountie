@@ -110,12 +110,13 @@ auth:
 
 ## Volume Configuration
 
-The `volumes` section defines shared directories:
+The `volumes` section defines shared directories. Each volume has a name, a path on the server, and (optionally) an identity-`mapping` block.
 
-| Option | Type   | Required | Description                       |
-|--------|--------|----------|-----------------------------------|
-| name   | string | yes      | Unique volume identifier          |
-| path   | string | yes      | Absolute path to shared directory |
+| Option    | Type    | Required | Description                                                          |
+|-----------|---------|----------|----------------------------------------------------------------------|
+| `name`    | string  | yes      | Unique volume identifier (clients reference this).                   |
+| `path`    | string  | yes      | Absolute path on the server to the shared directory.                 |
+| `mapping` | object  | no       | How the authenticated principal maps to a server-side identity. Defaults to `squash`. See below. |
 
 Example with multiple volumes:
 
@@ -128,6 +129,69 @@ volumes:
   - name: backup
     path: /srv/backup
 ```
+
+### Identity mapping
+
+Each volume picks **one** of four modes for `mapping.mode`. The mode decides which uid/gid the server uses when handling RPCs for that volume — i.e. the server-side identity that file-permission checks run against. See **[Concepts → Identity & ownership](../concepts/identity.mdx)** for the model.
+
+| `mode`        | Extra fields                          | Behaviour                                                                                       |
+|---------------|---------------------------------------|-------------------------------------------------------------------------------------------------|
+| `squash`      | `uid`, `gid`                          | Every authenticated principal becomes one fixed `(uid, gid)`. Default if `mapping` is omitted.   |
+| `static`      | `users{}`, `groups{}`                 | Lookup table: `username → {uid, gid, groups[]}` and `groupname → gid`.                          |
+| `system`      | _(none)_                              | Resolve the principal against the server's NSS (`/etc/passwd`, `/etc/group`, LDAP/SSSD…).        |
+| `passthrough` | `root_squash`, `anon_uid`             | Use the uid/gid the client claims. `root_squash` (default `true`) remaps client root to `anon_uid`. |
+
+#### Examples
+
+```yaml title="squash — one identity for everyone"
+volumes:
+  - name: shared
+    path: /srv/shared
+    mapping:
+      mode: squash
+      uid: 1000
+      gid: 1000
+```
+
+```yaml title="static — declared table of users"
+volumes:
+  - name: shared
+    path: /srv/shared
+    mapping:
+      mode: static
+      users:
+        alice:
+          uid: 1001
+          gid: 1001
+          groups: [editors]
+        bob:
+          uid: 1002
+          gid: 1002
+          groups: [editors, ops]
+      groups:
+        editors: 2000
+        ops:     2001
+```
+
+```yaml title="system — resolve against the server's user database"
+volumes:
+  - name: home
+    path: /home
+    mapping:
+      mode: system
+```
+
+```yaml title="passthrough — trust the client's uid/gid"
+volumes:
+  - name: backup
+    path: /srv/backup
+    mapping:
+      mode: passthrough
+      root_squash: true
+      anon_uid: 65534
+```
+
+If you don't include `mapping`, the volume gets `mode: squash` with `uid: 0` / `gid: 0` — pick something else unless you mean it.
 
 ## Example Configuration
 
