@@ -66,6 +66,8 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		"server.tls.client_ca_file",
 		"server.tls.min_version",
 		"server.tls.disabled",
+		"server.ops.addr",
+		"server.ops.auth.type",
 		"auth.type",
 	} {
 		_ = v.BindEnv(key)
@@ -87,6 +89,8 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	v.SetDefault("server.subscribe_buffer_size", DefaultServerSubscribeBufferSize)
 	v.SetDefault("server.subscribe_heartbeat_interval", DefaultServerSubscribeHeartbeatInterval)
 	v.SetDefault("server.tls.min_version", "1.3")
+	v.SetDefault("server.ops.addr", "127.0.0.1:9090")
+	v.SetDefault("server.ops.auth.type", "none")
 	result.Server = &ServerConfig{
 		Address:             v.GetString("server.address"),
 		Port:                v.GetUint("server.port"),
@@ -111,6 +115,7 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 			MinVersion:   v.GetString("server.tls.min_version"),
 			Disabled:     v.GetBool("server.tls.disabled"),
 		},
+		Ops: parseOpsConfig(v),
 	}
 
 	// Parse the auth configuration.
@@ -146,4 +151,24 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	}
 
 	return &result, nil
+}
+
+// parseOpsConfig reads the server.ops.* keys from the parent viper and builds
+// an OpsConfig. Users are decoded via mapstructure through a viper.Sub so that
+// array-of-struct values unmarshal correctly.
+func parseOpsConfig(v *viper.Viper) OpsConfig {
+	cfg := OpsConfig{
+		Addr: v.GetString("server.ops.addr"),
+		Auth: OpsAuthConfig{
+			Type: v.GetString("server.ops.auth.type"),
+		},
+	}
+	// Unmarshal the users slice (only present when auth.type: basic).
+	if sub := v.Sub("server.ops.auth"); sub != nil {
+		var users []BasicAuthConfigUser
+		if err := sub.UnmarshalKey("users", &users); err == nil {
+			cfg.Auth.Users = users
+		}
+	}
+	return cfg
 }

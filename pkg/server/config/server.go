@@ -78,6 +78,21 @@ type TLSConfig struct {
 	Disabled     bool   `mapstructure:"disabled"`
 }
 
+// OpsAuthConfig — Type is "none" (default) or "basic".
+type OpsAuthConfig struct {
+	Type  string                `mapstructure:"type" validate:"omitempty,oneof=none basic"`
+	Users []BasicAuthConfigUser `mapstructure:"users"`
+}
+
+// OpsConfig controls the operational HTTP endpoint (/metrics, /healthz,
+// /readyz, /version, /debug/pprof). Bound to 127.0.0.1:9090 by default so
+// cluster ops reach it via a sidecar / port-forward; binding to a
+// non-loopback addr requires Auth.Type != "none" (enforced at startup).
+type OpsConfig struct {
+	Addr string        `mapstructure:"addr"`
+	Auth OpsAuthConfig `mapstructure:"auth"`
+}
+
 // ServerConfig is a struct that holds the configuration for the server
 type ServerConfig struct {
 	// Address is the address that the server will listen on
@@ -86,9 +101,13 @@ type ServerConfig struct {
 	Port uint `validate:"required"`
 	// TLS controls how the server presents TLS to connecting clients.
 	TLS TLSConfig `mapstructure:"tls"`
+	// Ops controls the operational HTTP endpoint (/metrics, /healthz,
+	// /readyz, /version, /debug/pprof).
+	Ops OpsConfig `mapstructure:"ops"`
 	// Metrics enables the ops HTTP server.
 	Metrics bool
 	// MetricsAddr is the address the ops HTTP server listens on.
+	// Deprecated: use Ops.Addr instead.
 	MetricsAddr string `validate:"hostname_port" mapstructure:"metrics_addr"`
 	// Pprof exposes /debug/pprof/* on the ops HTTP server. Off by
 	// default: pprof endpoints leak goroutine names + symbols and can
