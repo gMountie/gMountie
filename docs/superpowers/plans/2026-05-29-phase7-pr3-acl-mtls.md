@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go `crypto/tls` peer-cert extraction (`google.golang.org/grpc/peer` + `credentials.TLSInfo`), existing principal/ctx plumbing, gRPC auth interceptor, testify, VM FUSE e2e (VM is back: kernel 6.8, Go 1.26.2).
 
-**Reference:** `docs/superpowers/specs/2026-05-29-phase7-security-hardening-design.md` §3.6 (ACL), §3.1/§3.2 (mTLS server/client), decision #6 (mTLS principal = cert CN; SAN if CN empty).
+**Reference:** the Phase 7 brainstorm spec (pruned on ship; see `docs/design/security-and-transport.md`).6 (ACL), §3.1/§3.2 (mTLS server/client), decision #6 (mTLS principal = cert CN; SAN if CN empty).
 
 ---
 

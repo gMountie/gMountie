@@ -8,7 +8,7 @@
 
 **Tech Stack:** `golang.org/x/crypto/argon2`, `crypto/rand`, `crypto/subtle` (constant-time hash compare), cobra CLI, gRPC server options.
 
-**Reference:** `docs/superpowers/specs/2026-05-29-phase7-security-hardening-design.md` §3.3 (passwords), §3.4 (ops), §3.5 (reflection + DoS).
+**Reference:** the Phase 7 brainstorm spec (pruned on ship; see `docs/design/security-and-transport.md`).3 (passwords), §3.4 (ops), §3.5 (reflection + DoS).
 
 ---
 

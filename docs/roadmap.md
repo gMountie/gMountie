@@ -249,24 +249,36 @@ compose hygiene, keyless release signing + SBOMs).
 
 ---
 
-## Phase 7 — Security hardening — **Deferred, but capped**
+## Phase 7 — Security hardening — **Done**
 
-**This phase is deferred but not unbounded.** The internet-deployment goal makes TLS in particular hard to defer indefinitely; treat the start of Phase 7 as "the moment we open the server to a non-trusted network for real."
+**Goal:** make gMountie deployable on a non-trusted network — the
+internet-deployment bar. Shipped across three PRs; see
+[Security and Transport](design/security-and-transport.md) for the durable
+design.
 
-The known gaps (file:line references in [Appendix A](#appendix-a--known-security-gaps)):
+Delivered:
 
-- TLS is advertised but not implemented — every connection is today plaintext.
-- Basic-auth credentials travel in plaintext.
-- Passwords are stored and compared in plaintext.
-- Privilege escalation via client-supplied uid.
-- No per-user volume ACL.
-- gRPC reflection registered without auth guard.
-- `/metrics` is world-readable.
-- No request size or concurrency limits.
-- Path inputs are not normalised at the controller layer.
-- `type: none` auth is silently allowed.
+1. **Transport (PR #53).** Server-TLS terminates every connection;
+   zero-config first start auto-generates a self-signed cert (SSH
+   host-key pattern) and logs its fingerprint; `gmountie fingerprint`
+   reads it back. Client verification modes `verify` / `tofu` (trust-on-
+   first-use pin) / `insecure`, plus `expected_fingerprint`. Basic-auth
+   now requires transport security (no plaintext credential leak).
+2. **Server hardening sweep (PR #54).** argon2id password storage at rest
+   + `gmountie genpass` + fail-closed startup on plaintext; ops endpoints
+   bind to loopback by default with optional basic-auth; gRPC reflection
+   opt-in (default off); per-connection DoS limits (recv size, concurrent
+   streams, idle/age).
+3. **Identity tightening (PR #55).** Per-user volume ACL
+   (`auth.users[].volumes`, `auth.default_allow`, single-chokepoint
+   `PrincipalCanAccess`) and mTLS auth (`auth.type: mtls`, client-cert CN
+   as principal).
 
-When this phase opens, it gets its own design doc and decomposition.
+Every gap in [Appendix A](#appendix-a--known-security-gaps) is closed.
+
+**Deferred follow-ups (not blockers):** OIDC/JWT auth, per-connection
+byte-rate limiting, OS-keyring client credential storage (the last shares
+the desktop-UI scope — Phase 8).
 
 ---
 
@@ -316,20 +328,22 @@ The readahead engine now serves partial/cross-chunk sub-ranges and retains the u
 
 ## Appendix A — Known security gaps
 
-> All file:line references are from the tree as of 2026-05-13. Verified spots are annotated inline.
+> File:line references were from the tree as of 2026-05-13. **All items below
+> are now closed** — by the identity feature (PRs #31–#48) and Phase 7
+> (PRs #53–#55). Kept as a record of what was hardened.
 
-- `pkg/client/grpc/client.go:257` — `insecure.NewCredentials()` hardcoded; TLS line commented out. *(verify — line moved from :120 to :257, still open)*
-- `pkg/client/grpc/auth.go:31` — `RequireTransportSecurity() = false`. *(still at this line, open)*
-- `pkg/server/service/auth.go:87` — plaintext string equality on password compare. *(still open)*
-- `pkg/server/config/auth.go:75-77` — `BasicAuthConfigUser.Password` plain string. *(verify — "none" auth accepted around :39 in current tree; original line may have shifted)*
-- `deployments/compose/config.yaml:9` — `admin/admin` shipped as default credentials.
-- `pkg/server/controller/utils.go:12-19` and `pkg/server/io/middleware/asume_user.go:29` — client-supplied uid/gid fed to `setfsuid`/`setfsgid`. *(nil-guard at utils.go:12-19 was fixed in Phase 1; the underlying uid-from-wire escalation vector in asume_user.go remains open)*
-- `pkg/server/controller/{fs,file,volume}.go` — no per-user volume ACL.
-- `pkg/server/grpc/server.go:107-108` — gRPC reflection registered without auth guard. *(verify — line moved from :83 to :107-108, still open)*
-- `pkg/server/grpc/server.go` — `/metrics` endpoint world-readable; HTTP server now in `pkg/server/ops` (not at original :183). *(verify — endpoint moved to pkg/server/ops; no auth added)*
-- `pkg/server/grpc/server.go` — `MaxRecvMsgSize` and `KeepaliveEnforcementPolicy` now present at :201/:205, added in Phases 1/3. *(fixed — no longer a gap)*
-- `pkg/server/controller/fs.go:36`, `pkg/server/controller/file.go:51` — no path cleaning / normalisation.
-- `pkg/server/config/auth.go:35-36` — `type: none` accepted with only a runtime log warning.
+- ~~`pkg/client/grpc/client.go` — `insecure.NewCredentials()` hardcoded; TLS commented out.~~ **Closed (PR #53):** client dials TLS via `pkg/client/tls.BuildConfig`.
+- ~~`pkg/client/grpc/auth.go` — `RequireTransportSecurity() = false`.~~ **Closed (PR #53):** returns `true`.
+- ~~`pkg/server/service/auth.go` — plaintext string equality on password compare.~~ **Closed (PR #54):** argon2id `passhash.Verify`, constant-time.
+- ~~`pkg/server/config/auth.go` — `BasicAuthConfigUser.Password` plain string.~~ **Closed (PR #54):** `PasswordHash` (argon2id PHC); plaintext rejected at startup.
+- ~~`deployments/compose/config.yaml` — `admin/admin` default credentials.~~ **Closed (PR #54):** first-run default writes a hashed `admin` with a `# CHANGE ME` comment.
+- ~~client-supplied uid/gid fed to `setfsuid`/`setfsgid`.~~ **Closed (identity Phase 1a, #31):** `AssumeUserMiddleware` deleted; identity is the authenticated principal, enforced kernel-native; wire uid advisory.
+- ~~`pkg/server/controller/{fs,file,volume}.go` — no per-user volume ACL.~~ **Closed (PR #55):** `VolumeService.PrincipalCanAccess` folded into `BindIdentity` + `List` filter.
+- ~~gRPC reflection registered without auth guard.~~ **Closed (PR #54):** `server.grpc.reflection` opt-in, default off.
+- ~~`/metrics` endpoint world-readable.~~ **Closed (PR #54):** ops endpoints bind loopback by default + optional basic-auth.
+- ~~`MaxRecvMsgSize` / `KeepaliveEnforcementPolicy`.~~ **Closed:** present since Phases 1/3; DoS limits formalised in PR #54.
+- ~~`pkg/server/controller/fs.go`, `file.go` — no path cleaning / normalisation.~~ **Closed (confinement Phase 2, #42):** every wire path resolves beneath the volume root via `openat2(RESOLVE_BENEATH)`.
+- ~~`pkg/server/config/auth.go` — `type: none` accepted with only a log warning.~~ **Closed (#33):** `auth: none` removed; the factory fails closed (`denyAllAuthService`) on unknown types.
 
 ---
 
