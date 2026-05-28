@@ -81,10 +81,20 @@ func (s *ConfinementWireSuite) TestEmbeddedDotDotEscapeDenied() {
 	s.assertGetAttrDenied("sub/../../../etc/hostname")
 }
 
-// TestAbsolutePathEscapeDenied: an absolute wire path. The volume root is
-// not "/", so addressing "/etc/hostname" is by definition an escape.
-func (s *ConfinementWireSuite) TestAbsolutePathEscapeDenied() {
-	s.assertGetAttrDenied("/etc/hostname")
+// TestLeadingSlashIsRelative: gMountie's wire convention treats paths with
+// a leading "/" as relative to the volume root, not as host-absolute. So
+// "/etc/hostname" addresses <volume_root>/etc/hostname — which doesn't
+// exist, hence ENOENT, NOT EACCES. (The actual escape vectors are tested
+// by the other three cases.)
+func (s *ConfinementWireSuite) TestLeadingSlashIsRelative() {
+	reply, err := s.fsClient().GetAttr(s.ctx, &proto.GetAttrRequest{
+		Volume: s.volume.Name,
+		Path:   "/etc/hostname",
+	})
+	s.Require().NoError(err)
+	s.Require().NotNil(reply)
+	s.Equal(int32(syscall.ENOENT), reply.Status,
+		"leading slash addresses in-tree; should be ENOENT not EACCES, got %d", reply.Status)
 }
 
 // TestSymlinkEscapeDenied: a symlink whose target lives OUTSIDE the volume,
