@@ -27,9 +27,9 @@ func (v *VolumeServiceImpl) Register(server *grpc.Server) {
 }
 
 // List lists all volumes
-func (v *VolumeServiceImpl) List(context.Context, *proto.VolumeListRequest) (*proto.VolumeListReply, error) {
+func (v *VolumeServiceImpl) List(ctx context.Context, _ *proto.VolumeListRequest) (*proto.VolumeListReply, error) {
 	// Find volumes
-	volumes, err := v.service.List()
+	volumes, err := v.service.List(ctx)
 	if err != nil {
 		return nil, err
 	}

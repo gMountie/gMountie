@@ -59,6 +59,9 @@ func (c *SessionController) Resume(_ context.Context, req *proto.SessionResumeRe
 }
 
 func (c *SessionController) WhoAmI(ctx context.Context, req *proto.WhoAmIRequest) (*proto.Identity, error) {
+	if err := c.volSvc.PrincipalCanAccess(ctx, req.Volume); err != nil {
+		return nil, err
+	}
 	id, err := c.volSvc.ResolveIdentity(ctx, req.Volume, req.Caller)
 	if err != nil {
 		return nil, status.Errorf(codes.PermissionDenied, "whoami: %v", err)

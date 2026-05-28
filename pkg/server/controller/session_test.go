@@ -59,6 +59,7 @@ func (s *SessionControllerTestSuite) TestResumeUnknownSession() {
 }
 
 func (s *SessionControllerTestSuite) TestWhoAmI() {
+	s.volSvc.EXPECT().PrincipalCanAccess(mock.Anything, "v").Return(nil)
 	s.volSvc.EXPECT().ResolveIdentity(mock.Anything, "v", mock.Anything).
 		Return(service.Identity{
 			Principal:  "alice",
