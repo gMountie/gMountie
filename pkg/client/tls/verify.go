@@ -32,6 +32,8 @@ type Config struct {
 	ExpectedFingerprint string
 	ServerName          string
 	KnownHostsPath      string // overridable; default $XDG_STATE_HOME/gmountie/known_hosts
+	CertFile            string // client cert for mTLS; both CertFile and KeyFile required together, or neither
+	KeyFile             string // client key for mTLS; both CertFile and KeyFile required together, or neither
 }
 
 // BuildConfig returns a *tls.Config wired with the right verification policy
@@ -84,6 +86,20 @@ func BuildConfig(cfg Config) (*tls.Config, error) {
 	default:
 		return nil, fmt.Errorf("unknown tls.verify mode %q", mode)
 	}
+
+	// mTLS: present a client certificate when configured. Both paths required
+	// together — one without the other is a config error.
+	if (cfg.CertFile == "") != (cfg.KeyFile == "") {
+		return nil, fmt.Errorf("client mTLS requires both cert_file and key_file (got cert_file=%q key_file=%q)", cfg.CertFile, cfg.KeyFile)
+	}
+	if cfg.CertFile != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("load client cert/key: %w", err)
+		}
+		out.Certificates = append(out.Certificates, cert)
+	}
+
 	return out, nil
 }
 
