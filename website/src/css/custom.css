@@ -1002,3 +1002,342 @@ table code { font-size: 12.5px; }
    hide the whole first item — breadcrumbs then start at the first real crumb.
    ------------------------------------------------------------ */
 .breadcrumbs__item:first-child { display: none; }
+
+/* ------------------------------------------------------------
+   19. MERMAID — diagrams
+   ----------------------------------------------------------
+   Enable in docusaurus.config.js:
+     markdown:    { mermaid: true },
+     themes:      ['@docusaurus/theme-mermaid'],
+     themeConfig: { mermaid: { theme: { light: 'base', dark: 'base' }, options: { ... } } }
+
+   The themeVariables in docusaurus.config.js set the *baseline*
+   colors that mermaid bakes into the SVG. The rules below override
+   them where we want stronger control (fonts, edge labels, the
+   "primary" ember focal class, dark-mode flips that mermaid's two-
+   theme system can't express).
+
+   gMountie posture in diagrams:
+   - Nodes are paper + ink-bordered, calm by default.
+   - Edges are thin (1px), no arrowheads bigger than the text.
+   - One ember focal node per diagram — add `classDef primary …`
+     in the mermaid source, or use the bundled .primary class.
+   - Cluster/subgraph labels use mono uppercase, like our eyebrows.
+   - Lines beat shadows. Mermaid's default node shadows are killed.
+   ------------------------------------------------------------ */
+.mermaid,
+pre.mermaid,
+.docusaurus-mermaid-container {
+  background: transparent !important;
+  color: var(--fg) !important;
+  border: 0 !important;
+  padding: 0 !important;
+  font-family: var(--font-sans);
+  margin: 1.5rem 0;
+  text-align: center;
+  overflow: visible;
+  font-size: inherit;
+  line-height: inherit;
+}
+.mermaid svg {
+  max-width: 100%;
+  height: auto;
+  font-family: var(--font-sans) !important;
+}
+.mermaid svg text { font-family: var(--font-sans) !important; }
+
+/* --- Flowchart / generic nodes --- */
+.mermaid .node rect,
+.mermaid .node polygon,
+.mermaid .node circle,
+.mermaid .node ellipse,
+.mermaid .node path,
+.mermaid .node .basic.label-container {
+  fill: var(--bg-elev) !important;
+  stroke: var(--border-strong) !important;
+  stroke-width: 1px !important;
+  filter: none !important;
+}
+.mermaid .node .label,
+.mermaid .node .nodeLabel,
+.mermaid .node .nodeLabel p,
+.mermaid .node text,
+.mermaid .nodeLabel,
+.mermaid .nodeLabel p {
+  color: var(--fg) !important;
+  fill: var(--fg) !important;
+  font-family: var(--font-sans) !important;
+  font-size: 13.5px !important;
+  font-weight: 460 !important;
+  letter-spacing: -0.005em !important;
+}
+
+/* "Primary" class — the ember focal node. Opt in:
+     classDef primary
+     class MyNode primary                                       */
+.mermaid .node.primary rect,
+.mermaid .node.primary polygon,
+.mermaid .node.primary circle,
+.mermaid .node.primary ellipse,
+.mermaid .node.primary path,
+.mermaid .node.primary .basic.label-container {
+  fill: var(--ember-mist) !important;
+  stroke: var(--ember) !important;
+  stroke-width: 1.5px !important;
+}
+.mermaid .node.primary .label,
+.mermaid .node.primary .nodeLabel,
+.mermaid .node.primary .nodeLabel p,
+.mermaid .node.primary text {
+  color: var(--ember-ink) !important;
+  fill: var(--ember-ink) !important;
+  font-weight: 540 !important;
+}
+
+/* Subtle / muted node — useful for "future" or de-emphasized steps */
+.mermaid .node.muted rect,
+.mermaid .node.muted polygon,
+.mermaid .node.muted circle,
+.mermaid .node.muted ellipse,
+.mermaid .node.muted path {
+  fill: var(--bg-sunken) !important;
+  stroke: var(--border) !important;
+  stroke-dasharray: 3 3 !important;
+}
+.mermaid .node.muted .nodeLabel,
+.mermaid .node.muted .label,
+.mermaid .node.muted text { color: var(--fg-meta) !important; fill: var(--fg-meta) !important; }
+
+/* --- Edges / arrows --- */
+.mermaid .edgePath .path,
+.mermaid .flowchart-link,
+.mermaid path.transition,
+.mermaid .relation {
+  stroke: var(--ink-2) !important;
+  stroke-width: 1px !important;
+  fill: none !important;
+}
+.mermaid .arrowheadPath,
+.mermaid marker path,
+.mermaid defs marker path,
+.mermaid #arrowhead path { fill: var(--ink-2) !important; stroke: none !important; }
+
+/* Edge labels — small paper tag */
+.mermaid .edgeLabel,
+.mermaid .edgeLabel p,
+.mermaid .edgeLabel .label {
+  background-color: var(--bg) !important;
+  color: var(--fg-meta) !important;
+  font-family: var(--font-mono) !important;
+  font-size: 11px !important;
+  letter-spacing: 0 !important;
+  padding: 1px 5px !important;
+}
+.mermaid .edgeLabel rect,
+.mermaid .labelBkg { fill: var(--bg) !important; opacity: 1 !important; }
+
+/* --- Clusters / subgraphs — eyebrow-styled label --- */
+.mermaid .cluster rect {
+  fill: var(--bg-sunken) !important;
+  stroke: var(--border) !important;
+  stroke-width: 1px !important;
+  stroke-dasharray: 2 3 !important;
+  rx: 6 !important; ry: 6 !important;
+}
+.mermaid .cluster .nodeLabel,
+.mermaid .cluster .label,
+.mermaid .cluster text {
+  fill: var(--fg-meta) !important;
+  color: var(--fg-meta) !important;
+  font-family: var(--font-mono) !important;
+  font-size: 10.5px !important;
+  letter-spacing: 0.1em !important;
+  text-transform: uppercase !important;
+  font-weight: 500 !important;
+}
+
+/* --- Sequence diagrams --- */
+.mermaid .actor {
+  fill: var(--bg-elev) !important;
+  stroke: var(--border-strong) !important;
+  stroke-width: 1px !important;
+}
+.mermaid text.actor,
+.mermaid text.actor > tspan {
+  fill: var(--fg) !important;
+  font-family: var(--font-sans) !important;
+  font-weight: 500 !important;
+  font-size: 13px !important;
+}
+.mermaid line.actor-line,
+.mermaid .actor-line { stroke: var(--border-strong) !important; stroke-dasharray: 2 3 !important; }
+.mermaid .messageLine0,
+.mermaid .messageLine1 { stroke: var(--ink-2) !important; stroke-width: 1px !important; }
+.mermaid .messageText,
+.mermaid text.messageText {
+  fill: var(--fg-muted) !important;
+  font-family: var(--font-mono) !important;
+  font-size: 11.5px !important;
+}
+.mermaid .note {
+  fill: var(--ember-mist) !important;
+  stroke: var(--ember) !important;
+  stroke-width: 1px !important;
+}
+.mermaid .noteText,
+.mermaid .noteText > tspan,
+.mermaid text.noteText {
+  fill: var(--ember-ink) !important;
+  font-family: var(--font-sans) !important;
+  font-size: 12px !important;
+}
+.mermaid .activation0,
+.mermaid .activation1,
+.mermaid .activation2 {
+  fill: var(--paper-2) !important;
+  stroke: var(--border) !important;
+  stroke-width: 1px !important;
+}
+.mermaid .labelBox {
+  fill: var(--bg-elev) !important;
+  stroke: var(--border-strong) !important;
+}
+.mermaid .labelText,
+.mermaid .labelText > tspan,
+.mermaid .loopText,
+.mermaid .loopText > tspan {
+  fill: var(--fg) !important;
+  font-family: var(--font-mono) !important;
+  font-size: 11px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.mermaid .loopLine { stroke: var(--border-strong) !important; stroke-dasharray: 2 3 !important; fill: none !important; }
+
+/* --- State diagrams --- */
+.mermaid .statediagram-state rect,
+.mermaid .statediagram-cluster rect,
+.mermaid g.stateGroup rect {
+  fill: var(--bg-elev) !important;
+  stroke: var(--border-strong) !important;
+  stroke-width: 1px !important;
+}
+.mermaid .statediagram-cluster rect { fill: var(--bg-sunken) !important; stroke-dasharray: 2 3 !important; }
+.mermaid .stateLabel,
+.mermaid .stateLabel p,
+.mermaid g.stateGroup text { fill: var(--fg) !important; color: var(--fg) !important; }
+.mermaid .start-state,
+.mermaid .end-state-inner,
+.mermaid circle.state-end,
+.mermaid circle.state-start { fill: var(--ink-1) !important; stroke: var(--ink-1) !important; }
+.mermaid path.transition,
+.mermaid .transition { stroke: var(--ink-2) !important; fill: none !important; }
+.mermaid .edgeLabel.stateLabel { background: var(--bg) !important; }
+
+/* --- Class diagrams --- */
+.mermaid g.classGroup rect {
+  fill: var(--bg-elev) !important;
+  stroke: var(--border-strong) !important;
+}
+.mermaid g.classGroup line { stroke: var(--border) !important; }
+.mermaid g.classGroup text,
+.mermaid .classLabel .label { fill: var(--fg) !important; font-family: var(--font-mono) !important; font-size: 12px !important; }
+.mermaid g.classGroup .title { font-family: var(--font-display) !important; font-weight: 460 !important; }
+
+/* --- ER diagrams --- */
+.mermaid .er.entityBox {
+  fill: var(--bg-elev) !important;
+  stroke: var(--border-strong) !important;
+}
+.mermaid .er.relationshipLabel { fill: var(--fg-meta) !important; font-family: var(--font-mono) !important; font-size: 11px !important; }
+.mermaid .er.relationshipLabelBox { fill: var(--bg) !important; opacity: 1 !important; }
+.mermaid .er.attributeBoxOdd,
+.mermaid .er.attributeBoxEven { fill: var(--bg) !important; stroke: var(--border) !important; }
+.mermaid .er.entityLabel { fill: var(--fg) !important; font-family: var(--font-display) !important; font-weight: 460 !important; }
+.mermaid .relationshipLine { stroke: var(--ink-2) !important; }
+
+/* --- Pie --- */
+.mermaid .pieTitleText { fill: var(--fg) !important; font-family: var(--font-display) !important; font-weight: 460 !important; font-size: 16px !important; }
+.mermaid .pieOuterCircle { stroke: var(--border-strong) !important; fill: none !important; }
+.mermaid .slice { stroke: var(--bg) !important; stroke-width: 1.5px !important; }
+.mermaid .legend text,
+.mermaid g.legend text { fill: var(--fg-muted) !important; font-family: var(--font-mono) !important; font-size: 11px !important; }
+.mermaid .pieCircle:nth-of-type(1) { fill: var(--ember) !important; }
+.mermaid .pieCircle:nth-of-type(2) { fill: var(--ink-1) !important; }
+.mermaid .pieCircle:nth-of-type(3) { fill: var(--wire) !important; }
+.mermaid .pieCircle:nth-of-type(4) { fill: var(--pine) !important; }
+.mermaid .pieCircle:nth-of-type(5) { fill: var(--ember-soft) !important; }
+.mermaid .pieCircle:nth-of-type(n+6) { fill: var(--ink-3) !important; }
+
+/* --- Gantt --- */
+.mermaid .titleText { fill: var(--fg) !important; font-family: var(--font-display) !important; font-weight: 460 !important; }
+.mermaid .sectionTitle,
+.mermaid .sectionTitle0,
+.mermaid .sectionTitle1,
+.mermaid .sectionTitle2,
+.mermaid .sectionTitle3 {
+  fill: var(--fg-meta) !important;
+  font-family: var(--font-mono) !important;
+  font-size: 11px !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.08em !important;
+}
+.mermaid .section0, .mermaid .section1, .mermaid .section2, .mermaid .section3 { fill: transparent !important; }
+.mermaid .grid .tick line { stroke: var(--border) !important; opacity: 1 !important; }
+.mermaid .grid .tick text { fill: var(--fg-meta) !important; font-family: var(--font-mono) !important; font-size: 10.5px !important; }
+.mermaid .grid path,
+.mermaid .grid .domain { stroke: none !important; }
+.mermaid .today { stroke: var(--ember) !important; stroke-width: 1.5px !important; stroke-dasharray: 2 3 !important; }
+.mermaid .task0, .mermaid .task1, .mermaid .task2, .mermaid .task3 {
+  fill: var(--paper-3) !important; stroke: var(--border-strong) !important; stroke-width: 1px !important;
+}
+.mermaid .activeTask, .mermaid .activeTask0, .mermaid .activeTask1, .mermaid .activeTask2, .mermaid .activeTask3 {
+  fill: var(--ember) !important; stroke: var(--ember-deep) !important;
+}
+.mermaid .doneTask, .mermaid .doneTask0, .mermaid .doneTask1, .mermaid .doneTask2, .mermaid .doneTask3 {
+  fill: var(--pine-soft) !important; stroke: var(--pine) !important;
+}
+.mermaid .critTask, .mermaid .critTask0, .mermaid .critTask1, .mermaid .critTask2, .mermaid .critTask3 {
+  fill: var(--postmark-soft) !important; stroke: var(--postmark) !important;
+}
+.mermaid .taskText,
+.mermaid .taskText0, .mermaid .taskText1, .mermaid .taskText2, .mermaid .taskText3 {
+  fill: var(--fg) !important; font-family: var(--font-mono) !important; font-size: 11px !important;
+}
+.mermaid .taskTextOutsideRight,
+.mermaid .taskTextOutsideLeft { fill: var(--fg-muted) !important; font-family: var(--font-mono) !important; font-size: 11px !important; }
+
+/* --- Journey --- */
+.mermaid .journey-section { fill: var(--fg-meta) !important; font-family: var(--font-mono) !important; font-size: 11px !important; text-transform: uppercase !important; letter-spacing: 0.08em !important; }
+.mermaid .face { fill: var(--ember-mist) !important; stroke: var(--ember) !important; }
+
+/* --- Git graph --- */
+.mermaid .commit-id, .mermaid .commit-msg, .mermaid .branch-label { fill: var(--fg-muted) !important; font-family: var(--font-mono) !important; font-size: 11px !important; }
+.mermaid .commit0, .mermaid .commit-highlight0 { stroke: var(--ember) !important; fill: var(--ember) !important; }
+.mermaid .commit1, .mermaid .commit-highlight1 { stroke: var(--ink-1) !important; fill: var(--ink-1) !important; }
+.mermaid .commit2, .mermaid .commit-highlight2 { stroke: var(--wire) !important; fill: var(--wire) !important; }
+.mermaid .commit3, .mermaid .commit-highlight3 { stroke: var(--pine) !important; fill: var(--pine) !important; }
+.mermaid .branch { stroke: var(--ink-2) !important; }
+
+/* --- Dark-mode adjustments —
+   the tokens already flip, but a couple of fills want a stronger
+   step against the near-black surface --- */
+[data-theme='dark'] .mermaid .node rect,
+[data-theme='dark'] .mermaid .node polygon,
+[data-theme='dark'] .mermaid .node circle,
+[data-theme='dark'] .mermaid .node ellipse,
+[data-theme='dark'] .mermaid .node path { fill: var(--paper-2) !important; stroke: var(--paper-4) !important; }
+[data-theme='dark'] .mermaid .actor { fill: var(--paper-2) !important; stroke: var(--paper-4) !important; }
+[data-theme='dark'] .mermaid .activation0,
+[data-theme='dark'] .mermaid .activation1,
+[data-theme='dark'] .mermaid .activation2 { fill: var(--paper-3) !important; }
+[data-theme='dark'] .mermaid .cluster rect { fill: var(--paper-1) !important; }
+[data-theme='dark'] .mermaid .statediagram-cluster rect { fill: var(--paper-1) !important; }
+[data-theme='dark'] .mermaid g.classGroup rect,
+[data-theme='dark'] .mermaid .er.entityBox { fill: var(--paper-2) !important; stroke: var(--paper-4) !important; }
+[data-theme='dark'] .mermaid .er.attributeBoxOdd,
+[data-theme='dark'] .mermaid .er.attributeBoxEven { fill: var(--paper-1) !important; stroke: var(--paper-3) !important; }
+[data-theme='dark'] .mermaid .task0, [data-theme='dark'] .mermaid .task1,
+[data-theme='dark'] .mermaid .task2, [data-theme='dark'] .mermaid .task3 { fill: var(--paper-3) !important; }
+[data-theme='dark'] .mermaid .note { fill: rgba(237, 122, 51, 0.14) !important; }
+

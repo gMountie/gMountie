@@ -56,6 +56,32 @@ When the client opens a file, the server allocates an fd in a per-connection ses
 
 This is what lets a `tail -f` over a flaky link **stall** during the drop and resume on its own, instead of failing the file handle.
 
+## The connection state machine
+
+```mermaid
+stateDiagram-v2
+  [*] --> Connecting
+  Connecting --> Connected: handshake ok
+  Connecting --> Failed: dial timeout
+
+  Connected --> Reconnecting: keepalive ACK<br/>missed (~40 s)
+  Reconnecting --> Connected: handshake ok<br/>fds reattached
+  Reconnecting --> Failed: max retries
+
+  Connected --> Closing: user umount
+  Closing --> [*]
+  Failed --> [*]
+
+  note right of Connected
+    pending syscalls
+    are held by the
+    kernel during
+    Reconnecting
+  end note
+```
+
+While **Reconnecting**, the kernel keeps pending FUSE syscalls suspended — your application sees a stall, not an error. The mount only surfaces `EIO` if the state machine lands in **Failed**.
+
 ## What the user sees
 
 | Situation                                       | Outward symptom                                                                      |

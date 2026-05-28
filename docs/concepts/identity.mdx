@@ -21,6 +21,37 @@ Configured per volume in `server.yaml` under `volumes[…].mapping`. **Default i
 
 Pick the mode that matches your trust model. Going outside this list isn't a thing — the validator rejects anything else.
 
+```mermaid
+flowchart TD
+  RPC([RPC from authenticated client])
+  M{Volume's<br/><b>mapping.mode</b>?}
+  SQ["<b>squash</b><br/>use fixed uid + gid"]
+  ST{"<b>static</b><br/>principal in users[]?"}
+  SY{"<b>system</b><br/>principal in NSS?"}
+  PT["<b>passthrough</b><br/>use client-claimed uid + gid"]
+  ROOT{"client uid == 0<br/>and root_squash?"}
+  ANON["map to anon_uid"]
+  REJECT[/Reject:<br/>PermissionDenied/]
+  ID([Resolved server identity])
+  CHECK[/Server filesystem<br/>permission check/]
+
+  RPC --> M
+  M -->|squash| SQ --> ID
+  M -->|static| ST
+  ST -->|yes| ID
+  ST -->|no| REJECT
+  M -->|system| SY
+  SY -->|yes| ID
+  SY -->|no| REJECT
+  M -->|passthrough| PT --> ROOT
+  ROOT -->|yes| ANON --> ID
+  ROOT -->|no| ID
+  ID --> CHECK
+
+  classDef primary fill:#FBE4CC,stroke:#D9641C,color:#6E2D08
+  class ID primary
+```
+
 ## squash
 
 The simplest. One uid + one gid for everyone.

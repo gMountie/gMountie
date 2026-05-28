@@ -95,12 +95,12 @@ Reads and writes now flow to the server, are cached locally, and the mount rides
 ## How It Works 🏗️
 
 ```
-     your machine                                    remote server
-┌─────────────────────┐        gRPC over HTTP/2     ┌─────────────────────┐
-│   gmountie mount     │ ◀─────────────────────────▶ │    gmountie serve    │
-│  FUSE mount point    │   metadata · data · events  │  real folders        │
-│  + local cache       │                             │  exposed as volumes  │
-└─────────────────────┘                             └─────────────────────┘
+     your machine                                   remote server
+┌─────────────────────┐       gRPC over HTTP/2     ┌─────────────────────┐
+│   gmountie mount    │ ◀────────────────────────▶ │   gmountie serve    │
+│  FUSE mount point   │  metadata · data · events  │  real folders       │
+│  + local cache      │                            │  exposed as volumes │
+└─────────────────────┘                            └─────────────────────┘
 ```
 
 The client implements a FUSE filesystem and turns each syscall into a gRPC call against the server, which serves it from the configured volume's real directory. Metadata, file data, and cache-invalidation events travel over three separate gRPC services, so they can be routed and tuned independently.

@@ -45,6 +45,51 @@ Where the protocol can, RPCs are designed to be **idempotent**: the same `Read(v
 
 Operations with side effects whose retry is *not* obviously safe (`Mkdir` on an existing dir, `Unlink` of a file that may have been deleted concurrently) aren't blindly retried; the client surfaces the underlying error and lets the caller decide.
 
+## What a `cat` looks like on the wire
+
+A `cat /mnt/shared/big.bin` from a cold cache. With the [cache](./cache.mdx) on, repeat reads of the same chunks skip everything between Lookup and Release.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant App as Application
+  participant K as FUSE (kernel)
+  participant C as gmountie mount
+  participant S as gmountie serve
+  participant FS as Server filesystem
+
+  App->>K: open("big.bin")
+  K->>C: lookup("big.bin")
+  C->>S: fs.Lookup(volume, "big.bin")
+  S->>FS: stat
+  FS-->>S: inode + attrs
+  S-->>C: ok, inode
+  C->>S: file.Open(volume, inode)
+  S->>FS: open(...)
+  FS-->>S: fd
+  S-->>C: ok, server fd
+
+  loop until EOF
+    App->>K: read()
+    K->>C: read(off, len)
+    Note over C: cache miss → wire<br/>cache hit → memory copy
+    C->>S: file.Read(volume, fd, off, len) [streamed]
+    S->>FS: pread
+    FS-->>S: bytes
+    S-->>C: chunk(s)
+    C-->>K: bytes
+    K-->>App: bytes
+  end
+
+  App->>K: close()
+  K->>C: release(fd)
+  C->>S: file.Release(volume, fd)
+  S->>FS: close
+  S-->>C: ok
+```
+
+The diagram glosses one thing: under sequential reads the client opens additional `file.Read` streams as **prefetches** — see [Cache → Sequential reads](./cache.mdx) for the readahead model.
+
 ## Go deeper
 
 The wire-format detail, RPC catalogue, and protocol-evolution rules live in the design doc:
