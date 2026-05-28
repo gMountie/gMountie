@@ -32,9 +32,11 @@ jobs:
           go-version-file: 'go.mod'
           cache-dependency-path: 'go.sum'
       - name: Install Task
-        uses: arduino/setup-task@v2
-        with:
-          version: 3.x
+        # `go install` goes through proxy.golang.org and reuses the
+        # setup-go module cache — sidesteps the unauthenticated
+        # GitHub release API rate limit that arduino/setup-task hits
+        # on busy shared runners.
+        run: go install github.com/go-task/task/v3/cmd/task@v3.51.1
       # golangci-lint maintains its own per-package incremental analysis
       # cache, independent of Go's build cache. Without persisting it
       # across runs every CI invocation re-analyses every package from
@@ -91,9 +93,11 @@ jobs:
           go-version-file: 'go.mod'
           cache-dependency-path: 'go.sum'
       - name: Install Task
-        uses: arduino/setup-task@v2
-        with:
-          version: 3.x
+        # `go install` goes through proxy.golang.org and reuses the
+        # setup-go module cache — sidesteps the unauthenticated
+        # GitHub release API rate limit that arduino/setup-task hits
+        # on busy shared runners.
+        run: go install github.com/go-task/task/v3/cmd/task@v3.51.1
       - name: Run tests
         run: |
           task test:coverage
@@ -120,9 +124,11 @@ jobs:
           go-version-file: 'go.mod'
           cache-dependency-path: 'go.sum'
       - name: Install Task
-        uses: arduino/setup-task@v2
-        with:
-          version: 3.x
+        # `go install` goes through proxy.golang.org and reuses the
+        # setup-go module cache — sidesteps the unauthenticated
+        # GitHub release API rate limit that arduino/setup-task hits
+        # on busy shared runners.
+        run: go install github.com/go-task/task/v3/cmd/task@v3.51.1
       # Scoped to the concurrent logic packages (see Taskfile test:race) — no
       # fio/GTK apt deps needed since the e2e suite and ./pkg/ui are excluded.
       - name: Race detector
