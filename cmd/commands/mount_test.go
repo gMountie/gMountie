@@ -139,7 +139,6 @@ func (s *MountCmdTestSuite) TestMountCmd_ConfigFile_BasicAuthFromFile() {
 	cfgYAML := `server:
   address: 192.168.11.11
   port: 9449
-  tls: false
 auth:
   type: basic
   username: demo
@@ -170,7 +169,6 @@ func (s *MountCmdTestSuite) TestMountCmd_FlagOverridesConfig() {
 	cfgYAML := `server:
   address: 192.168.11.11
   port: 9449
-  tls: false
 auth:
   type: basic
   username: admin

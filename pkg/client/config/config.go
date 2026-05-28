@@ -96,9 +96,37 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
-	// Parse server config
+	// Parse server config. Env-var overrides for nested TLS keys require
+	// explicit BindEnv on the parent viper (AutomaticEnv doesn't propagate
+	// through Sub), then mirror into the sub-tree before unmarshal.
+	for _, key := range []string{
+		"server.tls.verify",
+		"server.tls.ca_file",
+		"server.tls.expected_fingerprint",
+		"server.tls.server_name",
+		"server.tls.cert_file",
+		"server.tls.key_file",
+	} {
+		_ = v.BindEnv(key)
+	}
 	v.SetDefault("server", make(map[string]string))
-	if cfg, err := NewServerConfig(v.Sub("server")); err == nil {
+	serverSub := v.Sub("server")
+	if serverSub == nil {
+		serverSub = viper.New()
+	}
+	for _, key := range []string{
+		"tls.verify",
+		"tls.ca_file",
+		"tls.expected_fingerprint",
+		"tls.server_name",
+		"tls.cert_file",
+		"tls.key_file",
+	} {
+		if v.IsSet("server." + key) {
+			serverSub.Set(key, v.Get("server."+key))
+		}
+	}
+	if cfg, err := NewServerConfig(serverSub); err == nil {
 		result.Server = cfg
 	} else {
 		return nil, err

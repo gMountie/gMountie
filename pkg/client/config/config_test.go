@@ -19,7 +19,6 @@ func (s *ConfigTestSuite) SetupTest() {
 server:
   address: 0.0.0.0
   port: 9449
-  tls: false
 auth:
   type: basic
   username: admin

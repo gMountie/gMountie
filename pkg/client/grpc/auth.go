@@ -27,7 +27,8 @@ func (b *BasicAuthCredentials) GetRequestMetadata(context.Context, ...string) (m
 	}, nil
 }
 
-// RequireTransportSecurity returns if the transport security is required
+// RequireTransportSecurity returns if the transport security is required.
+// Always true — basic-auth credentials must not be sent over plaintext.
 func (b *BasicAuthCredentials) RequireTransportSecurity() bool {
-	return false
+	return true
 }

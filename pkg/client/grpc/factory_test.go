@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"strconv"
 	"sync"
@@ -14,10 +15,12 @@ import (
 	serverConfig "gmountie/pkg/server/config"
 	"gmountie/pkg/server/controller"
 	"gmountie/pkg/server/service"
+	servertls "gmountie/pkg/server/tls"
 
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
@@ -38,7 +41,22 @@ func (s *FactoryTestSuite) SetupSuite() {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	s.Require().NoError(err)
 
-	srv := grpc.NewServer()
+	// Phase 7 PR 1: the client always dials TLS. Spin up an ephemeral
+	// self-signed cert and configure the test server with it; the client
+	// uses Mode=insecure so it skips chain verification. Test/e2e/utils
+	// gets the full fixture treatment in T5; this is the minimum to keep
+	// pkg/client/grpc unit tests passing.
+	certPEM, keyPEM, err := servertls.Generate("127.0.0.1")
+	s.Require().NoError(err)
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	s.Require().NoError(err)
+	creds := credentials.NewTLS(&tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		NextProtos:   []string{"h2"},
+		Certificates: []tls.Certificate{cert},
+	})
+
+	srv := grpc.NewServer(grpc.Creds(creds))
 	sessMgr := service.NewSessionManager(service.SessionManagerOptions{})
 	proto.RegisterSessionServiceServer(srv, controller.NewSessionController(sessMgr, nil))
 
@@ -88,6 +106,7 @@ func (s *FactoryTestSuite) TestNewClientFromConfig_BasicAuth() {
 		Server: &config.ServerConfig{
 			Address: host,
 			Port:    uint(port),
+			TLS:     config.TLSConfig{Verify: "insecure"},
 		},
 		Auth: &config.BasicAuthConfig{
 			BasicAuthConfigUser: serverConfig.BasicAuthConfigUser{
@@ -120,7 +139,7 @@ func (s *FactoryTestSuite) TestCreateEndpoint() {
 func (s *FactoryTestSuite) TestNewClientFromConfig_TimeoutsApplied() {
 	host, port := s.hostPort()
 	cfg := &config.Config{
-		Server: &config.ServerConfig{Address: host, Port: uint(port)},
+		Server: &config.ServerConfig{Address: host, Port: uint(port), TLS: config.TLSConfig{Verify: "insecure"}},
 		Auth: &config.BasicAuthConfig{
 			BasicAuthConfigUser: serverConfig.BasicAuthConfigUser{
 				Username: "testuser",
@@ -158,7 +177,7 @@ func (s *FactoryTestSuite) TestNewClientFromConfig_HandshakeFailureReturnsError(
 	lis.Close()
 
 	cfg := &config.Config{
-		Server: &config.ServerConfig{Address: "127.0.0.1", Port: uint(port)},
+		Server: &config.ServerConfig{Address: "127.0.0.1", Port: uint(port), TLS: config.TLSConfig{Verify: "insecure"}},
 		Auth: &config.BasicAuthConfig{
 			BasicAuthConfigUser: serverConfig.BasicAuthConfigUser{
 				Username: "testuser",
