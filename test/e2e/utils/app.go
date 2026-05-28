@@ -211,6 +211,34 @@ func WithRandomTestVolume(randomfiles bool) TestOptions {
 	}
 }
 
+// WithStaticVolume adds a volume whose Mapping is static-mode, backed by an
+// existing on-disk directory (srcPath). The caller owns srcPath's lifecycle.
+// users and groups are mapped directly into MappingConfig.Users/Groups so the
+// static resolver can populate uid/gid/caps for each principal.
+//
+// Use this in identity/caps tests where you need per-principal caps and the
+// server must authenticate via basic-auth. Each AppTestingContext should carry
+// exactly one principal in both WithBasicAuth and WithStaticVolume.users.
+func WithStaticVolume(srcPath string, users map[string]config.StaticUser, groups map[string]uint32) TestOptions {
+	return func(c *AppTestingContext) {
+		name := randstr.String(10)
+		v, err := NewTestVolumeWithExistingSrc(name, srcPath)
+		if err != nil {
+			panic(err)
+		}
+		c.volumes = append(c.volumes, v)
+		c.cfg.Volumes = append(c.cfg.Volumes, &config.VolumeConfig{
+			Name: v.Name,
+			Path: v.GetSrcPath(),
+			Mapping: config.MappingConfig{
+				Mode:   config.MappingModeStatic,
+				Users:  users,
+				Groups: groups,
+			},
+		})
+	}
+}
+
 // WithExistingVolume adds a volume with a pinned name and an existing
 // server-side source directory. Both name and srcPath are caller-owned
 // (e.g. via t.TempDir()) so that multiple AppTestingContext instances can
