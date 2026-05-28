@@ -43,3 +43,11 @@ func (s *StaticResolverSuite) TestUnknownGroupIsSkipped() {
 	s.Require().NoError(err)
 	s.ElementsMatch([]uint32{1001, 2000}, id.Gids)
 }
+
+func (s *StaticResolverSuite) TestPopulatesNames() {
+	r := NewStaticResolver(s.mapping())
+	id, err := r.Resolve("alice")
+	s.Require().NoError(err)
+	s.Equal("alice", id.UserName)
+	s.Equal(map[uint32]string{2000: "developers"}, id.GroupNames)
+}
