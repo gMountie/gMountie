@@ -67,12 +67,25 @@ type ServerKeepaliveConfig struct {
 	PermitWithoutStream bool `mapstructure:"permit_without_stream"`
 }
 
+// TLSConfig controls how the server presents TLS. When CertFile/KeyFile are
+// empty and Disabled is false, the server auto-generates a self-signed cert
+// on first startup (the SSH host-key pattern — see Phase 7 spec §3.1.1).
+type TLSConfig struct {
+	CertFile     string `mapstructure:"cert_file"`
+	KeyFile      string `mapstructure:"key_file"`
+	ClientCAFile string `mapstructure:"client_ca_file"` // mTLS — reserved for PR 3; left unused here
+	MinVersion   string `mapstructure:"min_version" validate:"omitempty,oneof=1.2 1.3"`
+	Disabled     bool   `mapstructure:"disabled"`
+}
+
 // ServerConfig is a struct that holds the configuration for the server
 type ServerConfig struct {
 	// Address is the address that the server will listen on
 	Address string `validate:"required,ip"`
 	// Port is the port that the server will listen on
 	Port uint `validate:"required"`
+	// TLS controls how the server presents TLS to connecting clients.
+	TLS TLSConfig `mapstructure:"tls"`
 	// Metrics enables the ops HTTP server.
 	Metrics bool
 	// MetricsAddr is the address the ops HTTP server listens on.
