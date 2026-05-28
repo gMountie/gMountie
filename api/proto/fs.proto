@@ -73,6 +73,10 @@ message GetAttrIfChangedRequest {
   string volume = 1;
   string path = 2;
   uint64 known_version = 3;
+  // Caller carries the wire identity so passthrough volumes can
+  // revalidate as the real uid/gid (not anon) when no ctx principal
+  // is established. Mapped modes ignore it and use the ctx principal.
+  Caller caller = 4;
 }
 
 message GetAttrIfChangedReply {

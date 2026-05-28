@@ -173,6 +173,7 @@ func (b *BackendClient) GetAttrIfChanged(ctx context.Context, path string, known
 	defer cancel()
 	reply, err := b.client.Fs().GetAttrIfChanged(ctx2, &proto.GetAttrIfChangedRequest{
 		Volume:       b.volume,
+		Caller:       callerFromCtx(ctx2),
 		Path:         path,
 		KnownVersion: knownVersion,
 	})

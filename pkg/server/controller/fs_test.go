@@ -503,6 +503,30 @@ func (s *RpcServerTestSuite) TestGetAttrIfChanged_ENOENT() {
 	_ = reply
 }
 
+// TestGetAttrIfChanged_PassesWireCaller verifies the protective property of
+// the spec §11 follow-up: the wire Caller flows into BindIdentity (and thus
+// into the resolver's passthrough path), instead of nil — which previously
+// would have squashed every cache-revalidation stat to anon. Mapped modes
+// still ignore Caller and use the ctx principal; this test asserts the wire
+// is plumbed, not the mapping mode itself.
+func (s *RpcServerTestSuite) TestGetAttrIfChanged_PassesWireCaller() {
+	mockFs := new(pathfs2.MockFileSystem)
+	wireCaller := CreateCaller(1234, 5678, 0)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", wireCaller).Return(mockFs, nil).Once()
+
+	attr := &fuse.Attr{Ino: 1, Size: 1, Mode: 0o644, Nlink: 1}
+	mockFs.EXPECT().GetAttr("/x.bin", mock.Anything).Return(attr, fuse.OK)
+
+	_, err := s.server.GetAttrIfChanged(context.Background(), &proto.GetAttrIfChangedRequest{
+		Volume:       "testVolume",
+		Path:         "/x.bin",
+		KnownVersion: 0,
+		Caller:       wireCaller,
+	})
+	s.Require().NoError(err)
+	s.fsService.AssertExpectations(s.T()) // BindIdentity was called with the wire Caller
+}
+
 func (s *RpcServerTestSuite) TestUtimens() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)

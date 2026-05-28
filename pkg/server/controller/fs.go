@@ -313,14 +313,15 @@ func (r *RpcServerImpl) Compound(ctx context.Context, request *proto.CompoundReq
 func (r *RpcServerImpl) GetAttrIfChanged(ctx context.Context, request *proto.GetAttrIfChangedRequest) (*proto.GetAttrIfChangedReply, error) {
 	// Identity-bound like GetAttr: this serves file attrs to the client, so it
 	// must enforce the principal's permissions — otherwise a client could skip
-	// the identity-checked GetAttr and read metadata by polling here. Nil caller:
-	// mapped modes use the ctx principal; passthrough degrades to anon for this
-	// cache-revalidation stat (the request carries no Caller field).
-	fs, err := r.fsService.BindIdentity(ctx, request.Volume, nil)
+	// the identity-checked GetAttr and read metadata by polling here. The wire
+	// Caller is honored in passthrough mode (so the cache revalidation runs as
+	// the real uid/gid instead of anon); mapped modes use the ctx principal
+	// and ignore Caller.
+	fs, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
 		return nil, err
 	}
-	attr, st := fs.GetAttr(request.Path, createContext(ctx, nil))
+	attr, st := fs.GetAttr(request.Path, createContext(ctx, request.Caller))
 	if !st.Ok() || attr == nil {
 		if st == fuse.ENOENT {
 			return nil, status.Error(codes.NotFound, "path not found")
@@ -333,9 +334,6 @@ func (r *RpcServerImpl) GetAttrIfChanged(ctx context.Context, request *proto.Get
 	}
 	return &proto.GetAttrIfChangedReply{
 		NotModified: false,
-		// GetAttrIfChangedRequest carries no Caller — pass nil here, matching
-		// the BindIdentity(nil) call above. The names are best-effort; the
-		// client can re-stat through GetAttr when it needs them.
-		Attrs: toProtoAttr(attr, nil),
+		Attrs:       toProtoAttr(attr, resolveIdentityOrNil(ctx, r.fsService, request.Volume, request.Caller)),
 	}, nil
 }
