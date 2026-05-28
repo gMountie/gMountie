@@ -93,6 +93,37 @@ type OpsConfig struct {
 	Auth OpsAuthConfig `mapstructure:"auth"`
 }
 
+// GRPCConfig controls gRPC server-side behavior that isn't transport
+// (TLS) or routing.
+type GRPCConfig struct {
+	// Reflection enables the gRPC reflection service. Off by default so
+	// production deployments don't leak the service surface to anonymous
+	// callers; turn on for dev / debug.
+	Reflection bool `mapstructure:"reflection"`
+
+	// Limits caps per-connection resource use.
+	Limits LimitsConfig `mapstructure:"limits"`
+}
+
+// LimitsConfig — defaults aim to absorb a normal client and refuse
+// obviously hostile traffic.
+type LimitsConfig struct {
+	// MaxRecvMessageSize bounds the largest single gRPC message the server
+	// accepts (bytes). Default 16 MiB — matches the existing frame_size
+	// default so a normal Read/Write frame fits.
+	MaxRecvMessageSize int `mapstructure:"max_recv_message_size"`
+	// MaxConcurrentStreams bounds the number of in-flight streams per
+	// single connection. Default 256 — generous for a real client,
+	// bites only on stream-flood attacks.
+	MaxConcurrentStreams uint32 `mapstructure:"max_concurrent_streams"`
+	// MaxConnectionIdle closes idle connections after this duration.
+	// Default 5m. Set to 0 to disable.
+	MaxConnectionIdle time.Duration `mapstructure:"max_connection_idle"`
+	// MaxConnectionAge hard-caps total connection lifetime. Default 0
+	// (unlimited) — long-lived sessions are the gMountie norm.
+	MaxConnectionAge time.Duration `mapstructure:"max_connection_age"`
+}
+
 // ServerConfig is a struct that holds the configuration for the server
 type ServerConfig struct {
 	// Address is the address that the server will listen on
@@ -138,4 +169,6 @@ type ServerConfig struct {
 	// a HEARTBEAT to each live subscriber. Clients use the absence of
 	// heartbeats to detect a stale stream and trigger reconnection.
 	SubscribeHeartbeatInterval time.Duration `mapstructure:"subscribe_heartbeat_interval"`
+	// GRPC controls gRPC server-side behavior (reflection, DoS limits).
+	GRPC GRPCConfig `mapstructure:"grpc"`
 }

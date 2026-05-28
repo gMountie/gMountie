@@ -68,6 +68,11 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		"server.tls.disabled",
 		"server.ops.addr",
 		"server.ops.auth.type",
+		"server.grpc.reflection",
+		"server.grpc.limits.max_recv_message_size",
+		"server.grpc.limits.max_concurrent_streams",
+		"server.grpc.limits.max_connection_idle",
+		"server.grpc.limits.max_connection_age",
 		"auth.type",
 	} {
 		_ = v.BindEnv(key)
@@ -91,6 +96,11 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	v.SetDefault("server.tls.min_version", "1.3")
 	v.SetDefault("server.ops.addr", "127.0.0.1:9090")
 	v.SetDefault("server.ops.auth.type", "none")
+	v.SetDefault("server.grpc.reflection", false)
+	v.SetDefault("server.grpc.limits.max_recv_message_size", DefaultMaxMessageBytes)
+	v.SetDefault("server.grpc.limits.max_concurrent_streams", uint32(256))
+	v.SetDefault("server.grpc.limits.max_connection_idle", "5m")
+	v.SetDefault("server.grpc.limits.max_connection_age", 0)
 	result.Server = &ServerConfig{
 		Address:             v.GetString("server.address"),
 		Port:                v.GetUint("server.port"),
@@ -116,6 +126,15 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 			Disabled:     v.GetBool("server.tls.disabled"),
 		},
 		Ops: parseOpsConfig(v),
+		GRPC: GRPCConfig{
+			Reflection: v.GetBool("server.grpc.reflection"),
+			Limits: LimitsConfig{
+				MaxRecvMessageSize:  v.GetInt("server.grpc.limits.max_recv_message_size"),
+				MaxConcurrentStreams: uint32(v.GetUint("server.grpc.limits.max_concurrent_streams")),
+				MaxConnectionIdle:   v.GetDuration("server.grpc.limits.max_connection_idle"),
+				MaxConnectionAge:    v.GetDuration("server.grpc.limits.max_connection_age"),
+			},
+		},
 	}
 
 	// Parse the auth configuration.
