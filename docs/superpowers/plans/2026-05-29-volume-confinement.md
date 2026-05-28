@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26, `golang.org/x/sys/unix` (`Openat2`, `OpenHow`, `RESOLVE_BENEATH`, `RESOLVE_NO_MAGICLINKS`, `Fstatat`, `Mkdirat`, `Unlinkat`, `Renameat2`, `Symlinkat`, `Readlinkat`, `Linkat`, `Fchmodat`, `Fchownat`, `UtimesNanoAt`, `Faccessat`), go-fuse v2 `pathfs.FileSystem`, testify suites. Kernel ≥5.6 (VM is 6.8). Runs Linux-only (matches the rest of the server).
 
-**Reference spec:** `docs/superpowers/specs/2026-05-27-identity-permissions-design.md` §3.10.
+**Reference (historical):** the brainstorm spec that drove this plan has been pruned now that the identity feature has shipped; see `docs/design/identity-and-permissions.md` for the durable as-shipped record.
 
 **Scope:** the `ConfinedLoopbackFileSystem` (~22 pathfs ops fd-relative), wiring into `NewLocalFilesystem`, unit tests for the resolver + each op family, VM e2e symlink-escape + traversal regression test. **Out of scope:** changes to `identityBoundFS` (it composes unchanged), the data path (the fd returned by `Open` is already confined), `dac_override`/Phase 3 (gated on this PR).
 

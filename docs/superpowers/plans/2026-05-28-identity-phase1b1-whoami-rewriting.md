@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26, gRPC (`task gen:grpc`), go-fuse v2 (`pkg/client/io`), testify suites. Module `gmountie`. Server runs as root in prod (enforcement from Phase 1a).
 
-**Reference spec:** `docs/superpowers/specs/2026-05-27-identity-permissions-design.md` §3.5 (WhoAmI), §3.8 (client rewriting + raw_ids), §9 (Phase 1b).
+**Reference (historical):** the brainstorm spec that drove this plan has been pruned now that the identity feature has shipped; see `docs/design/identity-and-permissions.md` for the durable as-shipped record.
 
 **Scope (this plan = 1b-1):** WhoAmI RPC + Identity proto (uid/gid/gids — **no names yet**); server resolve; client identity cache; inbound + outbound UID/GID rewriting; `raw_ids`. **Deferred to 1b-2:** symbolic names (`Owner.user_name`/`group_name`, resolver name population, the `toProtoAttr` seam, client name display). **Out of scope:** Phase 2 (confinement), Phase 3 (caps).
 

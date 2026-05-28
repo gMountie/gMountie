@@ -10,7 +10,7 @@
 
 **Tech Stack:** Go 1.26, `github.com/hanwen/go-fuse/v2 v2.10.1` (`pathfs`), `golang.org/x/sys/unix` v0.45, Viper + `go-playground/validator` v10, testify suites. Module path `gmountie`. Server binary is `CGO_ENABLED=0`.
 
-**Reference spec:** `docs/superpowers/specs/2026-05-27-identity-permissions-design.md` (§3.2 modes, §3.3 resolver, §3.4 enforcement+wiring, §3.11 robustness/validation).
+**Reference (historical):** the brainstorm spec that drove this plan has been pruned now that the identity feature has shipped; see `docs/design/identity-and-permissions.md` for the durable as-shipped record.
 
 **Testing notes:**
 - Pure logic (config parse/validate, resolvers, ctx round-trip, cache, allocs) → unit tests as **testify suites** (project convention), runnable in the sandbox.
