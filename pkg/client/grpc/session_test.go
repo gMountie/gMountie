@@ -3,7 +3,6 @@ package grpc
 import (
 	"context"
 	"errors"
-	"io"
 	"os"
 	"testing"
 	"time"
@@ -27,33 +26,60 @@ func (s *SessionHandshakeTestSuite) SetupTest() {
 	s.sessionClient = mockProto.NewMockSessionServiceClient(s.T())
 }
 
+// newParkingKeepaliveStream returns a Keepalive stream stub whose Recv blocks
+// until the stream's own context is cancelled, then returns that context's
+// error. keepaliveLoop calls Keepalive(streamCtx, …) then Recv on the returned
+// stream, so binding the stream to streamCtx parks the loop there: it spins no
+// further recover cycle and exits the instant Close() cancels streamCtx. That
+// keeps mock expectations exact and the suite deterministic under -race (no
+// unexpected calls fired during teardown, no ungated state transitions). The
+// returned bind func must be invoked with the ctx from the Keepalive
+// expectation's RunAndReturn.
+func newParkingKeepaliveStream(t *testing.T) (stream *mockProto.MockSessionService_KeepaliveClient, bind func(context.Context)) {
+	stream = mockProto.NewMockSessionService_KeepaliveClient(t)
+	ctxCh := make(chan context.Context, 1)
+	stream.EXPECT().Recv().RunAndReturn(func() (*proto.KeepalivePing, error) {
+		ctx := <-ctxCh
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}).Maybe()
+	return stream, func(ctx context.Context) { ctxCh <- ctx }
+}
+
+// newGatedErrorKeepaliveStream returns a Keepalive stream stub whose Recv
+// blocks until release is closed, then returns err. Gating the stream break
+// lets a test assert the pre-recovery session state with the loop parked,
+// removing the race between Establish returning and the recovery goroutine
+// mutating that state.
+func newGatedErrorKeepaliveStream(t *testing.T, release <-chan struct{}, err error) *mockProto.MockSessionService_KeepaliveClient {
+	stream := mockProto.NewMockSessionService_KeepaliveClient(t)
+	stream.EXPECT().Recv().RunAndReturn(func() (*proto.KeepalivePing, error) {
+		<-release
+		return nil, err
+	}).Once()
+	return stream
+}
+
 func (s *SessionHandshakeTestSuite) TestEstablishCallsCreateAndStartsKeepalive() {
 	s.sessionClient.EXPECT().Create(mock.Anything, mock.Anything).
 		Return(&proto.SessionCreateReply{SessionId: "abc-123"}, nil).Once()
 
-	stream := mockProto.NewMockSessionService_KeepaliveClient(s.T())
-	// Recv blocks until the test signals; we end it with io.EOF.
-	blockCh := make(chan struct{})
-	stream.EXPECT().Recv().RunAndReturn(func() (*proto.KeepalivePing, error) {
-		<-blockCh
-		return nil, io.EOF
-	}).Maybe()
-	stream.EXPECT().CloseSend().Return(nil).Maybe()
-
+	// The keepalive stream parks on streamCtx and exits cleanly on Close —
+	// no EOF that would otherwise drive an (unmocked) recover cycle.
+	stream, bind := newParkingKeepaliveStream(s.T())
 	s.sessionClient.EXPECT().Keepalive(mock.Anything, mock.MatchedBy(func(req *proto.KeepaliveRequest) bool {
 		return req.SessionId == "abc-123"
-	})).Return(stream, nil).Once()
+	})).RunAndReturn(func(ctx context.Context, _ *proto.KeepaliveRequest, _ ...grpc.CallOption) (proto.SessionService_KeepaliveClient, error) {
+		bind(ctx)
+		return stream, nil
+	}).Once()
 
 	handshake := NewSessionHandshake(s.sessionClient)
 	err := handshake.Establish(context.Background())
 	s.Require().NoError(err)
 	s.Assert().Equal("abc-123", handshake.SessionID())
 
-	// Close the handshake — the Recv goroutine unblocks.
-	close(blockCh)
 	s.Require().NoError(handshake.Close())
-
-	// Give the background goroutine a moment to wind down.
 	s.Require().Eventually(func() bool {
 		return !handshake.IsRunning()
 	}, time.Second, 10*time.Millisecond)
@@ -99,111 +125,92 @@ func (s *SessionHandshakeTestSuite) TestKeepaliveStreamErrorTriggersResume() {
 	s.sessionClient.EXPECT().Create(mock.Anything, mock.Anything).
 		Return(&proto.SessionCreateReply{SessionId: "abc-123"}, nil).Once()
 
-	// First stream: emit one Recv that returns an error.
-	stream1 := mockProto.NewMockSessionService_KeepaliveClient(s.T())
-	stream1.EXPECT().Recv().Return(nil, status.Error(codes.Unavailable, "transient")).Once()
+	// First stream breaks only once the test releases it (so the pre-recovery
+	// assertion runs with the loop parked); the second parks until Close.
+	release := make(chan struct{})
+	stream1 := newGatedErrorKeepaliveStream(s.T(), release, status.Error(codes.Unavailable, "transient"))
+	stream2, bind2 := newParkingKeepaliveStream(s.T())
 
-	// Second stream: block forever until test closes the handshake.
-	stream2 := mockProto.NewMockSessionService_KeepaliveClient(s.T())
-	block := make(chan struct{})
-	stream2.EXPECT().Recv().RunAndReturn(func() (*proto.KeepalivePing, error) {
-		<-block
-		return nil, io.EOF
-	}).Maybe()
-
-	// After stream1 errors, the handshake calls Resume(abc-123) — succeeds.
+	// On the stream break the loop resumes (abc-123) — Resume succeeds, so the
+	// session id is unchanged.
 	s.sessionClient.EXPECT().Resume(mock.Anything, mock.MatchedBy(func(req *proto.SessionResumeRequest) bool {
 		return req.SessionId == "abc-123"
 	})).Return(&proto.SessionResumeReply{Resumed: true}, nil).Once()
 
-	// First Keepalive (during Establish) returns stream1; second (during recover) returns stream2.
-	secondKeepalive := make(chan struct{})
+	// First Keepalive (Establish) → stream1; second (recover) → stream2.
+	reopened := make(chan struct{})
 	s.sessionClient.EXPECT().Keepalive(mock.Anything, mock.Anything).
 		Return(stream1, nil).Once()
 	s.sessionClient.EXPECT().Keepalive(mock.Anything, mock.Anything).
-		RunAndReturn(func(ctx context.Context, req *proto.KeepaliveRequest, opts ...grpc.CallOption) (proto.SessionService_KeepaliveClient, error) {
-			close(secondKeepalive)
+		RunAndReturn(func(ctx context.Context, _ *proto.KeepaliveRequest, _ ...grpc.CallOption) (proto.SessionService_KeepaliveClient, error) {
+			bind2(ctx)
+			close(reopened)
 			return stream2, nil
 		}).Once()
 
 	handshake := NewSessionHandshake(s.sessionClient)
 	s.Require().NoError(handshake.Establish(context.Background()))
-	s.Require().Equal("abc-123", handshake.SessionID())
-
-	// Wait for recovery to actually reopen the Keepalive stream.
-	select {
-	case <-secondKeepalive:
-	case <-time.After(time.Second):
-		s.FailNow("recovery did not reopen Keepalive stream")
-	}
+	// Loop parked in stream1.Recv (release not yet closed): deterministic state.
 	s.Require().Equal("abc-123", handshake.SessionID())
 	s.Require().True(handshake.IsRunning())
 
-	// Close races the recovery loop: once we unblock Recv it returns EOF,
-	// and depending on goroutine scheduling the loop may fire one more
-	// Resume/Keepalive cycle before Close's streamCancel takes effect. The
-	// unexpected mock call would invoke testify's reflective diagnostic,
-	// which reads streamCtx at the same moment streamCancel writes it —
-	// a -race finding from CI run #119. Pre-register permissive expectations
-	// to absorb the race-window calls instead of asserting exact counts.
-	s.sessionClient.EXPECT().Resume(mock.Anything, mock.Anything).
-		Return(&proto.SessionResumeReply{Resumed: true}, nil).Maybe()
-	s.sessionClient.EXPECT().Keepalive(mock.Anything, mock.Anything).
-		Return(stream2, nil).Maybe()
+	close(release) // let stream1 break → Resume → reopen
+	select {
+	case <-reopened:
+	case <-time.After(2 * time.Second):
+		s.FailNow("recovery did not reopen the Keepalive stream")
+	}
+	s.Require().Equal("abc-123", handshake.SessionID()) // Resume kept the id
 
-	close(block)
 	s.Require().NoError(handshake.Close())
+	s.Require().Eventually(func() bool { return !handshake.IsRunning() }, time.Second, 5*time.Millisecond)
 }
 
 func (s *SessionHandshakeTestSuite) TestKeepaliveResumeFailureFallsBackToCreate() {
-	// Initial Create returns the first id.
+	// Initial Create → first id.
 	s.sessionClient.EXPECT().Create(mock.Anything, mock.Anything).
 		Return(&proto.SessionCreateReply{SessionId: "abc-123"}, nil).Once()
-	// First stream errors.
-	stream1 := mockProto.NewMockSessionService_KeepaliveClient(s.T())
-	stream1.EXPECT().Recv().Return(nil, status.Error(codes.Unavailable, "transient")).Once()
-	// Resume returns Resumed=false (server already reaped).
+
+	// First stream breaks only once released; second parks until Close.
+	release := make(chan struct{})
+	stream1 := newGatedErrorKeepaliveStream(s.T(), release, status.Error(codes.Unavailable, "transient"))
+	stream2, bind2 := newParkingKeepaliveStream(s.T())
+
+	// Resume reports the session reaped → loop falls back to a fresh Create
+	// with a NEW id.
 	s.sessionClient.EXPECT().Resume(mock.Anything, mock.Anything).
 		Return(&proto.SessionResumeReply{Resumed: false}, nil).Once()
-	// Second Create returns a NEW id.
 	s.sessionClient.EXPECT().Create(mock.Anything, mock.Anything).
 		Return(&proto.SessionCreateReply{SessionId: "xyz-789"}, nil).Once()
-	// Second stream blocks forever.
-	stream2 := mockProto.NewMockSessionService_KeepaliveClient(s.T())
-	block := make(chan struct{})
-	stream2.EXPECT().Recv().RunAndReturn(func() (*proto.KeepalivePing, error) {
-		<-block
-		return nil, io.EOF
-	}).Maybe()
 
+	reopened := make(chan struct{})
 	s.sessionClient.EXPECT().Keepalive(mock.Anything, mock.Anything).
 		Return(stream1, nil).Once()
 	s.sessionClient.EXPECT().Keepalive(mock.Anything, mock.MatchedBy(func(req *proto.KeepaliveRequest) bool {
 		return req.SessionId == "xyz-789"
-	})).Return(stream2, nil).Once()
+	})).RunAndReturn(func(ctx context.Context, _ *proto.KeepaliveRequest, _ ...grpc.CallOption) (proto.SessionService_KeepaliveClient, error) {
+		bind2(ctx)
+		close(reopened)
+		return stream2, nil
+	}).Once()
 
 	handshake := NewSessionHandshake(s.sessionClient)
 	s.Require().NoError(handshake.Establish(context.Background()))
+	// Loop parked in stream1.Recv: the pre-recovery id is observable, no race.
 	s.Require().Equal("abc-123", handshake.SessionID())
 
-	s.Require().Eventually(func() bool {
-		return handshake.SessionID() == "xyz-789"
-	}, time.Second, 10*time.Millisecond, "session id must update after fallback Create")
+	close(release) // let stream1 break → Resume(false) → Create(xyz-789) → reopen
+	select {
+	case <-reopened:
+	case <-time.After(2 * time.Second):
+		s.FailNow("recovery did not reopen the Keepalive stream after fallback Create")
+	}
+	// setSessionID(xyz-789) happens before the reopened Keepalive call, so this
+	// is deterministic once reopened fires.
+	s.Require().Equal("xyz-789", handshake.SessionID())
 
-	// Same race window as TestKeepaliveStreamErrorTriggersResume: once
-	// close(block) returns Recv from EOF, the loop may fire one more
-	// Resume/Create/Keepalive cycle before streamCancel takes effect.
-	// Pre-register permissive expectations so testify's reflective
-	// diagnostic has nothing to inspect alongside the cancel.
-	s.sessionClient.EXPECT().Resume(mock.Anything, mock.Anything).
-		Return(&proto.SessionResumeReply{Resumed: true}, nil).Maybe()
-	s.sessionClient.EXPECT().Create(mock.Anything, mock.Anything).
-		Return(&proto.SessionCreateReply{SessionId: "xyz-789"}, nil).Maybe()
-	s.sessionClient.EXPECT().Keepalive(mock.Anything, mock.Anything).
-		Return(stream2, nil).Maybe()
-
-	close(block)
 	s.Require().NoError(handshake.Close())
+	s.Require().Eventually(func() bool { return !handshake.IsRunning() }, time.Second, 5*time.Millisecond)
 }
 
 func (s *SessionHandshakeTestSuite) TestCloseInterruptsRecovery() {
