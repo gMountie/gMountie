@@ -143,7 +143,8 @@ const config = {
         darkTheme: {plain: {color: '#F4EEDD', backgroundColor: '#08070A'}, styles: prismTokenStyles},
         additionalLanguages: ['bash', 'diff', 'json', 'toml', 'yaml', 'go', 'protobuf', 'docker'],
       },
-      tableOfContents: {minHeadingLevel: 2, maxHeadingLevel: 3},
+      // Right TOC shows only top-level (h2) headings — no nested h3 indent/rule.
+      tableOfContents: {minHeadingLevel: 2, maxHeadingLevel: 2},
     }),
 };
 
