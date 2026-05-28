@@ -58,6 +58,9 @@ Deferred / follow-up:
 ```yaml title="server.yaml"
 server:
   tls:
+    # When omitted, the server auto-generates a self-signed cert on
+    # first startup (see §3.1.1). For production, point these at a
+    # real cert (Let's Encrypt, internal CA, etc.).
     cert_file: /etc/gmountie/server.crt
     key_file:  /etc/gmountie/server.key
     # Client cert verification — when set, the server enables mTLS.
@@ -77,11 +80,40 @@ Implementation:
 - If `client_ca_file` is set, `ClientCAs` populated and
   `ClientAuth: tls.RequireAndVerifyClientCert`. The verified client's
   `CommonName` (or first SAN) becomes the principal for mTLS auth.
-- **No TLS config = fail startup.** There is no "TLS optional" toggle —
-  every non-loopback connection is encrypted.
+- **No TLS config = auto-generate** (not "fail startup"). See §3.1.1.
 - An explicit `server.tls.disabled: true` override exists for local
   dev only; startup logs a loud `WARN` every 60s and the listener
   refuses any non-loopback bind addr.
+
+### 3.1.1 Auto-generated cert — the SSH host-key pattern
+
+If `cert_file` / `key_file` are unset and `tls.disabled` is false, the
+server generates a self-signed cert on first startup:
+
+- **Algorithm:** ECDSA P-256, SHA-256 signature, 10-year validity.
+- **Subject:** CN = `$server.bind hostname || gmountie-server`; SAN
+  includes that hostname + every IP literal the server is bound to.
+- **Storage:** `$XDG_STATE_HOME/gmountie/server.{crt,key}` (defaults to
+  `~/.local/state/gmountie/` for the running user; system installs
+  override via systemd `StateDirectory=gmountie` → `/var/lib/gmountie/`).
+  Key file is written `0600`, cert `0644`.
+- **First-start log:** the SHA-256 fingerprint of the cert is printed
+  at startup as a single line so operators can paste it into client
+  config (`tls.expected_fingerprint`) or hand it to colleagues out of
+  band:
+  ```
+  INFO  auto-generated server certificate
+        fingerprint: SHA256:M2ksb1...   path: /var/lib/gmountie/server.crt
+  ```
+- **Subsequent starts:** if files exist at the resolved path, they are
+  loaded as-is — no regeneration. Operators wishing to rotate just
+  delete the files and restart.
+- **Operator-provided cert wins.** If `cert_file` is set in config,
+  auto-gen is skipped entirely — production Let's Encrypt setups
+  override cleanly without any code-path divergence.
+
+This makes the zero-config first run land on a TLS connection
+immediately, with no "remember to flip a switch" gap.
 
 ### 3.2 TLS — client side
 
@@ -91,8 +123,16 @@ server:
   tls:
     # Path to CA bundle. Empty: use system trust store.
     ca_file: /etc/gmountie/server-ca.crt
-    # Skip server cert verification. Dev only; loud WARN at mount.
-    insecure_skip_verify: false
+    # Verification policy. Default "verify" — full cert chain check.
+    #   verify         — strict chain validation against ca_file or system roots
+    #   tofu           — trust on first use; pin fingerprint in $XDG_STATE_HOME
+    #                    on first successful connect, refuse if it changes
+    #   insecure       — skip verification entirely; loud WARN at mount
+    verify: "verify"
+    # Optional explicit pin. When set, the server's leaf-cert SHA-256
+    # must match. Useful with auto-generated server certs: paste the
+    # fingerprint the server logged at first start.
+    expected_fingerprint: ""
     # Server name to verify against. Empty: derive from endpoint host.
     server_name: ""
     # mTLS — present this cert to the server.
@@ -109,6 +149,25 @@ Implementation:
   TLS now errors at dial time instead of leaking the password.
 - The commented-out TLS line in `pkg/client/grpc/client.go:276` becomes
   the actual code path.
+
+**TOFU** (trust on first use) is the recommended pairing with
+auto-generated server certs. On first successful connect to an
+endpoint, the client pins the server's leaf-cert SHA-256 fingerprint
+to `$XDG_STATE_HOME/gmountie/known_hosts` keyed by `endpoint`. On
+every subsequent connect the presented cert must match the pin; a
+mismatch fails the dial with `cert fingerprint changed; if this is
+intentional, remove the entry from <known_hosts path> and re-pin`.
+This is strictly safer than `insecure` and avoids the operator step
+of distributing a CA bundle for self-signed deployments. SSH's
+exact pattern.
+
+`expected_fingerprint` is the static-config equivalent for
+non-interactive deploys (CI, immutable infra, configuration
+management): paste the fingerprint from the server's first-start log
+into config and TOFU is unnecessary.
+
+`insecure` remains the explicit "I'm prototyping, get out of my way"
+escape. Mount warns loudly.
 
 ### 3.3 Password hashing — argon2id
 
@@ -260,29 +319,36 @@ server:
     disabled: true           # logs WARN every 60s
 ```
 
-## 5. Phasing
+## 5. Phasing — three PRs
 
-One spec, multiple PRs because the surface is wide. Each PR is its own
-worktree (per the project working agreement).
+One spec, three PRs, each its own worktree (per the project working
+agreement). PR 1 must merge first because PRs 2-3 assume TLS is on the
+wire.
 
-1. **PR 1 — TLS foundation.** Server + client TLS config and bootstrap.
-   `RequireTransportSecurity() = true`. `tls.disabled` dev escape hatch.
-   Worked-example smoke test on the VM. No password-hash change yet —
-   shipped in PR 2.
-2. **PR 2 — Password hashing.** `password_hash` field; `gmountie genpass`;
-   startup rejection of plaintext; first-run default writes a hash.
-3. **PR 3 — Ops endpoints.** Loopback bind default; optional auth;
-   loud WARN when binding to a non-loopback addr without auth.
-4. **PR 4 — gRPC reflection + DoS limits.** Reflection opt-in; the
-   four limits exposed in config.
-5. **PR 5 — Per-user volume ACL.** `users[].volumes`,
-   `auth.default_allow`, `PrincipalCanAccess` centralized check.
-6. **PR 6 — mTLS auth scheme.** `auth.type: mtls`; cert-CN-as-
-   principal; integration with the existing identity layer.
+1. **PR 1 — Transport.** Server-TLS bootstrap, auto-generated cert on
+   first startup (the SSH-host-key pattern, §3.1.1), client TLS config
+   with `verify` / `tofu` / `insecure` modes (§3.2), pinning by
+   `expected_fingerprint`, `RequireTransportSecurity() = true`,
+   `tls.disabled` dev escape hatch. The TOFU `known_hosts` file. End
+   state: every existing test exercises TLS transparently via the
+   self-signed cert the test fixture spins up.
 
-PRs 1-5 are independent of each other except 1 must merge first
-(everything else assumes TLS is on the wire). PR 6 may land before or
-after PR 5 — they're orthogonal.
+2. **PR 2 — Server hardening sweep.** Password hashing (argon2id PHC
+   format + `gmountie genpass` CLI + startup rejection of plaintext
+   + first-run default writes a hash), ops endpoint loopback bind
+   default + optional ops auth, gRPC reflection opt-in, the four DoS
+   limits (`max_recv_message_size`, `max_concurrent_streams`,
+   `max_connection_idle`, and the existing keepalive policy). All
+   "tighten the server's surface" knobs land together because they
+   share config + interceptor machinery.
+
+3. **PR 3 — Identity tightening.** Per-user volume ACL
+   (`users[].volumes`, `auth.default_allow`, the centralized
+   `VolumeService.PrincipalCanAccess` check that every controller
+   method calls before `BindIdentity`), and the mTLS auth scheme
+   (`auth.type: mtls`, cert-CN-as-principal, integration with the
+   existing identity layer). Both touch the auth → principal →
+   volume-binding chain; one place to look.
 
 ## 6. Testing
 
@@ -308,6 +374,8 @@ after PR 5 — they're orthogonal.
 | 6 | mTLS principal source | client cert CN; SAN if CN empty |
 | 7 | `tls.disabled` dev mode | allowed but refuses non-loopback bind |
 | 8 | Existing weak admin/admin default | replaced by first-run hash + CHANGE ME comment |
+| 9 | No-config server start | auto-generate ECDSA P-256 cert + log fingerprint (SSH host-key pattern) |
+| 10 | Client unknown-cert policy | TOFU recommended; `expected_fingerprint` for non-interactive; `insecure` is the explicit dev escape |
 
 ## 8. North-star acceptance test
 
