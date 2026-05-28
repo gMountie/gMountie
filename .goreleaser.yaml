@@ -12,6 +12,11 @@ builds:
       - CGO_ENABLED=0
     goos:
       - linux
+      # TODO(macos client support): flip to `- darwin` once
+      # pkg/server/io/bound_fs.go is build-tagged for !linux so cmd/ compiles
+      # on darwin. The ci.yml `build-darwin` job is the regression guard until
+      # then; see the identity-permissions worktree (which heavily edits that
+      # file — coordinate the split with that work).
     id: gMountie
     main: cmd/main.go
     binary: gMountie
