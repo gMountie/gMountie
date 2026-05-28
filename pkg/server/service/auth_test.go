@@ -3,12 +3,23 @@ package service
 import (
 	"context"
 	"gmountie/pkg/common"
+	"gmountie/pkg/common/passhash"
 	"gmountie/pkg/server/config"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc/metadata"
 )
+
+// mustHash hashes s with argon2id and fails the test on error.
+func mustHash(t *testing.T, s string) string {
+	t.Helper()
+	h, err := passhash.Hash(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
 
 // AuthServiceBaseTestSuite is a base test suite with common utilities
 type AuthServiceBaseTestSuite struct {
@@ -56,8 +67,8 @@ type BasicAuthServiceTestSuite struct {
 func (s *BasicAuthServiceTestSuite) SetupTest() {
 	s.AuthServiceBaseTestSuite.SetupTest()
 	users := map[string]string{
-		"testuser": "testpass",
-		"admin":    "adminpass",
+		"testuser": mustHash(s.T(), "testpass"),
+		"admin":    mustHash(s.T(), "adminpass"),
 	}
 	s.service = NewBasicAuthService(users)
 }
@@ -112,6 +123,21 @@ func (s *BasicAuthServiceTestSuite) TestAuthorize_EmptyCredentials() {
 	s.Assert().Contains(err.Error(), "user or password is not provided")
 }
 
+func (s *BasicAuthServiceTestSuite) TestAuthorize_RejectsMalformedHash() {
+	// Seed a user whose stored "hash" is not a PHC string (simulates a
+	// misconfigured or hand-edited config that bypassed NewBasicAuthConfig).
+	// The service must deny, not panic.
+	svc := NewBasicAuthService(map[string]string{
+		"baduser": "not-a-phc",
+	})
+	ctx := s.createContextWithBasicAuth("baduser", "anything")
+	authorized, details, err := svc.Authorize(ctx, "test-method")
+	s.Require().Error(err)
+	s.Assert().False(authorized)
+	s.Assert().Nil(details)
+	s.Assert().Contains(err.Error(), "invalid user or password")
+}
+
 // AuthServiceFactoryTestSuite is the test suite for the AuthService factory
 type AuthServiceFactoryTestSuite struct {
 	suite.Suite
@@ -123,7 +149,7 @@ func (s *AuthServiceFactoryTestSuite) TestNewAuthServiceFromConfig_Basic() {
 			Type: config.AuthConfigTypeBasic,
 		},
 		Users: []config.BasicAuthConfigUser{
-			{Username: "test", Password: "pass"},
+			{Username: "test", PasswordHash: mustHash(s.T(), "pass")},
 		},
 	}
 	service := NewAuthServiceFromConfig(cfg)

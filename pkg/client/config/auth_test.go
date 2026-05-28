@@ -102,7 +102,7 @@ auth:
 // Test that GetType() returns correct auth type
 func (s *AuthConfigTestSuite) TestGetType() {
 	basicAuth := &BasicAuthConfig{
-		BasicAuthConfigUser: serverConfig.BasicAuthConfigUser{
+		BasicAuthConfigUser: BasicAuthConfigUser{
 			Username: "test",
 			Password: "test",
 		},

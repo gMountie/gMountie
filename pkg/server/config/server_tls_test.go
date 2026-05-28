@@ -21,7 +21,7 @@ auth:
   type: basic
   users:
   - username: admin
-    password: admin
+    password_hash: ` + testAdminPHC + `
 volumes:
   - name: test
     path: /tmp

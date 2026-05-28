@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"gmountie/pkg/common"
+	"gmountie/pkg/common/passhash"
 	"gmountie/pkg/server/config"
 	"gmountie/pkg/utils/log"
 
@@ -32,7 +33,7 @@ func NewAuthServiceFromConfig(cfg config.AuthConfig) AuthService {
 		authConfig, _ := cfg.(*config.BasicAuthConfig)
 		users := make(map[string]string)
 		for _, user := range authConfig.Users {
-			users[user.Username] = user.Password
+			users[user.Username] = user.PasswordHash
 		}
 		log.Log.Info("basic authentication is enabled")
 		return NewBasicAuthService(users)
@@ -84,12 +85,14 @@ func (a *BasicAuthService) Authorize(ctx context.Context, _ string) (bool, *User
 	}
 
 	// Check if the user exists
-	if pass, ok := a.users[user[0]]; ok {
-		// Check if the password is correct
-		if pass == password[0] {
-			userDetails := &UserDetails{Username: user[0]}
-			return true, userDetails, nil
+	if storedHash, ok := a.users[user[0]]; ok {
+		// Verify the password against the stored argon2id PHC hash.
+		// On a malformed hash treat as auth-denied (fail closed); never panic.
+		match, err := passhash.Verify(storedHash, password[0])
+		if err != nil || !match {
+			return false, nil, status.Errorf(codes.Unauthenticated, "invalid user or password")
 		}
+		return true, &UserDetails{Username: user[0]}, nil
 	}
 	return false, nil, status.Errorf(codes.Unauthenticated, "invalid user or password")
 }

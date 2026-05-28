@@ -7,10 +7,21 @@ import (
 	"testing"
 	"time"
 
+	"gmountie/pkg/common/passhash"
 	"gmountie/pkg/server/config"
 
 	"github.com/stretchr/testify/suite"
 )
+
+// mustHashApp hashes s with argon2id and fails the test on error.
+func mustHashApp(t *testing.T, s string) string {
+	t.Helper()
+	h, err := passhash.Hash(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
 
 type ServerAppTestSuite struct {
 	suite.Suite
@@ -42,7 +53,7 @@ func (s *ServerAppTestSuite) TestStart_ContextCancellationShutsDownGracefully() 
 		Auth: &config.BasicAuthConfig{
 			AuthConfigBase: config.AuthConfigBase{Type: config.AuthConfigTypeBasic},
 			Users: []config.BasicAuthConfigUser{
-				{Username: "admin", Password: "admin"},
+				{Username: "admin", PasswordHash: mustHashApp(s.T(), "admin")},
 			},
 		},
 		Volumes: []*config.VolumeConfig{},

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 
+	"gmountie/pkg/common/passhash"
+
 	"github.com/spf13/viper"
 )
 
@@ -52,8 +54,8 @@ func NewFromConfig(v *viper.Viper) (AuthConfig, error) {
 
 // BasicAuthConfigUser is a struct that holds the configuration for a basic auth user
 type BasicAuthConfigUser struct {
-	Username string `validate:"required"`
-	Password string `validate:"required"`
+	Username     string `validate:"required"`
+	PasswordHash string `mapstructure:"password_hash" validate:"required"`
 }
 
 // BasicAuthConfig is a struct that holds the configuration for the basic auth
@@ -69,6 +71,11 @@ func NewBasicAuthConfig(v *viper.Viper) (*BasicAuthConfig, error) {
 	err := v.Unmarshal(&conf)
 	if err != nil {
 		return nil, err
+	}
+	for i, u := range conf.Users {
+		if !passhash.IsHashed(u.PasswordHash) {
+			return nil, fmt.Errorf("auth.users[%d].password_hash must be a $argon2id$ PHC string; run 'gmountie genpass' and paste the output", i)
+		}
 	}
 	return &conf, nil
 }

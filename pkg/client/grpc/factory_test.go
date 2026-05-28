@@ -12,7 +12,6 @@ import (
 
 	"gmountie/pkg/client/config"
 	"gmountie/pkg/proto"
-	serverConfig "gmountie/pkg/server/config"
 	"gmountie/pkg/server/controller"
 	"gmountie/pkg/server/service"
 	servertls "gmountie/pkg/server/tls"
@@ -109,7 +108,7 @@ func (s *FactoryTestSuite) TestNewClientFromConfig_BasicAuth() {
 			TLS:     config.TLSConfig{Verify: "insecure"},
 		},
 		Auth: &config.BasicAuthConfig{
-			BasicAuthConfigUser: serverConfig.BasicAuthConfigUser{
+			BasicAuthConfigUser: config.BasicAuthConfigUser{
 				Username: "testuser",
 				Password: "testpass",
 			},
@@ -141,7 +140,7 @@ func (s *FactoryTestSuite) TestNewClientFromConfig_TimeoutsApplied() {
 	cfg := &config.Config{
 		Server: &config.ServerConfig{Address: host, Port: uint(port), TLS: config.TLSConfig{Verify: "insecure"}},
 		Auth: &config.BasicAuthConfig{
-			BasicAuthConfigUser: serverConfig.BasicAuthConfigUser{
+			BasicAuthConfigUser: config.BasicAuthConfigUser{
 				Username: "testuser",
 				Password: "testpass",
 			},
@@ -179,7 +178,7 @@ func (s *FactoryTestSuite) TestNewClientFromConfig_HandshakeFailureReturnsError(
 	cfg := &config.Config{
 		Server: &config.ServerConfig{Address: "127.0.0.1", Port: uint(port), TLS: config.TLSConfig{Verify: "insecure"}},
 		Auth: &config.BasicAuthConfig{
-			BasicAuthConfigUser: serverConfig.BasicAuthConfigUser{
+			BasicAuthConfigUser: config.BasicAuthConfigUser{
 				Username: "testuser",
 				Password: "testpass",
 			},

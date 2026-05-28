@@ -4,7 +4,9 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"gmountie/pkg/common/config"
+	"gmountie/pkg/common/passhash"
 	"gmountie/pkg/server"
 	serverConfig "gmountie/pkg/server/config"
 	"gmountie/pkg/utils/log"
@@ -17,8 +19,11 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	DefaultConfig = `server:
+// defaultConfigTemplate is the first-run server config. The %s placeholder
+// is replaced at startup with a freshly-hashed "admin" password so the
+// on-disk YAML always contains a valid $argon2id$ PHC string. Users should
+// replace the hash with the output of 'gmountie genpass' before deploying.
+const defaultConfigTemplate = `server:
   address: 127.0.0.1
   port: 9449
   metrics: true
@@ -27,9 +32,19 @@ auth:
   type: basic
   users:
     - username: admin
-      password: admin
+      # Replace with the output of: gmountie genpass
+      password_hash: %s
 `
-)
+
+// DefaultConfig is the first-run server configuration with a freshly-hashed
+// "admin" password. It is a var (not const) because argon2id salts are random.
+var DefaultConfig = func() string {
+	h, err := passhash.Hash("admin")
+	if err != nil {
+		panic(fmt.Sprintf("serve: generate default admin hash: %v", err))
+	}
+	return fmt.Sprintf(defaultConfigTemplate, h)
+}()
 
 // For testing purposes
 var serverStart = server.Start
