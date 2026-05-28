@@ -31,11 +31,13 @@ gmountie mount [flags] <mountpoint>
 
 ### `--raw-ids`
 
-By default, file uids and gids the server reports are mapped to the **invoking user** on the client — `ls -l` shows your username on every file. With `--raw-ids`, the client passes the server's raw uid/gid through. Useful when:
+On mount, the client calls a `WhoAmI` RPC and learns which `(uid, gid)` the server resolves you to — the result of running the volume's [identity mapping](../concepts/identity.mdx) (squash · static · system · passthrough). By default, the client uses that answer to **rewrite file metadata** in `ls -l`: anything the server reports as your resolved uid renders as your **local** invoking user. The listing reads naturally.
 
-- you're backing up the volume and need server-side ownership preserved,
-- you're an admin debugging "why does this file claim to be owned by `nobody`?",
-- you have matching uids on both ends and want the local user to be irrelevant.
+`--raw-ids` disables the rewriting. You see exactly the uid/gid the server reports. Useful when:
+
+- you're backing up the volume and need server-side ownership preserved literally,
+- you're debugging "why does this file claim to be owned by `nobody`?" — the raw uid tells you what the server thinks,
+- you've intentionally aligned uids on both ends and want the local user to be irrelevant.
 
 For day-to-day mounts, leave it off.
 
