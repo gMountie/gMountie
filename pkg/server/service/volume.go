@@ -50,7 +50,7 @@ type VolumeServiceImpl struct {
 }
 
 // NewVolumeService creates a new VolumeService.
-func NewVolumeService(cfg *config.Config, options ...VolumeServiceOptions) VolumeService {
+func NewVolumeService(cfg *config.Config, options ...VolumeServiceOptions) (VolumeService, error) {
 	fs := make(map[string]pathfs.FileSystem)
 	svc := &VolumeServiceImpl{
 		config:      cfg,
@@ -63,7 +63,11 @@ func NewVolumeService(cfg *config.Config, options ...VolumeServiceOptions) Volum
 		option(svc)
 	}
 	for _, v := range cfg.Volumes {
-		svc.addFileSystem(v.Name, io.NewLocalFilesystem(v.Path))
+		localFS, err := io.NewLocalFilesystem(v.Path)
+		if err != nil {
+			return nil, errors.Wrapf(err, "open volume %q", v.Name)
+		}
+		svc.addFileSystem(v.Name, localFS)
 		svc.mappings[v.Name] = v.Mapping
 		switch v.Mapping.Mode {
 		case config.MappingModeSquash:
@@ -76,7 +80,7 @@ func NewVolumeService(cfg *config.Config, options ...VolumeServiceOptions) Volum
 			// no resolver; identity derives from the wire caller
 		}
 	}
-	return svc
+	return svc, nil
 }
 
 // List lists all volumes.

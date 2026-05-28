@@ -31,7 +31,7 @@ type AppContext struct {
 }
 
 // NewServerAppContext creates a new ServerContext.
-func NewServerAppContext(cfg *config.Config) *AppContext {
+func NewServerAppContext(cfg *config.Config) (*AppContext, error) {
 	m := metrics.NewMetrics()
 	// Register against the default registerer so the existing /metrics
 	// scrape handler picks them up. Register (not MustRegister)
@@ -42,7 +42,10 @@ func NewServerAppContext(cfg *config.Config) *AppContext {
 	}
 
 	warnIfIdentityEnforcementUnprivileged()
-	volumeService := service.NewVolumeService(cfg)
+	volumeService, err := service.NewVolumeService(cfg)
+	if err != nil {
+		return nil, errors.Wrap(err, "build volume service")
+	}
 	authService := service.NewAuthServiceFromConfig(cfg.Auth)
 	sessionMgr := service.NewSessionManager(service.SessionManagerOptions{Metrics: m})
 	bus := io.NewLocalEventBus(io.EventBusOptions{
@@ -57,7 +60,7 @@ func NewServerAppContext(cfg *config.Config) *AppContext {
 		SessionManager: sessionMgr,
 		Metrics:        m,
 		Bus:            bus,
-	}
+	}, nil
 }
 
 // GetGrpcServices returns the gRPC services.
@@ -95,7 +98,10 @@ func Start(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 
-	appCtx := NewServerAppContext(cfg)
+	appCtx, err := NewServerAppContext(cfg)
+	if err != nil {
+		return errors.Wrap(err, "build app context")
+	}
 	s := grpc.NewServer(
 		cfg,
 		appCtx.AuthService,
