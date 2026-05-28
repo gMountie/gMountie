@@ -51,3 +51,33 @@ func (s *StaticResolverSuite) TestPopulatesNames() {
 	s.Equal("alice", id.UserName)
 	s.Equal(map[uint32]string{2000: "developers"}, id.GroupNames)
 }
+
+// TestPlumbsCapsFromConfig: a static-mode user's caps come straight from the
+// config table and reach the resolved Identity unmodified. The Phase 3
+// identity-bound FS (T5) consumes these via io.Identity.HasCap; this test
+// asserts the plumbing into service.Identity remains intact.
+func (s *StaticResolverSuite) TestPlumbsCapsFromConfig() {
+	m := s.mapping()
+	m.Users["bob"] = config.StaticUser{
+		Uid: 1002, Gid: 1002,
+		Caps: []string{"dac_read_search"},
+	}
+	m.Users["root-admin"] = config.StaticUser{
+		Uid: 1003, Gid: 1003,
+		Caps: []string{"dac_override"},
+	}
+	r := NewStaticResolver(m)
+
+	id, err := r.Resolve("bob")
+	s.Require().NoError(err)
+	s.Equal([]string{"dac_read_search"}, id.Caps)
+
+	id, err = r.Resolve("root-admin")
+	s.Require().NoError(err)
+	s.Equal([]string{"dac_override"}, id.Caps)
+
+	// Original alice has no caps configured — should round-trip as nil/empty.
+	id, err = r.Resolve("alice")
+	s.Require().NoError(err)
+	s.Empty(id.Caps)
+}
