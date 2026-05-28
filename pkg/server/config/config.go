@@ -129,10 +129,10 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		GRPC: GRPCConfig{
 			Reflection: v.GetBool("server.grpc.reflection"),
 			Limits: LimitsConfig{
-				MaxRecvMessageSize:  v.GetInt("server.grpc.limits.max_recv_message_size"),
+				MaxRecvMessageSize:   v.GetInt("server.grpc.limits.max_recv_message_size"),
 				MaxConcurrentStreams: uint32(v.GetUint("server.grpc.limits.max_concurrent_streams")),
-				MaxConnectionIdle:   v.GetDuration("server.grpc.limits.max_connection_idle"),
-				MaxConnectionAge:    v.GetDuration("server.grpc.limits.max_connection_age"),
+				MaxConnectionIdle:    v.GetDuration("server.grpc.limits.max_connection_idle"),
+				MaxConnectionAge:     v.GetDuration("server.grpc.limits.max_connection_age"),
 			},
 		},
 	}
