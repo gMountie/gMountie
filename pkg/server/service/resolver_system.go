@@ -62,7 +62,34 @@ func (r *systemResolver) Resolve(principal string) (Identity, error) {
 			gids = append(gids, uint32(g))
 		}
 	}
-	return Identity{Principal: principal, Uid: uid, Gid: gid, Gids: gids}, nil
+	uname, err := r.text(ctx, principal, "-un")
+	if err != nil {
+		return Identity{}, err
+	}
+	nGOut, err := r.run(ctx, "id", "-nG", principal)
+	if err != nil {
+		return Identity{}, mapNotFound(err)
+	}
+	groupNames := map[uint32]string{}
+	for i, name := range strings.Fields(string(nGOut)) {
+		if i < len(gids) {
+			groupNames[gids[i]] = name
+		}
+	}
+	return Identity{
+		Principal:  principal,
+		Uid:        uid, Gid: gid, Gids: gids,
+		UserName:   uname,
+		GroupNames: groupNames,
+	}, nil
+}
+
+func (r *systemResolver) text(ctx context.Context, principal, flag string) (string, error) {
+	out, err := r.run(ctx, "id", flag, principal)
+	if err != nil {
+		return "", mapNotFound(err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func (r *systemResolver) num(ctx context.Context, principal, flag string) (uint32, error) {

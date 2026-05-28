@@ -14,13 +14,17 @@ func TestSystemResolverSuite(t *testing.T) { suite.Run(t, new(SystemResolverSuit
 
 func (s *SystemResolverSuite) TestResolvesViaIdCommand() {
 	fake := func(_ context.Context, name string, args ...string) ([]byte, error) {
-		switch {
-		case name == "id" && args[0] == "-u":
+		switch args[0] {
+		case "-u":
 			return []byte("1001\n"), nil
-		case name == "id" && args[0] == "-g":
+		case "-g":
 			return []byte("1001\n"), nil
-		case name == "id" && args[0] == "-G":
+		case "-G":
 			return []byte("1001 2000 2001\n"), nil
+		case "-un":
+			return []byte("alice\n"), nil
+		case "-nG":
+			return []byte("alice developers admins\n"), nil
 		}
 		return nil, ErrPrincipalNotFound
 	}
@@ -46,4 +50,27 @@ func (s *SystemResolverSuite) TestRejectsMalformedPrincipal() {
 	}, time.Second)
 	_, err := r.Resolve("alice; rm -rf /")
 	s.Require().Error(err)
+}
+
+func (s *SystemResolverSuite) TestPopulatesNames() {
+	fake := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		switch args[0] {
+		case "-u":
+			return []byte("1001\n"), nil
+		case "-g":
+			return []byte("1001\n"), nil
+		case "-G":
+			return []byte("1001 2000\n"), nil
+		case "-un":
+			return []byte("alice\n"), nil
+		case "-nG":
+			return []byte("alice developers\n"), nil
+		}
+		return nil, ErrPrincipalNotFound
+	}
+	r := newSystemResolverWithRunner(fake, time.Second)
+	id, err := r.Resolve("alice")
+	s.Require().NoError(err)
+	s.Equal("alice", id.UserName)
+	s.Equal(map[uint32]string{1001: "alice", 2000: "developers"}, id.GroupNames)
 }
