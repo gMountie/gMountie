@@ -19,3 +19,13 @@ func (s *BoundFSSuite) TestBindIsAllocationCheap() {
 	})
 	s.LessOrEqual(allocs, 1.0)
 }
+
+func (s *BoundFSSuite) TestCapsRoundTripThroughBoundFS() {
+	base := pathfs.NewLoopbackFileSystem(s.T().TempDir())
+	id := &Identity{Uid: 1000, Gid: 1000, Gids: []uint32{1000}, Caps: []string{"dac_override"}}
+	bound := NewIdentityBoundFS(base, id).(*identityBoundFS)
+	s.Equal([]string{"dac_override"}, bound.id.Caps)
+	s.True(bound.id.HasCap("dac_override"))
+	s.True(bound.id.HasCap("DAC_OVERRIDE"), "HasCap must be case-insensitive")
+	s.False(bound.id.HasCap("dac_read_search"))
+}
