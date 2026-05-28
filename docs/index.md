@@ -20,13 +20,19 @@ description: A network filesystem that mounts remote storage anywhere over the i
 
 ## How it works
 
-```
-     your machine                                    remote server
-┌─────────────────────┐        gRPC over HTTP/2     ┌─────────────────────┐
-│   gmountie mount     │ ◀─────────────────────────▶ │    gmountie serve    │
-│  FUSE mount point    │   metadata · data · events  │  real folders        │
-│  + local cache       │                             │  exposed as volumes  │
-└─────────────────────┘                             └─────────────────────┘
+```mermaid
+flowchart LR
+  subgraph LOCAL["Your machine"]
+    direction TB
+    M["<b>gmountie mount</b><br/><span style='font-family:var(--font-mono);font-size:11px;color:#6B6151'>FUSE bridge + local cache</span>"]
+  end
+  subgraph REMOTE["Remote server"]
+    direction TB
+    S["<b>gmountie serve</b><br/><span style='font-family:var(--font-mono);font-size:11px;color:#6B6151'>real folders → named volumes</span>"]
+  end
+  M <-->|"gRPC over HTTP/2 · metadata · data · events"| S
+  classDef primary fill:#FBE4CC,stroke:#D9641C,color:#6E2D08
+  class S primary
 ```
 
 The client implements a FUSE filesystem and turns each syscall into a gRPC call against the server, which serves it from the configured volume's real directory. Metadata, file data, and cache-invalidation events travel over three separate gRPC services, so they can be routed and tuned independently.
