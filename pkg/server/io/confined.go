@@ -9,6 +9,7 @@ import (
 	"path"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -166,6 +167,72 @@ func (c *ConfinedLoopbackFileSystem) Access(name string, mode uint32, _ *fuse.Co
 	}
 	defer unix.Close(parentFd)
 	if err := unix.Faccessat(parentFd, leaf, mode, 0); err != nil {
+		return errnoToStatus(err)
+	}
+	return fuse.OK
+}
+
+func (c *ConfinedLoopbackFileSystem) Chmod(name string, mode uint32, _ *fuse.Context) fuse.Status {
+	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	if err != nil {
+		return errnoToStatus(err)
+	}
+	defer unix.Close(parentFd)
+	if err := unix.Fchmodat(parentFd, leaf, mode, 0); err != nil {
+		return errnoToStatus(err)
+	}
+	return fuse.OK
+}
+
+func (c *ConfinedLoopbackFileSystem) Chown(name string, uid, gid uint32, _ *fuse.Context) fuse.Status {
+	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	if err != nil {
+		return errnoToStatus(err)
+	}
+	defer unix.Close(parentFd)
+	if err := unix.Fchownat(parentFd, leaf, int(uid), int(gid), unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return errnoToStatus(err)
+	}
+	return fuse.OK
+}
+
+// toTimespec maps a nil *time.Time to UTIME_OMIT (the FUSE convention for
+// "don't touch this stamp") and a non-nil time to a normal sec/nsec pair.
+func toTimespec(t *time.Time) unix.Timespec {
+	if t == nil {
+		return unix.Timespec{Sec: 0, Nsec: unix.UTIME_OMIT}
+	}
+	return unix.Timespec{Sec: t.Unix(), Nsec: int64(t.Nanosecond())}
+}
+
+func (c *ConfinedLoopbackFileSystem) Utimens(name string, atime, mtime *time.Time, _ *fuse.Context) fuse.Status {
+	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	if err != nil {
+		return errnoToStatus(err)
+	}
+	defer unix.Close(parentFd)
+	ts := [2]unix.Timespec{toTimespec(atime), toTimespec(mtime)}
+	if err := unix.UtimesNanoAt(parentFd, leaf, ts[:], unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return errnoToStatus(err)
+	}
+	return fuse.OK
+}
+
+func (c *ConfinedLoopbackFileSystem) Truncate(name string, size uint64, _ *fuse.Context) fuse.Status {
+	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	if err != nil {
+		return errnoToStatus(err)
+	}
+	defer unix.Close(parentFd)
+	fd, err := unix.Openat2(parentFd, leaf, &unix.OpenHow{
+		Flags:   unix.O_WRONLY | unix.O_CLOEXEC,
+		Resolve: resolveHow,
+	})
+	if err != nil {
+		return errnoToStatus(err)
+	}
+	defer unix.Close(fd)
+	if err := unix.Ftruncate(fd, int64(size)); err != nil {
 		return errnoToStatus(err)
 	}
 	return fuse.OK
