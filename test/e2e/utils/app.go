@@ -2,9 +2,11 @@ package utils
 
 import (
 	"context"
+	"crypto/tls"
 	"gmountie/pkg/client"
 	clientConfig "gmountie/pkg/client/config"
 	grpcClient "gmountie/pkg/client/grpc"
+	clienttls "gmountie/pkg/client/tls"
 	"gmountie/pkg/server"
 	"gmountie/pkg/server/config"
 	grpcServer "gmountie/pkg/server/grpc"
@@ -16,6 +18,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/thanhpk/randstr"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/test/bufconn"
 )
 
@@ -27,6 +30,9 @@ type AppTestingContext struct {
 	serverCtx *server.AppContext
 	// clientCtx is the client context.
 	clientCtx *client.AppContext
+	// tls is the per-context ephemeral TLS cert/key used by the test server.
+	// Generated in NewAppTestingContext; T6 uses ExpectedFingerprint for TOFU tests.
+	tls *EphemeralTLS
 	// userClientOptions holds only the caller-supplied client options
 	// (auth, interceptors, timeouts). Does NOT include the bufconn/TCP
 	// dialer added by setupTransport. NewSiblingClient builds its own
@@ -310,6 +316,37 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// PHASE 7 PR 1: every test server terminates TLS. T5 wires this in by
+	// default so existing tests run unmodified; T6 covers the TLS-specific
+	// behaviour (auto-gen, TOFU, fingerprint pin).
+	ephemeral, err := NewEphemeralTLS("127.0.0.1")
+	if err != nil {
+		return nil, errors.Wrap(err, "generate test TLS cert")
+	}
+	appCtx.tls = ephemeral
+	serverCreds := credentials.NewTLS(&tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		NextProtos:   []string{"h2"},
+		Certificates: []tls.Certificate{ephemeral.ServerCreds},
+	})
+	appCtx.serverOptions = append(appCtx.serverOptions, grpcServer.WithCredentials(serverCreds))
+
+	// Client: skip chain verification against the self-signed test cert.
+	clientTLSCfg, err := clienttls.BuildConfig(clienttls.Config{
+		Endpoint: "127.0.0.1:0",
+		Mode:     clienttls.ModeInsecure,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "build client TLS config for test harness")
+	}
+	appCtx.clientOptions = append(appCtx.clientOptions, grpcClient.WithDialOptions([]grpc.DialOption{
+		grpc.WithTransportCredentials(credentials.NewTLS(clientTLSCfg)),
+	}))
+	appCtx.userClientOptions = append(appCtx.userClientOptions, grpcClient.WithDialOptions([]grpc.DialOption{
+		grpc.WithTransportCredentials(credentials.NewTLS(clientTLSCfg)),
+	}))
+
 	appCtx.server = grpcServer.NewServer(
 		&appCtx.cfg,
 		appCtx.serverCtx.AuthService,
