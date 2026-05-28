@@ -40,6 +40,17 @@ func (s *WrapMountErrorTestSuite) TestDarwinUnrelatedErrorPassesThrough() {
 	s.Same(in, out, "darwin with unrelated error must pass through")
 }
 
+func (s *WrapMountErrorTestSuite) TestDarwinPathNotFoundPassesThrough() {
+	currentGOOS = "darwin"
+	// A typo'd mountpoint produces "no such file or directory" without any
+	// FUSE-provider token — must pass through unwrapped so we don't mislead
+	// the user with an install hint when the real fix is to create the mount
+	// directory.
+	in := errors.New("open /Users/alice/typo-mountpoint: no such file or directory")
+	out := wrapMountError(in)
+	s.Same(in, out, "path-not-found errors without FUSE tokens must pass through")
+}
+
 func (s *WrapMountErrorTestSuite) TestDarwinMissingProviderWraps() {
 	currentGOOS = "darwin"
 

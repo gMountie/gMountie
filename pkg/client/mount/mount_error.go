@@ -41,8 +41,6 @@ func looksLikeMissingFUSE(err error) bool {
 		"mount_macfuse",
 		"/dev/macfuse",
 		"/dev/osxfuse",
-		"no such file or directory",
-		"executable file not found",
 	}
 	for _, p := range patterns {
 		if strings.Contains(s, p) {
