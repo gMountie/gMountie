@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"gmountie/pkg/server/config"
+
 	"github.com/pkg/errors"
 )
 
@@ -25,16 +27,17 @@ func execRunner(ctx context.Context, name string, args ...string) ([]byte, error
 var validPrincipal = regexp.MustCompile(`^[a-zA-Z0-9_@][a-zA-Z0-9._@-]{0,63}$`)
 
 type systemResolver struct {
-	run     commandRunner
-	timeout time.Duration
+	run         commandRunner
+	timeout     time.Duration
+	adminGroups map[string][]string // cap name -> server-side group names
 }
 
-func NewSystemResolver() IdentityResolver {
-	return newSystemResolverWithRunner(execRunner, 5*time.Second)
+func NewSystemResolver(cfg config.MappingConfig) IdentityResolver {
+	return newSystemResolverWithRunner(execRunner, 5*time.Second, cfg)
 }
 
-func newSystemResolverWithRunner(run commandRunner, timeout time.Duration) *systemResolver {
-	return &systemResolver{run: run, timeout: timeout}
+func newSystemResolverWithRunner(run commandRunner, timeout time.Duration, cfg config.MappingConfig) *systemResolver {
+	return &systemResolver{run: run, timeout: timeout, adminGroups: cfg.AdminGroups}
 }
 
 func (r *systemResolver) Resolve(principal string) (Identity, error) {
@@ -71,17 +74,44 @@ func (r *systemResolver) Resolve(principal string) (Identity, error) {
 		return Identity{}, mapNotFound(err)
 	}
 	groupNames := map[uint32]string{}
-	for i, name := range strings.Fields(string(nGOut)) {
+	memberNames := strings.Fields(string(nGOut))
+	for i, name := range memberNames {
 		if i < len(gids) {
 			groupNames[gids[i]] = name
 		}
 	}
+	caps := r.capsForMember(memberNames)
 	return Identity{
 		Principal: principal,
 		Uid:       uid, Gid: gid, Gids: gids,
+		Caps:       caps,
 		UserName:   uname,
 		GroupNames: groupNames,
 	}, nil
+}
+
+// capsForMember returns the caps granted by admin_groups whose group list
+// intersects the principal's membership (by name, from id -nG).
+func (r *systemResolver) capsForMember(memberNames []string) []string {
+	var caps []string
+	for capName, groupList := range r.adminGroups {
+		if hasMembership(memberNames, groupList) {
+			caps = append(caps, capName)
+		}
+	}
+	return caps
+}
+
+// hasMembership reports whether any group in groupList appears in memberNames.
+func hasMembership(memberNames []string, groupList []string) bool {
+	for _, g := range groupList {
+		for _, m := range memberNames {
+			if m == g {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (r *systemResolver) text(ctx context.Context, principal, flag string) (string, error) {

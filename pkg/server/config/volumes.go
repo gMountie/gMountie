@@ -35,6 +35,9 @@ type MappingConfig struct {
 	// passthrough:
 	RootSquash *bool  `mapstructure:"root_squash"` // nil => default true
 	AnonUid    uint32 `mapstructure:"anon_uid"`
+
+	// system:
+	AdminGroups map[string][]string `mapstructure:"admin_groups"` // cap name -> server-side group names
 }
 
 type VolumeConfig struct {

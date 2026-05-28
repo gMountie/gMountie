@@ -51,3 +51,19 @@ func (s *VolumeConfigSuite) TestParsesPassthroughRootSquash() {
 	s.Require().NotNil(c.Mapping.RootSquash)
 	s.False(*c.Mapping.RootSquash)
 }
+
+func (s *VolumeConfigSuite) TestParsesSystemAdminGroups() {
+	v := s.viperFrom(`
+name: team
+path: /srv/team
+mapping:
+  mode: system
+  admin_groups:
+    dac_override: [wheel]
+    dac_read_search: [backup]
+`)
+	c := NewVolumeConfig(v)
+	s.Equal(MappingModeSystem, c.Mapping.Mode)
+	s.Equal([]string{"wheel"}, c.Mapping.AdminGroups["dac_override"])
+	s.Equal([]string{"backup"}, c.Mapping.AdminGroups["dac_read_search"])
+}
