@@ -62,7 +62,7 @@ func (s *ConfinedProofSuite) TestDotDotTraversalBlocked() {
 
 	_, err := s.openat2Beneath(rootFd, "../../etc/passwd", unix.O_RDONLY)
 	s.Require().Error(err)
-	s.True(errors.Is(err, unix.EXDEV), "expected EXDEV, got %v", err)
+	s.ErrorIs(err, unix.EXDEV, "expected EXDEV, got %v", err)
 }
 
 // TestRelativeSymlinkWithinTreeWorks: a relative symlink that stays in-tree
