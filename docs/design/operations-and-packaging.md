@@ -88,7 +88,43 @@ cosign verify \
   ghcr.io/gmountie/gmountie-server:<tag>
 ```
 
+## Platform support
+
+The server is **Linux-only**; the client (`gmountie mount`) builds and runs on
+**Linux and macOS** (`darwin/amd64` and `darwin/arm64`). It's a single
+`gmountie` binary whose subcommand set is selected at build time:
+
+| OS | Subcommands |
+|---|---|
+| `linux` | `serve`, `mount`, `version` |
+| `darwin` | `mount`, `version` |
+
+- **How `serve` is excluded on darwin.** `cmd/commands/serve.go` carries a
+  `//go:build linux` tag. It's the only file in `cmd/` that imports
+  `pkg/server`, and it self-registers its subcommand via `init()`, so excluding
+  the file drops `serve` from the darwin binary cleanly — no `root.go` change.
+  This keeps `pkg/server/io` (whose `bound_fs.go` uses Linux-only
+  `setfsuid`/`setfsgid` and whose `confined.go` uses the Linux-only `openat2`
+  `RESOLVE_BENEATH` API) out of the darwin build entirely, so no per-file stubs
+  are needed. The tag is `linux` rather than `!darwin` because the server has
+  always been Linux-only.
+- **Runtime requirement.** Mounting on macOS needs a FUSE provider — either
+  [macFUSE](https://macfuse.io) (kext) or [FUSE-T](https://www.fuse-t.org/)
+  (userspace, no kext). `hanwen/go-fuse`'s `mount_darwin.go` works with either;
+  the binary doesn't tie itself to one.
+- **Missing-driver UX.** `pkg/client/mount.wrapMountError` annotates a darwin
+  mount failure that matches a missing-provider pattern (`macfuse`, `osxfuse`,
+  `mount_macfuse`, `/dev/macfuse`, `/dev/osxfuse`) with an install hint pointing
+  at both providers. It's a no-op on Linux and on unrelated darwin errors —
+  deliberately narrow so a typo'd mountpoint doesn't get a misleading hint.
+- **Shipping & CI.** goreleaser builds the darwin archives alongside Linux (four
+  archives total); the container image stays linux-only. A `build-darwin` CI job
+  cross-compiles `./cmd/...` for both darwin arches on every push as a
+  regression guard (no Mac runner — the client is pure Go).
+
 ## Out of scope
 
-macOS / Windows server builds, a Kubernetes operator, and desktop release
-artifacts (the Wails desktop build is deferred to Phase 8).
+macOS / Windows **server** builds, a Kubernetes operator, and desktop release
+artifacts (the Wails desktop build is deferred to Phase 8). For the macOS
+client specifically: no Homebrew tap, no Mac-runner integration test, no code
+signing / notarization, and no universal (`lipo`) binary.
