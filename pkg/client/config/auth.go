@@ -17,7 +17,7 @@ type BasicAuthConfigUser struct {
 
 // BasicAuthConfig is a struct that holds the configuration for the basic auth user
 type BasicAuthConfig struct {
-	Type             serverConfig.AuthConfigType `validate:"required"`
+	Type                serverConfig.AuthConfigType `validate:"required"`
 	BasicAuthConfigUser `yaml:",inline"`
 }
 

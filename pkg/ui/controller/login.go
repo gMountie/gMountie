@@ -89,7 +89,7 @@ func (l *LoginControllerImpl) Login(loginInfo LogInInfo) (bool, error) {
 		},
 		Auth: &clientConfig.BasicAuthConfig{
 			Type: config.AuthConfigTypeBasic,
-			BasicAuthConfigUser: config.BasicAuthConfigUser{
+			BasicAuthConfigUser: clientConfig.BasicAuthConfigUser{
 				Username: loginInfo.Username,
 				Password: loginInfo.Password,
 			},
