@@ -139,6 +139,18 @@ func (s *SessionHandshakeTestSuite) TestKeepaliveStreamErrorTriggersResume() {
 	s.Require().Equal("abc-123", handshake.SessionID())
 	s.Require().True(handshake.IsRunning())
 
+	// Close races the recovery loop: once we unblock Recv it returns EOF,
+	// and depending on goroutine scheduling the loop may fire one more
+	// Resume/Keepalive cycle before Close's streamCancel takes effect. The
+	// unexpected mock call would invoke testify's reflective diagnostic,
+	// which reads streamCtx at the same moment streamCancel writes it —
+	// a -race finding from CI run #119. Pre-register permissive expectations
+	// to absorb the race-window calls instead of asserting exact counts.
+	s.sessionClient.EXPECT().Resume(mock.Anything, mock.Anything).
+		Return(&proto.SessionResumeReply{Resumed: true}, nil).Maybe()
+	s.sessionClient.EXPECT().Keepalive(mock.Anything, mock.Anything).
+		Return(stream2, nil).Maybe()
+
 	close(block)
 	s.Require().NoError(handshake.Close())
 }
