@@ -12,10 +12,19 @@ func (r *staticResolver) Resolve(principal string) (Identity, error) {
 		return Identity{}, ErrPrincipalNotFound
 	}
 	gids := []uint32{u.Gid}
+	groupNames := map[uint32]string{}
 	for _, g := range u.Groups {
-		if gid, ok := r.m.Groups[g]; ok && gid != u.Gid {
-			gids = append(gids, gid)
+		if gid, ok := r.m.Groups[g]; ok {
+			if gid != u.Gid {
+				gids = append(gids, gid)
+			}
+			groupNames[gid] = g
 		}
 	}
-	return Identity{Principal: principal, Uid: u.Uid, Gid: u.Gid, Gids: gids, Caps: u.Caps}, nil
+	return Identity{
+		Principal:  principal,
+		Uid:        u.Uid, Gid: u.Gid, Gids: gids, Caps: u.Caps,
+		UserName:   principal,
+		GroupNames: groupNames,
+	}, nil
 }
