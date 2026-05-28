@@ -120,6 +120,7 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) error {
 	// NewNodeFS, spawns the Serve goroutine, and blocks on WaitMount
 	// before returning. No explicit go server.Serve()/WaitMount needed.
 	server, err := gofs.Mount(mountPath, root, fsOpts)
+	err = wrapMountError(err)
 	if err != nil {
 		return errors.Wrap(err, "mount fail")
 	}
