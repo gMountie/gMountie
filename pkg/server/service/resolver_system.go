@@ -77,8 +77,8 @@ func (r *systemResolver) Resolve(principal string) (Identity, error) {
 		}
 	}
 	return Identity{
-		Principal:  principal,
-		Uid:        uid, Gid: gid, Gids: gids,
+		Principal: principal,
+		Uid:       uid, Gid: gid, Gids: gids,
 		UserName:   uname,
 		GroupNames: groupNames,
 	}, nil
