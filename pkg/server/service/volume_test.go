@@ -19,15 +19,17 @@ func (s *VolumeServiceTestSuite) SetupTest() {
 		Volumes: []*config.VolumeConfig{
 			{
 				Name: "volume1",
-				Path: "/path/to/volume1",
+				Path: s.T().TempDir(),
 			},
 			{
 				Name: "volume2",
-				Path: "/path/to/volume2",
+				Path: s.T().TempDir(),
 			},
 		},
 	}
-	s.service = NewVolumeService(s.config)
+	svc, err := NewVolumeService(s.config)
+	s.Require().NoError(err)
+	s.service = svc
 }
 
 func (s *VolumeServiceTestSuite) TestList() {
@@ -70,9 +72,10 @@ func (s *VolumeServiceTestSuite) TestNewVolumeService_WithMiddleware() {
 	}
 
 	// Test
-	service := NewVolumeService(s.config, WithMiddleware(testMiddleware))
+	service, err := NewVolumeService(s.config, WithMiddleware(testMiddleware))
 
 	// Verify
+	s.Require().NoError(err)
 	s.Assert().NotNil(service)
 	s.Assert().True(middlewareCalled)
 }
@@ -84,7 +87,8 @@ func (s *VolumeServiceTestSuite) TestNewVolumeService_EmptyVolumes() {
 	}
 
 	// Test
-	service := NewVolumeService(emptyConfig)
+	service, err := NewVolumeService(emptyConfig)
+	s.Require().NoError(err)
 	volumes, err := service.List()
 
 	// Verify
@@ -101,11 +105,12 @@ func (s *VolumeServiceTestSuite) TestNewVolumeService_MultipleMiddleware() {
 	}
 
 	// Test
-	service := NewVolumeService(s.config,
+	service, err := NewVolumeService(s.config,
 		WithMiddleware(testMiddleware),
 		WithMiddleware(testMiddleware))
 
 	// Verify
+	s.Require().NoError(err)
 	s.Assert().NotNil(service)
 	s.Assert().Equal(2*len(s.config.Volumes), middlewareCalls)
 }

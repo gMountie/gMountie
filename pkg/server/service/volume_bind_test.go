@@ -19,7 +19,9 @@ func TestBindIdentitySuite(t *testing.T) { suite.Run(t, new(BindIdentitySuite)) 
 // given mapping. Path is a real temp dir so the loopback constructs cleanly.
 func (s *BindIdentitySuite) serviceForVolume(m config.MappingConfig) *VolumeServiceImpl {
 	cfg := &config.Config{Volumes: []*config.VolumeConfig{{Name: "v", Path: s.T().TempDir(), Mapping: m}}}
-	return NewVolumeService(cfg).(*VolumeServiceImpl)
+	svc, err := NewVolumeService(cfg)
+	s.Require().NoError(err)
+	return svc.(*VolumeServiceImpl)
 }
 
 func (s *BindIdentitySuite) TestSquashIgnoresPrincipalAndCaller() {

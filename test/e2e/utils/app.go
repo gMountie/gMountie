@@ -272,7 +272,11 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 		opt(appCtx)
 	}
 	// Create a new server app context
-	appCtx.serverCtx = server.NewServerAppContext(&appCtx.cfg)
+	serverCtx, err := server.NewServerAppContext(&appCtx.cfg)
+	if err != nil {
+		return nil, errors.Wrap(err, "build server app context")
+	}
+	appCtx.serverCtx = serverCtx
 
 	dialTarget, err := appCtx.setupTransport()
 	if err != nil {
