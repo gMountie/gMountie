@@ -75,7 +75,7 @@ func NewVolumeService(cfg *config.Config, options ...VolumeServiceOptions) (Volu
 		case config.MappingModeStatic:
 			svc.resolvers[v.Name] = NewCachedResolver(NewStaticResolver(v.Mapping), defaultIdentityTTL)
 		case config.MappingModeSystem:
-			svc.resolvers[v.Name] = NewCachedResolver(NewSystemResolver(), defaultIdentityTTL)
+			svc.resolvers[v.Name] = NewCachedResolver(NewSystemResolver(v.Mapping), defaultIdentityTTL)
 		case config.MappingModePassthrough:
 			// no resolver; identity derives from the wire caller
 		}
