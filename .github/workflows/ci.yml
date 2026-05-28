@@ -128,3 +128,26 @@ jobs:
       - name: Race detector
         run: task test:race
 
+  build-darwin:
+    # Cross-compile regression guard for client-side macOS support. Scoped to
+    # ./pkg/client/... for now — ./cmd/... pulls in pkg/server/io/bound_fs.go,
+    # which uses Linux-only syscall.Setfsuid/Setfsgid and won't compile on
+    # darwin. Once that file is build-tagged for !linux (currently being edited
+    # in the identity-permissions worktree, hands off), expand this to
+    # `go build ./cmd/...` and uncomment `- darwin` in .goreleaser.yaml.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+          cache-dependency-path: 'go.sum'
+      - name: Cross-compile darwin/arm64 (client)
+        env:
+          GOOS: darwin
+          GOARCH: arm64
+          CGO_ENABLED: '0'
+        run: go build ./pkg/client/...
+
