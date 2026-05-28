@@ -5,7 +5,7 @@
 
   [![Release](https://img.shields.io/github/v/release/gMountie/gMountie?include_prereleases&sort=semver&label=release)](https://github.com/gMountie/gMountie/releases)
   [![Go](https://img.shields.io/github/go-mod/go-version/gMountie/gMountie)](go.mod)
-  ![Platform](https://img.shields.io/badge/platform-Linux-informational)
+  ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20(client)-informational)
   ![Status](https://img.shields.io/badge/status-alpha-orange)
   [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 </div>
@@ -22,11 +22,11 @@ Accessing files on a server across the internet usually means a VPN plus NFS/SMB
 - **One small binary.** The same `gMountie` is both the server and the client.
 
 > [!NOTE]
-> gMountie is **alpha** and **Linux-only** today, with a single-user-ish trust model — TLS and security hardening are on the [roadmap](docs/roadmap.md). It's a great fit for mounting your own servers; it is not yet meant to face hostile networks.
+> gMountie is **alpha**, with a single-user-ish trust model — TLS and security hardening are on the [roadmap](docs/roadmap.md). The **server is Linux-only**; the **client mounts on Linux and macOS**. It's a great fit for mounting your own servers; it is not yet meant to face hostile networks.
 
 ## Quick Start 🚀
 
-> The **server** just exposes folders — no special requirements. The **client** mounts via FUSE, so it needs `fuse3` (`/dev/fuse`) on Linux.
+> The **server** (Linux only) just exposes folders — no special requirements. The **client** mounts via FUSE: install `fuse3` (`/dev/fuse`) on Linux, or [**macFUSE**](https://macfuse.io) / [**FUSE-T**](https://www.fuse-t.org/) on macOS.
 
 ### 1. Get `gMountie`
 
@@ -36,7 +36,7 @@ git clone https://github.com/gMountie/gMountie && cd gMountie
 go build -o gMountie ./cmd
 ```
 
-Prefer not to build? Grab a `gMountie_linux_*.tar.gz` from the [releases page](https://github.com/gMountie/gMountie/releases), or run the server from the container image `ghcr.io/gmountie/gmountie-server`.
+Prefer not to build? Grab a `gMountie_linux_*.tar.gz` (or `gMountie_darwin_*.tar.gz` for the macOS client) from the [releases page](https://github.com/gMountie/gMountie/releases), or run the server from the container image `ghcr.io/gmountie/gmountie-server`.
 
 ### 2. Start a server
 
