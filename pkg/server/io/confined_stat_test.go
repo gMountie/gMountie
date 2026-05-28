@@ -77,6 +77,16 @@ func (s *ConfinedStatSuite) TestAccessEscape() {
 	s.Equal(fuse.EACCES, st)
 }
 
+// TestAccessSymlinkTargetEscape: a symlink WITHIN the volume whose target
+// resolves OUTSIDE the volume must be rejected. The naive Faccessat(parent,
+// leaf, mode, 0) would follow the link and check the real /etc/passwd, which
+// is readable by anyone — a silent escape. The openat2 RESOLVE_BENEATH
+// pre-step traps the cross-root resolve as EXDEV → EACCES.
+func (s *ConfinedStatSuite) TestAccessSymlinkTargetEscape() {
+	st := s.fs.Access("evil", 0, nil) // evil -> /etc/passwd, planted in SetupTest
+	s.Equal(fuse.EACCES, st, "symlink-to-outside-root must not be access-checkable")
+}
+
 // TestStatFsRoot: StatFs on the root returns a non-nil result with non-zero Bsize.
 func (s *ConfinedStatSuite) TestStatFsRoot() {
 	out := s.fs.StatFs("")

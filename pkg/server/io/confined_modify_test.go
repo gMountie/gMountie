@@ -43,6 +43,17 @@ func (s *ConfinedModifySuite) TestChmodInTree() {
 	s.Equal(os.FileMode(0o600), info.Mode()&0o777)
 }
 
+// TestChmodSymlinkTargetEscape: an in-tree symlink whose target lives
+// outside the volume must not be chmod-able. Naive Fchmodat would follow
+// the link and chmod a real file outside the root — a silent escape that
+// can DoS or escalate. RESOLVE_BENEATH pre-resolves the leaf and trips
+// EXDEV first.
+func (s *ConfinedModifySuite) TestChmodSymlinkTargetEscape() {
+	s.Require().NoError(os.Symlink("/etc/passwd", filepath.Join(s.rootDir, "evil")))
+	st := s.fs.Chmod("evil", 0o600, nil)
+	s.Equal(fuse.EACCES, st, "symlink-to-outside-root must not be chmod-able through the volume")
+}
+
 // TestChmodEscape: traversal past root returns EACCES.
 func (s *ConfinedModifySuite) TestChmodEscape() {
 	st := s.fs.Chmod("../../etc/passwd", 0o600, nil)
