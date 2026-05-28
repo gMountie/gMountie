@@ -1,0 +1,96 @@
+---
+title: Performance
+sidebar_label: Performance
+description: Live performance graphs from the gMountie Bencher dashboard — sequential throughput, random I/O latency, and metadata latency on LAN and WAN profiles.
+---
+
+# Performance
+
+Live charts from the gMountie [Bencher](https://bencher.dev/) dashboard. Every tagged release runs the same fio-based benchmark suite against a fixed perf pod, and the results land on these plots — so what you see below is the **current** state of the codebase, not a snapshot frozen in a README.
+
+For the *why* behind the design — readahead window, write coalescing, the dirent cache — see **[Design — Performance](./design/performance.md)**. This page is the data.
+
+## How to read these charts
+
+- **Each line is a benchmark.** Sequential plots show 3 file sizes × 2 I/O paths (plain and optimized) = 6 lines. Random/metadata plots show 4 KiB read + 4 KiB write side by side.
+- **X axis is wall-clock time** (one point per release).
+- **Y axis is what the harness measured** — MB/s for throughput, nanoseconds for latency. The unit is in the chart title.
+- **Two link profiles.** `lan` = full-rate loopback. `wan` = `tc netem` shaping the loopback with realistic internet RTT and bandwidth. The split matters: gMountie's whole reason to exist is the WAN side.
+
+The testbed (`gmountie-perf-pod`) is a single fixed machine — it gives you trend, not absolute headroom on your hardware. Run the [perf suite](https://github.com/gMountie/gMountie/tree/master/test/e2e/perf) on your own host if you want to compare against your own ceiling.
+
+## Sequential read throughput (LAN)
+
+The headline number. Driven by the [readahead window](./client/config.md#readahead) — chunk size × number of in-flight chunks. The `Opt` variants use the partial-consume + cross-chunk path that landed in [#0f1dd8e](https://github.com/gMountie/gMountie/commit/0f1dd8e); the gap between plain and Opt is the value of that work.
+
+<iframe
+  src="https://bencher.dev/perf/gmountie-tfkojd8g/embed?plot=3fde69e9-291d-4160-8ba0-e577dc03b953"
+  title="Sequential read throughput (LAN)"
+  width="100%"
+  height="480"
+  loading="lazy"
+  style={{border: '1px solid var(--ifm-color-emphasis-300)', borderRadius: '8px'}}
+></iframe>
+
+→ [WAN variant](https://bencher.dev/perf/gmountie-tfkojd8g?plot=300b6e39-48ad-443c-86af-9c4617ec0422) · [normalized overhead (LAN)](https://bencher.dev/perf/gmountie-tfkojd8g?plot=69761a2d-3dcc-4d09-93d2-a1bf18ebbc53)
+
+## Sequential write throughput (LAN)
+
+The mirror of the read plot, exercising the [readahead and write coalescing](./design/performance.md#25-client-readahead-and-write-coalescing) path. Bounded by the disk's sustained-write floor on the server, which the [substrate floor plot](https://bencher.dev/perf/gmountie-tfkojd8g?plot=0d776c9d-4981-43d9-9a74-010a0f39e397) gives the absolute ceiling for.
+
+<iframe
+  src="https://bencher.dev/perf/gmountie-tfkojd8g/embed?plot=c59873b0-9378-40bd-a017-21791aad5eee"
+  title="Sequential write throughput (LAN)"
+  width="100%"
+  height="480"
+  loading="lazy"
+  style={{border: '1px solid var(--ifm-color-emphasis-300)', borderRadius: '8px'}}
+></iframe>
+
+→ [WAN variant](https://bencher.dev/perf/gmountie-tfkojd8g?plot=959656ea-ef03-481f-86d8-bc77b67e0240) · [normalized overhead (LAN)](https://bencher.dev/perf/gmountie-tfkojd8g?plot=b6855cd6-cf74-412b-95f2-5f0a1af4d873)
+
+## Random 4 KiB I/O latency
+
+Tail behaviour on small, scattered I/O. The harness tracks **central latency** per benchmark (nanoseconds), not a percentile — Bencher's threshold system uses iterative t-tests on the central tendency. For percentile breakdowns, run [`task perf:bench:fs`](https://github.com/gMountie/gMountie/blob/master/test/e2e/perf/) locally; the fio reports include p99 inline.
+
+<iframe
+  src="https://bencher.dev/perf/gmountie-tfkojd8g/embed?plot=280b6a65-10be-4428-b90d-eb62c5a6086b"
+  title="Random 4 KiB I/O latency"
+  width="100%"
+  height="480"
+  loading="lazy"
+  style={{border: '1px solid var(--ifm-color-emphasis-300)', borderRadius: '8px'}}
+></iframe>
+
+→ [Random 4 KiB throughput](https://bencher.dev/perf/gmountie-tfkojd8g?plot=919740fa-c859-4a78-b079-cefa21cc3a12) — same workload, viewed as ops/sec instead of ns/op.
+
+## Metadata latency
+
+`Lookup`, `OpenStatClose`, `Readdir*` — exercises the [dirent cache](./concepts/cache.mdx) and the negative-cache TTL. Cold cache vs. hot cache show up as two regimes; the suite covers both.
+
+<iframe
+  src="https://bencher.dev/perf/gmountie-tfkojd8g/embed?plot=54ef745a-e1fb-4287-8c7d-4a2f78c06ff7"
+  title="Metadata latency"
+  width="100%"
+  height="480"
+  loading="lazy"
+  style={{border: '1px solid var(--ifm-color-emphasis-300)', borderRadius: '8px'}}
+></iframe>
+
+## What lives on the dashboard but not here
+
+The full Bencher project has 12 plots; this page embeds 4. The others — normalized overhead (% of the min(disk,link) ceiling), WAN variants, the substrate floor (raw disk and raw network MB/s on the same pod) — are linked inline or available straight on the **[Bencher dashboard](https://bencher.dev/perf/gmountie-tfkojd8g)**.
+
+The plot set is declared in [`scripts/perf/plots.yaml`](https://github.com/gMountie/gMountie/blob/master/scripts/perf/plots.yaml) and synced with `task perf:plots:sync`, so it's reproducible and reviewable in PRs — no clickops on the dashboard.
+
+## Caveats
+
+- **One testbed.** Every line on every chart is from the same machine. Use it for *trend* (did this PR slow things down?), not as a hardware-portable absolute.
+- **Public, alert-only.** The Bencher project is public; CI raises an alert on regression but does not fail the build. Performance is tracked, not gated.
+- **Release cadence.** Each tagged release publishes one point per benchmark per plot. Mid-PR perf work is run locally and only lands on Bencher when the PR merges and a release is cut. See [`design/performance.md`](./design/performance.md) for the release-gated flow.
+
+## See also
+
+- [Design — Performance](./design/performance.md) — readahead defaults, write-coalescing windows, knobs that move the numbers.
+- [Concepts — Cache](./concepts/cache.mdx) — what's cached on the client and why the metadata plot looks like two regimes.
+- [Bencher dashboard](https://bencher.dev/perf/gmountie-tfkojd8g) — every plot, every release, every branch.

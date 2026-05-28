@@ -10,6 +10,7 @@ const sidebars = {
     'quickstart',     // docs/quickstart.mdx
     'cli-cheatsheet', // docs/cli-cheatsheet.md
     'comparison',     // docs/comparison.md
+    'performance',    // docs/performance.mdx — live Bencher embeds
     {
       type: 'category',
       label: 'Server',
