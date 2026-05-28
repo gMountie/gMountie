@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"gmountie/pkg/client"
 	clientConfig "gmountie/pkg/client/config"
 	grpcClient "gmountie/pkg/client/grpc"
@@ -60,6 +61,10 @@ type AppTestingContext struct {
 	server *grpcServer.Server
 	// client is the gRPC client.
 	client grpcClient.Client
+	// mtlsCreds, when non-nil, overrides the default ephemeral server cert
+	// with a CA-signed leaf and configures the server to require client certs
+	// from that CA. Set via WithMTLS.
+	mtlsCreds *mtlsCredsConfig
 	// volumes are the test volumes.
 	volumes []*TestVolume
 	// cacheCfg is the client-side cache configuration. Defaulted to
@@ -170,6 +175,93 @@ func WithClientTLS(cfg clientConfig.TLSConfig) TestOptions {
 			ExpectedFingerprint: cfg.ExpectedFingerprint,
 			ServerName:          cfg.ServerName,
 			KnownHostsPath:      cfg.KnownHostsPath,
+		}
+	}
+}
+
+// mtlsCredsConfig holds the PEM materials for an in-process mTLS test context.
+type mtlsCredsConfig struct {
+	caCertPEM    []byte
+	serverCert   []byte
+	serverKey    []byte
+	clientCert   []byte // primary client cert (default client / alice)
+	clientKey    []byte
+}
+
+// ACLUser describes a single principal for WithACLUsers.
+type ACLUser struct {
+	Username string
+	Password string   // plaintext; hashed internally
+	Volumes  []string // explicit volume grant list; nil means use default_allow
+}
+
+// WithACLUsers sets a multi-user BasicAuth config with per-user volume ACLs and
+// default_allow:false. The first user's credentials are wired as the default
+// client; use NewClientAs to build a second client authenticating as another
+// user. Volume names in the grants must match the names used in WithExistingVolume
+// or other volume helpers.
+func WithACLUsers(users ...ACLUser) TestOptions {
+	return func(c *AppTestingContext) {
+		f := false
+		bac := &config.BasicAuthConfig{
+			AuthConfigBase: config.AuthConfigBase{Type: config.AuthConfigTypeBasic},
+			DefaultAllow:   &f,
+		}
+		for _, u := range users {
+			h, err := passhash.HashFast(u.Password)
+			if err != nil {
+				panic("WithACLUsers: hash password for " + u.Username + ": " + err.Error())
+			}
+			bac.Users = append(bac.Users, config.BasicAuthConfigUser{
+				Username:     u.Username,
+				PasswordHash: h,
+				Volumes:      u.Volumes,
+			})
+		}
+		c.cfg.Auth = bac
+		// Wire the first user as the default gRPC client.
+		if len(users) > 0 {
+			u := users[0]
+			c.userClientOptions = append(c.userClientOptions, grpcClient.WithBasicAuth(u.Username, u.Password))
+			c.clientOptions = append(c.clientOptions, grpcClient.WithBasicAuth(u.Username, u.Password))
+		}
+	}
+}
+
+// WithMTLS configures the server to use the supplied CA-signed server cert and
+// require client certs from that CA (RequireAndVerifyClientCert). The primary
+// client authenticates using clientCert/clientKey. Auth config is set to
+// auth.type:mtls with the supplied users; default_allow is false.
+// Use NewClientAs or build a raw gRPC client to connect as a different principal.
+func WithMTLS(ca *TestCA, primaryPrincipal string, users ...ACLUser) TestOptions {
+	return func(c *AppTestingContext) {
+		c.mtlsCreds = &mtlsCredsConfig{
+			caCertPEM:  ca.CACertPEM,
+			serverCert: ca.ServerCert,
+			serverKey:  ca.ServerKey,
+			clientCert: ca.ClientCerts[primaryPrincipal],
+			clientKey:  ca.ClientKeys[primaryPrincipal],
+		}
+		// Build auth config (mtls-typed; no password hashes).
+		f := false
+		bac := &config.BasicAuthConfig{
+			AuthConfigBase: config.AuthConfigBase{Type: config.AuthConfigTypeMTLS},
+			DefaultAllow:   &f,
+		}
+		for _, u := range users {
+			bac.Users = append(bac.Users, config.BasicAuthConfigUser{
+				Username: u.Username,
+				Volumes:  u.Volumes,
+			})
+		}
+		c.cfg.Auth = bac
+		// Client TLS stays insecure (server cert SAN is 127.0.0.1 but the bufconn
+		// dial target is "bufnet", so server-name verification would fail). The
+		// client cert is still presented and validated by the server.
+		c.clientTLSConfig = clienttls.Config{
+			Mode:     clienttls.ModeInsecure,
+			CertFile: "", // populated in NewAppTestingContext from mtlsCreds
+			KeyFile:  "",
 		}
 	}
 }
@@ -353,42 +445,81 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 	// PHASE 7 PR 1: every test server terminates TLS. T5 wires this in by
 	// default so existing tests run unmodified; T6 covers the TLS-specific
 	// behaviour (auto-gen, TOFU, fingerprint pin).
-	ephemeral, err := NewEphemeralTLS("127.0.0.1")
-	if err != nil {
-		return nil, errors.Wrap(err, "generate test TLS cert")
-	}
-	appCtx.tls = ephemeral
-	serverCreds := credentials.NewTLS(&tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		NextProtos:   []string{"h2"},
-		Certificates: []tls.Certificate{ephemeral.ServerCreds},
-	})
-	appCtx.serverOptions = append(appCtx.serverOptions, grpcServer.WithCredentials(serverCreds))
-
-	// Build client TLS credentials from clientTLSConfig (defaulted to insecure;
-	// WithClientTLS may have replaced it with tofu/verify). The endpoint for TOFU
-	// key resolution is the real TCP listener address when useTCP is set, so that
-	// known_hosts entries written in tests use the same key the verifier will look
-	// up. For bufconn contexts the endpoint is a synthetic string (the TOFU key is
-	// unused because the cert is per-test and the known_hosts path is a tempdir).
-	tlsCfgForClient := appCtx.clientTLSConfig
-	if tlsCfgForClient.Endpoint == "" {
-		if appCtx.tcpListener != nil {
-			tlsCfgForClient.Endpoint = appCtx.tcpListener.Addr().String()
-		} else {
-			tlsCfgForClient.Endpoint = "127.0.0.1:0"
+	// When WithMTLS is used, override the self-signed ephemeral cert with the
+	// CA-signed server cert and require client certificates from the test CA.
+	if appCtx.mtlsCreds != nil {
+		mc := appCtx.mtlsCreds
+		serverLeaf, err := tls.X509KeyPair(mc.serverCert, mc.serverKey)
+		if err != nil {
+			return nil, errors.Wrap(err, "parse mTLS server cert/key")
 		}
+		caPool := x509.NewCertPool()
+		if !caPool.AppendCertsFromPEM(mc.caCertPEM) {
+			return nil, errors.New("mTLS: no CA cert found in CA PEM")
+		}
+		serverTLSCfg := &tls.Config{
+			MinVersion:   tls.VersionTLS13,
+			NextProtos:   []string{"h2"},
+			Certificates: []tls.Certificate{serverLeaf},
+			ClientCAs:    caPool,
+			ClientAuth:   tls.RequireAndVerifyClientCert,
+		}
+		appCtx.serverOptions = append(appCtx.serverOptions, grpcServer.WithCredentials(credentials.NewTLS(serverTLSCfg)))
+		// Client TLS: insecure server-cert verification (bufconn target ≠ IP SAN)
+		// but present the primary client cert.
+		clientLeaf, err := tls.X509KeyPair(mc.clientCert, mc.clientKey)
+		if err != nil {
+			return nil, errors.Wrap(err, "parse mTLS client cert/key")
+		}
+		clientTLSCfg := &tls.Config{
+			MinVersion:         tls.VersionTLS13,
+			InsecureSkipVerify: true, //nolint:gosec // intentional for in-process test
+			Certificates:       []tls.Certificate{clientLeaf},
+		}
+		appCtx.clientOptions = append(appCtx.clientOptions, grpcClient.WithDialOptions([]grpc.DialOption{
+			grpc.WithTransportCredentials(credentials.NewTLS(clientTLSCfg)),
+		}))
+		appCtx.userClientOptions = append(appCtx.userClientOptions, grpcClient.WithDialOptions([]grpc.DialOption{
+			grpc.WithTransportCredentials(credentials.NewTLS(clientTLSCfg)),
+		}))
+	} else {
+		ephemeral, err := NewEphemeralTLS("127.0.0.1")
+		if err != nil {
+			return nil, errors.Wrap(err, "generate test TLS cert")
+		}
+		appCtx.tls = ephemeral
+		serverCreds := credentials.NewTLS(&tls.Config{
+			MinVersion:   tls.VersionTLS13,
+			NextProtos:   []string{"h2"},
+			Certificates: []tls.Certificate{ephemeral.ServerCreds},
+		})
+		appCtx.serverOptions = append(appCtx.serverOptions, grpcServer.WithCredentials(serverCreds))
+
+		// Build client TLS credentials from clientTLSConfig (defaulted to insecure;
+		// WithClientTLS may have replaced it with tofu/verify). The endpoint for TOFU
+		// key resolution is the real TCP listener address when useTCP is set, so that
+		// known_hosts entries written in tests use the same key the verifier will look
+		// up. For bufconn contexts the endpoint is a synthetic string (the TOFU key is
+		// unused because the cert is per-test and the known_hosts path is a tempdir).
+		tlsCfgForClient := appCtx.clientTLSConfig
+		if tlsCfgForClient.Endpoint == "" {
+			if appCtx.tcpListener != nil {
+				tlsCfgForClient.Endpoint = appCtx.tcpListener.Addr().String()
+			} else {
+				tlsCfgForClient.Endpoint = "127.0.0.1:0"
+			}
+		}
+		clientTLSCfg, err := clienttls.BuildConfig(tlsCfgForClient)
+		if err != nil {
+			return nil, errors.Wrap(err, "build client TLS config for test harness")
+		}
+		appCtx.clientOptions = append(appCtx.clientOptions, grpcClient.WithDialOptions([]grpc.DialOption{
+			grpc.WithTransportCredentials(credentials.NewTLS(clientTLSCfg)),
+		}))
+		appCtx.userClientOptions = append(appCtx.userClientOptions, grpcClient.WithDialOptions([]grpc.DialOption{
+			grpc.WithTransportCredentials(credentials.NewTLS(clientTLSCfg)),
+		}))
 	}
-	clientTLSCfg, err := clienttls.BuildConfig(tlsCfgForClient)
-	if err != nil {
-		return nil, errors.Wrap(err, "build client TLS config for test harness")
-	}
-	appCtx.clientOptions = append(appCtx.clientOptions, grpcClient.WithDialOptions([]grpc.DialOption{
-		grpc.WithTransportCredentials(credentials.NewTLS(clientTLSCfg)),
-	}))
-	appCtx.userClientOptions = append(appCtx.userClientOptions, grpcClient.WithDialOptions([]grpc.DialOption{
-		grpc.WithTransportCredentials(credentials.NewTLS(clientTLSCfg)),
-	}))
 
 	appCtx.server = grpcServer.NewServer(
 		&appCtx.cfg,
@@ -515,6 +646,69 @@ func (c *AppTestingContext) NewSiblingClient(cacheCfg *clientConfig.CacheConfig)
 		return nil, errors.New("sibling client session handshake failed")
 	}
 	return client.NewAppContext(siblingClient, "", c.fuseCfg, cacheCfg), nil
+}
+
+// NewClientAs builds a raw gRPC client that authenticates as the named
+// principal using basic auth. It connects to the same server as this context.
+// Use this in ACL tests where you need a second caller with different
+// credentials. The caller must close the returned client when done.
+func (c *AppTestingContext) NewClientAs(username, password string) (grpcClient.Client, error) {
+	// Collect transport credentials from userClientOptions (which already includes
+	// the TLS dial option appended after options apply) and replace auth.
+	// Build a fresh option slice: no auth yet, then add this principal's basic-auth.
+	opts := make([]grpcClient.ClientOption, 0, len(c.userClientOptions)+2)
+	for _, o := range c.userClientOptions {
+		opts = append(opts, o)
+	}
+	opts = append(opts, grpcClient.WithBasicAuth(username, password))
+	// Wire the transport dialer (bufconn or TCP).
+	if c.listener != nil {
+		opts = append(opts, grpcClient.WithDialOptions([]grpc.DialOption{
+			grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+				return c.listener.Dial()
+			}),
+		}))
+	}
+	cl, err := grpcClient.NewClient(c.client.GetEndpoint(), opts...)
+	if err != nil {
+		return nil, errors.Wrap(err, "NewClientAs: dial")
+	}
+	cl.Connect()
+	if cl.SessionID() == "" {
+		_ = cl.Close()
+		return nil, errors.New("NewClientAs: session handshake failed")
+	}
+	return cl, nil
+}
+
+// NewRawClientWithTLS builds a raw gRPC client using caller-supplied TLS
+// credentials. It connects to the same server as this context (bufconn or TCP).
+// The caller is responsible for closing the returned client. This is used in
+// mTLS tests to connect with an alternative principal cert without going through
+// the WithBasicAuth path.
+func (c *AppTestingContext) NewRawClientWithTLS(tlsCfg *tls.Config) (grpcClient.Client, error) {
+	creds := credentials.NewTLS(tlsCfg)
+	var opts []grpcClient.ClientOption
+	opts = append(opts, grpcClient.WithDialOptions([]grpc.DialOption{
+		grpc.WithTransportCredentials(creds),
+	}))
+	if c.listener != nil {
+		opts = append(opts, grpcClient.WithDialOptions([]grpc.DialOption{
+			grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+				return c.listener.Dial()
+			}),
+		}))
+	}
+	cl, err := grpcClient.NewClient(c.client.GetEndpoint(), opts...)
+	if err != nil {
+		return nil, errors.Wrap(err, "NewRawClientWithTLS: dial")
+	}
+	cl.Connect()
+	if cl.SessionID() == "" {
+		_ = cl.Close()
+		return nil, errors.New("NewRawClientWithTLS: session handshake failed")
+	}
+	return cl, nil
 }
 
 // MountVolumeErr mounts the test volume and returns any error. Callers
