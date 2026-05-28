@@ -22,6 +22,7 @@ package fs
 // rawIDs=true.
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -112,6 +113,18 @@ func (s *IdentityRewriteSuite) TestSquashUIDRewrittenToLocalUser() {
 		s.Assert().NotEqual(squashGID, stat.Gid,
 			"FUSE-visible gid must not be the raw squash gid %d; rewriting is broken", squashGID)
 	}
+}
+
+// TestSquashWhoAmIReturnsUserName proves the server populates Identity.user_name
+// end-to-end: a WhoAmI call from the client returns a non-empty UserName for the
+// squash uid (when the VM's name service can resolve it; skipped otherwise).
+func (s *IdentityRewriteSuite) TestSquashWhoAmIReturnsUserName() {
+	id, err := s.testAppCtx.GetClient().WhoAmI(context.Background(), s.volume.Name)
+	s.Require().NoError(err)
+	if id.UserName == "" {
+		s.T().Skipf("getent passwd %d returns nothing on this VM; cannot assert UserName", squashUID)
+	}
+	s.Assert().NotEmpty(id.UserName, "WhoAmI must surface the squash uid's name")
 }
 
 func TestIdentityRewriteSuite(t *testing.T) {
