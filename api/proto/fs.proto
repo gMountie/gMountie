@@ -86,6 +86,11 @@ message GetAttrIfChangedReply {
 
 message SubscribeRequest {
   string volume = 1;
+  // Caller carries the wire identity so the server can filter events by
+  // per-path access — a subscriber must not learn the existence of paths
+  // it has no read access to. The server binds identity once at stream
+  // start and Access-checks every event before forwarding.
+  Caller caller = 2;
 }
 
 message SubscribeEvent {
