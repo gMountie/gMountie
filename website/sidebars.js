@@ -9,6 +9,7 @@ const sidebars = {
     'home',           // docs/index.md — slug "/"
     'quickstart',     // docs/quickstart.mdx
     'cli-cheatsheet', // docs/cli-cheatsheet.md
+    'comparison',     // docs/comparison.md
     {
       type: 'category',
       label: 'Server',
@@ -32,7 +33,21 @@ const sidebars = {
         'concepts/identity',
       ],
     },
+    {
+      type: 'category',
+      label: 'Recipes',
+      collapsed: false,
+      link: {type: 'doc', id: 'recipes/index'}, // docs/recipes/index.md
+      items: [
+        'recipes/systemd',
+        'recipes/docker',
+        'recipes/caddy-reverse-proxy',
+        'recipes/multi-volume-vfs',
+      ],
+    },
     'troubleshooting',
+    'error-catalog',
+    'glossary',
     'roadmap',
     {
       type: 'category',
