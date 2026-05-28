@@ -40,9 +40,9 @@ func (s *LimitsSuite) TestKeepaliveOptionAppearsWhenIdleOrAgeNonzero() {
 
 func (s *LimitsSuite) TestAllNonzeroProducesThreeOptions() {
 	opts := limitsServerOptions(config.LimitsConfig{
-		MaxRecvMessageSize:  1,
+		MaxRecvMessageSize:   1,
 		MaxConcurrentStreams: 1,
-		MaxConnectionIdle:   time.Second,
+		MaxConnectionIdle:    time.Second,
 	})
 	s.Len(opts, 3)
 }

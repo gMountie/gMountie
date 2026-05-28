@@ -245,7 +245,7 @@ func (s *Server) getOptions() []grpc.ServerOption {
 		// MaxConcurrentStreams. KeepaliveParams for Idle/Age are already
 		// folded into kaParams above; limitsServerOptions skips them here.
 		limCfg := config.LimitsConfig{
-			MaxRecvMessageSize:  srv.GRPC.Limits.MaxRecvMessageSize,
+			MaxRecvMessageSize:   srv.GRPC.Limits.MaxRecvMessageSize,
 			MaxConcurrentStreams: srv.GRPC.Limits.MaxConcurrentStreams,
 		}
 		opts = append(opts, limitsServerOptions(limCfg)...)
