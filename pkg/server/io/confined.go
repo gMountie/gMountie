@@ -6,6 +6,7 @@ package io
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"strings"
 	"syscall"
@@ -13,6 +14,7 @@ import (
 	"unsafe"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/hanwen/go-fuse/v2/fuse/nodefs"
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	"golang.org/x/sys/unix"
 )
@@ -337,4 +339,113 @@ func (c *ConfinedLoopbackFileSystem) Link(oldName, newName string, _ *fuse.Conte
 		return errnoToStatus(err)
 	}
 	return fuse.OK
+}
+
+// Open opens an existing file for reading or writing. The fd is opened via
+// openat2 with RESOLVE_BENEATH so the returned nodefs.File is confined to the
+// volume root. O_APPEND is stripped: the kernel translates offsets for us.
+func (c *ConfinedLoopbackFileSystem) Open(name string, flags uint32, _ *fuse.Context) (nodefs.File, fuse.Status) {
+	// Mirror loopback: strip O_APPEND (kernel handles offset translation).
+	flags = flags &^ uint32(syscall.O_APPEND)
+	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	if err != nil {
+		return nil, errnoToStatus(err)
+	}
+	defer unix.Close(parentFd)
+	fd, err := unix.Openat2(parentFd, leaf, &unix.OpenHow{
+		Flags:   uint64(flags) | unix.O_CLOEXEC,
+		Resolve: resolveHow,
+	})
+	if err != nil {
+		return nil, errnoToStatus(err)
+	}
+	// os.NewFile takes ownership of fd; LoopbackFile closes it via Release.
+	return nodefs.NewLoopbackFile(os.NewFile(uintptr(fd), leaf)), fuse.OK
+}
+
+// Create creates (or opens with O_CREAT) a file confined to the volume root.
+// O_APPEND is stripped for the same reason as Open.
+func (c *ConfinedLoopbackFileSystem) Create(name string, flags, mode uint32, _ *fuse.Context) (nodefs.File, fuse.Status) {
+	flags = flags &^ uint32(syscall.O_APPEND)
+	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	if err != nil {
+		return nil, errnoToStatus(err)
+	}
+	defer unix.Close(parentFd)
+	fd, err := unix.Openat2(parentFd, leaf, &unix.OpenHow{
+		Flags:   uint64(flags) | unix.O_CREAT | unix.O_CLOEXEC,
+		Mode:    uint64(mode),
+		Resolve: resolveHow,
+	})
+	if err != nil {
+		return nil, errnoToStatus(err)
+	}
+	return nodefs.NewLoopbackFile(os.NewFile(uintptr(fd), leaf)), fuse.OK
+}
+
+// OpenDir reads directory entries beneath the volume root. Mode and Ino are
+// sourced from the underlying syscall.Stat_t, mirroring the loopback's
+// fuse.ToStatT conversion exactly.
+func (c *ConfinedLoopbackFileSystem) OpenDir(name string, _ *fuse.Context) ([]fuse.DirEntry, fuse.Status) {
+	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	if err != nil {
+		return nil, errnoToStatus(err)
+	}
+	defer unix.Close(parentFd)
+	// Open the directory itself, confined via openat2.
+	fd, err := unix.Openat2(parentFd, leaf, &unix.OpenHow{
+		Flags:   unix.O_RDONLY | unix.O_DIRECTORY | unix.O_CLOEXEC,
+		Resolve: resolveHow,
+	})
+	if err != nil {
+		return nil, errnoToStatus(err)
+	}
+	// os.NewFile takes ownership of the fd; Close releases it.
+	f := os.NewFile(uintptr(fd), leaf)
+	defer f.Close()
+	entries, err := f.ReadDir(-1)
+	if err != nil {
+		return nil, errnoToStatus(err)
+	}
+	out := make([]fuse.DirEntry, 0, len(entries))
+	for _, e := range entries {
+		d := fuse.DirEntry{Name: e.Name()}
+		// info.Sys() is *syscall.Stat_t on Linux; that carries the kernel
+		// mode bits (S_IFREG/S_IFDIR/…) FUSE expects, not Go's os.FileMode
+		// layout. Fall back to the dirent type if per-entry stat fails.
+		if info, ierr := e.Info(); ierr == nil {
+			if st, ok := info.Sys().(*syscall.Stat_t); ok {
+				d.Mode = st.Mode
+				d.Ino = st.Ino
+			}
+		}
+		if d.Mode == 0 {
+			d.Mode = direntTypeToMode(e.Type())
+		}
+		out = append(out, d)
+	}
+	return out, fuse.OK
+}
+
+// direntTypeToMode maps an os.DirEntry type to a Linux S_IFMT bit. Used as
+// a fallback when per-entry stat fails (e.g. EACCES on a child); the
+// readdir d_type alone still tells us the kind.
+func direntTypeToMode(t os.FileMode) uint32 {
+	switch {
+	case t&os.ModeDir != 0:
+		return syscall.S_IFDIR
+	case t&os.ModeSymlink != 0:
+		return syscall.S_IFLNK
+	case t&os.ModeDevice != 0:
+		if t&os.ModeCharDevice != 0 {
+			return syscall.S_IFCHR
+		}
+		return syscall.S_IFBLK
+	case t&os.ModeNamedPipe != 0:
+		return syscall.S_IFIFO
+	case t&os.ModeSocket != 0:
+		return syscall.S_IFSOCK
+	default:
+		return syscall.S_IFREG
+	}
 }
