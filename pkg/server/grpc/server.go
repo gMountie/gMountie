@@ -17,6 +17,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	_ "google.golang.org/grpc/encoding/gzip" // Installing the gzip encoding as an available compressor.
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/reflection"
@@ -34,6 +35,7 @@ type Server struct {
 	server                  *grpc.Server
 	authService             service.AuthService
 	listener                net.Listener
+	creds                   credentials.TransportCredentials
 	extraUnaryInterceptors  []grpc.UnaryServerInterceptor
 	extraStreamInterceptors []grpc.StreamServerInterceptor
 	metricsServer           *prometheus.ServerMetrics
@@ -50,6 +52,15 @@ type ServerOption func(*Server)
 func WithListener(lis net.Listener) ServerOption {
 	return func(s *Server) {
 		s.listener = lis
+	}
+}
+
+// WithCredentials sets the transport credentials (TLS) for the gRPC server.
+// When nil or not provided, the server uses plaintext (only valid for
+// loopback-bound listeners — the bootstrap enforces this).
+func WithCredentials(creds credentials.TransportCredentials) ServerOption {
+	return func(s *Server) {
+		s.creds = creds
 	}
 }
 
@@ -186,6 +197,11 @@ func (s *Server) getOptions() []grpc.ServerOption {
 	opts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(unaryInterceptors...),
 		grpc.ChainStreamInterceptor(streamInterceptors...),
+	}
+	// Wire TLS credentials when provided. When nil the server uses plaintext
+	// (only permitted for loopback-bound listeners; the bootstrap enforces this).
+	if s.creds != nil {
+		opts = append(opts, grpc.Creds(s.creds))
 	}
 	// Wire keepalive + message-size guards from config. The server pings idle
 	// connections every Time and tears them down after Timeout without an ack.

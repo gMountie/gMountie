@@ -2,6 +2,21 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
+	"net"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"syscall"
+	"time"
+
+	"github.com/adrg/xdg"
+	"github.com/pkg/errors"
+	prometheus "github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/zap"
+	"google.golang.org/grpc/credentials"
+
 	"gmountie/pkg/server/config"
 	"gmountie/pkg/server/controller"
 	"gmountie/pkg/server/grpc"
@@ -9,15 +24,8 @@ import (
 	"gmountie/pkg/server/metrics"
 	"gmountie/pkg/server/ops"
 	"gmountie/pkg/server/service"
+	servertls "gmountie/pkg/server/tls"
 	"gmountie/pkg/utils/log"
-	"os"
-	"runtime"
-	"syscall"
-	"time"
-
-	"github.com/pkg/errors"
-	prometheus "github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/zap"
 )
 
 type AppContext struct {
@@ -102,13 +110,51 @@ func Start(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return errors.Wrap(err, "build app context")
 	}
+
+	// Resolve TLS before building the listener so a cert failure aborts
+	// before any socket is bound.
+	bind := net.JoinHostPort(cfg.Server.Address, strconv.FormatUint(uint64(cfg.Server.Port), 10))
+	var serverCreds credentials.TransportCredentials
+	if !cfg.Server.TLS.Disabled {
+		certPath, keyPath := resolveCertPaths(cfg.Server.TLS)
+		if err := os.MkdirAll(filepath.Dir(certPath), 0o755); err != nil {
+			return errors.Wrap(err, "ensure cert dir")
+		}
+		host := hostFromBind(bind)
+		cert, _, fp, err := servertls.LoadOrGenerate(certPath, keyPath, host)
+		if err != nil {
+			return errors.Wrap(err, "load/generate server cert")
+		}
+		tlsCfg := &tls.Config{
+			MinVersion:   minTLSVersion(cfg.Server.TLS.MinVersion),
+			NextProtos:   []string{"h2"},
+			Certificates: []tls.Certificate{cert},
+		}
+		serverCreds = credentials.NewTLS(tlsCfg)
+		log.Log.Info("server TLS enabled",
+			zap.String("cert_path", certPath),
+			zap.String("fingerprint", fp))
+	} else {
+		if !isLoopback(bind) {
+			return errors.Errorf("server.tls.disabled=true requires a loopback bind address (got %q)", bind)
+		}
+		log.Log.Warn("server TLS DISABLED — every connection is plaintext (dev mode)",
+			zap.String("bind", bind))
+	}
+
+	grpcOpts := []grpc.ServerOption{
+		grpc.WithExtraUnaryInterceptors(
+			grpc.UnaryServerMetricsInterceptor(appCtx.Metrics),
+		),
+	}
+	if serverCreds != nil {
+		grpcOpts = append(grpcOpts, grpc.WithCredentials(serverCreds))
+	}
 	s := grpc.NewServer(
 		cfg,
 		appCtx.AuthService,
 		appCtx.GetGrpcServices(),
-		grpc.WithExtraUnaryInterceptors(
-			grpc.UnaryServerMetricsInterceptor(appCtx.Metrics),
-		),
+		grpcOpts...,
 	)
 
 	// Build the ops HTTP server (/metrics, /healthz, /readyz, /version).
@@ -171,6 +217,56 @@ func Start(ctx context.Context, cfg *config.Config) error {
 			return errors.New("shutdown deadline exceeded")
 		}
 	}
+}
+
+// resolveCertPaths returns the cert + key paths to use. When config is unset
+// they default to $XDG_STATE_HOME/gmountie/server.{crt,key}. Pure resolution —
+// no I/O. Matches the path the `gmountie fingerprint` subcommand reads.
+func resolveCertPaths(cfg config.TLSConfig) (certPath, keyPath string) {
+	if cfg.CertFile != "" || cfg.KeyFile != "" {
+		return cfg.CertFile, cfg.KeyFile
+	}
+	base := filepath.Join(xdg.StateHome, "gmountie")
+	return filepath.Join(base, "server.crt"), filepath.Join(base, "server.key")
+}
+
+// minTLSVersion maps a "1.2" / "1.3" string to the tls.Version* constant. The
+// caller normalizes empty to "1.3" before calling; unknown values fall through
+// to TLS 1.3 with a warning. Validation already restricts to {1.2, 1.3}.
+func minTLSVersion(s string) uint16 {
+	switch s {
+	case "1.2":
+		return tls.VersionTLS12
+	default:
+		return tls.VersionTLS13
+	}
+}
+
+// hostFromBind extracts the host part of a "host:port" bind string for cert SAN.
+// Falls back to "gmountie-server" when no host is given (":9244").
+func hostFromBind(bind string) string {
+	if bind == "" {
+		return "gmountie-server"
+	}
+	host, _, err := net.SplitHostPort(bind)
+	if err != nil || host == "" || host == "0.0.0.0" || host == "::" {
+		return "gmountie-server"
+	}
+	return host
+}
+
+// isLoopback returns true when the bind addr is on 127.0.0.0/8 or [::1]. Used
+// to gate the tls.disabled escape hatch.
+func isLoopback(bind string) bool {
+	host, _, err := net.SplitHostPort(bind)
+	if err != nil {
+		host = bind
+	}
+	if host == "" || host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // warnIfIdentityEnforcementUnprivileged emits a loud startup warning when the

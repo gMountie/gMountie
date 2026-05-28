@@ -61,6 +61,11 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		"server.keepalive.permit_without_stream",
 		"server.subscribe_buffer_size",
 		"server.subscribe_heartbeat_interval",
+		"server.tls.cert_file",
+		"server.tls.key_file",
+		"server.tls.client_ca_file",
+		"server.tls.min_version",
+		"server.tls.disabled",
 		"auth.type",
 	} {
 		_ = v.BindEnv(key)
@@ -81,6 +86,7 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	v.SetDefault("server.keepalive.permit_without_stream", DefaultKeepalivePermitWithoutStream)
 	v.SetDefault("server.subscribe_buffer_size", DefaultServerSubscribeBufferSize)
 	v.SetDefault("server.subscribe_heartbeat_interval", DefaultServerSubscribeHeartbeatInterval)
+	v.SetDefault("server.tls.min_version", "1.3")
 	result.Server = &ServerConfig{
 		Address:             v.GetString("server.address"),
 		Port:                v.GetUint("server.port"),
@@ -98,6 +104,13 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		},
 		SubscribeBufferSize:        v.GetInt("server.subscribe_buffer_size"),
 		SubscribeHeartbeatInterval: v.GetDuration("server.subscribe_heartbeat_interval"),
+		TLS: TLSConfig{
+			CertFile:     v.GetString("server.tls.cert_file"),
+			KeyFile:      v.GetString("server.tls.key_file"),
+			ClientCAFile: v.GetString("server.tls.client_ca_file"),
+			MinVersion:   v.GetString("server.tls.min_version"),
+			Disabled:     v.GetBool("server.tls.disabled"),
+		},
 	}
 
 	// Parse the auth configuration.
