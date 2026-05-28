@@ -10,7 +10,7 @@ ARG TARGETPLATFORM
 # build stage to add.
 RUN adduser -D -u 1000 gmountie
 
-COPY $TARGETPLATFORM/gMountie /opt/gmountie/gMountie
+COPY $TARGETPLATFORM/gmountie /opt/gmountie/gmountie
 
 USER gmountie
 
@@ -21,4 +21,4 @@ USER gmountie
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget -q -O- http://127.0.0.1:9090/healthz || exit 1
 
-ENTRYPOINT ["/opt/gmountie/gMountie", "serve"]
+ENTRYPOINT ["/opt/gmountie/gmountie", "serve"]
