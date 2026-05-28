@@ -120,7 +120,7 @@ func (s *VolumeServiceImpl) BindIdentity(ctx context.Context, volume string, cal
 	if err != nil {
 		return nil, err
 	}
-	return io.NewIdentityBoundFS(fs, &io.Identity{Uid: id.Uid, Gid: id.Gid, Gids: id.Gids}), nil
+	return io.NewIdentityBoundFS(fs, &io.Identity{Uid: id.Uid, Gid: id.Gid, Gids: id.Gids, Caps: id.Caps}), nil
 }
 
 // ResolveIdentity resolves the request's server-side identity for a volume.

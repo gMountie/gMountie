@@ -2,6 +2,7 @@ package io
 
 import (
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -26,6 +27,21 @@ type Identity struct {
 	Uid  uint32
 	Gid  uint32
 	Gids []uint32
+	// Caps holds the admin-capability set for this identity (e.g. "dac_override",
+	// "dac_read_search"). Populated by BindIdentity from service.Identity.Caps;
+	// dispatch behavior is added in Phase 3 Task 5.
+	Caps []string
+}
+
+// HasCap reports whether the identity holds the named POSIX capability.
+// The cap name is compared case-insensitively against the stored values.
+func (id *Identity) HasCap(cap string) bool {
+	for _, c := range id.Caps {
+		if strings.EqualFold(c, cap) {
+			return true
+		}
+	}
+	return false
 }
 
 type identityBoundFS struct {

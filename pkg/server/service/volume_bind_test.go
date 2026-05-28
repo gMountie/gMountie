@@ -116,3 +116,27 @@ func (s *BindIdentitySuite) TestBindIdentityUnprivilegedReturnsBareFS() {
 	s.Require().NoError(err)
 	s.Same(bare, bound)
 }
+
+func (s *BindIdentitySuite) TestBindIdentityStaticCapsCarriedThrough() {
+	orig := identityEnforceable
+	defer func() { identityEnforceable = orig }()
+	identityEnforceable = func() bool { return true }
+
+	svc := s.serviceForVolume(config.MappingConfig{
+		Mode: config.MappingModeStatic,
+		Users: map[string]config.StaticUser{
+			"alice": {Uid: 1001, Gid: 1001, Caps: []string{"dac_read_search"}},
+		},
+	})
+	ctx := principal.WithPrincipal(context.Background(), "alice")
+
+	// Verify that the service.Identity resolved for alice carries the cap.
+	id, err := svc.resolveIdentity(ctx, "v", nil)
+	s.Require().NoError(err)
+	s.Equal([]string{"dac_read_search"}, id.Caps, "service.Identity must carry the configured cap")
+
+	// Verify that BindIdentity succeeds (i.e. Caps does not break the construction path).
+	boundFS, err := svc.BindIdentity(ctx, "v", nil)
+	s.Require().NoError(err)
+	s.NotNil(boundFS, "bound FS must be non-nil")
+}
