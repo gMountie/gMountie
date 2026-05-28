@@ -115,6 +115,35 @@ server generates a self-signed cert on first startup:
 This makes the zero-config first run land on a TLS connection
 immediately, with no "remember to flip a switch" gap.
 
+### 3.1.2 `gmountie fingerprint` — read the cert fingerprint
+
+The startup log is a fine first-time signal but the wrong tool when an
+operator is rolling out clients later or reads config from a runbook.
+A small CLI subcommand prints the fingerprint of the cert the server
+would present:
+
+```
+$ gmountie fingerprint
+SHA256:M2ksb1aPxlnGc4qoY3eCkjLpDxHV0WcLbS2sM0AbY+E
+```
+
+- **One line, machine-readable** — scripts can pipe straight into
+  client config (`expected_fingerprint: $(ssh server gmountie fingerprint)`).
+- **`--verbose`** prints subject, issuer, NotBefore / NotAfter, and the
+  fingerprint together — what an operator wants to eyeball during
+  rotation.
+- **Resolution order matches the server's:** if `server.tls.cert_file`
+  is set in config, that file's fingerprint; otherwise the
+  auto-generated path at `$XDG_STATE_HOME/gmountie/server.crt`.
+- **Missing cert** exits non-zero with `no server cert at <path>; run
+  'gmountie serve' once to auto-generate, or set server.tls.cert_file`.
+  This is the same path the server takes — auto-gen happens only at
+  serve-start, never inside `fingerprint`, because we don't want a
+  read-only inspection command to mutate state.
+
+Reuses the same `pkg/server/tls` helper that `serve` calls to load
++ hash the cert, so the two stay in lock-step.
+
 ### 3.2 TLS — client side
 
 ```yaml title="client.yaml"
@@ -326,8 +355,9 @@ agreement). PR 1 must merge first because PRs 2-3 assume TLS is on the
 wire.
 
 1. **PR 1 — Transport.** Server-TLS bootstrap, auto-generated cert on
-   first startup (the SSH-host-key pattern, §3.1.1), client TLS config
-   with `verify` / `tofu` / `insecure` modes (§3.2), pinning by
+   first startup (the SSH-host-key pattern, §3.1.1), `gmountie
+   fingerprint` CLI subcommand (§3.1.2), client TLS config with
+   `verify` / `tofu` / `insecure` modes (§3.2), pinning by
    `expected_fingerprint`, `RequireTransportSecurity() = true`,
    `tls.disabled` dev escape hatch. The TOFU `known_hosts` file. End
    state: every existing test exercises TLS transparently via the
@@ -376,6 +406,7 @@ wire.
 | 8 | Existing weak admin/admin default | replaced by first-run hash + CHANGE ME comment |
 | 9 | No-config server start | auto-generate ECDSA P-256 cert + log fingerprint (SSH host-key pattern) |
 | 10 | Client unknown-cert policy | TOFU recommended; `expected_fingerprint` for non-interactive; `insecure` is the explicit dev escape |
+| 11 | Fingerprint inspection | `gmountie fingerprint` subcommand; read-only (does not auto-gen); shares the cert-load helper with `serve` |
 
 ## 8. North-star acceptance test
 
