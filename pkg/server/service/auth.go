@@ -2,13 +2,16 @@ package service
 
 import (
 	"context"
+	"crypto/x509"
 	"gmountie/pkg/common"
 	"gmountie/pkg/common/passhash"
 	"gmountie/pkg/server/config"
 	"gmountie/pkg/utils/log"
 
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -37,6 +40,9 @@ func NewAuthServiceFromConfig(cfg config.AuthConfig) AuthService {
 		}
 		log.Log.Info("basic authentication is enabled")
 		return NewBasicAuthService(users)
+	case config.AuthConfigTypeMTLS:
+		log.Log.Info("mTLS authentication is enabled — principal from verified client certificate")
+		return &mtlsAuthService{}
 	default:
 		// Unreachable: config parsing rejects unknown auth types. Fail closed
 		// (deny) rather than open, so a misconfiguration can never run unauthed.
@@ -95,4 +101,46 @@ func (a *BasicAuthService) Authorize(ctx context.Context, _ string) (bool, *User
 		return true, &UserDetails{Username: user[0]}, nil
 	}
 	return false, nil, status.Errorf(codes.Unauthenticated, "invalid user or password")
+}
+
+// ----------- mtlsAuthService -----------
+
+// mtlsAuthService authenticates by the verified client certificate. The TLS
+// layer (RequireAndVerifyClientCert) has already validated the chain against
+// the configured client CA, so a present verified cert is a trusted identity.
+// The principal is the cert CN, or the first DNS SAN when CN is empty
+// (Phase 7 decision #6). Per-volume authorization is the ACL's job
+// (VolumeService.PrincipalCanAccess), run later in BindIdentity.
+type mtlsAuthService struct{}
+
+func (mtlsAuthService) Authorize(ctx context.Context, _ string) (bool, *UserDetails, error) {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return false, nil, status.Error(codes.Unauthenticated, "no peer info")
+	}
+	ti, ok := p.AuthInfo.(credentials.TLSInfo)
+	if !ok {
+		return false, nil, status.Error(codes.Unauthenticated, "connection is not mTLS")
+	}
+	name := principalFromVerifiedChains(ti.State.VerifiedChains)
+	if name == "" {
+		return false, nil, status.Error(codes.Unauthenticated, "no verified client certificate")
+	}
+	return true, &UserDetails{Username: name}, nil
+}
+
+// principalFromVerifiedChains returns the leaf cert's CN, or its first DNS SAN
+// when CN is empty. Empty string when there is no verified leaf.
+func principalFromVerifiedChains(chains [][]*x509.Certificate) string {
+	if len(chains) == 0 || len(chains[0]) == 0 {
+		return ""
+	}
+	leaf := chains[0][0]
+	if leaf.Subject.CommonName != "" {
+		return leaf.Subject.CommonName
+	}
+	if len(leaf.DNSNames) > 0 {
+		return leaf.DNSNames[0]
+	}
+	return ""
 }
