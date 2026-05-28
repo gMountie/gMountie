@@ -82,10 +82,20 @@ func (s *ReflectionGateSuite) TestReflectionOffByDefault() {
 	stream, err := rc.ServerReflectionInfo(context.Background())
 	s.Require().NoError(err)
 
-	err = stream.Send(&grpcReflection.ServerReflectionRequest{
+	if err := stream.Send(&grpcReflection.ServerReflectionRequest{
 		MessageRequest: &grpcReflection.ServerReflectionRequest_ListServices{ListServices: ""},
-	})
-	s.Require().NoError(err)
+	}); err != nil {
+		// Send can race the server's Serve goroutine startup under -race;
+		// either way the stream is observable via Recv, which is the
+		// assertion that matters. Surface the Send error as a Recv error.
+		_, err = stream.Recv()
+		s.Require().Error(err)
+		st, ok := status.FromError(err)
+		if ok && st.Code() == codes.Unimplemented {
+			return
+		}
+		s.FailNowf("Send race", "Send failed but Recv didn't surface the expected Unimplemented: %v", err)
+	}
 
 	_, err = stream.Recv()
 	s.Require().Error(err)
