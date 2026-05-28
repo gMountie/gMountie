@@ -16,11 +16,11 @@ import (
 // All certs are signed by the same in-memory CA, so RequireAndVerifyClientCert
 // accepts every client cert and the ACL layer is the gating mechanism.
 type TestCA struct {
-	CACertPEM    []byte // CA cert (pass to server client_ca_file / client RootCAs)
-	ServerCert   []byte // server leaf cert PEM (SAN: 127.0.0.1)
-	ServerKey    []byte // server leaf key PEM
-	ClientCerts  map[string][]byte // CN → client leaf cert PEM
-	ClientKeys   map[string][]byte // CN → client leaf key PEM
+	CACertPEM   []byte            // CA cert (pass to server client_ca_file / client RootCAs)
+	ServerCert  []byte            // server leaf cert PEM (SAN: 127.0.0.1)
+	ServerKey   []byte            // server leaf key PEM
+	ClientCerts map[string][]byte // CN → client leaf cert PEM
+	ClientKeys  map[string][]byte // CN → client leaf key PEM
 }
 
 // GenerateTestCA creates a fresh in-memory CA, a server leaf cert/key (SAN

@@ -33,9 +33,9 @@ import (
 // MTLSSuite verifies mTLS principal extraction and per-volume ACL denial.
 type MTLSSuite struct {
 	suite.Suite
-	app      *utils.AppTestingContext
-	ca       *utils.TestCA
-	volName  string
+	app     *utils.AppTestingContext
+	ca      *utils.TestCA
+	volName string
 }
 
 func (s *MTLSSuite) SetupSuite() {
