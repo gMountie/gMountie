@@ -1,0 +1,89 @@
+---
+id: quickstart
+title: Quickstart
+sidebar_label: Quickstart
+description: Serve a folder from one machine and mount it on another in about 90 seconds. One binary, two commands, no VPN.
+---
+
+# Quickstart
+
+**One binary on the host, one on the client, a directory you can `ls` over the internet — no VPN.** The same `gmountie` binary plays both roles. End-to-end is about 90 seconds.
+
+:::note[Prerequisites]
+- Linux on both ends. Server runs on amd64 or arm64; the client mounts via FUSE.
+- `fuse3` installed on the client (`apt install fuse3` on Debian/Ubuntu).
+- A folder you want to share on the server, plus an empty mount point on the client.
+:::
+
+## 1 · Install
+
+Build from source (Go 1.26+):
+
+```bash
+git clone https://github.com/gMountie/gMountie && cd gMountie
+go build -o gmountie ./cmd
+```
+
+Or grab a `gmountie_linux_*.tar.gz` from the [releases page](https://github.com/gMountie/gMountie/releases). The binary is `gmountie` (lowercase); it's both the server and the client.
+
+## 2 · Start the server
+
+Write a `server.yaml` next to the directory you want to share:
+
+```yaml title="server.yaml"
+server:
+  address: 0.0.0.0
+  port: 9449
+auth:
+  type: basic
+  users:
+    - username: admin
+      password: change-me
+volumes:
+  - name: shared
+    path: /srv/shared
+```
+
+Then start it:
+
+```bash
+gmountie serve -c server.yaml
+```
+
+The server listens on `:9449` and exposes `/srv/shared` as the volume named `shared`. If you skip `-c`, gMountie writes a default config to `~/.config/gmountie/server.yaml` on first run and uses it from then on.
+
+:::warning[Change the default password]
+The default config ships with `admin / admin`. Change it in `server.yaml` before exposing the server beyond localhost. TLS isn't shipped yet — see the [roadmap](./roadmap.md) — so basic-auth credentials travel as base64 over the gRPC channel today.
+:::
+
+## 3 · Mount the volume from a client
+
+```bash
+mkdir -p ~/mnt/shared
+gmountie mount ~/mnt/shared \
+  --server <host>:9449 \
+  --auth-type basic --username admin --password change-me \
+  --volume shared
+```
+
+`~/mnt/shared` now behaves like a local folder — every read, write, and `stat` flows to the server over a gRPC stream:
+
+```bash
+ls ~/mnt/shared          # listing comes from /srv/shared on the server
+cat ~/mnt/shared/file    # bytes stream over the wire
+```
+
+Press `Ctrl-C` in the `gmountie mount` terminal to unmount cleanly, or run `umount ~/mnt/shared` from another shell.
+
+## What's next
+
+- **[CLI cheatsheet](./cli-cheatsheet.md)** — every flag, every common command, on one page.
+- **[Server config](./server/config.md)** · **[Client config](./client/config.md)** — every option with defaults and valid ranges.
+- **[Wire protocol](./concepts/wire-protocol.mdx)** — what's crossing the network.
+- **[Cache & consistency](./concepts/cache.mdx)** — when reads skip the wire and why writes are still safe.
+- **[Sessions & reconnect](./concepts/sessions-and-reconnect.mdx)** — how the mount survives a flaky link.
+- **[Troubleshooting](./troubleshooting.mdx)** — when something doesn't work.
+
+<Pacer pose="pointing" action="Open an issue" href="https://github.com/gMountie/gMountie/issues">
+  Stuck on something? Pacer triages the issue tracker weekly.
+</Pacer>

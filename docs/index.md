@@ -8,13 +8,13 @@ description: A network filesystem that mounts remote storage anywhere over the i
 
 # gMountie
 
-**Mount a directory from a remote server and use it like a local folder — over the public internet, no VPN, and without falling apart when the network hiccups.** gMountie is built on [FUSE](https://www.kernel.org/doc/html/latest/filesystems/fuse.html) and [gRPC](https://grpc.io): a `gMountie serve` process exposes folders as named **volumes**, and a `gMountie mount` client mounts one locally and proxies every filesystem call to the server.
+**Mount a directory from a remote server and use it like a local folder — over the public internet, no VPN, and without falling apart when the network hiccups.** gMountie is built on [FUSE](https://www.kernel.org/doc/html/latest/filesystems/fuse.html) and [gRPC](https://grpc.io): a `gmountie serve` process exposes folders as named **volumes**, and a `gmountie mount` client mounts one locally and proxies every filesystem call to the server.
 
 > **Alpha · Linux-only.** gMountie is a great fit for mounting your own servers; it is not yet meant to face hostile networks. See the [roadmap](./roadmap.md) for TLS and security hardening.
 
 ## Start here
 
-- **[Quickstart](./quickstart.md)** — serve a folder and mount it in two commands.
+- **[Quickstart](./quickstart.mdx)** — serve a folder and mount it in two commands.
 - **Server reference** — [CLI](./server/cli.md) · [Configuration](./server/config.md)
 - **Client reference** — [CLI](./client/cli.md) · [Configuration](./client/config.md)
 
@@ -23,7 +23,7 @@ description: A network filesystem that mounts remote storage anywhere over the i
 ```
      your machine                                    remote server
 ┌─────────────────────┐        gRPC over HTTP/2     ┌─────────────────────┐
-│   gMountie mount     │ ◀─────────────────────────▶ │    gMountie serve    │
+│   gmountie mount     │ ◀─────────────────────────▶ │    gmountie serve    │
 │  FUSE mount point    │   metadata · data · events  │  real folders        │
 │  + local cache       │                             │  exposed as volumes  │
 └─────────────────────┘                             └─────────────────────┘

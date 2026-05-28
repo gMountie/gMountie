@@ -1,0 +1,79 @@
+---
+title: Cache & consistency
+sidebar_label: Cache & consistency
+description: How the client-side cache works, what it stores, and why writes are still safe — push-invalidated, close-to-open consistent.
+---
+
+# Cache & consistency
+
+**The client decorates the gRPC backend with an in-memory cache.** On a hit, the FUSE op returns without crossing the wire. On a miss, the wire call runs and seeds the cache. The server pushes invalidations so multiple clients converge without polling.
+
+## What's cached
+
+Three independent sub-caches share one byte budget (`cache.max_size_bytes`, default 1 GiB):
+
+| Sub-cache | Holds                                | TTL key                  | Default |
+| --------- | ------------------------------------ | ------------------------ | ------- |
+| **attr**  | `getattr` results — inode metadata.  | `cache.attr_ttl`         | 5 s     |
+| **dir**   | `readdir` listings.                  | `cache.dir_ttl`          | 5 s     |
+| **data**  | File content, chunked.               | (no TTL — invalidation-driven) | — |
+| **neg**   | "this path doesn't exist" cache.    | `cache.negative_ttl`     | 2 s     |
+
+Data lives in fixed-size **chunks** (`cache.chunk_size_bytes`, default 1 MiB). A read at a non-aligned offset spans two chunks; the chunk size matches the streaming frame size so a chunk fetch maps 1:1 to one `Read` RPC.
+
+The cache is **off by default**. Turn it on in `client.yaml`:
+
+```yaml
+cache:
+  enabled: true
+```
+
+See [Client configuration](../client/config.md) for every knob.
+
+## Push invalidation
+
+The cache isn't pure-TTL — it also subscribes to a server-side stream of change events.
+
+- The client opens a long-lived `Subscribe` RPC on the **volume** service.
+- When the server applies a write that affects a path (locally on the server, or via another mounted client), it broadcasts a small invalidation event.
+- Subscribers evict the matching attr / dir / data chunk on receipt.
+
+This is what makes the cache **safe across multiple clients**. Two clients mounted on the same volume see each other's writes promptly without either polling.
+
+## Close-to-open consistency
+
+gMountie targets **close-to-open** consistency (the NFS model): when one client closes a file, subsequent opens on any client see the new bytes.
+
+In practice:
+
+- A write completes locally, gets coalesced if eligible (see [Client config — Write Coalescing](../client/config.md#write-coalescing)), and is flushed on `Flush` / `Fsync` / `Release`.
+- On `Release`, the server has the new bytes durable enough that the next `Open` from any client returns them.
+- Concurrent writers to the same file from different clients are *not* CRDT-merged — last writer's `Release` wins. gMountie is not multi-master.
+
+## Read path — what a `cat` actually does
+
+A `cat /mnt/shared/foo` on a warm cache:
+
+1. **Lookup** → attr cache hit → no RPC.
+2. **Open** → cache doesn't gate Open; one `file.Open` RPC opens an fd on the server.
+3. **Read** loop — for each chunk:
+   - Cache hit → memory copy, no RPC.
+   - Cache miss → one `file.Read` streaming RPC; the chunk is cached on the way back.
+4. **Release** → one `file.Release` RPC.
+
+On a **cold** cache, step 1 is also one RPC and step 3 is all RPCs — that's the cold-`readdir`/cold-read cost. Warm, the only required RPCs are `Open` and `Release` plus any miss in step 3.
+
+## Sequential reads — readahead skips the cache miss
+
+Hot caches help re-reads. **Readahead** helps first reads of sequential files: after a few in-order reads, the client speculatively fetches the next N chunks in parallel, so the subsequent reads land in cache before the syscalls arrive.
+
+The defaults (1 MiB chunks, window of 4) target ~50 ms RTT. Tune in `rpc.readahead_*` — see [Client config — Readahead](../client/config.md#readahead).
+
+## Turning the cache off
+
+Set `cache.enabled: false` (the default until further notice). Every operation crosses the wire — useful for debugging consistency questions or measuring cold-path performance.
+
+## Go deeper
+
+- [Design — Caching & Consistency](../design/caching-and-consistency.md) — the eviction model, the chunk layout, the consistency proofs, edge cases (mixed-client races, partial writes, the negative-cache lifecycle).
+- [Wire protocol](./wire-protocol.mdx) — what `Subscribe` and `Read` actually look like on the wire.

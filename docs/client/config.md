@@ -1,7 +1,12 @@
-# Client Configuration
+---
+title: Client configuration
+sidebar_label: Configuration
+description: Every client.yaml field — server, RPC tuning, FUSE knobs, optional cache, auth, mount type — with types, defaults, and valid ranges.
+---
 
-The gMountie client configuration file uses YAML format and supports various
-options for connecting to servers, authentication, and mounting volumes.
+# Client configuration
+
+The client reads a YAML file with up to six sections: **`server`** (where to connect), **`rpc`** (per-RPC timeouts, message size, [readahead](#readahead), [write coalescing](#write-coalescing), keepalive), **`fuse`** (kernel-side mount knobs), **`cache`** (optional client-side cache), **`auth`** (credentials), and **`mount`** (single-volume or VFS). CLI flags override the corresponding fields — see **[Client CLI](./cli.md)** for the override list.
 
 ## Configuration File Structure
 

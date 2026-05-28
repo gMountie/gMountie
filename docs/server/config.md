@@ -1,7 +1,12 @@
-# Server Configuration
+---
+title: Server configuration
+sidebar_label: Configuration
+description: Every server.yaml field — server, keepalive, auth, volumes — with types, defaults, and valid ranges.
+---
 
-The gMountie server configuration file uses YAML format and supports various
-options for customizing server behavior, authentication, and volume management.
+# Server configuration
+
+The server reads a YAML file with three sections: **`server`** (listen address and transport tuning), **`auth`** (credentials), and **`volumes`** (the directories you're sharing). If you don't pass `-c`, gMountie writes a default config to `~/.config/gmountie/server.yaml` on first run.
 
 ## Configuration File Structure
 
@@ -134,7 +139,7 @@ server:
   address: 0.0.0.0
   port: 9449
   metrics: true
-authentication:
+auth:
   type: basic
   users:
     - username: admin
@@ -145,3 +150,9 @@ volumes:
   - name: private
     path: /private
 ```
+
+## See also
+
+- [Server CLI](./cli.md) — `gmountie serve` invocation.
+- [Wire protocol](../concepts/wire-protocol.mdx) — what the server speaks on the wire.
+- [Sessions & reconnect](../concepts/sessions-and-reconnect.mdx) — how keepalive surfaces dead connections.

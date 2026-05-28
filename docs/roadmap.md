@@ -1,4 +1,11 @@
-# gMountie roadmap
+---
+id: roadmap
+title: Roadmap
+sidebar_label: Roadmap
+description: What's shipped, what's in flight, what's planned. Phase ordering and the rationale behind it.
+---
+
+# Roadmap
 
 **Status / last refreshed:** 2026-05-27
 
@@ -24,7 +31,7 @@ This is a roadmap, not an implementation plan. Each phase below is scoped tightl
 
 This roadmap deliberately does not target "production-ready" in the strict sense. It targets **functional reliability, observable behavior, good internet performance, and the headline client-cache feature** — with security hardening tracked separately.
 
-**The desktop UI is deferred to last.** Phases 1–7 target the CLI (`gMountie mount`, `gMountie serve`), the shared library (`pkg/client/`, `pkg/server/`, `pkg/common/`), and the protocol (`api/proto/`). The Wails desktop app under `ui/` and `pkg/ui/` is Phase 8 — once the library underneath it is correct, the UI is mostly re-binding work. Until Phase 8, the UI policy is: **"don't actively break, don't actively improve."**
+**The desktop UI is deferred to last.** Phases 1–7 target the CLI (`gmountie mount`, `gmountie serve`), the shared library (`pkg/client/`, `pkg/server/`, `pkg/common/`), and the protocol (`api/proto/`). The Wails desktop app under `ui/` and `pkg/ui/` is Phase 8 — once the library underneath it is correct, the UI is mostly re-binding work. Until Phase 8, the UI policy is: **"don't actively break, don't actively improve."**
 
 ## What "works perfectly end-to-end" means
 
@@ -34,7 +41,7 @@ A successful endpoint of Phases 1–6 (CLI and library only; desktop UI excluded
 - That mount survives a 30-second network drop, an ISP IP renumber, and a server restart — without manual `umount` or re-mount.
 - File handles open before a network blip remain valid after reconnect.
 - Reading a file already in the local cache hits the network only to validate freshness, not to fetch bytes. A cold-cache read of a multi-GB file streams without hitting the 4 MiB unary ceiling.
-- `gMountie serve` runs for days under typical workloads without crashing, leaking file descriptors, or accumulating zombie state.
+- `gmountie serve` runs for days under typical workloads without crashing, leaking file descriptors, or accumulating zombie state.
 - SIGTERM to the server completes in-flight RPCs and shuts down cleanly.
 - Performance targets (measured against `test/e2e/fs/io_bench_test.go`):
   - **localhost:** sequential read of 1 GiB ≥ 70% of raw loopback FUSE throughput; metadata ops in single-digit milliseconds.
@@ -192,13 +199,13 @@ See [Caching & Consistency](design/caching-and-consistency.md) for the design, c
 5. **Proto package rename.** Move `api/proto/*.proto` to `package gmountie.v1;` and `pkg/proto/v1/` for naming clarity. Do it once after Phase 1 + 3 + 4 have stopped churning fields. (No wire-compatibility obligation — see Appendix C.)
 
 6. **Doc fixes.**
-   - `docs/server/config.md` and `docs/quickstart.md` use `authentication:` — parser expects `auth:`. Replace.
+   - `docs/server/config.md` and `docs/quickstart.mdx` use `authentication:` — parser expects `auth:`. Replace.
    - Add `CONTRIBUTING.md` (the README links to issues/PRs as a stopgap until it exists).
    - Add an "internet deployment" guide (TLS setup, NAT / firewall, expected latencies, cache sizing recommendations).
    - Add an **"alternatives — when not to use gMountie"** page comparing honestly against Tailscale + NFS, rclone mount, SSHFS, and Cloudflare Tunnel + WebDAV.
    - Document the three-service gRPC split intent in the proto files (see Appendix B item 6).
 
-7. **CLI client config profiles.** `gMountie mount` currently takes every parameter on the command line. Add `~/.config/gMountie/profiles.yaml` for named profiles (`gMountie mount <mountpoint> --profile myserver`). Each profile gets its own cache path / size. Pure UX; no protocol changes.
+7. **CLI client config profiles.** `gmountie mount` currently takes every parameter on the command line. Add `~/.config/gmountie/profiles.yaml` for named profiles (`gmountie mount <mountpoint> --profile myserver`). Each profile gets its own cache path / size. Pure UX; no protocol changes.
 
 **Out of scope:**
 - Frontend (SvelteKit) test scaffolding — Phase 8.
@@ -361,7 +368,7 @@ Each is a real product capability rather than incremental debt cleanup; promotio
 
 ### D1 — gMountie cache proxy / edge tier
 
-Run a gMountie process in shared-cache mode in a cloud AZ (e.g. AWS) that sits between an on-prem origin server and N downstream gMountie mounts in the same AZ. The proxy is a gMountie *client* upstream (it mounts the origin volume) and a gMountie *server* downstream (it exposes the same RPCs over a local network). Downstream clients hit the proxy; only the proxy reaches across the WAN to the origin.
+Run a gMountie process in shared-cache mode in a cloud AZ (e.g. AWS) that sits between an on-prem origin server and N downstream gmountie mounts in the same AZ. The proxy is a gMountie *client* upstream (it mounts the origin volume) and a gMountie *server* downstream (it exposes the same RPCs over a local network). Downstream clients hit the proxy; only the proxy reaches across the WAN to the origin.
 
 **Design hooks already in place after Phase 4:**
 

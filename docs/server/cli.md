@@ -1,7 +1,12 @@
-# Server CLI Options
+---
+title: Server CLI
+sidebar_label: CLI
+description: Flags for `gmountie serve` — the server entry point. Most settings live in the config file; the CLI keeps to file selection and verbosity.
+---
 
-The gMountie server can be started using the `serve` command with various
-options to customize its behavior.
+# Server CLI
+
+`gmountie serve` starts the server: it loads a YAML config, opens the configured volumes, and listens on the configured port for gRPC connections. Everything tunable lives in the **[server config file](./config.md)** — the CLI keeps a tight surface.
 
 ## Basic Usage
 

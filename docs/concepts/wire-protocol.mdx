@@ -1,0 +1,53 @@
+---
+title: The wire protocol
+sidebar_label: Wire protocol
+description: How gMountie talks. Three gRPC services over HTTP/2, snappy-compressed, with every request scoped to a named volume.
+---
+
+# The wire protocol
+
+**Each FUSE syscall on the client becomes one (or a small number of) gRPC calls to the server, framed in HTTP/2, snappy-compressed by default.** Three services split the work; every request carries the volume name so the server picks the right backing directory.
+
+## The three services
+
+The protocol lives under `api/proto/`. Three application-level gRPC services share one TCP connection (HTTP/2 multiplexes them):
+
+| Service     | What it carries                                              | Examples                                         |
+| ----------- | ------------------------------------------------------------ | ------------------------------------------------ |
+| **fs**      | Metadata — directory and inode-level ops.                    | `Lookup`, `Getattr`, `Readdir`, `Mkdir`, `Rename`, `Unlink` |
+| **file**    | File data — streaming reads and writes.                      | `Open`, `Read`, `Write`, `Release`, `Flush`      |
+| **volume**  | Connection control and out-of-band notifications.            | `Version`, `Heartbeat`, `Subscribe` (push invalidations) |
+
+Splitting them lets each be tuned and routed independently — for example, a deep readahead `Read` stream on `file` doesn't head-of-line block a `Getattr` on `fs`.
+
+## Volume-scoped requests
+
+Every request carries a `volume` field. There's no server-wide session that remembers which volume you're on — each call says it. This keeps a server stateless across volumes and lets a single client multiplex multiple mounts over one connection.
+
+A request that names an unknown volume gets `NotFound` from the server; an unauthorized one gets `PermissionDenied`.
+
+## Transport
+
+- **gRPC over HTTP/2** — one TCP connection per client, all streams multiplexed.
+- **Snappy compression** — applied as a custom codec on both sides. Cheap on CPU, helpful on text-heavy payloads (readdir entries, attribute blocks). See `pkg/server/grpc/snappy`.
+- **Streaming reads and writes** — `Read` and `Write` are server-streaming and client-streaming respectively, so a single RPC frames many in-flight chunks without per-chunk round-trips. The frame size is server-configurable.
+- **Keepalive** — gRPC HTTP/2 pings flow in both directions to detect dead connections within ~40 s by default. See [Sessions & reconnect](./sessions-and-reconnect.mdx).
+
+## Authentication
+
+Today: **basic** auth on every connection. Credentials are sent on connection setup and validated by an interceptor on the server. There is no anonymous mode.
+
+Planned: TLS (server cert, optional client cert), then mTLS. See the [roadmap](../roadmap.md) for the security phase.
+
+## Idempotency and retries
+
+Where the protocol can, RPCs are designed to be **idempotent**: the same `Read(volume, fd, offset, length)` returns the same bytes; `Write` carries the offset rather than relying on an implicit cursor. The client retries transient failures (`Unavailable`, `DeadlineExceeded`) on operations whose retry is safe — see the implementation in `pkg/client/io` (uses `avast/retry-go`).
+
+Operations with side effects whose retry is *not* obviously safe (`Mkdir` on an existing dir, `Unlink` of a file that may have been deleted concurrently) aren't blindly retried; the client surfaces the underlying error and lets the caller decide.
+
+## Go deeper
+
+The wire-format detail, RPC catalogue, and protocol-evolution rules live in the design doc:
+
+- [Architecture & Protocol](../design/architecture.md) — every RPC, the framing, the error-mapping, and the protocol's stability guarantees.
+- [Caching & consistency](../design/caching-and-consistency.md) — how the `Subscribe` stream feeds the client cache.
