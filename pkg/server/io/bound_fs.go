@@ -15,6 +15,11 @@ import (
 	"go.uber.org/zap"
 )
 
+// wantsFchown reports whether the identity uses the dac_override path, which
+// requires a post-create fchown to assign new entries to the principal rather
+// than root.
+func wantsFchown(id *Identity) bool { return id.HasCap(CapDacOverride) }
+
 // Make syscall functions package variables for testing.
 var (
 	setfsuid = syscall.Setfsuid
@@ -54,13 +59,32 @@ func NewIdentityBoundFS(fs pathfs.FileSystem, id *Identity) pathfs.FileSystem {
 	return &identityBoundFS{FileSystem: fs, id: id}
 }
 
-// changeIdentity pins the current OS thread and applies the identity's full
-// credentials (supplementary groups + primary gid + fsuid). Returns a cleanup
-// that restores root creds and unlocks. On any error the thread is left locked
-// (tainted) so it dies with the goroutine — same rule as the old changeUser.
+// changeIdentity pins the current OS thread and applies the identity's
+// credentials. Dispatch is based on id.Caps:
+//
+//   - dac_override: setgroups + setfsgid, full caps retained, fsuid stays 0.
+//   - dac_read_search: setgroups + setfsgid, fsuid stays 0, EFFECTIVE capped
+//     to DAC_READ_SEARCH + SETUID + SETGID (drops DAC_OVERRIDE/FOWNER/FSETID).
+//   - no caps (default): setgroups + setfsgid + setfsuid to id.Uid — bit-for-
+//     bit identical to the pre-Phase-3 behaviour.
+//
+// Returns a cleanup that restores root creds and unlocks. On any error the
+// thread is left locked (tainted) so it dies with the goroutine.
 func changeIdentity(id *Identity) (func(), error) {
 	runtime.LockOSThread()
+	switch {
+	case id.HasCap(CapDacOverride):
+		return applyDacOverride(id)
+	case id.HasCap(CapDacReadSearch):
+		return applyDacReadSearch(id)
+	default:
+		return applyUnprivileged(id)
+	}
+}
 
+// applyUnprivileged is the original changeIdentity body (setgroups + setfsgid +
+// setfsuid). The LockOSThread call now lives in the dispatcher above.
+func applyUnprivileged(id *Identity) (func(), error) {
 	origGroups, err := getgroups()
 	if err != nil {
 		runtime.UnlockOSThread()
@@ -86,6 +110,95 @@ func changeIdentity(id *Identity) (func(), error) {
 			log.Log.Error("restore fsuid failed; leaking OS thread", zap.Error(err))
 			return
 		}
+		if err := setfsgid(syscall.Getegid()); err != nil {
+			log.Log.Error("restore fsgid failed; leaking OS thread", zap.Error(err))
+			return
+		}
+		if err := setGroupsRaw(origGroups); err != nil {
+			log.Log.Error("restore groups failed; leaking OS thread", zap.Error(err))
+			return
+		}
+		runtime.UnlockOSThread()
+	}, nil
+}
+
+// applyDacReadSearch sets supplementary groups + fsgid, keeps fsuid=0, and
+// reduces the EFFECTIVE capability set to DAC_READ_SEARCH + SETUID + SETGID
+// only (dropping DAC_OVERRIDE/FOWNER/FSETID). PERMITTED is left intact —
+// dropping from PERMITTED is irreversible within a session; DAC enforcement
+// consults EFFECTIVE, so this is sufficient. Restore re-raises the saved
+// effective set, restores fsgid, and restores groups.
+func applyDacReadSearch(id *Identity) (func(), error) {
+	origGroups, err := getgroups()
+	if err != nil {
+		runtime.UnlockOSThread()
+		return nil, err
+	}
+	if err := setGroupsRaw(id.Gids); err != nil {
+		runtime.UnlockOSThread()
+		return nil, err
+	}
+	if err := setfsgid(int(id.Gid)); err != nil {
+		_ = setGroupsRaw(origGroups)
+		runtime.UnlockOSThread()
+		return nil, err
+	}
+	origCaps, err := getCaps()
+	if err != nil {
+		_ = setfsgid(syscall.Getegid())
+		_ = setGroupsRaw(origGroups)
+		runtime.UnlockOSThread()
+		return nil, err
+	}
+	// Keep only the bits that are already in PERMITTED (can't raise above it).
+	newEff := origCaps.permitted & dacReadSearchEffectiveMask()
+	if err := setCapsEffective(capState{
+		effective:   newEff,
+		permitted:   origCaps.permitted,
+		inheritable: origCaps.inheritable,
+	}); err != nil {
+		_ = setfsgid(syscall.Getegid())
+		_ = setGroupsRaw(origGroups)
+		runtime.UnlockOSThread()
+		return nil, err
+	}
+	return func() {
+		if err := setCapsEffective(origCaps); err != nil {
+			log.Log.Error("restore caps failed; leaking OS thread", zap.Error(err))
+			return
+		}
+		if err := setfsgid(syscall.Getegid()); err != nil {
+			log.Log.Error("restore fsgid failed; leaking OS thread", zap.Error(err))
+			return
+		}
+		if err := setGroupsRaw(origGroups); err != nil {
+			log.Log.Error("restore groups failed; leaking OS thread", zap.Error(err))
+			return
+		}
+		runtime.UnlockOSThread()
+	}, nil
+}
+
+// applyDacOverride sets supplementary groups + fsgid but keeps fsuid=0 and
+// retains all capabilities. New entries created while this identity is active
+// will be owned by root until the caller performs an explicit post-create
+// fchown; see the Create/Mkdir/Symlink/Mknod/Link wrappers in identityBoundFS.
+func applyDacOverride(id *Identity) (func(), error) {
+	origGroups, err := getgroups()
+	if err != nil {
+		runtime.UnlockOSThread()
+		return nil, err
+	}
+	if err := setGroupsRaw(id.Gids); err != nil {
+		runtime.UnlockOSThread()
+		return nil, err
+	}
+	if err := setfsgid(int(id.Gid)); err != nil {
+		_ = setGroupsRaw(origGroups)
+		runtime.UnlockOSThread()
+		return nil, err
+	}
+	return func() {
 		if err := setfsgid(syscall.Getegid()); err != nil {
 			log.Log.Error("restore fsgid failed; leaking OS thread", zap.Error(err))
 			return
@@ -198,7 +311,15 @@ func (a *identityBoundFS) Link(oldName string, newName string, context *fuse.Con
 		return fuse.EPERM
 	}
 	defer cleanup()
-	return a.FileSystem.Link(oldName, newName, context)
+	st := a.FileSystem.Link(oldName, newName, context)
+	if st.Ok() && wantsFchown(a.id) {
+		if fst := a.FileSystem.Chown(newName, a.id.Uid, a.id.Gid, context); !fst.Ok() {
+			log.Log.Warn("dac_override post-create fchown failed; entry left root-owned",
+				zap.String("path", newName), zap.Uint32("uid", a.id.Uid), zap.Uint32("gid", a.id.Gid),
+				zap.Stringer("status", fst))
+		}
+	}
+	return st
 }
 
 func (a *identityBoundFS) Mkdir(name string, mode uint32, context *fuse.Context) fuse.Status {
@@ -208,7 +329,15 @@ func (a *identityBoundFS) Mkdir(name string, mode uint32, context *fuse.Context)
 		return fuse.EPERM
 	}
 	defer cleanup()
-	return a.FileSystem.Mkdir(name, mode, context)
+	st := a.FileSystem.Mkdir(name, mode, context)
+	if st.Ok() && wantsFchown(a.id) {
+		if fst := a.FileSystem.Chown(name, a.id.Uid, a.id.Gid, context); !fst.Ok() {
+			log.Log.Warn("dac_override post-create fchown failed; entry left root-owned",
+				zap.String("path", name), zap.Uint32("uid", a.id.Uid), zap.Uint32("gid", a.id.Gid),
+				zap.Stringer("status", fst))
+		}
+	}
+	return st
 }
 
 func (a *identityBoundFS) Mknod(name string, mode uint32, dev uint32, context *fuse.Context) fuse.Status {
@@ -218,7 +347,15 @@ func (a *identityBoundFS) Mknod(name string, mode uint32, dev uint32, context *f
 		return fuse.EPERM
 	}
 	defer cleanup()
-	return a.FileSystem.Mknod(name, mode, dev, context)
+	st := a.FileSystem.Mknod(name, mode, dev, context)
+	if st.Ok() && wantsFchown(a.id) {
+		if fst := a.FileSystem.Chown(name, a.id.Uid, a.id.Gid, context); !fst.Ok() {
+			log.Log.Warn("dac_override post-create fchown failed; entry left root-owned",
+				zap.String("path", name), zap.Uint32("uid", a.id.Uid), zap.Uint32("gid", a.id.Gid),
+				zap.Stringer("status", fst))
+		}
+	}
+	return st
 }
 
 func (a *identityBoundFS) Rename(oldName string, newName string, context *fuse.Context) (code fuse.Status) {
@@ -308,7 +445,15 @@ func (a *identityBoundFS) Create(name string, flags uint32, mode uint32, context
 		return nil, fuse.EPERM
 	}
 	defer cleanup()
-	return a.FileSystem.Create(name, flags, mode, context)
+	f, st := a.FileSystem.Create(name, flags, mode, context)
+	if st.Ok() && wantsFchown(a.id) {
+		if fst := a.FileSystem.Chown(name, a.id.Uid, a.id.Gid, context); !fst.Ok() {
+			log.Log.Warn("dac_override post-create fchown failed; entry left root-owned",
+				zap.String("path", name), zap.Uint32("uid", a.id.Uid), zap.Uint32("gid", a.id.Gid),
+				zap.Stringer("status", fst))
+		}
+	}
+	return f, st
 }
 
 func (a *identityBoundFS) OpenDir(name string, context *fuse.Context) (stream []fuse.DirEntry, code fuse.Status) {
@@ -328,7 +473,15 @@ func (a *identityBoundFS) Symlink(value string, linkName string, context *fuse.C
 		return fuse.EPERM
 	}
 	defer cleanup()
-	return a.FileSystem.Symlink(value, linkName, context)
+	st := a.FileSystem.Symlink(value, linkName, context)
+	if st.Ok() && wantsFchown(a.id) {
+		if fst := a.FileSystem.Chown(linkName, a.id.Uid, a.id.Gid, context); !fst.Ok() {
+			log.Log.Warn("dac_override post-create fchown failed; entry left root-owned",
+				zap.String("path", linkName), zap.Uint32("uid", a.id.Uid), zap.Uint32("gid", a.id.Gid),
+				zap.Stringer("status", fst))
+		}
+	}
+	return st
 }
 
 func (a *identityBoundFS) Readlink(name string, context *fuse.Context) (string, fuse.Status) {
