@@ -73,7 +73,7 @@ func dupCloexec(rootFd int) (int, error) {
 // to fd-relative *at syscalls anchored at a single openat2-resolved volume
 // root dirfd. It composes safely under identityBoundFS.
 type ConfinedLoopbackFileSystem struct {
-	pathfs.FileSystem        // no-op String/SetDebug/OnMount/OnUnmount etc.
+	pathfs.FileSystem // no-op String/SetDebug/OnMount/OnUnmount etc.
 	rootFd            int
 	rootPath          string // kept for log + StatFs
 }
@@ -102,7 +102,7 @@ func errnoToStatus(err error) fuse.Status {
 	var errno syscall.Errno
 	if errors.As(err, &errno) {
 		switch errno {
-		case syscall.Errno(unix.EXDEV), syscall.Errno(unix.ELOOP):
+		case unix.EXDEV, unix.ELOOP:
 			return fuse.EACCES
 		}
 		return fuse.Status(errno)
@@ -115,7 +115,7 @@ func (c *ConfinedLoopbackFileSystem) GetAttr(name string, _ *fuse.Context) (*fus
 	if err != nil {
 		return nil, errnoToStatus(err)
 	}
-	defer unix.Close(parentFd)
+	defer func() { _ = unix.Close(parentFd) }()
 	var st unix.Stat_t
 	if err := unix.Fstatat(parentFd, leaf, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return nil, errnoToStatus(err)
@@ -130,7 +130,7 @@ func (c *ConfinedLoopbackFileSystem) StatFs(name string) *fuse.StatfsOut {
 	if err != nil {
 		return nil
 	}
-	defer unix.Close(parentFd)
+	defer func() { _ = unix.Close(parentFd) }()
 	fd, err := unix.Openat2(parentFd, leaf, &unix.OpenHow{
 		Flags:   unix.O_PATH | unix.O_CLOEXEC,
 		Resolve: resolveHow,
@@ -138,7 +138,7 @@ func (c *ConfinedLoopbackFileSystem) StatFs(name string) *fuse.StatfsOut {
 	if err != nil {
 		return nil
 	}
-	defer unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }()
 	var sf unix.Statfs_t
 	if err := unix.Fstatfs(fd, &sf); err != nil {
 		return nil
@@ -153,7 +153,7 @@ func (c *ConfinedLoopbackFileSystem) Readlink(name string, _ *fuse.Context) (str
 	if err != nil {
 		return "", errnoToStatus(err)
 	}
-	defer unix.Close(parentFd)
+	defer func() { _ = unix.Close(parentFd) }()
 	buf := make([]byte, 4096)
 	n, err := unix.Readlinkat(parentFd, leaf, buf)
 	if err != nil {
@@ -167,7 +167,7 @@ func (c *ConfinedLoopbackFileSystem) Access(name string, mode uint32, _ *fuse.Co
 	if err != nil {
 		return errnoToStatus(err)
 	}
-	defer unix.Close(parentFd)
+	defer func() { _ = unix.Close(parentFd) }()
 	if err := unix.Faccessat(parentFd, leaf, mode, 0); err != nil {
 		return errnoToStatus(err)
 	}
@@ -179,7 +179,7 @@ func (c *ConfinedLoopbackFileSystem) Chmod(name string, mode uint32, _ *fuse.Con
 	if err != nil {
 		return errnoToStatus(err)
 	}
-	defer unix.Close(parentFd)
+	defer func() { _ = unix.Close(parentFd) }()
 	if err := unix.Fchmodat(parentFd, leaf, mode, 0); err != nil {
 		return errnoToStatus(err)
 	}
@@ -191,7 +191,7 @@ func (c *ConfinedLoopbackFileSystem) Chown(name string, uid, gid uint32, _ *fuse
 	if err != nil {
 		return errnoToStatus(err)
 	}
-	defer unix.Close(parentFd)
+	defer func() { _ = unix.Close(parentFd) }()
 	if err := unix.Fchownat(parentFd, leaf, int(uid), int(gid), unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return errnoToStatus(err)
 	}
@@ -212,7 +212,7 @@ func (c *ConfinedLoopbackFileSystem) Utimens(name string, atime, mtime *time.Tim
 	if err != nil {
 		return errnoToStatus(err)
 	}
-	defer unix.Close(parentFd)
+	defer func() { _ = unix.Close(parentFd) }()
 	ts := [2]unix.Timespec{toTimespec(atime), toTimespec(mtime)}
 	if err := unix.UtimesNanoAt(parentFd, leaf, ts[:], unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return errnoToStatus(err)
@@ -225,7 +225,7 @@ func (c *ConfinedLoopbackFileSystem) Truncate(name string, size uint64, _ *fuse.
 	if err != nil {
 		return errnoToStatus(err)
 	}
-	defer unix.Close(parentFd)
+	defer func() { _ = unix.Close(parentFd) }()
 	fd, err := unix.Openat2(parentFd, leaf, &unix.OpenHow{
 		Flags:   unix.O_WRONLY | unix.O_CLOEXEC,
 		Resolve: resolveHow,
@@ -233,7 +233,7 @@ func (c *ConfinedLoopbackFileSystem) Truncate(name string, size uint64, _ *fuse.
 	if err != nil {
 		return errnoToStatus(err)
 	}
-	defer unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }()
 	if err := unix.Ftruncate(fd, int64(size)); err != nil {
 		return errnoToStatus(err)
 	}
@@ -245,7 +245,7 @@ func (c *ConfinedLoopbackFileSystem) Mkdir(name string, mode uint32, _ *fuse.Con
 	if err != nil {
 		return errnoToStatus(err)
 	}
-	defer unix.Close(parentFd)
+	defer func() { _ = unix.Close(parentFd) }()
 	if err := unix.Mkdirat(parentFd, leaf, mode); err != nil {
 		return errnoToStatus(err)
 	}
@@ -257,7 +257,7 @@ func (c *ConfinedLoopbackFileSystem) Mknod(name string, mode, dev uint32, _ *fus
 	if err != nil {
 		return errnoToStatus(err)
 	}
-	defer unix.Close(parentFd)
+	defer func() { _ = unix.Close(parentFd) }()
 	if err := unix.Mknodat(parentFd, leaf, mode, int(dev)); err != nil {
 		return errnoToStatus(err)
 	}
@@ -269,7 +269,7 @@ func (c *ConfinedLoopbackFileSystem) Rmdir(name string, _ *fuse.Context) fuse.St
 	if err != nil {
 		return errnoToStatus(err)
 	}
-	defer unix.Close(parentFd)
+	defer func() { _ = unix.Close(parentFd) }()
 	if err := unix.Unlinkat(parentFd, leaf, unix.AT_REMOVEDIR); err != nil {
 		return errnoToStatus(err)
 	}
@@ -281,7 +281,7 @@ func (c *ConfinedLoopbackFileSystem) Unlink(name string, _ *fuse.Context) fuse.S
 	if err != nil {
 		return errnoToStatus(err)
 	}
-	defer unix.Close(parentFd)
+	defer func() { _ = unix.Close(parentFd) }()
 	if err := unix.Unlinkat(parentFd, leaf, 0); err != nil {
 		return errnoToStatus(err)
 	}
@@ -293,12 +293,12 @@ func (c *ConfinedLoopbackFileSystem) Rename(oldName, newName string, _ *fuse.Con
 	if err != nil {
 		return errnoToStatus(err)
 	}
-	defer unix.Close(oldParent)
+	defer func() { _ = unix.Close(oldParent) }()
 	newParent, newLeaf, err := resolveBeneath(c.rootFd, newName)
 	if err != nil {
 		return errnoToStatus(err)
 	}
-	defer unix.Close(newParent)
+	defer func() { _ = unix.Close(newParent) }()
 	if err := unix.Renameat(oldParent, oldLeaf, newParent, newLeaf); err != nil {
 		return errnoToStatus(err)
 	}
@@ -316,7 +316,7 @@ func (c *ConfinedLoopbackFileSystem) Symlink(value, linkName string, _ *fuse.Con
 	if err != nil {
 		return errnoToStatus(err)
 	}
-	defer unix.Close(parentFd)
+	defer func() { _ = unix.Close(parentFd) }()
 	if err := unix.Symlinkat(value, parentFd, leaf); err != nil {
 		return errnoToStatus(err)
 	}
@@ -328,12 +328,12 @@ func (c *ConfinedLoopbackFileSystem) Link(oldName, newName string, _ *fuse.Conte
 	if err != nil {
 		return errnoToStatus(err)
 	}
-	defer unix.Close(oldParent)
+	defer func() { _ = unix.Close(oldParent) }()
 	newParent, newLeaf, err := resolveBeneath(c.rootFd, newName)
 	if err != nil {
 		return errnoToStatus(err)
 	}
-	defer unix.Close(newParent)
+	defer func() { _ = unix.Close(newParent) }()
 	// flags=0: don't follow the source if it's a symlink (preserve loopback behavior).
 	if err := unix.Linkat(oldParent, oldLeaf, newParent, newLeaf, 0); err != nil {
 		return errnoToStatus(err)
@@ -351,7 +351,7 @@ func (c *ConfinedLoopbackFileSystem) Open(name string, flags uint32, _ *fuse.Con
 	if err != nil {
 		return nil, errnoToStatus(err)
 	}
-	defer unix.Close(parentFd)
+	defer func() { _ = unix.Close(parentFd) }()
 	fd, err := unix.Openat2(parentFd, leaf, &unix.OpenHow{
 		Flags:   uint64(flags) | unix.O_CLOEXEC,
 		Resolve: resolveHow,
@@ -371,7 +371,7 @@ func (c *ConfinedLoopbackFileSystem) Create(name string, flags, mode uint32, _ *
 	if err != nil {
 		return nil, errnoToStatus(err)
 	}
-	defer unix.Close(parentFd)
+	defer func() { _ = unix.Close(parentFd) }()
 	fd, err := unix.Openat2(parentFd, leaf, &unix.OpenHow{
 		Flags:   uint64(flags) | unix.O_CREAT | unix.O_CLOEXEC,
 		Mode:    uint64(mode),
@@ -391,7 +391,7 @@ func (c *ConfinedLoopbackFileSystem) OpenDir(name string, _ *fuse.Context) ([]fu
 	if err != nil {
 		return nil, errnoToStatus(err)
 	}
-	defer unix.Close(parentFd)
+	defer func() { _ = unix.Close(parentFd) }()
 	// Open the directory itself, confined via openat2.
 	fd, err := unix.Openat2(parentFd, leaf, &unix.OpenHow{
 		Flags:   unix.O_RDONLY | unix.O_DIRECTORY | unix.O_CLOEXEC,
@@ -402,7 +402,7 @@ func (c *ConfinedLoopbackFileSystem) OpenDir(name string, _ *fuse.Context) ([]fu
 	}
 	// os.NewFile takes ownership of the fd; Close releases it.
 	f := os.NewFile(uintptr(fd), leaf)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	entries, err := f.ReadDir(-1)
 	if err != nil {
 		return nil, errnoToStatus(err)
@@ -435,7 +435,7 @@ func (c *ConfinedLoopbackFileSystem) openLeafForXattr(name string) (int, error) 
 	if err != nil {
 		return -1, err
 	}
-	defer unix.Close(parentFd)
+	defer func() { _ = unix.Close(parentFd) }()
 	return unix.Openat2(parentFd, leaf, &unix.OpenHow{
 		Flags:   unix.O_PATH | unix.O_CLOEXEC,
 		Resolve: resolveHow,
@@ -447,7 +447,7 @@ func (c *ConfinedLoopbackFileSystem) GetXAttr(name, attr string, _ *fuse.Context
 	if err != nil {
 		return nil, errnoToStatus(err)
 	}
-	defer unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }()
 	procPath := fmt.Sprintf("/proc/self/fd/%d", fd)
 	// First call sizes the buffer; second reads it.
 	size, err := unix.Getxattr(procPath, attr, nil)
@@ -467,7 +467,7 @@ func (c *ConfinedLoopbackFileSystem) SetXAttr(name, attr string, data []byte, fl
 	if err != nil {
 		return errnoToStatus(err)
 	}
-	defer unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }()
 	if err := unix.Setxattr(fmt.Sprintf("/proc/self/fd/%d", fd), attr, data, flags); err != nil {
 		return errnoToStatus(err)
 	}
@@ -479,7 +479,7 @@ func (c *ConfinedLoopbackFileSystem) ListXAttr(name string, _ *fuse.Context) ([]
 	if err != nil {
 		return nil, errnoToStatus(err)
 	}
-	defer unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }()
 	procPath := fmt.Sprintf("/proc/self/fd/%d", fd)
 	size, err := unix.Listxattr(procPath, nil)
 	if err != nil {
@@ -498,7 +498,7 @@ func (c *ConfinedLoopbackFileSystem) RemoveXAttr(name, attr string, _ *fuse.Cont
 	if err != nil {
 		return errnoToStatus(err)
 	}
-	defer unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }()
 	if err := unix.Removexattr(fmt.Sprintf("/proc/self/fd/%d", fd), attr); err != nil {
 		return errnoToStatus(err)
 	}

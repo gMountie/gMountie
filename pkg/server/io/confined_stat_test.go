@@ -43,7 +43,7 @@ func (s *ConfinedStatSuite) TestGetAttrInTree() {
 	attr, st := s.fs.GetAttr("ok.txt", nil)
 	s.Equal(fuse.OK, st)
 	s.Require().NotNil(attr)
-	s.True(attr.Mode&0o170000 == 0o100000, "expected regular file mode, got %o", attr.Mode)
+	s.Equal(uint32(0o100000), attr.Mode&0o170000, "expected regular file mode, got %o", attr.Mode)
 }
 
 // TestGetAttrEscape: traversal past root returns EACCES.
