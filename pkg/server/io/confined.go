@@ -4,9 +4,15 @@
 package io
 
 import (
+	"errors"
+	"fmt"
 	"path"
 	"strings"
+	"syscall"
+	"unsafe"
 
+	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	"golang.org/x/sys/unix"
 )
 
@@ -58,4 +64,109 @@ func resolveBeneath(rootFd int, name string) (parentFd int, leaf string, err err
 // affect the FS's long-lived root handle.
 func dupCloexec(rootFd int) (int, error) {
 	return unix.FcntlInt(uintptr(rootFd), unix.F_DUPFD_CLOEXEC, 0)
+}
+
+// ConfinedLoopbackFileSystem is a pathfs.FileSystem that translates every op
+// to fd-relative *at syscalls anchored at a single openat2-resolved volume
+// root dirfd. It composes safely under identityBoundFS.
+type ConfinedLoopbackFileSystem struct {
+	pathfs.FileSystem        // no-op String/SetDebug/OnMount/OnUnmount etc.
+	rootFd            int
+	rootPath          string // kept for log + StatFs
+}
+
+// NewConfinedLoopbackFileSystem opens path as the volume root. It must be a
+// directory; ENOTDIR/ENOENT bubble up to the caller.
+func NewConfinedLoopbackFileSystem(rootPath string) (*ConfinedLoopbackFileSystem, error) {
+	fd, err := unix.Open(rootPath, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, fmt.Errorf("open volume root %q: %w", rootPath, err)
+	}
+	return &ConfinedLoopbackFileSystem{
+		FileSystem: pathfs.NewDefaultFileSystem(),
+		rootFd:     fd,
+		rootPath:   rootPath,
+	}, nil
+}
+
+// errnoToStatus maps a unix errno to a fuse.Status. EXDEV/ELOOP from
+// resolveBeneath map to fuse.EACCES per spec §3.10 (the client sees a
+// permission denial, not a system-internal cross-device hint).
+func errnoToStatus(err error) fuse.Status {
+	if err == nil {
+		return fuse.OK
+	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		switch errno {
+		case syscall.Errno(unix.EXDEV), syscall.Errno(unix.ELOOP):
+			return fuse.EACCES
+		}
+		return fuse.Status(errno)
+	}
+	return fuse.EIO
+}
+
+func (c *ConfinedLoopbackFileSystem) GetAttr(name string, _ *fuse.Context) (*fuse.Attr, fuse.Status) {
+	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	if err != nil {
+		return nil, errnoToStatus(err)
+	}
+	defer unix.Close(parentFd)
+	var st unix.Stat_t
+	if err := unix.Fstatat(parentFd, leaf, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return nil, errnoToStatus(err)
+	}
+	a := &fuse.Attr{}
+	a.FromStat((*syscall.Stat_t)(unsafe.Pointer(&st)))
+	return a, fuse.OK
+}
+
+func (c *ConfinedLoopbackFileSystem) StatFs(name string) *fuse.StatfsOut {
+	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	if err != nil {
+		return nil
+	}
+	defer unix.Close(parentFd)
+	fd, err := unix.Openat2(parentFd, leaf, &unix.OpenHow{
+		Flags:   unix.O_PATH | unix.O_CLOEXEC,
+		Resolve: resolveHow,
+	})
+	if err != nil {
+		return nil
+	}
+	defer unix.Close(fd)
+	var sf unix.Statfs_t
+	if err := unix.Fstatfs(fd, &sf); err != nil {
+		return nil
+	}
+	out := &fuse.StatfsOut{}
+	out.FromStatfsT((*syscall.Statfs_t)(unsafe.Pointer(&sf)))
+	return out
+}
+
+func (c *ConfinedLoopbackFileSystem) Readlink(name string, _ *fuse.Context) (string, fuse.Status) {
+	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	if err != nil {
+		return "", errnoToStatus(err)
+	}
+	defer unix.Close(parentFd)
+	buf := make([]byte, 4096)
+	n, err := unix.Readlinkat(parentFd, leaf, buf)
+	if err != nil {
+		return "", errnoToStatus(err)
+	}
+	return string(buf[:n]), fuse.OK
+}
+
+func (c *ConfinedLoopbackFileSystem) Access(name string, mode uint32, _ *fuse.Context) fuse.Status {
+	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	if err != nil {
+		return errnoToStatus(err)
+	}
+	defer unix.Close(parentFd)
+	if err := unix.Faccessat(parentFd, leaf, mode, 0); err != nil {
+		return errnoToStatus(err)
+	}
+	return fuse.OK
 }
