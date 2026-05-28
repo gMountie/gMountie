@@ -237,3 +237,104 @@ func (c *ConfinedLoopbackFileSystem) Truncate(name string, size uint64, _ *fuse.
 	}
 	return fuse.OK
 }
+
+func (c *ConfinedLoopbackFileSystem) Mkdir(name string, mode uint32, _ *fuse.Context) fuse.Status {
+	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	if err != nil {
+		return errnoToStatus(err)
+	}
+	defer unix.Close(parentFd)
+	if err := unix.Mkdirat(parentFd, leaf, mode); err != nil {
+		return errnoToStatus(err)
+	}
+	return fuse.OK
+}
+
+func (c *ConfinedLoopbackFileSystem) Mknod(name string, mode, dev uint32, _ *fuse.Context) fuse.Status {
+	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	if err != nil {
+		return errnoToStatus(err)
+	}
+	defer unix.Close(parentFd)
+	if err := unix.Mknodat(parentFd, leaf, mode, int(dev)); err != nil {
+		return errnoToStatus(err)
+	}
+	return fuse.OK
+}
+
+func (c *ConfinedLoopbackFileSystem) Rmdir(name string, _ *fuse.Context) fuse.Status {
+	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	if err != nil {
+		return errnoToStatus(err)
+	}
+	defer unix.Close(parentFd)
+	if err := unix.Unlinkat(parentFd, leaf, unix.AT_REMOVEDIR); err != nil {
+		return errnoToStatus(err)
+	}
+	return fuse.OK
+}
+
+func (c *ConfinedLoopbackFileSystem) Unlink(name string, _ *fuse.Context) fuse.Status {
+	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	if err != nil {
+		return errnoToStatus(err)
+	}
+	defer unix.Close(parentFd)
+	if err := unix.Unlinkat(parentFd, leaf, 0); err != nil {
+		return errnoToStatus(err)
+	}
+	return fuse.OK
+}
+
+func (c *ConfinedLoopbackFileSystem) Rename(oldName, newName string, _ *fuse.Context) fuse.Status {
+	oldParent, oldLeaf, err := resolveBeneath(c.rootFd, oldName)
+	if err != nil {
+		return errnoToStatus(err)
+	}
+	defer unix.Close(oldParent)
+	newParent, newLeaf, err := resolveBeneath(c.rootFd, newName)
+	if err != nil {
+		return errnoToStatus(err)
+	}
+	defer unix.Close(newParent)
+	if err := unix.Renameat(oldParent, oldLeaf, newParent, newLeaf); err != nil {
+		return errnoToStatus(err)
+	}
+	return fuse.OK
+}
+
+// Symlink creates a symlink at linkName pointing at value. The value string is
+// stored verbatim — confinement enforcement happens at resolve time (any
+// traversal through the link goes through resolveBeneath, which has
+// RESOLVE_NO_MAGICLINKS + RESOLVE_BENEATH set). We do not validate the value
+// here; an absolute or escaping value is just an inert string until something
+// tries to follow it.
+func (c *ConfinedLoopbackFileSystem) Symlink(value, linkName string, _ *fuse.Context) fuse.Status {
+	parentFd, leaf, err := resolveBeneath(c.rootFd, linkName)
+	if err != nil {
+		return errnoToStatus(err)
+	}
+	defer unix.Close(parentFd)
+	if err := unix.Symlinkat(value, parentFd, leaf); err != nil {
+		return errnoToStatus(err)
+	}
+	return fuse.OK
+}
+
+func (c *ConfinedLoopbackFileSystem) Link(oldName, newName string, _ *fuse.Context) fuse.Status {
+	oldParent, oldLeaf, err := resolveBeneath(c.rootFd, oldName)
+	if err != nil {
+		return errnoToStatus(err)
+	}
+	defer unix.Close(oldParent)
+	newParent, newLeaf, err := resolveBeneath(c.rootFd, newName)
+	if err != nil {
+		return errnoToStatus(err)
+	}
+	defer unix.Close(newParent)
+	// flags=0: don't follow the source if it's a symlink (preserve loopback behavior).
+	if err := unix.Linkat(oldParent, oldLeaf, newParent, newLeaf, 0); err != nil {
+		return errnoToStatus(err)
+	}
+	return fuse.OK
+}
