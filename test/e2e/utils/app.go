@@ -89,8 +89,10 @@ func WithBasicAuth(username, password string) TestOptions {
 		if err != nil {
 			panic("WithBasicAuth: hash password: " + err.Error())
 		}
-		// Set the server basic auth
+		// Set the server basic auth. AuthConfigBase.Type must be set
+		// explicitly so NewAuthServiceFromConfig selects the basic-auth branch.
 		c.cfg.Auth = &config.BasicAuthConfig{
+			AuthConfigBase: config.AuthConfigBase{Type: config.AuthConfigTypeBasic},
 			Users: []config.BasicAuthConfigUser{
 				{
 					Username: username, PasswordHash: h,
@@ -181,11 +183,11 @@ func WithClientTLS(cfg clientConfig.TLSConfig) TestOptions {
 
 // mtlsCredsConfig holds the PEM materials for an in-process mTLS test context.
 type mtlsCredsConfig struct {
-	caCertPEM    []byte
-	serverCert   []byte
-	serverKey    []byte
-	clientCert   []byte // primary client cert (default client / alice)
-	clientKey    []byte
+	caCertPEM  []byte
+	serverCert []byte
+	serverKey  []byte
+	clientCert []byte // primary client cert (default client / alice)
+	clientKey  []byte
 }
 
 // ACLUser describes a single principal for WithACLUsers.
