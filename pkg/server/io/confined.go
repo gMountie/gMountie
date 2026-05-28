@@ -427,6 +427,98 @@ func (c *ConfinedLoopbackFileSystem) OpenDir(name string, _ *fuse.Context) ([]fu
 	return out, fuse.OK
 }
 
+// openLeafForXattr opens an O_PATH handle to `name` confined beneath the
+// volume root. Linux xattr syscalls have no *at variants, so we operate
+// on the fd via /proc/self/fd/N.
+func (c *ConfinedLoopbackFileSystem) openLeafForXattr(name string) (int, error) {
+	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	if err != nil {
+		return -1, err
+	}
+	defer unix.Close(parentFd)
+	return unix.Openat2(parentFd, leaf, &unix.OpenHow{
+		Flags:   unix.O_PATH | unix.O_CLOEXEC,
+		Resolve: resolveHow,
+	})
+}
+
+func (c *ConfinedLoopbackFileSystem) GetXAttr(name, attr string, _ *fuse.Context) ([]byte, fuse.Status) {
+	fd, err := c.openLeafForXattr(name)
+	if err != nil {
+		return nil, errnoToStatus(err)
+	}
+	defer unix.Close(fd)
+	procPath := fmt.Sprintf("/proc/self/fd/%d", fd)
+	// First call sizes the buffer; second reads it.
+	size, err := unix.Getxattr(procPath, attr, nil)
+	if err != nil {
+		return nil, errnoToStatus(err)
+	}
+	buf := make([]byte, size)
+	n, err := unix.Getxattr(procPath, attr, buf)
+	if err != nil {
+		return nil, errnoToStatus(err)
+	}
+	return buf[:n], fuse.OK
+}
+
+func (c *ConfinedLoopbackFileSystem) SetXAttr(name, attr string, data []byte, flags int, _ *fuse.Context) fuse.Status {
+	fd, err := c.openLeafForXattr(name)
+	if err != nil {
+		return errnoToStatus(err)
+	}
+	defer unix.Close(fd)
+	if err := unix.Setxattr(fmt.Sprintf("/proc/self/fd/%d", fd), attr, data, flags); err != nil {
+		return errnoToStatus(err)
+	}
+	return fuse.OK
+}
+
+func (c *ConfinedLoopbackFileSystem) ListXAttr(name string, _ *fuse.Context) ([]string, fuse.Status) {
+	fd, err := c.openLeafForXattr(name)
+	if err != nil {
+		return nil, errnoToStatus(err)
+	}
+	defer unix.Close(fd)
+	procPath := fmt.Sprintf("/proc/self/fd/%d", fd)
+	size, err := unix.Listxattr(procPath, nil)
+	if err != nil {
+		return nil, errnoToStatus(err)
+	}
+	buf := make([]byte, size)
+	n, err := unix.Listxattr(procPath, buf)
+	if err != nil {
+		return nil, errnoToStatus(err)
+	}
+	return splitNullTerminated(buf[:n]), fuse.OK
+}
+
+func (c *ConfinedLoopbackFileSystem) RemoveXAttr(name, attr string, _ *fuse.Context) fuse.Status {
+	fd, err := c.openLeafForXattr(name)
+	if err != nil {
+		return errnoToStatus(err)
+	}
+	defer unix.Close(fd)
+	if err := unix.Removexattr(fmt.Sprintf("/proc/self/fd/%d", fd), attr); err != nil {
+		return errnoToStatus(err)
+	}
+	return fuse.OK
+}
+
+// splitNullTerminated splits a Linux listxattr buffer (NUL-terminated names
+// concatenated, possibly with a trailing NUL) into a string slice.
+func splitNullTerminated(b []byte) []string {
+	if len(b) == 0 {
+		return nil
+	}
+	parts := strings.Split(string(b), "\x00")
+	// Trim trailing empty from the final NUL terminator, if present.
+	if len(parts) > 0 && parts[len(parts)-1] == "" {
+		parts = parts[:len(parts)-1]
+	}
+	return parts
+}
+
 // direntTypeToMode maps an os.DirEntry type to a Linux S_IFMT bit. Used as
 // a fallback when per-entry stat fails (e.g. EACCES on a child); the
 // readdir d_type alone still tells us the kind.
