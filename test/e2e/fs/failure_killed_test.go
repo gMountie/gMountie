@@ -174,7 +174,7 @@ func (s *ServerKilledSuite) TestKilledMidReadSurfacesError() {
 	case <-time.After(10 * time.Second):
 		s.FailNow("timed out waiting for first read to return — mount may be unresponsive")
 	}
-	s.ctx.StopServer()
+	s.ctx.KillServer()
 
 	// The key property: the read goroutine must return within 10 s.
 	// A hang here is the regression we guard against.
@@ -293,7 +293,7 @@ func (s *ServerKilledSuite) TestKilledMidWriteSurfacesError() {
 	case <-time.After(10 * time.Second):
 		s.FailNow("timed out waiting for first write to return")
 	}
-	s.ctx.StopServer()
+	s.ctx.KillServer()
 
 	// The write goroutine must return within 10 s; a hang is a hard failure.
 	var res writeResult
