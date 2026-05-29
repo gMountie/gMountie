@@ -34,13 +34,15 @@ func (s *SessionControllerTestSuite) TearDownTest() {
 }
 
 func (s *SessionControllerTestSuite) TestCreateReturnsSessionID() {
-	reply, err := s.controller.Create(context.Background(), &proto.SessionCreateRequest{})
+	ctx := principal.WithPrincipal(context.Background(), "alice")
+	reply, err := s.controller.Create(ctx, &proto.SessionCreateRequest{})
 	s.Require().NoError(err)
 	s.Assert().NotEmpty(reply.SessionId)
 }
 
 func (s *SessionControllerTestSuite) TestResumeKnownSession() {
-	createReply, err := s.controller.Create(context.Background(), &proto.SessionCreateRequest{})
+	ctx := principal.WithPrincipal(context.Background(), "alice")
+	createReply, err := s.controller.Create(ctx, &proto.SessionCreateRequest{})
 	s.Require().NoError(err)
 
 	s.mgr.MarkDisconnected(createReply.SessionId)

@@ -623,6 +623,7 @@ func (c *AppTestingContext) buildServer(lis net.Listener) *grpcServer.Server {
 	// the concrete listener for this server instance.
 	opts := append([]grpcServer.ServerOption(nil), c.serverOptions...)
 	opts = append(opts, grpcServer.WithListener(lis))
+	opts = append(opts, grpcServer.WithSessionManager(c.serverCtx.SessionManager))
 	return grpcServer.NewServer(
 		&c.cfg,
 		c.serverCtx.AuthService,

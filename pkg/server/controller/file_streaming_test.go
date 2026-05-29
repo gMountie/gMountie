@@ -110,7 +110,7 @@ func (s *StreamingReadSuite) SetupTest() {
 	s.frameSize = 1 << 20 // 1 MiB
 	s.fsService = new(mockservice.MockVolumeService)
 	s.sessionMgr = service.NewSessionManager(service.SessionManagerOptions{})
-	sid, err := s.sessionMgr.Create()
+	sid, err := s.sessionMgr.Create("test-user")
 	s.Require().NoError(err)
 	s.sessionID = sid
 	s.bus = serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})

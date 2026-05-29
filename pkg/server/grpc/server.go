@@ -34,6 +34,9 @@ type Server struct {
 	services                []ServiceRegistrar
 	server                  *grpc.Server
 	authService             service.AuthService
+	// sessionManager is the SAME instance used by the SessionController so
+	// that principals written at Create are visible to the AuthInterceptor.
+	sessionManager          service.SessionManager
 	listener                net.Listener
 	creds                   credentials.TransportCredentials
 	extraUnaryInterceptors  []grpc.UnaryServerInterceptor
@@ -78,6 +81,15 @@ func WithExtraUnaryInterceptors(unary ...grpc.UnaryServerInterceptor) ServerOpti
 func WithExtraStreamInterceptors(stream ...grpc.StreamServerInterceptor) ServerOption {
 	return func(s *Server) {
 		s.extraStreamInterceptors = append(s.extraStreamInterceptors, stream...)
+	}
+}
+
+// WithSessionManager sets the SessionManager that the AuthInterceptor uses to
+// look up session principals. It must be the same instance as the one passed to
+// the SessionController so that sessions created via Create are visible here.
+func WithSessionManager(mgr service.SessionManager) ServerOption {
+	return func(s *Server) {
+		s.sessionManager = mgr
 	}
 }
 
@@ -177,7 +189,7 @@ func (s *Server) createListener() (net.Listener, error) {
 // getOptions returns the gRPC server options.
 func (s *Server) getOptions() []grpc.ServerOption {
 	unaryLog, streamLog := s.getLoggingInterceptor()
-	authInterceptor := NewAuthInterceptor(s.authService)
+	authInterceptor := NewAuthInterceptor(s.authService, s.sessionManager)
 
 	unaryInterceptors := append(
 		[]grpc.UnaryServerInterceptor{

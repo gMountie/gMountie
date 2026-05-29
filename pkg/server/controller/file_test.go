@@ -39,7 +39,7 @@ func (s *RpcFileServerTestSuite) SetupTest() {
 	s.fsService.On("ResolveIdentity", mock.Anything, mock.Anything, mock.Anything).
 		Return(service.Identity{}, nil).Maybe()
 	s.sessionMgr = service.NewSessionManager(service.SessionManagerOptions{})
-	sid, err := s.sessionMgr.Create()
+	sid, err := s.sessionMgr.Create("test-user")
 	s.Require().NoError(err)
 	s.sessionID = sid
 	s.bus = serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
