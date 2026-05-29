@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"gmountie/pkg/common"
 	commongrpc "gmountie/pkg/common/grpc"
 	"gmountie/pkg/proto"
 	"gmountie/pkg/utils/log"
@@ -12,6 +13,7 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 // Client is the interface for the gRPC Client.
@@ -219,8 +221,12 @@ func (c *ClientImpl) Close() error {
 }
 
 // SessionID returns the server-assigned session id obtained during Connect.
-// Returns "" if the handshake has not completed (Connect not called or failed).
+// Returns "" if the handshake has not completed (Connect not called or failed),
+// or if c.handshake is nil (pre-construction guard).
 func (c *ClientImpl) SessionID() string {
+	if c.handshake == nil {
+		return ""
+	}
 	return c.handshake.SessionID()
 }
 
@@ -254,9 +260,35 @@ func (c *ClientImpl) WhoAmI(ctx context.Context, volume string) (*proto.Identity
 	})
 }
 
-// getInterceptors returns the ClientImpl interceptors, including any
+// sessionIDUnaryInterceptor injects the current session_id into outgoing unary
+// RPC metadata. It is a no-op when SessionID() is empty (i.e. during the
+// initial SessionService/Create call) so Create hits full argon2 auth.
+func (c *ClientImpl) sessionIDUnaryInterceptor() grpc.UnaryClientInterceptor {
+	return func(ctx context.Context, method string, req, reply interface{},
+		cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		if id := c.SessionID(); id != "" {
+			ctx = metadata.AppendToOutgoingContext(ctx, common.MetadataSessionID, id)
+		}
+		return invoker(ctx, method, req, reply, cc, opts...)
+	}
+}
+
+// sessionIDStreamInterceptor injects the current session_id into outgoing
+// stream metadata. Read/Write/Subscribe/Keepalive are streams and must carry
+// the session_id so they hit the fast path on the server.
+func (c *ClientImpl) sessionIDStreamInterceptor() grpc.StreamClientInterceptor {
+	return func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn,
+		method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+		if id := c.SessionID(); id != "" {
+			ctx = metadata.AppendToOutgoingContext(ctx, common.MetadataSessionID, id)
+		}
+		return streamer(ctx, desc, cc, method, opts...)
+	}
+}
+
+// getInterceptors returns the ClientImpl unary interceptors, including any
 // extras registered via WithUnaryInterceptors. Built-ins (request-id,
-// logging) run first; extras run closer to the invoker.
+// logging, session-id) run first; extras run closer to the invoker.
 func (c *ClientImpl) getInterceptors() []grpc.UnaryClientInterceptor {
 	opts := []logging.Option{
 		logging.WithLogOnEvents(logging.FinishCall),
@@ -264,6 +296,7 @@ func (c *ClientImpl) getInterceptors() []grpc.UnaryClientInterceptor {
 	base := []grpc.UnaryClientInterceptor{
 		commongrpc.ClientUnaryRequestID(),
 		logging.UnaryClientInterceptor(commongrpc.InterceptorLogger(log.Log), opts...),
+		c.sessionIDUnaryInterceptor(),
 	}
 	return append(base, c.extraInterceptors...)
 }
@@ -274,6 +307,9 @@ func (c *ClientImpl) getDialOptions() []grpc.DialOption {
 	opts := []grpc.DialOption{
 		grpc.WithChainUnaryInterceptor(
 			c.getInterceptors()...,
+		),
+		grpc.WithChainStreamInterceptor(
+			c.sessionIDStreamInterceptor(),
 		),
 	}
 

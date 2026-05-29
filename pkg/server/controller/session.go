@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"gmountie/pkg/proto"
+	"gmountie/pkg/server/principal"
 	"gmountie/pkg/server/service"
 	"gmountie/pkg/utils/log"
 
@@ -35,12 +36,19 @@ func (c *SessionController) Register(server *grpc.Server) {
 	proto.RegisterSessionServiceServer(server, c)
 }
 
-func (c *SessionController) Create(_ context.Context, _ *proto.SessionCreateRequest) (*proto.SessionCreateReply, error) {
-	id, err := c.sessions.Create()
+func (c *SessionController) Create(ctx context.Context, _ *proto.SessionCreateRequest) (*proto.SessionCreateReply, error) {
+	// The AuthInterceptor runs full argon2 Authorize on SessionService/Create
+	// and injects the principal before this handler is reached. Bind the
+	// session to that principal so later RPCs can skip argon2 by session_id.
+	// When no principal is in context (e.g. test servers without an auth
+	// interceptor), bind an empty string — an empty principal will fail any
+	// subsequent PrincipalCanAccess check and cannot grant volume access.
+	p, _ := principal.FromContext(ctx)
+	id, err := c.sessions.Create(p)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to create session: %v", err)
 	}
-	log.Log.Info("session created", zap.String("session_id", id))
+	log.Log.Info("session created", zap.String("session_id", id), zap.String("principal", p))
 	return &proto.SessionCreateReply{SessionId: id}, nil
 }
 

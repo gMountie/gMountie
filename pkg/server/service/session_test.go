@@ -24,17 +24,17 @@ func (s *SessionManagerTestSuite) SetupTest() {
 }
 
 func (s *SessionManagerTestSuite) TestCreateReturnsUniqueIDs() {
-	id1, err := s.mgr.Create()
+	id1, err := s.mgr.Create("test-user")
 	s.Require().NoError(err)
 	s.Require().NotEmpty(id1)
 
-	id2, err := s.mgr.Create()
+	id2, err := s.mgr.Create("test-user")
 	s.Require().NoError(err)
 	s.Assert().NotEqual(id1, id2)
 }
 
 func (s *SessionManagerTestSuite) TestGetReturnsTheSession() {
-	id, err := s.mgr.Create()
+	id, err := s.mgr.Create("test-user")
 	s.Require().NoError(err)
 
 	sess, err := s.mgr.Get(id)
@@ -48,7 +48,7 @@ func (s *SessionManagerTestSuite) TestGetUnknownSessionErrors() {
 }
 
 func (s *SessionManagerTestSuite) TestSessionFdTableRegisterAndLookup() {
-	id, err := s.mgr.Create()
+	id, err := s.mgr.Create("test-user")
 	s.Require().NoError(err)
 	sess, err := s.mgr.Get(id)
 	s.Require().NoError(err)
@@ -62,7 +62,7 @@ func (s *SessionManagerTestSuite) TestSessionFdTableRegisterAndLookup() {
 }
 
 func (s *SessionManagerTestSuite) TestSessionReleaseFile() {
-	id, err := s.mgr.Create()
+	id, err := s.mgr.Create("test-user")
 	s.Require().NoError(err)
 	sess, _ := s.mgr.Get(id)
 	fd := sess.RegisterFile("/p", nodefs.NewDefaultFile())
@@ -73,7 +73,7 @@ func (s *SessionManagerTestSuite) TestSessionReleaseFile() {
 }
 
 func (s *SessionManagerTestSuite) TestDisconnectThenGraceExpiryReapsFds() {
-	id, err := s.mgr.Create()
+	id, err := s.mgr.Create("test-user")
 	s.Require().NoError(err)
 	sess, _ := s.mgr.Get(id)
 	fd := sess.RegisterFile("/p", nodefs.NewDefaultFile())
@@ -90,7 +90,7 @@ func (s *SessionManagerTestSuite) TestDisconnectThenGraceExpiryReapsFds() {
 }
 
 func (s *SessionManagerTestSuite) TestResumeBeforeGraceCancelsReap() {
-	id, err := s.mgr.Create()
+	id, err := s.mgr.Create("test-user")
 	s.Require().NoError(err)
 	sess, _ := s.mgr.Get(id)
 	fd := sess.RegisterFile("/p", nodefs.NewDefaultFile())
@@ -119,7 +119,7 @@ func (s *SessionManagerTestSuite) TestResumeUnknownSessionReturnsFalse() {
 }
 
 func (s *SessionManagerTestSuite) TestStopReleasesAllFds() {
-	id, err := s.mgr.Create()
+	id, err := s.mgr.Create("test-user")
 	s.Require().NoError(err)
 	sess, _ := s.mgr.Get(id)
 	_ = sess.RegisterFile("/p", nodefs.NewDefaultFile())
@@ -132,7 +132,7 @@ func (s *SessionManagerTestSuite) TestStopReleasesAllFds() {
 }
 
 func (s *SessionManagerTestSuite) TestDoOnceCachesSuccessfulReply() {
-	id, _ := s.mgr.Create()
+	id, _ := s.mgr.Create("test-user")
 	sess, _ := s.mgr.Get(id)
 
 	calls := 0
@@ -153,7 +153,7 @@ func (s *SessionManagerTestSuite) TestDoOnceCachesSuccessfulReply() {
 }
 
 func (s *SessionManagerTestSuite) TestDoOnceDoesNotCacheErrors() {
-	id, _ := s.mgr.Create()
+	id, _ := s.mgr.Create("test-user")
 	sess, _ := s.mgr.Get(id)
 
 	calls := 0
@@ -175,7 +175,7 @@ func (s *SessionManagerTestSuite) TestDoOnceDoesNotCacheErrors() {
 }
 
 func (s *SessionManagerTestSuite) TestDoOnceCollapsesConcurrentDuplicates() {
-	id, _ := s.mgr.Create()
+	id, _ := s.mgr.Create("test-user")
 	sess, _ := s.mgr.Get(id)
 
 	var mu sync.Mutex
@@ -217,7 +217,7 @@ func (s *SessionManagerTestSuite) TestDoOnceCollapsesConcurrentDuplicates() {
 }
 
 func (s *SessionManagerTestSuite) TestDoOnceLRUEvictsOldEntries() {
-	id, _ := s.mgr.Create()
+	id, _ := s.mgr.Create("test-user")
 	sess, _ := s.mgr.Get(id)
 
 	// Saturate the LRU (256 entries) and verify the first one is gone.

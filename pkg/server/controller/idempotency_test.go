@@ -20,7 +20,7 @@ type IdempotencyTestSuite struct {
 
 func (s *IdempotencyTestSuite) SetupTest() {
 	s.mgr = service.NewSessionManager(service.SessionManagerOptions{})
-	id, err := s.mgr.Create()
+	id, err := s.mgr.Create("test-user")
 	s.Require().NoError(err)
 	s.session, err = s.mgr.Get(id)
 	s.Require().NoError(err)
