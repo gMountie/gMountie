@@ -139,6 +139,13 @@ therefore **session-scoped**:
   access — it falls through to the full `Authorize`, which denies missing or
   invalid credentials. A valid `session_id` can only be obtained by passing
   argon2 at `Create`.
+- **Credential omission:** once the keepalive-backed session is confirmed live,
+  the client stops sending the now-redundant basic-auth username/password on the
+  wire and sends only `session_id` (trimming per-RPC metadata). Basic-auth is
+  still sent for `Create`/`Resume` and throughout any reconnect/recovery window
+  (gated on a "session healthy" signal), so authorization continues to work if
+  the session was reaped. This is a wire/perf refinement; the authorization
+  decision above is unchanged.
 
 **Model shift:** post-handshake, the `session_id` is a bearer credential for
 the session's lifetime (until it is reaped, `GracePeriod` after disconnect). It
