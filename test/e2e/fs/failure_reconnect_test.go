@@ -58,6 +58,16 @@ func (s *ReconnectOpenFDSuite) countingReadInterceptor() grpc.StreamServerInterc
 }
 
 func (s *ReconnectOpenFDSuite) SetupSuite() {
+	// VM-only gate (MUST be the first statement, before any server/mount setup).
+	// This suite severs the connection while an fd is open; that is safe only on
+	// the dedicated kubevirt VM. CI runners DO have /dev/fuse, so without this
+	// gate the suite would mount and execute in CI — where a stranded in-flight
+	// FUSE request can hang teardown until the job timeout. The relied-upon
+	// "mount fails => skip" guard is not enough because the mount does not fail
+	// in CI. The VM run sets GMOUNTIE_E2E_VM=1.
+	if os.Getenv("GMOUNTIE_E2E_VM") != "1" {
+		s.T().Skip("GMOUNTIE_E2E_VM not set to 1; skipping VM-only reconnect suite")
+	}
 	testAppCtx, err := utils.NewAppTestingContext(
 		utils.WithTCPTransport(),
 		utils.WithProxy(),
