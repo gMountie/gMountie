@@ -55,6 +55,13 @@ type AppTestingContext struct {
 	// and a real loopback TCP listener. TCP is enabled via
 	// WithTCPTransport so perf benches can exercise tc netem shaping.
 	useTCP bool
+	// useProxy, when true, inserts a TCPProxy between the client and the
+	// server's TCP listener. The client dials the proxy, which forwards to
+	// the server. WithProxy implies useTCP. Used in T4 reconnect tests.
+	useProxy bool
+	// proxy is the TCPProxy instance when useProxy is set; nil otherwise.
+	// Close shuts it down after the client and server are torn down.
+	proxy *TCPProxy
 	// listener is the in-memory bufconn listener used in the default
 	// configuration; nil when useTCP is set.
 	listener *bufconn.Listener
@@ -146,6 +153,18 @@ func WithServerStreamInterceptors(interceptors ...grpc.StreamServerInterceptor) 
 func WithTCPTransport() TestOptions {
 	return func(c *AppTestingContext) {
 		c.useTCP = true
+	}
+}
+
+// WithProxy inserts a TCPProxy between the client and the server's TCP
+// listener. The client dials the proxy, which forwards to the server.
+// WithProxy implies WithTCPTransport (proxy requires a real TCP listener
+// to forward to). The proxy is accessible via Proxy() for Sever/Restore
+// calls in failure-mode tests. Close shuts down the proxy automatically.
+func WithProxy() TestOptions {
+	return func(c *AppTestingContext) {
+		c.useTCP = true
+		c.useProxy = true
 	}
 }
 
@@ -568,6 +587,20 @@ func (c *AppTestingContext) setupTransport() (string, error) {
 			return "", errors.Wrap(err, "test harness TCP listener")
 		}
 		c.tcpListener = lis
+		// If a proxy is requested, insert it between the client and the
+		// server's TCP listener. The client dials the proxy; the proxy
+		// forwards to the server listener. The TLS endpoint for
+		// known-hosts/TOFU resolution still keys off tcpListener.Addr()
+		// (where the server actually sits), not the proxy addr — which is
+		// correct because insecure mode (test default) skips that lookup.
+		if c.useProxy {
+			px, pxErr := NewTCPProxy(lis.Addr().String())
+			if pxErr != nil {
+				return "", errors.Wrap(pxErr, "test harness TCP proxy")
+			}
+			c.proxy = px
+			return "passthrough:///" + px.Addr(), nil
+		}
 		// passthrough:///TARGET (three slashes; passthrough resolver
 		// treats whatever follows as the literal dial address).
 		return "passthrough:///" + lis.Addr().String(), nil
@@ -657,6 +690,13 @@ func (c *AppTestingContext) GetTLSFingerprint() string {
 		return ""
 	}
 	return c.tls.ExpectedFingerprint
+}
+
+// Proxy returns the TCPProxy used by this context, or nil if WithProxy was
+// not passed. Tests use Proxy().Sever() / Proxy().Restore() to simulate
+// a transient network outage while the server stays up.
+func (c *AppTestingContext) Proxy() *TCPProxy {
+	return c.proxy
 }
 
 // GetEndpoint returns the raw "host:port" TCP address for the test server.
@@ -880,6 +920,10 @@ func (c *AppTestingContext) Close() error {
 	// Drain the serve goroutine if Start was called.
 	if c.serveErrCh != nil {
 		<-c.serveErrCh
+	}
+	// Shut down the proxy if one was created by WithProxy.
+	if c.proxy != nil {
+		_ = c.proxy.Close()
 	}
 	return nil
 }
