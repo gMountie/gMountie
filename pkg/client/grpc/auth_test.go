@@ -46,7 +46,7 @@ func (s *BasicAuthCredentialsTestSuite) TestSessionLiveTrueOmitsBasicAuth() {
 
 	md, err := creds.GetRequestMetadata(context.Background())
 	s.Require().NoError(err)
-	s.Nil(md, "basic-auth metadata must be nil when session is live")
+	s.Empty(md, "no basic-auth metadata must be carried when session is live")
 }
 
 func TestBasicAuthCredentialsTestSuite(t *testing.T) {
