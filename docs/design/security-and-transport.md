@@ -118,6 +118,36 @@ t=3 / p=4 (OWASP 2026). `pkg/common/passhash` owns `Hash`/`Verify`
   `# CHANGE ME` comment — onboarding still "just works" but the weak
   credential is discoverable.
 
+### 4a. Session-scoped authentication
+
+argon2id is deliberately expensive (m=64 MiB / t=3), so verifying it on
+**every** RPC made the server CPU/allocation-bound under high request rates —
+a self-inflicted DoS and a real throughput collapse under load. Auth is
+therefore **session-scoped**:
+
+- The password is verified **once**, at `SessionService/Create` (and again at
+  `Resume`, to re-prove identity after a reconnect). These two methods always
+  run the full `authService.Authorize` path.
+- `Create` binds the authenticated principal onto the server-side session
+  (`Session.Principal()`), keyed by the session's UUIDv4 `session_id`.
+- Every other RPC carries its `session_id` in gRPC metadata
+  (`common.MetadataSessionID`). The auth interceptor resolves it to the live
+  session and injects that principal **without** re-running argon2. The
+  downstream volume-ACL check (`PrincipalCanAccess`) still runs per request, so
+  authorization is unchanged — only the password re-derivation is skipped.
+- **Fail-closed:** an absent, empty, or unknown `session_id` never grants
+  access — it falls through to the full `Authorize`, which denies missing or
+  invalid credentials. A valid `session_id` can only be obtained by passing
+  argon2 at `Create`.
+
+**Model shift:** post-handshake, the `session_id` is a bearer credential for
+the session's lifetime (until it is reaped, `GracePeriod` after disconnect). It
+is a 122-bit UUIDv4 that travels only over TLS (§1), so it is at least as strong
+as the username+password it replaces in the same metadata. mTLS is unaffected
+(its per-call cert check is already cheap). This is consistent with the threat
+model (§7): a stolen `session_id` is equivalent to a stolen credential, and
+compromised clients/binaries are already out of scope.
+
 ## 5. Server surface hardening
 
 - **Ops endpoints** (`/metrics`, `/healthz`, `/readyz`, `/version`,
