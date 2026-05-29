@@ -98,10 +98,17 @@ func WithDialOptions(dialOptions []grpc.DialOption) ClientOption {
 	}
 }
 
-// WithBasicAuth sets the basic authentication for the gRPC ClientImpl
+// WithBasicAuth sets the basic authentication for the gRPC ClientImpl.
+// The credentials are wired with a sessionLive gate: once the keepalive-backed
+// session is healthy, basic-auth metadata is omitted on steady-state RPCs and
+// the per-RPC session_id (injected by sessionIDUnaryInterceptor) authorises
+// the call instead. Basic-auth is still sent for Create/Resume/recovery because
+// those run while healthy=false.
 func WithBasicAuth(username, password string) ClientOption {
 	return func(c *ClientImpl) {
-		c.dialOptions = append(c.dialOptions, grpc.WithPerRPCCredentials(NewBasicAuthCredentials(username, password)))
+		creds := NewBasicAuthCredentials(username, password)
+		creds.sessionLive = c.SessionLive
+		c.dialOptions = append(c.dialOptions, grpc.WithPerRPCCredentials(creds))
 	}
 }
 
@@ -228,6 +235,17 @@ func (c *ClientImpl) SessionID() string {
 		return ""
 	}
 	return c.handshake.SessionID()
+}
+
+// SessionLive reports whether the keepalive-backed session is currently healthy
+// (i.e. a keepalive stream is open and draining). Returns false before Connect
+// is called, during session recovery, and after Close. Used by BasicAuthCredentials
+// to omit redundant basic-auth metadata on steady-state RPCs.
+func (c *ClientImpl) SessionLive() bool {
+	if c.handshake == nil {
+		return false
+	}
+	return c.handshake.IsHealthy()
 }
 
 // MetaTimeout returns the per-RPC timeout for metadata operations.

@@ -30,6 +30,10 @@ type SessionHandshake struct {
 	client    proto.SessionServiceClient
 	sessionID string
 	running   atomic.Bool
+	// healthy is true exactly while a keepalive stream is currently open
+	// and draining. It goes false initially, during recovery, and after
+	// teardown. It is safe to read from any goroutine (atomic).
+	healthy atomic.Bool
 
 	streamCtx    context.Context
 	streamCancel context.CancelFunc
@@ -50,6 +54,13 @@ func (h *SessionHandshake) SessionID() string {
 
 func (h *SessionHandshake) IsRunning() bool {
 	return h.running.Load()
+}
+
+// IsHealthy reports whether a keepalive stream is currently open and draining.
+// It is true only after Establish succeeds and until the stream breaks (at which
+// point it goes false for the duration of recovery) or Close is called.
+func (h *SessionHandshake) IsHealthy() bool {
+	return h.healthy.Load()
 }
 
 func (h *SessionHandshake) setSessionID(id string) {
@@ -86,6 +97,7 @@ func (h *SessionHandshake) Establish(ctx context.Context) error {
 	h.streamCancel = cancel
 	h.done = make(chan struct{})
 	h.running.Store(true)
+	h.healthy.Store(true)
 	go h.keepaliveLoop(stream)
 	return nil
 }
@@ -96,6 +108,7 @@ func (h *SessionHandshake) Establish(ctx context.Context) error {
 func (h *SessionHandshake) keepaliveLoop(initial proto.SessionService_KeepaliveClient) {
 	defer func() {
 		h.running.Store(false)
+		h.healthy.Store(false)
 		close(h.done)
 	}()
 
@@ -115,6 +128,9 @@ func (h *SessionHandshake) keepaliveLoop(initial proto.SessionService_KeepaliveC
 						zap.String("session_id", h.SessionID()),
 						zap.Error(err))
 				}
+				// Mark unhealthy before recovery so that basic-auth is
+				// re-sent on Create/Resume during the reattach window.
+				h.healthy.Store(false)
 				break
 			}
 		}
@@ -124,6 +140,8 @@ func (h *SessionHandshake) keepaliveLoop(initial proto.SessionService_KeepaliveC
 			// recover() only returns an error when streamCtx is cancelled.
 			return
 		}
+		// Recovery succeeded; the new keepalive stream is open.
+		h.healthy.Store(true)
 		stream = newStream
 	}
 }

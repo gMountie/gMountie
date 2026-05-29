@@ -262,6 +262,113 @@ func (s *SessionHandshakeTestSuite) TestEstablishKeepaliveFailureClearsSessionID
 		"SessionID must be cleared so a retry of Establish runs the full handshake")
 }
 
+// newGatedErrorThenParkKeepaliveStream returns a stream whose first Recv errors
+// (after release is closed) to drive recovery, and whose second Recv parks on
+// the stream context (returned by bind). This lets a single mock serve both the
+// break and the post-recovery drain phases in a recovery test.
+//
+// Usage: the first Recv call blocks until release is closed, then returns err.
+// Subsequent Recv calls block until the bound context is cancelled (via bind).
+func newGatedErrorThenParkKeepaliveStream(t *testing.T, release <-chan struct{}, err error) (stream *mockProto.MockSessionService_KeepaliveClient, bind func(context.Context)) {
+	stream = mockProto.NewMockSessionService_KeepaliveClient(t)
+	ctxCh := make(chan context.Context, 1)
+	bind = func(ctx context.Context) { ctxCh <- ctx }
+	callCount := 0
+	stream.EXPECT().Recv().RunAndReturn(func() (*proto.KeepalivePing, error) {
+		callCount++
+		if callCount == 1 {
+			<-release
+			return nil, err
+		}
+		ctx := <-ctxCh
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}).Maybe()
+	return stream, bind
+}
+
+// TestHealthyTransitions verifies the IsHealthy gate:
+//   - After Establish: true (keepalive stream open).
+//   - After stream breaks, before recovery reopens: false.
+//   - After successful reattach: true again.
+//   - After Close/teardown: false.
+//
+// Determinism is guaranteed by gating Resume behind a channel, keeping the loop
+// parked inside recover() with healthy already false, so the test can assert
+// IsHealthy==false without any sleep-as-sync.
+func (s *SessionHandshakeTestSuite) TestHealthyTransitions() {
+	s.sessionClient.EXPECT().Create(mock.Anything, mock.Anything).
+		Return(&proto.SessionCreateReply{SessionId: "hlt-1"}, nil).Once()
+
+	// releaseStream1 breaks the first keepalive stream.
+	releaseStream1 := make(chan struct{})
+	// releaseResume gates Resume, keeping the loop parked in recover() while
+	// healthy is false so the test can assert before the reopen completes.
+	releaseResume := make(chan struct{})
+	// reopened fires after the second Keepalive stream is successfully opened.
+	reopened := make(chan struct{})
+
+	// First stream: errors once releaseStream1 is closed.
+	stream1 := newGatedErrorKeepaliveStream(s.T(), releaseStream1, status.Error(codes.Unavailable, "transient"))
+	// Second stream: parks on streamCtx until Close.
+	stream2, bind2 := newParkingKeepaliveStream(s.T())
+
+	// Resume blocks until releaseResume is closed, then succeeds.
+	s.sessionClient.EXPECT().Resume(mock.Anything, mock.MatchedBy(func(req *proto.SessionResumeRequest) bool {
+		return req.SessionId == "hlt-1"
+	})).RunAndReturn(func(_ context.Context, _ *proto.SessionResumeRequest, _ ...grpc.CallOption) (*proto.SessionResumeReply, error) {
+		<-releaseResume
+		return &proto.SessionResumeReply{Resumed: true}, nil
+	}).Once()
+
+	// First Keepalive → stream1; second (after recovery) → stream2.
+	s.sessionClient.EXPECT().Keepalive(mock.Anything, mock.Anything).
+		Return(stream1, nil).Once()
+	s.sessionClient.EXPECT().Keepalive(mock.Anything, mock.Anything).
+		RunAndReturn(func(ctx context.Context, _ *proto.KeepaliveRequest, _ ...grpc.CallOption) (proto.SessionService_KeepaliveClient, error) {
+			bind2(ctx)
+			close(reopened)
+			return stream2, nil
+		}).Once()
+
+	handshake := NewSessionHandshake(s.sessionClient)
+	s.Require().NoError(handshake.Establish(context.Background()))
+
+	// 1. After Establish: healthy == true.
+	s.Assert().True(handshake.IsHealthy(), "IsHealthy must be true after Establish")
+
+	// Break stream1 → keepaliveLoop sets healthy=false, then enters recover().
+	// recover() calls Resume which is gated by releaseResume.
+	close(releaseStream1)
+
+	// Wait until the loop reaches Resume (i.e. is parked inside recover()).
+	// healthy.Store(false) happens before recover() is called, so once Resume
+	// is blocked we can safely observe healthy==false.
+	// We gate on Resume being called: since Resume blocks on releaseResume, by
+	// the time Resume is entered healthy is already false. Poll with Eventually
+	// until Resume is entered (signalled by healthy being false).
+	s.Require().Eventually(func() bool {
+		return !handshake.IsHealthy()
+	}, time.Second, time.Millisecond,
+		"IsHealthy must be false once the stream breaks (before recovery completes)")
+
+	// 2. Release Resume → recovery completes, second Keepalive opens.
+	close(releaseResume)
+	select {
+	case <-reopened:
+	case <-time.After(2 * time.Second):
+		s.FailNow("recovery did not reopen the Keepalive stream")
+	}
+
+	// 3. After successful reattach: healthy == true.
+	s.Assert().True(handshake.IsHealthy(), "IsHealthy must be true after recovery")
+
+	// 4. After Close: healthy == false.
+	s.Require().NoError(handshake.Close())
+	s.Require().Eventually(func() bool { return !handshake.IsRunning() }, time.Second, 5*time.Millisecond)
+	s.Assert().False(handshake.IsHealthy(), "IsHealthy must be false after Close")
+}
+
 func TestSessionHandshakeTestSuite(t *testing.T) {
 	suite.Run(t, new(SessionHandshakeTestSuite))
 }
