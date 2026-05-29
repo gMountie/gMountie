@@ -17,8 +17,8 @@ import (
 
 // countingAuthService wraps BasicAuthService and counts Authorize invocations.
 type countingAuthService struct {
-	inner  service.AuthService
-	calls  int
+	inner service.AuthService
+	calls int
 }
 
 func (c *countingAuthService) Authorize(ctx context.Context, method string) (bool, *service.UserDetails, error) {
@@ -30,8 +30,8 @@ func (c *countingAuthService) Authorize(ctx context.Context, method string) (boo
 // directly, covering fail-closed, session-skip, and argon2-count properties.
 type AuthInterceptorTestSuite struct {
 	suite.Suite
-	sessions   service.SessionManager
-	authSvc    *countingAuthService
+	sessions    service.SessionManager
+	authSvc     *countingAuthService
 	interceptor *AuthInterceptor
 }
 
@@ -81,13 +81,6 @@ func ctxWithBasicAuth(username string) context.Context {
 	return metadata.NewIncomingContext(context.Background(), metadata.Pairs(
 		common.MetadataAuthBasicUsername, username,
 		common.MetadataAuthBasicPassword, "any",
-	))
-}
-
-// ctxWithSessionID injects a session_id metadata into the context.
-func ctxWithSessionID(id string) context.Context {
-	return metadata.NewIncomingContext(context.Background(), metadata.Pairs(
-		common.MetadataSessionID, id,
 	))
 }
 
@@ -249,16 +242,16 @@ func (s *AuthInterceptorTestSuite) TestUnaryInterceptor_UsesReturnedCtx() {
 	ctx := ctxWithSessionIDAndBadCreds(id)
 	info := &grpc.UnaryServerInfo{FullMethod: "/gmountie.RpcFile/Read"}
 
-	var capturedCtx context.Context
-	_, err = interceptor(ctx, nil, info, func(handlerCtx context.Context, req interface{}) (interface{}, error) {
-		capturedCtx = handlerCtx
-		return nil, nil
+	var gotPrincipal string
+	var gotOK bool
+	_, err = interceptor(ctx, nil, info, func(handlerCtx context.Context, _ interface{}) (interface{}, error) {
+		gotPrincipal, gotOK = principal.FromContext(handlerCtx)
+		return struct{}{}, nil
 	})
 	s.Require().NoError(err)
 
-	p, ok := principal.FromContext(capturedCtx)
-	s.Require().True(ok)
-	s.Assert().Equal("alice", p)
+	s.Require().True(gotOK)
+	s.Assert().Equal("alice", gotPrincipal)
 }
 
 // TestStreamInterceptor_Authorizes verifies the stream interceptor authorizes
