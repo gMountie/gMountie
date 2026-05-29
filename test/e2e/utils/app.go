@@ -9,6 +9,7 @@ import (
 	grpcClient "gmountie/pkg/client/grpc"
 	clienttls "gmountie/pkg/client/tls"
 	"gmountie/pkg/common/passhash"
+	"gmountie/pkg/proto"
 	"gmountie/pkg/server"
 	"gmountie/pkg/server/config"
 	grpcServer "gmountie/pkg/server/grpc"
@@ -46,7 +47,9 @@ type AppTestingContext struct {
 	userClientOptions []grpcClient.ClientOption
 	// clientOptions is the client options (user options + transport dialer).
 	clientOptions []grpcClient.ClientOption
-	// serverOptions is the server options.
+	// serverOptions holds server options WITHOUT a listener. buildServer
+	// appends the listener separately so StartServer can re-serve on a
+	// fresh listener without accumulating stale WithListener options.
 	serverOptions []grpcServer.ServerOption
 	// useTCP toggles between the default in-memory bufconn transport
 	// and a real loopback TCP listener. TCP is enabled via
@@ -59,6 +62,9 @@ type AppTestingContext struct {
 	tcpListener net.Listener
 	// server is the gRPC server.
 	server *grpcServer.Server
+	// serveErrCh receives the error (or nil) returned by server.Serve()
+	// so StopServer can join the serve goroutine before rebuilding.
+	serveErrCh chan error
 	// client is the gRPC client.
 	client grpcClient.Client
 	// mtlsCreds, when non-nil, overrides the default ephemeral server cert
@@ -523,12 +529,14 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 		}))
 	}
 
-	appCtx.server = grpcServer.NewServer(
-		&appCtx.cfg,
-		appCtx.serverCtx.AuthService,
-		appCtx.serverCtx.GetGrpcServices(),
-		appCtx.serverOptions...,
-	)
+	// Determine which listener to pass to buildServer.
+	var initialLis net.Listener
+	if appCtx.useTCP {
+		initialLis = appCtx.tcpListener
+	} else {
+		initialLis = appCtx.listener
+	}
+	appCtx.server = appCtx.buildServer(initialLis)
 	c, err := grpcClient.NewClient(dialTarget, appCtx.clientOptions...)
 	if err != nil {
 		return nil, err
@@ -549,6 +557,10 @@ func (c *AppTestingContext) GetServerApp() *server.AppContext {
 // network sockets; WithTCPTransport switches to a real 127.0.0.1
 // listener so loopback shaping (tc netem) takes effect on the gRPC
 // path.
+//
+// The listener is NOT appended to c.serverOptions here — buildServer
+// adds it fresh each time so StartServer can re-serve on a new
+// listener without accumulating stale WithListener options.
 func (c *AppTestingContext) setupTransport() (string, error) {
 	if c.useTCP {
 		lis, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
@@ -556,19 +568,70 @@ func (c *AppTestingContext) setupTransport() (string, error) {
 			return "", errors.Wrap(err, "test harness TCP listener")
 		}
 		c.tcpListener = lis
-		c.serverOptions = append(c.serverOptions, grpcServer.WithListener(lis))
 		// passthrough:///TARGET (three slashes; passthrough resolver
 		// treats whatever follows as the literal dial address).
 		return "passthrough:///" + lis.Addr().String(), nil
 	}
 	c.listener = bufconn.Listen(1024 * 1024)
-	c.serverOptions = append(c.serverOptions, grpcServer.WithListener(c.listener))
 	c.clientOptions = append(c.clientOptions, grpcClient.WithDialOptions([]grpc.DialOption{
 		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
 			return c.listener.Dial()
 		}),
 	}))
 	return "passthrough://bufnet", nil
+}
+
+// buildServer constructs a fresh *grpcServer.Server over lis, combining
+// c.serverOptions (interceptors, TLS creds, etc.) with a new WithListener.
+// Each call returns an independent server; the caller is responsible for
+// launching Serve and sending its error to c.serveErrCh.
+func (c *AppTestingContext) buildServer(lis net.Listener) *grpcServer.Server {
+	// Copy c.serverOptions so we never mutate the stored slice, then append
+	// the concrete listener for this server instance.
+	opts := append([]grpcServer.ServerOption(nil), c.serverOptions...)
+	opts = append(opts, grpcServer.WithListener(lis))
+	return grpcServer.NewServer(
+		&c.cfg,
+		c.serverCtx.AuthService,
+		c.serverCtx.GetGrpcServices(),
+		opts...,
+	)
+}
+
+// serveBackground launches c.server.Serve in a goroutine that sends the
+// result to c.serveErrCh. GracefulStop makes grpc return nil, so a nil
+// result is expected on an intentional stop — the caller reads from
+// c.serveErrCh to join the goroutine.
+func (c *AppTestingContext) serveBackground() {
+	c.serveErrCh = make(chan error, 1)
+	go func() {
+		c.serveErrCh <- c.server.Serve()
+	}()
+}
+
+// waitHealthy polls c.client.Version().Get until the server replies or
+// deadline elapses. No session or volume is required for the Version RPC;
+// it probes the gRPC transport being up and accepting TLS + auth without
+// any per-session state. The poll cadence is 25 ms.
+func (c *AppTestingContext) waitHealthy(deadline time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
+	for {
+		_, err := c.client.Version().Get(ctx, &proto.VersionRequest{})
+		if err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return errors.Wrap(ctx.Err(), "server did not become healthy within deadline")
+		case serveErr := <-c.serveErrCh:
+			// Serve returned early (bind failure, etc.) — re-queue the error
+			// so StopServer's drain still works, then propagate.
+			c.serveErrCh <- serveErr
+			return errors.Wrap(serveErr, "server Serve() returned before becoming healthy")
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
 }
 
 // GetClientApp returns the client app context.
@@ -737,20 +800,58 @@ func (c *AppTestingContext) UnmountVolume(v *TestVolume) error {
 	return c.clientCtx.SingleVolumeMounter.Unmount(v.Name)
 }
 
-// Start starts the gRPC server.
+// Start starts the gRPC server and waits until it is healthy before
+// completing the client session handshake. The readiness gate polls
+// c.client.Version().Get with a 5-second deadline so there is no
+// fixed sleep and startup is deterministic.
 func (c *AppTestingContext) Start() error {
-	go func() {
-		if err := c.server.Serve(); err != nil {
-			panic(err)
-		}
-	}()
-	// Wait for the server to start
-	time.Sleep(1 * time.Second)
+	c.serveBackground()
+	if err := c.waitHealthy(5 * time.Second); err != nil {
+		return errors.Wrap(err, "server readiness")
+	}
 	c.client.Connect()
 	if c.client.SessionID() == "" {
 		return errors.New("client session handshake failed; test harness cannot proceed")
 	}
 	return nil
+}
+
+// StopServer gracefully stops the running gRPC server and waits for
+// the Serve goroutine to return. The client's keepalive loop will
+// observe the connection drop and begin its recovery backoff.
+func (c *AppTestingContext) StopServer() {
+	c.server.Stop(true)
+	// Drain the channel so serveBackground can be called again.
+	<-c.serveErrCh
+}
+
+// StartServer rebuilds and re-serves the gRPC server over the same TCP
+// address as the previous listener. Only supported under WithTCPTransport;
+// returns an error when called on a bufconn context (bufconn listeners
+// cannot rebind). The client is left as-is: its keepalive recovery loop
+// will reattach once the server accepts again.
+func (c *AppTestingContext) StartServer() error {
+	if c.tcpListener == nil {
+		return errors.New("StartServer is only supported with WithTCPTransport (bufconn cannot rebind)")
+	}
+	addr := c.tcpListener.Addr().String()
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		return errors.Wrap(err, "StartServer: rebind TCP listener")
+	}
+	c.tcpListener = lis
+	c.server = c.buildServer(lis)
+	c.serveBackground()
+	if err := c.waitHealthy(5 * time.Second); err != nil {
+		return errors.Wrap(err, "StartServer: server did not become healthy")
+	}
+	return nil
+}
+
+// RestartServer is a convenience wrapper for StopServer followed by StartServer.
+func (c *AppTestingContext) RestartServer() error {
+	c.StopServer()
+	return c.StartServer()
 }
 
 // Close closes the gRPC server.
@@ -762,5 +863,9 @@ func (c *AppTestingContext) Close() error {
 	}
 	// Close the server
 	c.server.Stop(true)
+	// Drain the serve goroutine if Start was called.
+	if c.serveErrCh != nil {
+		<-c.serveErrCh
+	}
 	return nil
 }
