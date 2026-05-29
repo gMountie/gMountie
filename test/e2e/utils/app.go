@@ -825,6 +825,20 @@ func (c *AppTestingContext) StopServer() {
 	<-c.serveErrCh
 }
 
+// KillServer immediately stops the running gRPC server (non-graceful) and
+// waits for the Serve goroutine to return. Unlike StopServer (which uses
+// GracefulStop and waits for in-flight RPCs to drain), KillServer drops all
+// active connections immediately — semantically equivalent to killing the
+// server process mid-transfer. This is the correct primitive for kill-mid-read
+// and kill-mid-write failure tests where GracefulStop would block indefinitely
+// on long-lived Subscribe/session streams. T3 (ServerKilledSuite) uses this
+// instead of StopServer.
+func (c *AppTestingContext) KillServer() {
+	c.server.Stop(false)
+	// Drain the channel so serveBackground can be called again.
+	<-c.serveErrCh
+}
+
 // StartServer rebuilds and re-serves the gRPC server over the same TCP
 // address as the previous listener. Only supported under WithTCPTransport;
 // returns an error when called on a bufconn context (bufconn listeners
