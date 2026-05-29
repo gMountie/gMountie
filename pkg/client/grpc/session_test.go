@@ -262,31 +262,6 @@ func (s *SessionHandshakeTestSuite) TestEstablishKeepaliveFailureClearsSessionID
 		"SessionID must be cleared so a retry of Establish runs the full handshake")
 }
 
-// newGatedErrorThenParkKeepaliveStream returns a stream whose first Recv errors
-// (after release is closed) to drive recovery, and whose second Recv parks on
-// the stream context (returned by bind). This lets a single mock serve both the
-// break and the post-recovery drain phases in a recovery test.
-//
-// Usage: the first Recv call blocks until release is closed, then returns err.
-// Subsequent Recv calls block until the bound context is cancelled (via bind).
-func newGatedErrorThenParkKeepaliveStream(t *testing.T, release <-chan struct{}, err error) (stream *mockProto.MockSessionService_KeepaliveClient, bind func(context.Context)) {
-	stream = mockProto.NewMockSessionService_KeepaliveClient(t)
-	ctxCh := make(chan context.Context, 1)
-	bind = func(ctx context.Context) { ctxCh <- ctx }
-	callCount := 0
-	stream.EXPECT().Recv().RunAndReturn(func() (*proto.KeepalivePing, error) {
-		callCount++
-		if callCount == 1 {
-			<-release
-			return nil, err
-		}
-		ctx := <-ctxCh
-		<-ctx.Done()
-		return nil, ctx.Err()
-	}).Maybe()
-	return stream, bind
-}
-
 // TestHealthyTransitions verifies the IsHealthy gate:
 //   - After Establish: true (keepalive stream open).
 //   - After stream breaks, before recovery reopens: false.
@@ -360,8 +335,12 @@ func (s *SessionHandshakeTestSuite) TestHealthyTransitions() {
 		s.FailNow("recovery did not reopen the Keepalive stream")
 	}
 
-	// 3. After successful reattach: healthy == true.
-	s.Assert().True(handshake.IsHealthy(), "IsHealthy must be true after recovery")
+	// 3. After successful reattach: healthy == true. `reopened` fires inside the
+	// Keepalive mock (during recover()), but healthy.Store(true) runs just after
+	// recover() returns to keepaliveLoop — so poll rather than asserting at the
+	// instant reopened closes (that observation would race the loop goroutine).
+	s.Require().Eventually(func() bool { return handshake.IsHealthy() },
+		time.Second, time.Millisecond, "IsHealthy must be true after recovery reopens the stream")
 
 	// 4. After Close: healthy == false.
 	s.Require().NoError(handshake.Close())

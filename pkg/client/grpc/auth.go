@@ -40,9 +40,11 @@ func NewBasicAuthCredentials(username, password string) *BasicAuthCredentials {
 // on the server side without requiring argon2 re-verification.
 func (b *BasicAuthCredentials) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
 	if b.sessionLive != nil && b.sessionLive() {
-		// Session is live; omit basic-auth to avoid the ~11% small-read
-		// throughput regression from carrying redundant per-RPC metadata.
-		return nil, nil
+		// Session is live; omit basic-auth — the session_id authorizes the
+		// call, so carrying redundant per-RPC credential metadata is wasted
+		// bytes/allocs. Empty map (not nil) keeps the nilnil linter happy and
+		// means "no metadata to add".
+		return map[string]string{}, nil
 	}
 	return map[string]string{
 		common.MetadataAuthBasicUsername: b.Username,
