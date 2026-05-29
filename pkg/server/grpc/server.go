@@ -30,10 +30,10 @@ type ServiceRegistrar interface {
 
 // Server is a struct that contains a gRPC server.
 type Server struct {
-	config                  *config.Config
-	services                []ServiceRegistrar
-	server                  *grpc.Server
-	authService             service.AuthService
+	config      *config.Config
+	services    []ServiceRegistrar
+	server      *grpc.Server
+	authService service.AuthService
 	// sessionManager is the SAME instance used by the SessionController so
 	// that principals written at Create are visible to the AuthInterceptor.
 	sessionManager          service.SessionManager
