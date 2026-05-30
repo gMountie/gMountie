@@ -22,7 +22,7 @@ Accessing files on a server across the internet usually means a VPN plus NFS/SMB
 - **One small binary.** The same `gMountie` is both the server and the client.
 
 > [!NOTE]
-> gMountie is **alpha**, with a single-user-ish trust model — TLS and security hardening are on the [roadmap](docs/roadmap.md). The **server is Linux-only**; the **client mounts on Linux and macOS**. It's a great fit for mounting your own servers; it is not yet meant to face hostile networks.
+> gMountie is **alpha**. The **server is Linux-only**; the **client mounts on Linux and macOS**. Transport is TLS (auto-generated cert on first run) with basic-auth and per-user volume ACLs — it's a great fit for mounting your own servers over the public internet. OIDC/JWT auth remains on the [roadmap](docs/roadmap.md).
 
 ## Quick Start 🚀
 
@@ -40,7 +40,14 @@ Prefer not to build? Grab a `gMountie_linux_*.tar.gz` (or `gMountie_darwin_*.tar
 
 ### 2. Start a server
 
-Point a volume at a folder you want to share (`config.yaml`):
+**Zero-config first run:** just run `gmountie serve` with no arguments. On first start it:
+- auto-generates `~/.config/gmountie/server.yaml` binding `0.0.0.0:9449`
+- creates a `shared` volume at `$XDG_DATA_HOME/gmountie/shared`
+- generates a **random admin password**, prints it once to the console, and stores an argon2id hash in the config
+
+After first run you can inspect or edit the config at `~/.config/gmountie/server.yaml`. To rotate the password run `gmountie genpass`, copy the printed hash, and paste it into `auth.users[0].password_hash`.
+
+Or write your own config from the start (`server.yaml`):
 
 ```yaml
 server:
@@ -50,32 +57,37 @@ auth:
   type: basic
   users:
     - username: admin
-      password: change-me
+      password_hash: $argon2id$v=19$m=19456,t=2,p=1$...  # output of: gmountie genpass
 volumes:
   - name: shared
     path: /srv/shared        # the folder to expose
 ```
 
 ```bash
-gmountie serve -c config.yaml
+gmountie serve -c server.yaml
 ```
+
+> **Note:** `password_hash` must be a `$argon2id$` PHC string — the server rejects plaintext at startup. Generate one with `gmountie genpass`.
 
 ### 3. Mount it from a client
 
-No config file needed — point the client at the server and pick a volume:
+Use the shorthand form — the password is prompted interactively (no echo):
 
 ```bash
 mkdir -p ~/mnt/shared
-gmountie mount ~/mnt/shared \
-  --server your-server.example:9449 \
-  --auth-type basic --username admin --password change-me \
-  --volume shared
+gmountie mount admin@your-server.example:9449/shared ~/mnt/shared
+# Password: (enter the password printed on first server run)
 
-# ...and use it like any other folder:
+# List what the server exposes before mounting:
+gmountie ls admin@your-server.example:9449
+
+# ...and use the mount like any other folder:
 ls ~/mnt/shared
 ```
 
-Reads and writes now flow to the server, are cached locally, and the mount rides out network blips. For a persistent setup (a `client.yaml` with the same fields, plus multi-volume mounts), see the full walkthrough at **[docs.gmountie.dev](https://docs.gmountie.dev)**.
+The password comes from `--password`, then the config file, then `$GMOUNTIE_AUTH_PASSWORD`, then an interactive no-echo prompt. The old flag form still works: `gmountie mount ~/mnt/shared -s host:9449 -n shared -u admin`.
+
+Reads and writes now flow to the server, are cached locally, and the mount rides out network blips. For background mounts, TOFU TLS pinning, and a full `client.yaml` reference, see **[docs.gmountie.dev](https://docs.gmountie.dev)**.
 
 ## Features ✨
 
@@ -89,8 +101,9 @@ Reads and writes now flow to the server, are cached locally, and the mount rides
 - **Push-based invalidation** (a server `Subscribe` stream) keeps clients coherent — close-to-open consistency across multiple clients
 
 **Simple & observable**
-- One binary, two commands: `gmountie serve` and `gmountie mount`
-- Prometheus metrics, health/readiness endpoints, structured logs, and basic authentication
+- One binary: `gmountie serve`, `gmountie mount`, `gmountie ls`, `gmountie config show`, and more
+- TLS with auto-generated cert + TOFU pinning; argon2id-hashed credentials; per-user volume ACLs
+- Prometheus metrics, health/readiness endpoints, and structured logs
 
 ## How It Works 🏗️
 

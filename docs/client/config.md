@@ -20,13 +20,14 @@ Basic example:
 
 ```yaml
 server:
-  address: 127.0.0.1
+  address: your-server.example
   port: 9449
-  tls: false
+  tls:
+    verify: tofu     # pin server cert fingerprint on first connect (recommended for self-signed certs)
 auth:
   type: basic
   username: admin
-  password: admin
+  password: ""       # leave empty to be prompted; or set $GMOUNTIE_AUTH_PASSWORD
 mount:
   type: single
   volume: shared
@@ -37,19 +38,41 @@ mount:
 
 The `server` section configures the connection to the gMountie server:
 
-| Option  | Type    | Default   | Description                   |
-|---------|---------|-----------|-------------------------------|
-| address | string  | 127.0.0.1 | Server IP address or hostname |
-| port    | integer | 9449      | Server port number            |
-| tls     | boolean | false     | Enable/disable TLS encryption |
+| Option           | Type    | Default   | Description                                              |
+|------------------|---------|-----------|----------------------------------------------------------|
+| address          | string  | 127.0.0.1 | Server IP address or hostname                            |
+| port             | integer | 9449      | Server port number                                       |
+| tls.verify       | string  | `"verify"` | Verification mode: `verify` \| `tofu` \| `insecure`    |
+| tls.ca_file      | string  | _(system roots)_ | Path to a CA cert to validate the server against  |
+| tls.expected_fingerprint | string | _(none)_ | Static SHA-256 pin (`SHA256:…`); verified on top of chain check in `verify` mode, or replaces TOFU pin in `tofu` mode |
+| tls.server_name  | string  | _(from endpoint)_ | Override the TLS server name (SNI)               |
+| tls.cert_file    | string  | _(none)_  | mTLS client cert                                         |
+| tls.key_file     | string  | _(none)_  | mTLS client key                                          |
 
-Example:
+**Verification modes:**
+- `verify` (default) — full chain validation against `tls.ca_file` or system roots; add `tls.expected_fingerprint` to also pin the leaf cert.
+- `tofu` — trust on first use; pins the server's leaf-cert SHA-256 to `$XDG_STATE_HOME/gmountie/known_hosts` on first connect, and refuses on any later mismatch.
+- `insecure` — skip verification; for local development only.
+
+Example connecting to a server with an auto-generated self-signed cert:
 
 ```yaml
 server:
-  address: 192.168.1.100  # Remote server address
-  port: 8080              # Custom port
-  tls: true               # Enable TLS
+  address: your-server.example
+  port: 9449
+  tls:
+    verify: tofu
+```
+
+Example with a static fingerprint pin (get the value by running `gmountie fingerprint` on the server):
+
+```yaml
+server:
+  address: your-server.example
+  port: 9449
+  tls:
+    verify: tofu
+    expected_fingerprint: SHA256:AAAA...  # output of: gmountie fingerprint
 ```
 
 ## RPC Options
@@ -247,23 +270,21 @@ cache:
 
 The `auth` section configures client authentication:
 
-| Option   | Type   | Required | Description                   |
-|----------|--------|----------|-------------------------------|
-| type     | string | yes      | Authentication type ("basic") |
-| username | string | yes      | Username for basic auth       |
-| password | string | yes      | Password for basic auth       |
+| Option   | Type   | Required | Description                                        |
+|----------|--------|----------|----------------------------------------------------|
+| type     | string | yes      | Authentication type ("basic")                      |
+| username | string | yes      | Username for basic auth                            |
+| password | string | no       | Password for basic auth; if empty, falls back to `$GMOUNTIE_AUTH_PASSWORD` then an interactive prompt |
 
-Authentication is required; every client must supply credentials.
+Authentication is required; every client must supply at least `username` and `type`. The password can be omitted from the config file and supplied at runtime.
 
 ### Basic Authentication
-
-Enables username/password authentication:
 
 ```yaml
 auth:
   type: basic
   username: admin
-  password: admin
+  password: ""   # omit or leave empty to use $GMOUNTIE_AUTH_PASSWORD or an interactive prompt
 ```
 
 ## Mount Configuration
@@ -322,30 +343,32 @@ mount:
 
 ```yaml
 server:
-  address: 192.168.1.100
+  address: your-server.example
   port: 9449
-  tls: false
+  tls:
+    verify: tofu
+    expected_fingerprint: SHA256:AAAA...  # output of: gmountie fingerprint
 auth:
   type: basic
   username: admin
-  password: admin
+  # password: omitted — resolved from $GMOUNTIE_AUTH_PASSWORD or interactive prompt
 mount:
   type: single
-  volume: documents
-  path: /home/user/documents
+  volume: shared
+  path: /home/user/shared
 ```
 
 ### VFS Mount Example
 
 ```yaml
 server:
-  address: 192.168.1.100
+  address: your-server.example
   port: 9449
-  tls: false
+  tls:
+    verify: tofu
 auth:
   type: basic
   username: admin
-  password: admin
 mount:
   type: vfs
   path: /mnt/gmountie

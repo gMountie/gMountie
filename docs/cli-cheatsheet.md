@@ -11,11 +11,15 @@ Every command, every flag, one page. The binary is `gmountie` — one binary, bo
 
 ## Commands
 
-| Command            | What it does                                                            |
-| ------------------ | ----------------------------------------------------------------------- |
-| `gmountie serve`   | Start the server. Exposes the volumes in your config over a gRPC stream. |
-| `gmountie mount`   | Mount a server's volume locally via FUSE.                                |
-| `gmountie version` | Print the build version and exit.                                        |
+| Command               | What it does                                                              |
+| --------------------- | ------------------------------------------------------------------------- |
+| `gmountie serve`      | Start the server. Exposes the volumes in your config over a gRPC stream.  |
+| `gmountie mount`      | Mount a server's volume locally via FUSE.                                 |
+| `gmountie ls`         | List the volumes a server exposes (same auth as `mount`).                 |
+| `gmountie config show`| Print the effective config (server or client) with passwords redacted.    |
+| `gmountie genpass`    | Read a password (no-echo) and print the argon2id PHC hash to paste into the server config. |
+| `gmountie fingerprint`| Print the server's TLS cert fingerprint for TOFU pinning.                |
+| `gmountie version`    | Print the build version and exit.                                         |
 
 ## Global flags
 
@@ -39,7 +43,11 @@ The server has no command-specific flags beyond the globals — everything else 
 ## `gmountie mount`
 
 ```bash
-gmountie mount [<mountpoint>] [flags]
+# Shorthand (recommended):
+gmountie mount [user@]host[:port]/volume mountpoint
+
+# Flag form:
+gmountie mount mountpoint -s host:port -n volume -u username [flags]
 ```
 
 CLI flags override the corresponding fields in the client config. With `-c`, anything not set on the CLI falls back to the config.
@@ -50,30 +58,68 @@ CLI flags override the corresponding fields in the client config. With `-c`, any
 | `--volume`          | `-n`  | _(required)_     | Volume name to mount.                                                          |
 | `--auth-type`       | `-t`  | `basic`          | Authentication scheme. Only `basic` is supported today.                       |
 | `--username`        | `-u`  | _(required)_     | Username for basic auth.                                                       |
-| `--password`        | `-p`  | _(required)_     | Password for basic auth.                                                       |
+| `--password`        | `-p`  | _(optional)_     | Password for basic auth (visible in shell history; prefer the prompt or `$GMOUNTIE_AUTH_PASSWORD`). |
+| `--daemon`          |       | `false`          | Detach after mount is ready. Logs go to `$XDG_STATE_HOME/gmountie/mount-daemon.log`. |
 | `--raw-ids`         |       | `false`          | Expose the server's raw uid/gid on file metadata, instead of mapping to the local user. Useful for backups and admin tooling. |
+
+**Password resolution order** (first non-empty wins): `--password` flag → config file (`auth.password`) → `$GMOUNTIE_AUTH_PASSWORD` → interactive no-echo prompt.
 
 Mountpoint can also come from `mount.path` in the client config; either works.
 
 See **[Client configuration](./client/config.md)** for every YAML field including RPC tuning, FUSE knobs, and the optional client-side cache.
 
+## `gmountie ls`
+
+```bash
+gmountie ls [user@]host[:port]
+gmountie ls -c client.yaml
+```
+
+Lists volumes the server exposes. Uses the same auth resolution as `mount`.
+
+## `gmountie config show`
+
+```bash
+gmountie config show [--for server|client]
+```
+
+Prints the effective config file with passwords redacted.
+
 ## Common recipes
 
 ```bash
-# Mount with everything on the CLI
-gmountie mount /mnt/shared \
-  --server example.com:9449 \
-  --auth-type basic --username admin --password '<password>' \
-  --volume shared
+# Zero-config first run (random password printed once)
+gmountie serve
 
-# Mount from a config file (so the password isn't in shell history)
+# List what a server exposes
+gmountie ls admin@example.com:9449
+
+# Mount shorthand — prompts for password interactively
+gmountie mount admin@example.com:9449/shared /mnt/shared
+
+# Mount in the background (detach after mount is ready)
+gmountie mount admin@example.com:9449/shared /mnt/shared --daemon
+
+# Mount from a config file (password from config or prompt — not in shell history)
 gmountie mount -c ~/.config/gmountie/client.yaml
+
+# Mount with password from environment (for scripts)
+GMOUNTIE_AUTH_PASSWORD=secret gmountie mount admin@example.com:9449/shared /mnt/shared
 
 # Verbose logging for troubleshooting
 gmountie mount -v -c client.yaml
 
 # Server with a custom config
 gmountie serve -c /etc/gmountie/server.yaml
+
+# Generate a new password hash to paste into server config
+gmountie genpass
+
+# Print the server cert fingerprint for TOFU pinning on the client
+gmountie fingerprint
+
+# Show effective config (passwords redacted)
+gmountie config show --for server
 
 # Unmount
 umount /mnt/shared          # from another shell
@@ -82,11 +128,12 @@ umount /mnt/shared          # from another shell
 
 ## Environment variables
 
-| Variable               | Effect                                                                                  |
-| ---------------------- | --------------------------------------------------------------------------------------- |
-| `GMOUNTIE_PPROF_ADDR`  | If set (e.g. `127.0.0.1:6060`), the client serves `/debug/pprof/` on that address.       |
+| Variable                  | Effect                                                                                  |
+| ------------------------- | --------------------------------------------------------------------------------------- |
+| `GMOUNTIE_AUTH_PASSWORD`  | Password for basic auth — checked after `--password` and config file, before prompt.   |
+| `GMOUNTIE_PPROF_ADDR`     | If set (e.g. `127.0.0.1:6060`), the client serves `/debug/pprof/` on that address.    |
 
-Most settings are configured via YAML, not the environment. The pprof toggle is the exception — it's a diagnostic hook, not a runtime feature.
+Most settings are configured via YAML, not the environment. `GMOUNTIE_AUTH_PASSWORD` is useful in scripts where an interactive prompt is not available.
 
 ## See also
 
