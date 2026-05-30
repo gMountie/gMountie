@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -40,17 +39,6 @@ func NewGrpcServer(fsService service.VolumeService, sessions service.SessionMana
 	}
 	srv.compound = service.NewCompoundDispatcher(srv, compoundMaxParallel)
 	return srv
-}
-
-// versionAfter returns the freshness token for path after a successful
-// mutation, suitable for Emit. Returns 0 if Stat fails — the event still
-// fires; the client falls back to GetAttrIfChanged.
-func (r *RpcServerImpl) versionAfter(ctx context.Context, fs pathfs.FileSystem, path string, caller *proto.Caller) uint64 {
-	attr, st := fs.GetAttr(path, createContext(ctx, caller))
-	if !st.Ok() || attr == nil {
-		return 0
-	}
-	return serverio.VersionFromAttr(attr)
 }
 
 // Register registers the gRPC server
@@ -88,7 +76,7 @@ func (r *RpcServerImpl) Mkdir(ctx context.Context, request *proto.MkdirRequest) 
 	return withIdempotency(sess, request.RequestId, func() (*proto.MkdirReply, error) {
 		s := fs.Mkdir(request.Path, request.Mode, createContext(ctx, request.Caller))
 		if s == fuse.OK {
-			r.bus.Emit(request.Volume, request.Path, r.versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
+			r.bus.Emit(request.Volume, request.Path, versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
 		}
 		return &proto.MkdirReply{Status: int32(s)}, nil
 	})
@@ -125,7 +113,7 @@ func (r *RpcServerImpl) Rename(ctx context.Context, request *proto.RenameRequest
 		s := fs.Rename(request.OldName, request.NewName, createContext(ctx, request.Caller))
 		if s == fuse.OK {
 			r.bus.EmitRename(request.Volume, request.OldName, request.NewName,
-				r.versionAfter(ctx, fs, request.NewName, request.Caller))
+				versionAfter(ctx, fs, request.NewName, request.Caller))
 		}
 		return &proto.RenameReply{Status: int32(s)}, nil
 	})
@@ -156,7 +144,7 @@ func (r *RpcServerImpl) Symlink(ctx context.Context, request *proto.SymlinkReque
 		s := fs.Symlink(request.Target, request.LinkPath, createContext(ctx, request.Caller))
 		if s == fuse.OK {
 			r.bus.Emit(request.Volume, request.LinkPath,
-				r.versionAfter(ctx, fs, request.LinkPath, request.Caller), serverio.KindMutated)
+				versionAfter(ctx, fs, request.LinkPath, request.Caller), serverio.KindMutated)
 		}
 		return &proto.SymlinkReply{Status: int32(s)}, nil
 	})
@@ -248,7 +236,7 @@ func (r *RpcServerImpl) Truncate(ctx context.Context, request *proto.TruncateReq
 	return withIdempotency(sess, request.RequestId, func() (*proto.TruncateReply, error) {
 		s := fs.Truncate(request.Path, request.Size, createContext(ctx, request.Caller))
 		if s == fuse.OK {
-			r.bus.Emit(request.Volume, request.Path, r.versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
+			r.bus.Emit(request.Volume, request.Path, versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
 		}
 		return &proto.TruncateReply{Status: int32(s)}, nil
 	})
@@ -266,7 +254,7 @@ func (r *RpcServerImpl) Chmod(ctx context.Context, request *proto.ChmodRequest) 
 	return withIdempotency(sess, request.RequestId, func() (*proto.ChmodReply, error) {
 		s := fs.Chmod(request.Path, request.Mode, createContext(ctx, request.Caller))
 		if s == fuse.OK {
-			r.bus.Emit(request.Volume, request.Path, r.versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
+			r.bus.Emit(request.Volume, request.Path, versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
 		}
 		return &proto.ChmodReply{Status: int32(s)}, nil
 	})
@@ -284,7 +272,7 @@ func (r *RpcServerImpl) Chown(ctx context.Context, request *proto.ChownRequest) 
 	return withIdempotency(sess, request.RequestId, func() (*proto.ChownReply, error) {
 		s := fs.Chown(request.Path, request.Uid, request.Gid, createContext(ctx, request.Caller))
 		if s == fuse.OK {
-			r.bus.Emit(request.Volume, request.Path, r.versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
+			r.bus.Emit(request.Volume, request.Path, versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
 		}
 		return &proto.ChownReply{Status: int32(s)}, nil
 	})
@@ -314,7 +302,7 @@ func (r *RpcServerImpl) Utimens(ctx context.Context, request *proto.UtimensReque
 		mtime := fileTimeToTime(request.Mtime)
 		s := fs.Utimens(request.Path, atime, mtime, createContext(ctx, request.Caller))
 		if s == fuse.OK {
-			r.bus.Emit(request.Volume, request.Path, r.versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
+			r.bus.Emit(request.Volume, request.Path, versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
 		}
 		return &proto.UtimensReply{Status: int32(s)}, nil
 	})

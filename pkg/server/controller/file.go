@@ -56,11 +56,7 @@ func (r *RpcFileServerImpl) versionAfterPath(ctx context.Context, volume, path s
 	if err != nil {
 		return 0
 	}
-	attr, st := fs.GetAttr(path, createContext(ctx, caller))
-	if !st.Ok() || attr == nil {
-		return 0
-	}
-	return serverio.VersionFromAttr(attr)
+	return versionAfter(ctx, fs, path, caller)
 }
 
 func (r *RpcFileServerImpl) Open(ctx context.Context, request *proto.OpenRequest) (*proto.OpenReply, error) {

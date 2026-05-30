@@ -7,6 +7,7 @@ import (
 	"gmountie/pkg/server/service"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 )
 
 // toProtoAttr maps a server-side FUSE Attr to the wire Attr, including the
@@ -68,6 +69,17 @@ func resolveIdentityOrNil(ctx context.Context, svc service.VolumeService, volume
 		return nil
 	}
 	return &id
+}
+
+// versionAfter re-Stats path on fs and returns the freshness token for use in
+// an Emit call. Returns 0 if GetAttr fails — the event still fires; the client
+// falls back to GetAttrIfChanged.
+func versionAfter(ctx context.Context, fs pathfs.FileSystem, path string, caller *proto.Caller) uint64 {
+	attr, st := fs.GetAttr(path, createContext(ctx, caller))
+	if !st.Ok() || attr == nil {
+		return 0
+	}
+	return serverio.VersionFromAttr(attr)
 }
 
 // createContext creates a new fuse.Context from the given context.Context.
