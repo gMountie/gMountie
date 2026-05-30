@@ -1,7 +1,6 @@
 package ops
 
 import (
-	"crypto/subtle"
 	"net/http"
 
 	"gmountie/pkg/common/passhash"
@@ -50,12 +49,6 @@ func (a *BasicAuth) Wrap(next http.Handler) http.Handler {
 		}
 		match, err := passhash.Verify(hash, pass)
 		if err != nil || !match {
-			a.deny(w)
-			return
-		}
-		// subtle.ConstantTimeCompare on the username as belt-and-braces
-		// defense against comparison shortcuts in r.BasicAuth().
-		if subtle.ConstantTimeCompare([]byte(user), []byte(user)) != 1 {
 			a.deny(w)
 			return
 		}
