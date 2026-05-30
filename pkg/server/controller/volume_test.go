@@ -72,6 +72,41 @@ func (s *VolumeServiceTestSuite) TestList_ServiceError() {
 	s.service.AssertExpectations(s.T())
 }
 
+func (s *VolumeServiceTestSuite) TestResolve_LocalLocation() {
+	// An empty location means "served here" — the OSS default.
+	s.service.On("Resolve", mock.Anything, "photos").Return("", nil)
+
+	reply, err := s.server.Resolve(context.Background(), &proto.VolumeResolveRequest{Name: "photos"})
+
+	s.Require().NoError(err)
+	s.Require().NotNil(reply)
+	s.Assert().Empty(reply.GetLocation())
+	s.service.AssertExpectations(s.T())
+}
+
+func (s *VolumeServiceTestSuite) TestResolve_ReferralLocation() {
+	// A non-empty location is a referral the client should reconnect to.
+	s.service.On("Resolve", mock.Anything, "photos").Return("v-abc.data.example.com:443", nil)
+
+	reply, err := s.server.Resolve(context.Background(), &proto.VolumeResolveRequest{Name: "photos"})
+
+	s.Require().NoError(err)
+	s.Require().NotNil(reply)
+	s.Assert().Equal("v-abc.data.example.com:443", reply.GetLocation())
+	s.service.AssertExpectations(s.T())
+}
+
+func (s *VolumeServiceTestSuite) TestResolve_ServiceError() {
+	expectedError := errors.New("test")
+	s.service.On("Resolve", mock.Anything, "photos").Return("", expectedError)
+
+	reply, err := s.server.Resolve(context.Background(), &proto.VolumeResolveRequest{Name: "photos"})
+
+	s.Require().Error(err)
+	s.Assert().Nil(reply)
+	s.service.AssertExpectations(s.T())
+}
+
 func TestVolumeServiceTestSuite(t *testing.T) {
 	suite.Run(t, new(VolumeServiceTestSuite))
 }

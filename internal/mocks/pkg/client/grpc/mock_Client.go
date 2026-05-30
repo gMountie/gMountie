@@ -6,11 +6,11 @@ package grpc
 
 import (
 	"context"
-	"go.gmountie.dev/gmountie/pkg/client/grpc"
-	"go.gmountie.dev/gmountie/pkg/proto"
 	"time"
 
 	mock "github.com/stretchr/testify/mock"
+	"go.gmountie.dev/gmountie/pkg/client/grpc"
+	"go.gmountie.dev/gmountie/pkg/proto"
 )
 
 // NewMockClient creates a new instance of MockClient. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.

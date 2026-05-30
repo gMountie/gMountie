@@ -47,3 +47,13 @@ func (v *VolumeServiceImpl) List(ctx context.Context, _ *proto.VolumeListRequest
 	}
 	return reply, nil
 }
+
+// Resolve tells the client where to reach a volume. An empty location means the
+// volume is served here (the OSS default); a non-empty location is a referral.
+func (v *VolumeServiceImpl) Resolve(ctx context.Context, req *proto.VolumeResolveRequest) (*proto.VolumeResolveReply, error) {
+	location, err := v.service.Resolve(ctx, req.GetName())
+	if err != nil {
+		return nil, err
+	}
+	return &proto.VolumeResolveReply{Location: location}, nil
+}

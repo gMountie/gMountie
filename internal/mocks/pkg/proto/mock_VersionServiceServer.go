@@ -6,9 +6,9 @@ package proto
 
 import (
 	"context"
-	"go.gmountie.dev/gmountie/pkg/proto"
 
 	mock "github.com/stretchr/testify/mock"
+	"go.gmountie.dev/gmountie/pkg/proto"
 )
 
 // NewMockVersionServiceServer creates a new instance of MockVersionServiceServer. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.

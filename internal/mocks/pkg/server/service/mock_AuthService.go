@@ -6,9 +6,9 @@ package service
 
 import (
 	"context"
-	"go.gmountie.dev/gmountie/pkg/server/service"
 
 	mock "github.com/stretchr/testify/mock"
+	"go.gmountie.dev/gmountie/pkg/server/service"
 )
 
 // NewMockAuthService creates a new instance of MockAuthService. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.

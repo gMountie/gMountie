@@ -6,9 +6,9 @@ package proto
 
 import (
 	"context"
-	"go.gmountie.dev/gmountie/pkg/proto"
 
 	mock "github.com/stretchr/testify/mock"
+	"go.gmountie.dev/gmountie/pkg/proto"
 	"google.golang.org/grpc"
 )
 

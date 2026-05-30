@@ -6,9 +6,9 @@ package proto
 
 import (
 	"context"
-	"go.gmountie.dev/gmountie/pkg/proto"
 
 	mock "github.com/stretchr/testify/mock"
+	"go.gmountie.dev/gmountie/pkg/proto"
 )
 
 // NewMockVolumeServiceServer creates a new instance of MockVolumeServiceServer. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
@@ -102,6 +102,74 @@ func (_c *MockVolumeServiceServer_List_Call) Return(volumeListReply *proto.Volum
 }
 
 func (_c *MockVolumeServiceServer_List_Call) RunAndReturn(run func(context1 context.Context, volumeListRequest *proto.VolumeListRequest) (*proto.VolumeListReply, error)) *MockVolumeServiceServer_List_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Resolve provides a mock function for the type MockVolumeServiceServer
+func (_mock *MockVolumeServiceServer) Resolve(context1 context.Context, volumeResolveRequest *proto.VolumeResolveRequest) (*proto.VolumeResolveReply, error) {
+	ret := _mock.Called(context1, volumeResolveRequest)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Resolve")
+	}
+
+	var r0 *proto.VolumeResolveReply
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.VolumeResolveRequest) (*proto.VolumeResolveReply, error)); ok {
+		return returnFunc(context1, volumeResolveRequest)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.VolumeResolveRequest) *proto.VolumeResolveReply); ok {
+		r0 = returnFunc(context1, volumeResolveRequest)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proto.VolumeResolveReply)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.VolumeResolveRequest) error); ok {
+		r1 = returnFunc(context1, volumeResolveRequest)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockVolumeServiceServer_Resolve_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Resolve'
+type MockVolumeServiceServer_Resolve_Call struct {
+	*mock.Call
+}
+
+// Resolve is a helper method to define mock.On call
+//   - context1 context.Context
+//   - volumeResolveRequest *proto.VolumeResolveRequest
+func (_e *MockVolumeServiceServer_Expecter) Resolve(context1 interface{}, volumeResolveRequest interface{}) *MockVolumeServiceServer_Resolve_Call {
+	return &MockVolumeServiceServer_Resolve_Call{Call: _e.mock.On("Resolve", context1, volumeResolveRequest)}
+}
+
+func (_c *MockVolumeServiceServer_Resolve_Call) Run(run func(context1 context.Context, volumeResolveRequest *proto.VolumeResolveRequest)) *MockVolumeServiceServer_Resolve_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *proto.VolumeResolveRequest
+		if args[1] != nil {
+			arg1 = args[1].(*proto.VolumeResolveRequest)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockVolumeServiceServer_Resolve_Call) Return(volumeResolveReply *proto.VolumeResolveReply, err error) *MockVolumeServiceServer_Resolve_Call {
+	_c.Call.Return(volumeResolveReply, err)
+	return _c
+}
+
+func (_c *MockVolumeServiceServer_Resolve_Call) RunAndReturn(run func(context1 context.Context, volumeResolveRequest *proto.VolumeResolveRequest) (*proto.VolumeResolveReply, error)) *MockVolumeServiceServer_Resolve_Call {
 	_c.Call.Return(run)
 	return _c
 }
