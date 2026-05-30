@@ -6,11 +6,11 @@ import (
 	"gmountie/pkg/client/grpc"
 	"gmountie/pkg/client/mount"
 	"gmountie/pkg/utils/log"
+	"net"
 	"net/http"
 	"net/http/pprof"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -82,13 +82,14 @@ var mountCmd = &cobra.Command{
 		}
 
 		// applyServer is special: -s "host:port" splits into two viper keys.
+		// net.SplitHostPort handles IPv6 bracket notation ([::1]:9449) correctly.
 		if !hasConfig || cmd.Flags().Changed("server") {
-			endpointSlice := strings.Split(serverAddr, ":")
-			if len(endpointSlice) != 2 {
-				return fmt.Errorf("invalid server address: %s", serverAddr)
+			host, port, err := net.SplitHostPort(serverAddr)
+			if err != nil {
+				return fmt.Errorf("invalid server address %q: %w", serverAddr, err)
 			}
-			v.Set("server.address", endpointSlice[0])
-			v.Set("server.port", endpointSlice[1])
+			v.Set("server.address", host)
+			v.Set("server.port", port)
 		}
 		setFromFlag := func(name, viperKey, value string) {
 			if !hasConfig || cmd.Flags().Changed(name) {
