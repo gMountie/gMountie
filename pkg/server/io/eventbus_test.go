@@ -114,4 +114,23 @@ func (s *EventBusSuite) TestHeartbeatFires() {
 	}
 }
 
+// TestSubscribeAfterClose verifies that a Subscribe call after Close returns a
+// pre-closed channel instead of panicking or writing to a nil map.
+func (s *EventBusSuite) TestSubscribeAfterClose() {
+	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 16})
+	bus.Close()
+
+	ch, cancel := bus.Subscribe("vol")
+	defer cancel()
+
+	// The returned channel must already be closed — reading from it should
+	// unblock immediately with the zero value and ok==false.
+	select {
+	case _, ok := <-ch:
+		s.Assert().False(ok, "channel returned by Subscribe-after-Close must be pre-closed")
+	case <-time.After(time.Second):
+		s.FailNow("Subscribe-after-Close returned a channel that never closed")
+	}
+}
+
 func TestEventBusSuite(t *testing.T) { suite.Run(t, new(EventBusSuite)) }
