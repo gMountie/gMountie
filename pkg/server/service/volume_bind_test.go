@@ -117,6 +117,59 @@ func (s *BindIdentitySuite) TestBindIdentityUnprivilegedReturnsBareFS() {
 	s.Same(bare, bound)
 }
 
+// TestBoundFSCachedForMappedMode verifies that repeated BindIdentity calls for
+// the same (volume, principal) return the same wrapper instance when the process
+// is privileged and the mapping mode is not passthrough.
+func (s *BindIdentitySuite) TestBoundFSCachedForMappedMode() {
+	orig := identityEnforceable
+	defer func() { identityEnforceable = orig }()
+	identityEnforceable = func() bool { return true }
+
+	svc := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModeSquash, Uid: 1000, Gid: 1000})
+	ctx := principal.WithPrincipal(context.Background(), "alice")
+
+	fs1, _, err := svc.BindIdentity(ctx, "v", nil)
+	s.Require().NoError(err)
+	fs2, _, err := svc.BindIdentity(ctx, "v", nil)
+	s.Require().NoError(err)
+	s.Same(fs1, fs2, "repeated BindIdentity for the same principal must return the cached wrapper")
+}
+
+// TestBoundFSNotCachedForPassthrough verifies that passthrough mode never
+// caches the wrapper — each call returns a fresh snapshot because identity
+// derives from the per-RPC wire Caller.
+func (s *BindIdentitySuite) TestBoundFSNotCachedForPassthrough() {
+	orig := identityEnforceable
+	defer func() { identityEnforceable = orig }()
+	identityEnforceable = func() bool { return true }
+
+	svc := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModePassthrough})
+	caller1 := &proto.Caller{Owner: &proto.Owner{Uid: 1001, Gid: 1001}}
+	caller2 := &proto.Caller{Owner: &proto.Owner{Uid: 1002, Gid: 1002}}
+	ctx := context.Background()
+
+	fs1, _, err := svc.BindIdentity(ctx, "v", caller1)
+	s.Require().NoError(err)
+	fs2, _, err := svc.BindIdentity(ctx, "v", caller2)
+	s.Require().NoError(err)
+	s.NotSame(fs1, fs2, "passthrough wrappers must never be shared across different callers")
+}
+
+// TestBindIdentityReturnsIdentity verifies that the Identity returned by
+// BindIdentity matches the one from ResolveIdentity (no double-resolve needed).
+func (s *BindIdentitySuite) TestBindIdentityReturnsIdentity() {
+	svc := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModeSquash, Uid: 1000, Gid: 1000})
+	ctx := context.Background()
+
+	_, id, err := svc.BindIdentity(ctx, "v", nil)
+	s.Require().NoError(err)
+	// In unprivileged path, resolveIdentity is still called for best-effort names.
+	resolved, err := svc.ResolveIdentity(ctx, "v", nil)
+	s.Require().NoError(err)
+	s.Equal(resolved.Uid, id.Uid)
+	s.Equal(resolved.Gid, id.Gid)
+}
+
 func (s *BindIdentitySuite) TestBindIdentityStaticCapsCarriedThrough() {
 	orig := identityEnforceable
 	defer func() { identityEnforceable = orig }()
