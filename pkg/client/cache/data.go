@@ -1,7 +1,6 @@
 package cache
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -30,9 +29,14 @@ func (c *dataCache) ChunkSize() int { return c.chunkSizeBytes }
 // chunkKey returns the cache key for (path, chunkIndex). path is
 // the FUSE-side path; chunkIndex is the zero-based chunk number.
 // The "\x00" separator is impossible in valid file paths and so
-// is a safe delimiter.
+// is a safe delimiter. Uses strconv.AppendInt to avoid the
+// fmt.Sprintf allocation on the hot data-cache access path.
 func chunkKey(path string, chunkIndex int) string {
-	return fmt.Sprintf("%s\x00%d", path, chunkIndex)
+	b := make([]byte, 0, len(path)+1+10)
+	b = append(b, path...)
+	b = append(b, 0)
+	b = strconv.AppendInt(b, int64(chunkIndex), 10)
+	return string(b)
 }
 
 // get returns the cached chunk for (path, chunkIndex), or nil on miss.

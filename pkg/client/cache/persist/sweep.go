@@ -165,71 +165,79 @@ func (p *Persist) startBackgroundSweeps() {
 }
 
 // enforceDiskBudget evicts the lexically-oldest data_idx entries until
-// disk usage falls under the budget. On each iteration it reads the
-// first key from the data_idx cursor (bbolt keeps keys sorted, so
-// First() gives the lexically-earliest composite path\x00idx key),
-// deletes that entry, decrements the chunk_refs refcount, and unlinks
-// the chunk file when the count reaches zero — which debits the disk
-// accountant via unlinkChunk.
+// disk usage falls under the budget. All entries to evict are collected
+// in a single bbolt View walk and then deleted in a single Update
+// transaction, avoiding the 2-txn-per-chunk pattern (one View + one
+// Update per iteration). After the batch Update, chunk files whose
+// refcount hit zero are unlinked — which debits the disk accountant.
 //
 // FIFO-of-path semantics (lexical ordering, not strict access LRU).
 // A future task may add proper access-time ordering via the lru /
 // lru_pos buckets that schema.go already provisions.
 //
-// The loop terminates when Over()==0 or data_idx is empty (any
-// remaining over-budget bytes must be orphans reachable only via the
+// Terminates when Over()==0 or data_idx is empty (any remaining
+// over-budget bytes must be orphan chunks reachable only by the
 // background orphan sweep).
 func (p *Persist) enforceDiskBudget() error {
 	if p.disk.Over() == 0 {
 		return nil
 	}
-	for p.disk.Over() > 0 {
-		var key []byte
-		var ref ChunkRef
-		err := p.db.View(func(tx *bolt.Tx) error {
-			c := tx.Bucket(bucketDataIdx).Cursor()
-			k, v := c.First()
-			if k == nil {
-				return nil
-			}
+
+	// Collect keys and refs to evict in a single read-only scan. We walk
+	// lexically from First() and accumulate entries until the sum of their
+	// sizes would cover the over-budget amount. Refcounting may mean some
+	// chunks are shared and won't actually be unlinked, causing a second
+	// call to enforce the budget on the remainder — that is acceptable.
+	overBy := p.disk.Over()
+	var toDeleteKeys [][]byte
+	var toDeleteRefs []ChunkRef
+	var collected int64
+	err := p.db.View(func(tx *bolt.Tx) error {
+		c := tx.Bucket(bucketDataIdx).Cursor()
+		for k, v := c.First(); k != nil && collected < overBy; k, v = c.Next() {
 			r, derr := decodeChunkRef(v)
 			if derr != nil {
 				return derr
 			}
-			key = make([]byte, len(k))
-			copy(key, k)
-			ref = r
-			return nil
-		})
-		if err != nil {
-			return errors.Wrap(err, "evict scan")
+			ks := make([]byte, len(k))
+			copy(ks, k)
+			toDeleteKeys = append(toDeleteKeys, ks)
+			toDeleteRefs = append(toDeleteRefs, r)
+			collected += int64(r.Size)
 		}
-		if key == nil {
-			// data_idx is empty but budget is still over — any remaining
-			// bytes are orphan chunks that only the background sweep can
-			// reach. Stop here to avoid spinning.
-			return nil
-		}
-		var shouldUnlink bool
-		err = p.db.Update(func(tx *bolt.Tx) error {
-			idx := tx.Bucket(bucketDataIdx)
-			if derr := idx.Delete(key); derr != nil {
+		return nil
+	})
+	if err != nil {
+		return errors.Wrap(err, "evict scan")
+	}
+	if len(toDeleteKeys) == 0 {
+		// data_idx is empty; remaining bytes are orphan chunks.
+		return nil
+	}
+
+	var toUnlink [][16]byte
+	err = p.db.Update(func(tx *bolt.Tx) error {
+		idx := tx.Bucket(bucketDataIdx)
+		for i, k := range toDeleteKeys {
+			if derr := idx.Delete(k); derr != nil {
 				return derr
 			}
-			remaining, derr := decRefTx(tx, ref.Hash)
+			remaining, derr := decRefTx(tx, toDeleteRefs[i].Hash)
 			if derr != nil {
 				return derr
 			}
-			shouldUnlink = (remaining == 0)
-			return nil
-		})
-		if err != nil {
-			return errors.Wrap(err, "evict delete")
-		}
-		if shouldUnlink {
-			if err := p.unlinkChunk(ref.Hash); err != nil {
-				return err
+			if remaining == 0 {
+				toUnlink = append(toUnlink, toDeleteRefs[i].Hash)
 			}
+		}
+		return nil
+	})
+	if err != nil {
+		return errors.Wrap(err, "evict delete")
+	}
+	for _, h := range toUnlink {
+		if err := p.unlinkChunk(h); err != nil {
+			return err
 		}
 	}
 	return nil
