@@ -6,11 +6,11 @@ import (
 	"syscall"
 	"time"
 
-	"gmountie/pkg/common"
-	"gmountie/pkg/proto"
-	"gmountie/pkg/server/config"
-	"gmountie/pkg/server/io"
-	"gmountie/pkg/server/principal"
+	"go.gmountie.dev/gmountie/pkg/common"
+	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/server/io"
+	"go.gmountie.dev/gmountie/pkg/server/principal"
 
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	"github.com/pkg/errors"

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"gmountie/pkg/client/metrics"
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
 
 	"github.com/avast/retry-go/v4"
 	"google.golang.org/grpc/codes"

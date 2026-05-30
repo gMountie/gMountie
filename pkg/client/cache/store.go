@@ -3,7 +3,7 @@ package cache
 import (
 	"sync"
 
-	"gmountie/pkg/client/metrics"
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
 )
 
 // store is a generic key→entry map that defers byte-accounting and

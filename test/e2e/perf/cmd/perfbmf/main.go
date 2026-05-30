@@ -22,7 +22,7 @@ import (
 	"runtime"
 	"time"
 
-	"gmountie/test/e2e/perf/bmf"
+	"go.gmountie.dev/gmountie/test/e2e/perf/bmf"
 )
 
 func main() {

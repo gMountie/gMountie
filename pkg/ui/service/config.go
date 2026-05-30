@@ -1,8 +1,8 @@
 package service
 
 import (
-	"gmountie/pkg/client/config"
-	"gmountie/pkg/utils/log"
+	"go.gmountie.dev/gmountie/pkg/client/config"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 	"os"
 
 	"go.uber.org/zap"

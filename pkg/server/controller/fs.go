@@ -2,11 +2,12 @@ package controller
 
 import (
 	"context"
-	"gmountie/pkg/proto"
-	serverio "gmountie/pkg/server/io"
-	"gmountie/pkg/server/metrics"
-	"gmountie/pkg/server/service"
 	"time"
+
+	"go.gmountie.dev/gmountie/pkg/proto"
+	serverio "go.gmountie.dev/gmountie/pkg/server/io"
+	"go.gmountie.dev/gmountie/pkg/server/metrics"
+	"go.gmountie.dev/gmountie/pkg/server/service"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"google.golang.org/grpc"

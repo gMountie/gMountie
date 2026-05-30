@@ -4,16 +4,17 @@ package commands
 
 import (
 	"fmt"
-	"gmountie/pkg/client/config"
-	"gmountie/pkg/client/grpc"
-	"gmountie/pkg/client/mount"
-	"gmountie/pkg/utils/log"
 	"net"
 	"net/http"
 	"net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"go.gmountie.dev/gmountie/pkg/client/config"
+	"go.gmountie.dev/gmountie/pkg/client/grpc"
+	"go.gmountie.dev/gmountie/pkg/client/mount"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"

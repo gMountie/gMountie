@@ -3,7 +3,7 @@ package config
 import (
 	"testing"
 
-	serverConfig "gmountie/pkg/server/config"
+	serverConfig "go.gmountie.dev/gmountie/pkg/server/config"
 
 	"github.com/stretchr/testify/suite"
 )

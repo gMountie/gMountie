@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"gmountie/pkg/client/cache/persist"
+	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
 
 	"github.com/stretchr/testify/suite"
 )

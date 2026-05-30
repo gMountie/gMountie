@@ -24,9 +24,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	grpcClient "gmountie/pkg/client/grpc"
-	"gmountie/pkg/proto"
-	"gmountie/test/e2e/utils"
+	grpcClient "go.gmountie.dev/gmountie/pkg/client/grpc"
+	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/test/e2e/utils"
 
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc/codes"

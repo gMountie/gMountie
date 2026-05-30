@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/io"
 
 	"github.com/stretchr/testify/suite"
 )

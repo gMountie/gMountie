@@ -2,15 +2,16 @@ package controller
 
 import (
 	"context"
-	mockservice "gmountie/internal/mocks/pkg/server/service"
-	serverio "gmountie/pkg/server/io"
-	"gmountie/pkg/server/service"
 	"testing"
 	"time"
 
-	"gmountie/pkg/proto"
+	mockservice "go.gmountie.dev/gmountie/internal/mocks/pkg/server/service"
+	serverio "go.gmountie.dev/gmountie/pkg/server/io"
+	"go.gmountie.dev/gmountie/pkg/server/service"
 
-	pathfs2 "gmountie/internal/mocks/github.com/hanwen/go-fuse/v2/fuse/pathfs"
+	"go.gmountie.dev/gmountie/pkg/proto"
+
+	pathfs2 "go.gmountie.dev/gmountie/internal/mocks/github.com/hanwen/go-fuse/v2/fuse/pathfs"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"

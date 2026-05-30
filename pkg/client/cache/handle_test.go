@@ -3,7 +3,7 @@ package cache
 import (
 	"testing"
 
-	iomocks "gmountie/internal/mocks/pkg/client/io"
+	iomocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/io"
 
 	"github.com/stretchr/testify/suite"
 )

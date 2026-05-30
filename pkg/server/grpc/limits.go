@@ -1,7 +1,7 @@
 package grpc
 
 import (
-	"gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/server/config"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"

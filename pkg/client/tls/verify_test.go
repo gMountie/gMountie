@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	servertls "gmountie/pkg/server/tls"
+	servertls "go.gmountie.dev/gmountie/pkg/server/tls"
 
 	"github.com/stretchr/testify/suite"
 )

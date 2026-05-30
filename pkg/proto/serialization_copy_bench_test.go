@@ -5,7 +5,7 @@ import (
 	"io"
 	"testing"
 
-	"gmountie/pkg/server/grpc/snappy"
+	"go.gmountie.dev/gmountie/pkg/server/grpc/snappy"
 
 	"google.golang.org/grpc/encoding"
 	gproto "google.golang.org/protobuf/proto"

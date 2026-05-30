@@ -5,8 +5,8 @@ import (
 	"path"
 	"time"
 
-	commongrpc "gmountie/pkg/common/grpc"
-	"gmountie/pkg/server/metrics"
+	commongrpc "go.gmountie.dev/gmountie/pkg/common/grpc"
+	"go.gmountie.dev/gmountie/pkg/server/metrics"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/status"

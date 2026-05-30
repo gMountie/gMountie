@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"gmountie/pkg/client/config"
-	clientgrpc "gmountie/pkg/client/grpc"
-	"gmountie/pkg/proto"
-	"gmountie/pkg/utils/log"
+	"go.gmountie.dev/gmountie/pkg/client/config"
+	clientgrpc "go.gmountie.dev/gmountie/pkg/client/grpc"
+	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pkg/errors"

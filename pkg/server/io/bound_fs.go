@@ -7,7 +7,7 @@ import (
 	"time"
 	"unsafe"
 
-	"gmountie/pkg/utils/log"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hanwen/go-fuse/v2/fuse/nodefs"

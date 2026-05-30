@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"gmountie/pkg/proto"
-	"gmountie/test/e2e/utils"
+	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/test/e2e/utils"
 
 	"github.com/stretchr/testify/suite"
 )

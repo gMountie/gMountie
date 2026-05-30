@@ -5,7 +5,7 @@ import (
 	"os"
 	"regexp"
 
-	commonconfig "gmountie/pkg/common/config"
+	commonconfig "go.gmountie.dev/gmountie/pkg/common/config"
 
 	"github.com/spf13/cobra"
 )

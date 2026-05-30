@@ -5,11 +5,11 @@ import (
 	"os"
 	"time"
 
-	"gmountie/pkg/client/metrics"
-	"gmountie/pkg/common"
-	commongrpc "gmountie/pkg/common/grpc"
-	"gmountie/pkg/proto"
-	"gmountie/pkg/utils/log"
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
+	"go.gmountie.dev/gmountie/pkg/common"
+	commongrpc "go.gmountie.dev/gmountie/pkg/common/grpc"
+	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
 	"go.uber.org/zap"

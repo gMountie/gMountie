@@ -3,10 +3,11 @@ package service
 import (
 	"context"
 	"crypto/x509"
-	"gmountie/pkg/common"
-	"gmountie/pkg/common/passhash"
-	"gmountie/pkg/server/config"
-	"gmountie/pkg/utils/log"
+
+	"go.gmountie.dev/gmountie/pkg/common"
+	"go.gmountie.dev/gmountie/pkg/common/passhash"
+	"go.gmountie.dev/gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"

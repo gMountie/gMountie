@@ -4,11 +4,11 @@ import (
 	"errors"
 	"testing"
 
-	"gmountie/pkg/client/config"
-	"gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/client/config"
+	"go.gmountie.dev/gmountie/pkg/proto"
 
-	grpcmocks "gmountie/internal/mocks/pkg/client/grpc"
-	protomocks "gmountie/internal/mocks/pkg/proto"
+	grpcmocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/grpc"
+	protomocks "go.gmountie.dev/gmountie/internal/mocks/pkg/proto"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"

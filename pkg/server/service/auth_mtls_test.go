@@ -13,8 +13,8 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
-	"gmountie/pkg/server/config"
-	"gmountie/pkg/server/service"
+	"go.gmountie.dev/gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/server/service"
 )
 
 // MTLSAuthSuite tests the mtlsAuthService principal-extraction logic.

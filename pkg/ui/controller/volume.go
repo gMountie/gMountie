@@ -3,9 +3,9 @@ package controller
 import (
 	"context"
 	"fmt"
-	"gmountie/pkg/common"
-	"gmountie/pkg/ui/service"
-	"gmountie/pkg/utils/log"
+	"go.gmountie.dev/gmountie/pkg/common"
+	"go.gmountie.dev/gmountie/pkg/ui/service"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"go.uber.org/zap"

@@ -6,7 +6,7 @@ package io
 
 import (
 	"context"
-	"gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/io"
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"

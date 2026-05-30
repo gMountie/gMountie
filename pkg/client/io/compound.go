@@ -8,7 +8,7 @@ package io
 import (
 	"context"
 
-	"gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/proto"
 )
 
 // CompoundBatcher accumulates read-only metadata ops (GetAttr/OpenDir/...)

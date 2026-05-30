@@ -38,8 +38,8 @@ import (
 	"syscall"
 	"testing"
 
-	srvconfig "gmountie/pkg/server/config"
-	"gmountie/test/e2e/utils"
+	srvconfig "go.gmountie.dev/gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/test/e2e/utils"
 
 	"github.com/stretchr/testify/suite"
 )
@@ -62,11 +62,11 @@ const (
 // through the real FUSE mount + gRPC + static identity resolver.
 type AdminCapsSuite struct {
 	suite.Suite
-	appReader *utils.AppTestingContext
-	appAdmin  *utils.AppTestingContext
-	volReader *utils.TestVolume
-	volAdmin  *utils.TestVolume
-	sharedSrc    string // on-disk directory both volumes point at
+	appReader     *utils.AppTestingContext
+	appAdmin      *utils.AppTestingContext
+	volReader     *utils.TestVolume
+	volAdmin      *utils.TestVolume
+	sharedSrc     string // on-disk directory both volumes point at
 	protectedFile string // basename of the 0o600 victim-owned file
 }
 

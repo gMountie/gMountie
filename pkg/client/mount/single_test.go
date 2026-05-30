@@ -2,16 +2,17 @@ package mount
 
 import (
 	"errors"
-	"gmountie/pkg/client/cache/persist"
-	"gmountie/pkg/client/config"
-	"gmountie/pkg/proto"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"gmountie/internal/mocks/pkg/client/grpc"
-	mockProto "gmountie/internal/mocks/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
+	"go.gmountie.dev/gmountie/pkg/client/config"
+	"go.gmountie.dev/gmountie/pkg/proto"
+
+	"go.gmountie.dev/gmountie/internal/mocks/pkg/client/grpc"
+	mockProto "go.gmountie.dev/gmountie/internal/mocks/pkg/proto"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"

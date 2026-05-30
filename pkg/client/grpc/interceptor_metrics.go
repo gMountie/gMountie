@@ -4,7 +4,7 @@ import (
 	"context"
 	"path"
 
-	"gmountie/pkg/client/metrics"
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
 
 	"google.golang.org/grpc"
 )

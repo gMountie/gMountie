@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"gmountie/pkg/server/config"
-	"gmountie/pkg/server/principal"
+	"go.gmountie.dev/gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/server/principal"
 
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc/codes"

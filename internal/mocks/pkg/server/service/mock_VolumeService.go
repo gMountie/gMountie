@@ -6,9 +6,9 @@ package service
 
 import (
 	"context"
-	"gmountie/pkg/common"
-	"gmountie/pkg/proto"
-	"gmountie/pkg/server/service"
+	"go.gmountie.dev/gmountie/pkg/common"
+	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/server/service"
 
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	mock "github.com/stretchr/testify/mock"

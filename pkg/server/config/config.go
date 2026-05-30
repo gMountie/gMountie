@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"gmountie/pkg/common/config"
-	"gmountie/pkg/utils/log"
+	"go.gmountie.dev/gmountie/pkg/common/config"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/spf13/viper"

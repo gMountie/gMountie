@@ -2,10 +2,11 @@ package service
 
 import (
 	"context"
-	"gmountie/pkg/common"
-	"gmountie/pkg/common/passhash"
-	"gmountie/pkg/server/config"
 	"testing"
+
+	"go.gmountie.dev/gmountie/pkg/common"
+	"go.gmountie.dev/gmountie/pkg/common/passhash"
+	"go.gmountie.dev/gmountie/pkg/server/config"
 
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc/metadata"

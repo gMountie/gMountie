@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/server/config"
 
 	"github.com/pkg/errors"
 )

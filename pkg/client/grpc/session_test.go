@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	mockProto "gmountie/internal/mocks/pkg/proto"
-	"gmountie/pkg/proto"
+	mockProto "go.gmountie.dev/gmountie/internal/mocks/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/proto"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"

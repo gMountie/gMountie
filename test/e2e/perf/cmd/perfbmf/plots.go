@@ -10,7 +10,7 @@ import (
 	"os/exec"
 	"strconv"
 
-	"gmountie/test/e2e/perf/bmf"
+	"go.gmountie.dev/gmountie/test/e2e/perf/bmf"
 )
 
 // plots implements `perfbmf plots sync`: reconcile the live Bencher dashboard

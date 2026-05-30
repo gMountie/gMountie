@@ -21,9 +21,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"gmountie/pkg/proto"
-	grpcClient "gmountie/pkg/client/grpc"
-	"gmountie/test/e2e/utils"
+	grpcClient "go.gmountie.dev/gmountie/pkg/client/grpc"
+	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/test/e2e/utils"
 
 	"github.com/stretchr/testify/suite"
 	"golang.org/x/sync/errgroup"
@@ -38,8 +38,8 @@ const (
 // concurrently and verifies: no errors, no data races, correct content.
 type ConcurrentClientsSuite struct {
 	suite.Suite
-	appCtx     *utils.AppTestingContext
-	volume     *utils.TestVolume
+	appCtx *utils.AppTestingContext
+	volume *utils.TestVolume
 }
 
 func (s *ConcurrentClientsSuite) SetupSuite() {

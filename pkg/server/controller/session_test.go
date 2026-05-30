@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	mockservice "gmountie/internal/mocks/pkg/server/service"
-	"gmountie/pkg/proto"
-	"gmountie/pkg/server/principal"
-	"gmountie/pkg/server/service"
+	mockservice "go.gmountie.dev/gmountie/internal/mocks/pkg/server/service"
+	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/server/principal"
+	"go.gmountie.dev/gmountie/pkg/server/service"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"

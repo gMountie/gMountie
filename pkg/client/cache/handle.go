@@ -1,6 +1,6 @@
 package cache
 
-import "gmountie/pkg/client/io"
+import "go.gmountie.dev/gmountie/pkg/client/io"
 
 // cachedHandle wraps an inner io.FileHandle returned by the inner
 // FileSystemBackend.Open or Create. The cache decorator returns

@@ -3,7 +3,7 @@ package utils
 import (
 	"crypto/tls"
 
-	servertls "gmountie/pkg/server/tls"
+	servertls "go.gmountie.dev/gmountie/pkg/server/tls"
 )
 
 // EphemeralTLS wraps an in-memory self-signed cert for one test app context.

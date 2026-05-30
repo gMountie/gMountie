@@ -4,9 +4,9 @@ import (
 	"os"
 	"strings"
 
-	"gmountie/pkg/common/config"
-	serverConfig "gmountie/pkg/server/config"
-	"gmountie/pkg/utils/log"
+	"go.gmountie.dev/gmountie/pkg/common/config"
+	serverConfig "go.gmountie.dev/gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/pkg/errors"

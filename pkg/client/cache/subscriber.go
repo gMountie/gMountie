@@ -8,9 +8,9 @@ import (
 	"path"
 	"time"
 
-	"gmountie/pkg/client/metrics"
-	"gmountie/pkg/proto"
-	"gmountie/pkg/utils/log"
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
+	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"

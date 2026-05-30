@@ -1,7 +1,7 @@
 package utils
 
 import (
-	"gmountie/pkg/utils/log"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 	"math/rand"
 	"os"
 	"path"

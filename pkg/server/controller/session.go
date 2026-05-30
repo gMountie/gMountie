@@ -4,11 +4,11 @@ import (
 	"context"
 	"time"
 
-	"gmountie/pkg/common"
-	"gmountie/pkg/proto"
-	"gmountie/pkg/server/principal"
-	"gmountie/pkg/server/service"
-	"gmountie/pkg/utils/log"
+	"go.gmountie.dev/gmountie/pkg/common"
+	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/server/principal"
+	"go.gmountie.dev/gmountie/pkg/server/service"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"

@@ -7,8 +7,8 @@ import (
 	"context"
 	"sync"
 
-	"gmountie/pkg/proto"
-	"gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/server/config"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"google.golang.org/grpc/codes"

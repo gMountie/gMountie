@@ -1,7 +1,7 @@
 package fs
 
 import (
-	"gmountie/test/e2e/utils"
+	"go.gmountie.dev/gmountie/test/e2e/utils"
 	"os"
 	"path/filepath"
 	"testing"

@@ -3,12 +3,13 @@ package grpc
 import (
 	"context"
 	"fmt"
-	grpc2 "gmountie/pkg/common/grpc"
-	"gmountie/pkg/server/config"
-	_ "gmountie/pkg/server/grpc/snappy" // Installing the snappy encoding as an available compressor.
-	"gmountie/pkg/server/service"
-	"gmountie/pkg/utils/log"
 	"net"
+
+	grpc2 "go.gmountie.dev/gmountie/pkg/common/grpc"
+	"go.gmountie.dev/gmountie/pkg/server/config"
+	_ "go.gmountie.dev/gmountie/pkg/server/grpc/snappy" // Installing the snappy encoding as an available compressor.
+	"go.gmountie.dev/gmountie/pkg/server/service"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus"
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"

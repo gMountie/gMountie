@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 
-	"gmountie/pkg/utils/log"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"

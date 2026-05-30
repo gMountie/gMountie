@@ -2,7 +2,8 @@ package grpc
 
 import (
 	"context"
-	"gmountie/pkg/common"
+
+	"go.gmountie.dev/gmountie/pkg/common"
 )
 
 // BasicAuthCredentials is a struct that holds the basic authentication credentials

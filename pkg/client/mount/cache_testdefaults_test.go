@@ -1,6 +1,6 @@
 package mount
 
-import "gmountie/pkg/client/config"
+import "go.gmountie.dev/gmountie/pkg/client/config"
 
 // defaultTestCacheConfig returns a disabled CacheConfig for use in
 // mount-layer tests. Enabled=false keeps the cache wrap a no-op so

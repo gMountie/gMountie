@@ -18,16 +18,16 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/credentials"
 
-	"gmountie/pkg/common/passhash"
-	"gmountie/pkg/server/config"
-	"gmountie/pkg/server/controller"
-	"gmountie/pkg/server/grpc"
-	"gmountie/pkg/server/io"
-	"gmountie/pkg/server/metrics"
-	"gmountie/pkg/server/ops"
-	"gmountie/pkg/server/service"
-	servertls "gmountie/pkg/server/tls"
-	"gmountie/pkg/utils/log"
+	"go.gmountie.dev/gmountie/pkg/common/passhash"
+	"go.gmountie.dev/gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/server/controller"
+	"go.gmountie.dev/gmountie/pkg/server/grpc"
+	"go.gmountie.dev/gmountie/pkg/server/io"
+	"go.gmountie.dev/gmountie/pkg/server/metrics"
+	"go.gmountie.dev/gmountie/pkg/server/ops"
+	"go.gmountie.dev/gmountie/pkg/server/service"
+	servertls "go.gmountie.dev/gmountie/pkg/server/tls"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 )
 
 type AppContext struct {

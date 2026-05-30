@@ -3,8 +3,8 @@ package controller
 import (
 	"context"
 
-	"gmountie/pkg"
-	"gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg"
+	"go.gmountie.dev/gmountie/pkg/proto"
 
 	"google.golang.org/grpc"
 )

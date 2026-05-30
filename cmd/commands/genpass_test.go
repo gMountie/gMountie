@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"gmountie/pkg/common/passhash"
+	"go.gmountie.dev/gmountie/pkg/common/passhash"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/suite"
