@@ -6,8 +6,9 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/stretchr/testify/suite"
 	"gmountie/pkg/proto"
+
+	"github.com/stretchr/testify/suite"
 )
 
 type LsSuite struct{ suite.Suite }
