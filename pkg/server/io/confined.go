@@ -489,14 +489,13 @@ func (c *ConfinedLoopbackFileSystem) GetXAttr(name, attr string, _ *fuse.Context
 		return nil, errnoToStatus(err)
 	}
 	defer func() { _ = unix.Close(fd) }()
-	procPath := fmt.Sprintf("/proc/self/fd/%d", fd)
 	// First call sizes the buffer; second reads it.
-	size, err := unix.Getxattr(procPath, attr, nil)
+	size, err := unix.Getxattr(procFdPath(fd), attr, nil)
 	if err != nil {
 		return nil, errnoToStatus(err)
 	}
 	buf := make([]byte, size)
-	n, err := unix.Getxattr(procPath, attr, buf)
+	n, err := unix.Getxattr(procFdPath(fd), attr, buf)
 	if err != nil {
 		return nil, errnoToStatus(err)
 	}
@@ -509,7 +508,7 @@ func (c *ConfinedLoopbackFileSystem) SetXAttr(name, attr string, data []byte, fl
 		return errnoToStatus(err)
 	}
 	defer func() { _ = unix.Close(fd) }()
-	if err := unix.Setxattr(fmt.Sprintf("/proc/self/fd/%d", fd), attr, data, flags); err != nil {
+	if err := unix.Setxattr(procFdPath(fd), attr, data, flags); err != nil {
 		return errnoToStatus(err)
 	}
 	return fuse.OK
@@ -521,13 +520,12 @@ func (c *ConfinedLoopbackFileSystem) ListXAttr(name string, _ *fuse.Context) ([]
 		return nil, errnoToStatus(err)
 	}
 	defer func() { _ = unix.Close(fd) }()
-	procPath := fmt.Sprintf("/proc/self/fd/%d", fd)
-	size, err := unix.Listxattr(procPath, nil)
+	size, err := unix.Listxattr(procFdPath(fd), nil)
 	if err != nil {
 		return nil, errnoToStatus(err)
 	}
 	buf := make([]byte, size)
-	n, err := unix.Listxattr(procPath, buf)
+	n, err := unix.Listxattr(procFdPath(fd), buf)
 	if err != nil {
 		return nil, errnoToStatus(err)
 	}
@@ -540,7 +538,7 @@ func (c *ConfinedLoopbackFileSystem) RemoveXAttr(name, attr string, _ *fuse.Cont
 		return errnoToStatus(err)
 	}
 	defer func() { _ = unix.Close(fd) }()
-	if err := unix.Removexattr(fmt.Sprintf("/proc/self/fd/%d", fd), attr); err != nil {
+	if err := unix.Removexattr(procFdPath(fd), attr); err != nil {
 		return errnoToStatus(err)
 	}
 	return fuse.OK
