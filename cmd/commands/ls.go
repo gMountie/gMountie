@@ -81,7 +81,7 @@ func runLs(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return remediate(err, addr, "")
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	reply, err := c.Volume().List(context.Background(), &proto.VolumeListRequest{})
 	if err != nil {
@@ -94,10 +94,10 @@ func runLs(cmd *cobra.Command, args []string) error {
 // renderVolumes prints one volume name per line, or a friendly note if empty.
 func renderVolumes(out io.Writer, vols []*proto.Volume) {
 	if len(vols) == 0 {
-		fmt.Fprintln(out, "no volumes available")
+		_, _ = fmt.Fprintln(out, "no volumes available")
 		return
 	}
 	for _, vol := range vols {
-		fmt.Fprintln(out, vol.GetName())
+		_, _ = fmt.Fprintln(out, vol.GetName())
 	}
 }

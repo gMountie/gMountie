@@ -57,6 +57,6 @@ func runConfigShow(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("read config %s: %w", path, err)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "# %s\n%s\n", path, redactConfigYAML(string(data)))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "# %s\n%s\n", path, redactConfigYAML(string(data)))
 	return nil
 }

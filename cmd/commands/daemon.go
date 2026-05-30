@@ -3,6 +3,7 @@
 package commands
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -72,19 +73,21 @@ func (execDaemonizer) spawnAndAwaitReady(childArgs []string) error {
 	if err != nil {
 		return fmt.Errorf("open daemon log %s: %w", logPath, err)
 	}
-	defer logFile.Close()
+	defer func() { _ = logFile.Close() }()
 
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		return fmt.Errorf("create ready pipe: %w", err)
 	}
-	defer pr.Close()
+	defer func() { _ = pr.Close() }()
 
 	self, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve executable: %w", err)
 	}
-	cmd := exec.Command(self, childArgs...)
+	// CommandContext (not Command) per the project's noctx lint; the daemon
+	// parent is short-lived, so a background context is appropriate.
+	cmd := exec.CommandContext(context.Background(), self, childArgs...)
 	cmd.Env = append(os.Environ(), daemonChildEnv+"=1")
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -92,10 +95,10 @@ func (execDaemonizer) spawnAndAwaitReady(childArgs []string) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	if err := cmd.Start(); err != nil {
-		pw.Close()
+		_ = pw.Close()
 		return fmt.Errorf("start daemon child: %w", err)
 	}
-	pw.Close() // parent keeps only the read end
+	_ = pw.Close() // parent keeps only the read end
 
 	buf := make([]byte, 5)
 	n, _ := io.ReadFull(pr, buf) // child writes "ready"

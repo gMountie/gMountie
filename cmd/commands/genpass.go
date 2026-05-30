@@ -52,4 +52,3 @@ func runGenpass(cmd *cobra.Command, _ []string) error {
 	_, _ = fmt.Fprintln(stdout, phc)
 	return nil
 }
-
