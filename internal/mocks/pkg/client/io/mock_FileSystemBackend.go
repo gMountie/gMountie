@@ -6,11 +6,11 @@ package io
 
 import (
 	"context"
-	"go.gmountie.dev/gmountie/pkg/client/io"
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	mock "github.com/stretchr/testify/mock"
+	"go.gmountie.dev/gmountie/pkg/client/io"
 )
 
 // NewMockFileSystemBackend creates a new instance of MockFileSystemBackend. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.

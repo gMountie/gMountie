@@ -5,9 +5,8 @@
 package io
 
 import (
-	"go.gmountie.dev/gmountie/pkg/client/io"
-
 	mock "github.com/stretchr/testify/mock"
+	"go.gmountie.dev/gmountie/pkg/client/io"
 )
 
 // NewMockFileHandle creates a new instance of MockFileHandle. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.

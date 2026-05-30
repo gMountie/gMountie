@@ -6,9 +6,9 @@ package proto
 
 import (
 	"context"
-	"go.gmountie.dev/gmountie/pkg/proto"
 
 	mock "github.com/stretchr/testify/mock"
+	"go.gmountie.dev/gmountie/pkg/proto"
 	"google.golang.org/grpc"
 )
 
@@ -122,6 +122,93 @@ func (_c *MockVolumeServiceClient_List_Call) Return(volumeListReply *proto.Volum
 }
 
 func (_c *MockVolumeServiceClient_List_Call) RunAndReturn(run func(ctx context.Context, in *proto.VolumeListRequest, opts ...grpc.CallOption) (*proto.VolumeListReply, error)) *MockVolumeServiceClient_List_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Resolve provides a mock function for the type MockVolumeServiceClient
+func (_mock *MockVolumeServiceClient) Resolve(ctx context.Context, in *proto.VolumeResolveRequest, opts ...grpc.CallOption) (*proto.VolumeResolveReply, error) {
+	// grpc.CallOption
+	_va := make([]interface{}, len(opts))
+	for _i := range opts {
+		_va[_i] = opts[_i]
+	}
+	var _ca []interface{}
+	_ca = append(_ca, ctx, in)
+	_ca = append(_ca, _va...)
+	ret := _mock.Called(_ca...)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Resolve")
+	}
+
+	var r0 *proto.VolumeResolveReply
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.VolumeResolveRequest, ...grpc.CallOption) (*proto.VolumeResolveReply, error)); ok {
+		return returnFunc(ctx, in, opts...)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.VolumeResolveRequest, ...grpc.CallOption) *proto.VolumeResolveReply); ok {
+		r0 = returnFunc(ctx, in, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proto.VolumeResolveReply)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.VolumeResolveRequest, ...grpc.CallOption) error); ok {
+		r1 = returnFunc(ctx, in, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockVolumeServiceClient_Resolve_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Resolve'
+type MockVolumeServiceClient_Resolve_Call struct {
+	*mock.Call
+}
+
+// Resolve is a helper method to define mock.On call
+//   - ctx context.Context
+//   - in *proto.VolumeResolveRequest
+//   - opts ...grpc.CallOption
+func (_e *MockVolumeServiceClient_Expecter) Resolve(ctx interface{}, in interface{}, opts ...interface{}) *MockVolumeServiceClient_Resolve_Call {
+	return &MockVolumeServiceClient_Resolve_Call{Call: _e.mock.On("Resolve",
+		append([]interface{}{ctx, in}, opts...)...)}
+}
+
+func (_c *MockVolumeServiceClient_Resolve_Call) Run(run func(ctx context.Context, in *proto.VolumeResolveRequest, opts ...grpc.CallOption)) *MockVolumeServiceClient_Resolve_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *proto.VolumeResolveRequest
+		if args[1] != nil {
+			arg1 = args[1].(*proto.VolumeResolveRequest)
+		}
+		var arg2 []grpc.CallOption
+		variadicArgs := make([]grpc.CallOption, len(args)-2)
+		for i, a := range args[2:] {
+			if a != nil {
+				variadicArgs[i] = a.(grpc.CallOption)
+			}
+		}
+		arg2 = variadicArgs
+		run(
+			arg0,
+			arg1,
+			arg2...,
+		)
+	})
+	return _c
+}
+
+func (_c *MockVolumeServiceClient_Resolve_Call) Return(volumeResolveReply *proto.VolumeResolveReply, err error) *MockVolumeServiceClient_Resolve_Call {
+	_c.Call.Return(volumeResolveReply, err)
+	return _c
+}
+
+func (_c *MockVolumeServiceClient_Resolve_Call) RunAndReturn(run func(ctx context.Context, in *proto.VolumeResolveRequest, opts ...grpc.CallOption) (*proto.VolumeResolveReply, error)) *MockVolumeServiceClient_Resolve_Call {
 	_c.Call.Return(run)
 	return _c
 }
