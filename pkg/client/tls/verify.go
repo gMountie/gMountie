@@ -12,7 +12,7 @@ import (
 	"net"
 	"os"
 
-	servertls "gmountie/pkg/server/tls"
+	servertls "go.gmountie.dev/gmountie/pkg/server/tls"
 )
 
 // Mode constants for TLS verification policy.

@@ -1,6 +1,6 @@
 package service
 
-import "gmountie/pkg/client"
+import "go.gmountie.dev/gmountie/pkg/client"
 
 // AppService is a service for managing the application
 type AppService interface {

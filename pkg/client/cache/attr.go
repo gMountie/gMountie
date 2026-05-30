@@ -5,8 +5,8 @@ import (
 	"encoding/gob"
 	"time"
 
-	"gmountie/pkg/client/cache/persist"
-	"gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
+	"go.gmountie.dev/gmountie/pkg/client/io"
 )
 
 // attrEntry is the value stored in attrCache. negative=true means a

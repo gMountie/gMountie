@@ -2,12 +2,13 @@ package grpc
 
 import (
 	"fmt"
-	"gmountie/pkg/client/config"
-	"gmountie/pkg/client/metrics"
-	clienttls "gmountie/pkg/client/tls"
-	"gmountie/pkg/server/grpc/snappy"
-	"gmountie/pkg/utils/log"
 	"os"
+
+	"go.gmountie.dev/gmountie/pkg/client/config"
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
+	clienttls "go.gmountie.dev/gmountie/pkg/client/tls"
+	"go.gmountie.dev/gmountie/pkg/server/grpc/snappy"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"

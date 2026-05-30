@@ -2,9 +2,10 @@ package service
 
 import (
 	"context"
-	"gmountie/pkg/client/grpc"
-	"gmountie/pkg/common"
-	"gmountie/pkg/proto"
+
+	"go.gmountie.dev/gmountie/pkg/client/grpc"
+	"go.gmountie.dev/gmountie/pkg/common"
+	"go.gmountie.dev/gmountie/pkg/proto"
 )
 
 // VolumeService is an interface that provides information about the volumes

@@ -1,6 +1,6 @@
 package service
 
-import "gmountie/pkg/server/config"
+import "go.gmountie.dev/gmountie/pkg/server/config"
 
 type staticResolver struct{ m config.MappingConfig }
 

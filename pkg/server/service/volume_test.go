@@ -2,8 +2,9 @@ package service
 
 import (
 	"context"
-	"gmountie/pkg/server/config"
 	"testing"
+
+	"go.gmountie.dev/gmountie/pkg/server/config"
 
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	"github.com/stretchr/testify/suite"

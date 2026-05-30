@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"gmountie/pkg"
+	"go.gmountie.dev/gmountie/pkg"
 
 	"github.com/stretchr/testify/suite"
 )

@@ -8,9 +8,9 @@ import (
 	"io"
 	"net"
 
-	"gmountie/pkg/client/config"
-	"gmountie/pkg/client/grpc"
-	"gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/client/config"
+	"go.gmountie.dev/gmountie/pkg/client/grpc"
+	"go.gmountie.dev/gmountie/pkg/proto"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"

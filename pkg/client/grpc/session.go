@@ -7,9 +7,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"gmountie/pkg/common"
-	"gmountie/pkg/proto"
-	"gmountie/pkg/utils/log"
+	"go.gmountie.dev/gmountie/pkg/common"
+	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/pkg/errors"
 	"go.uber.org/zap"

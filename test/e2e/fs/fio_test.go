@@ -5,7 +5,7 @@ import (
 	"context"
 	"embed"
 	"errors"
-	"gmountie/test/e2e/utils"
+	"go.gmountie.dev/gmountie/test/e2e/utils"
 	"io/fs"
 	"os"
 	"os/exec"

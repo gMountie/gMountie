@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	clientconfig "gmountie/pkg/client/config"
-	servertls "gmountie/pkg/server/tls"
+	clientconfig "go.gmountie.dev/gmountie/pkg/client/config"
+	servertls "go.gmountie.dev/gmountie/pkg/server/tls"
 
 	"github.com/adrg/xdg"
 	"github.com/go-playground/validator/v10"

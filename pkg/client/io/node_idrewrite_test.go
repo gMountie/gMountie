@@ -5,8 +5,8 @@ import (
 	"syscall"
 	"testing"
 
-	iomocks "gmountie/internal/mocks/pkg/client/io"
-	clientio "gmountie/pkg/client/io"
+	iomocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/io"
+	clientio "go.gmountie.dev/gmountie/pkg/client/io"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"

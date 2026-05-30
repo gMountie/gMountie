@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"gmountie/pkg/common"
-	"gmountie/pkg/server/principal"
-	"gmountie/pkg/server/service"
+	"go.gmountie.dev/gmountie/pkg/common"
+	"go.gmountie.dev/gmountie/pkg/server/principal"
+	"go.gmountie.dev/gmountie/pkg/server/service"
 
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc"

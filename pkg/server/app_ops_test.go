@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/server/config"
 )
 
 func TestAppOpsSuite(t *testing.T) {

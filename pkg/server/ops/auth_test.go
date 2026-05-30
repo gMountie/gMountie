@@ -5,8 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"gmountie/pkg/common/passhash"
-	"gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/common/passhash"
+	"go.gmountie.dev/gmountie/pkg/server/config"
 
 	"github.com/stretchr/testify/suite"
 )

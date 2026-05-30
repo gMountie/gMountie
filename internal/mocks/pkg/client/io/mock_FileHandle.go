@@ -5,7 +5,7 @@
 package io
 
 import (
-	"gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/io"
 
 	mock "github.com/stretchr/testify/mock"
 )

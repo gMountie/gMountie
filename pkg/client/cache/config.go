@@ -3,7 +3,7 @@ package cache
 import (
 	"time"
 
-	clientconfig "gmountie/pkg/client/config"
+	clientconfig "go.gmountie.dev/gmountie/pkg/client/config"
 )
 
 // Config is the in-process Config the cache layer consumes. ClientConfig's

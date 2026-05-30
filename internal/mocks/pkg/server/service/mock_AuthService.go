@@ -6,7 +6,7 @@ package service
 
 import (
 	"context"
-	"gmountie/pkg/server/service"
+	"go.gmountie.dev/gmountie/pkg/server/service"
 
 	mock "github.com/stretchr/testify/mock"
 )

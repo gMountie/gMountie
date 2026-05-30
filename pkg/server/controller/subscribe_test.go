@@ -5,12 +5,12 @@ import (
 	"testing"
 	"time"
 
-	mockservice "gmountie/internal/mocks/pkg/server/service"
-	"gmountie/pkg/proto"
-	serverio "gmountie/pkg/server/io"
-	"gmountie/pkg/server/service"
+	mockservice "go.gmountie.dev/gmountie/internal/mocks/pkg/server/service"
+	"go.gmountie.dev/gmountie/pkg/proto"
+	serverio "go.gmountie.dev/gmountie/pkg/server/io"
+	"go.gmountie.dev/gmountie/pkg/server/service"
 
-	pathfs2 "gmountie/internal/mocks/github.com/hanwen/go-fuse/v2/fuse/pathfs"
+	pathfs2 "go.gmountie.dev/gmountie/internal/mocks/github.com/hanwen/go-fuse/v2/fuse/pathfs"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"

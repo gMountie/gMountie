@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/proto"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/suite"

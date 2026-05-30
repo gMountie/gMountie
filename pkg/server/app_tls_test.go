@@ -9,7 +9,7 @@ import (
 	"github.com/adrg/xdg"
 	"github.com/stretchr/testify/suite"
 
-	"gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/server/config"
 )
 
 type AppTLSSuite struct {

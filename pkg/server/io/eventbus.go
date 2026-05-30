@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"gmountie/pkg/server/metrics"
+	"go.gmountie.dev/gmountie/pkg/server/metrics"
 )
 
 // EventKind classifies what changed.

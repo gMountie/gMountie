@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	iomocks "gmountie/internal/mocks/pkg/client/io"
-	"gmountie/pkg/client/io"
+	iomocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/io"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"

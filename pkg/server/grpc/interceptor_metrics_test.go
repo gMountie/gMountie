@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"gmountie/pkg/server/metrics"
+	"go.gmountie.dev/gmountie/pkg/server/metrics"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/suite"

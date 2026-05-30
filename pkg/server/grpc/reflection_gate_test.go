@@ -5,8 +5,8 @@ import (
 	"net"
 	"testing"
 
-	"gmountie/pkg/server/config"
-	"gmountie/pkg/server/service"
+	"go.gmountie.dev/gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/server/service"
 
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc"

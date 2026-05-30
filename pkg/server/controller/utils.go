@@ -2,9 +2,10 @@ package controller
 
 import (
 	"context"
-	"gmountie/pkg/proto"
-	serverio "gmountie/pkg/server/io"
-	"gmountie/pkg/server/service"
+
+	"go.gmountie.dev/gmountie/pkg/proto"
+	serverio "go.gmountie.dev/gmountie/pkg/server/io"
+	"go.gmountie.dev/gmountie/pkg/server/service"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"

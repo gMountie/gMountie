@@ -6,8 +6,8 @@ package grpc
 
 import (
 	"context"
-	"gmountie/pkg/client/grpc"
-	"gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/client/grpc"
+	"go.gmountie.dev/gmountie/pkg/proto"
 	"time"
 
 	mock "github.com/stretchr/testify/mock"

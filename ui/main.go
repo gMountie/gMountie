@@ -3,10 +3,10 @@ package main
 import (
 	"embed"
 	_ "embed"
-	"gmountie/pkg/common/config"
-	"gmountie/pkg/ui/controller"
-	"gmountie/pkg/ui/service"
-	"gmountie/pkg/utils/log"
+	"go.gmountie.dev/gmountie/pkg/common/config"
+	"go.gmountie.dev/gmountie/pkg/ui/controller"
+	"go.gmountie.dev/gmountie/pkg/ui/service"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 	"log/slog"
 
 	"github.com/samber/slog-zap/v2"

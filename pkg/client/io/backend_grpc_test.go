@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	grpcmocks "gmountie/internal/mocks/pkg/client/grpc"
-	mockProto "gmountie/internal/mocks/pkg/proto"
-	grpcclient "gmountie/pkg/client/grpc"
-	"gmountie/pkg/proto"
+	grpcmocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/grpc"
+	mockProto "go.gmountie.dev/gmountie/internal/mocks/pkg/proto"
+	grpcclient "go.gmountie.dev/gmountie/pkg/client/grpc"
+	"go.gmountie.dev/gmountie/pkg/proto"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"

@@ -3,8 +3,8 @@ package controller
 import (
 	"context"
 
-	"gmountie/pkg/server/principal"
-	"gmountie/pkg/server/service"
+	"go.gmountie.dev/gmountie/pkg/server/principal"
+	"go.gmountie.dev/gmountie/pkg/server/service"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/proto"
 
 	"github.com/stretchr/testify/suite"
 )

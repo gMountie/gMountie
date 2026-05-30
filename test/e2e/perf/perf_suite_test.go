@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
-	clientconfig "gmountie/pkg/client/config"
-	"gmountie/pkg/utils/log"
-	"gmountie/test/e2e/utils"
+	clientconfig "go.gmountie.dev/gmountie/pkg/client/config"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
+	"go.gmountie.dev/gmountie/test/e2e/utils"
 )
 
 // TestMain silences the package-level zap logger before any benchmark runs.

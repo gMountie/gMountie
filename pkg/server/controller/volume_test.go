@@ -2,10 +2,11 @@ package controller
 
 import (
 	"context"
-	"gmountie/internal/mocks/pkg/server/service"
-	"gmountie/pkg/common"
-	"gmountie/pkg/proto"
 	"testing"
+
+	"go.gmountie.dev/gmountie/internal/mocks/pkg/server/service"
+	"go.gmountie.dev/gmountie/pkg/common"
+	"go.gmountie.dev/gmountie/pkg/proto"
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/mock"

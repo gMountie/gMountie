@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"gmountie/pkg"
+	"go.gmountie.dev/gmountie/pkg"
 )
 
 // LivenessHandler always returns 200 — the binary is alive enough to

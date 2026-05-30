@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	grpcclient "gmountie/pkg/client/grpc"
-	"gmountie/pkg/proto"
-	"gmountie/pkg/utils/log"
+	grpcclient "go.gmountie.dev/gmountie/pkg/client/grpc"
+	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/google/uuid"
 	"github.com/hanwen/go-fuse/v2/fuse"

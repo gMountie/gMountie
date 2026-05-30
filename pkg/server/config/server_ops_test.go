@@ -3,7 +3,7 @@ package config
 import (
 	"testing"
 
-	"gmountie/pkg/common/passhash"
+	"go.gmountie.dev/gmountie/pkg/common/passhash"
 
 	"github.com/stretchr/testify/suite"
 )

@@ -1,7 +1,7 @@
 package commands
 
 import (
-	"gmountie/pkg"
+	"go.gmountie.dev/gmountie/pkg"
 
 	"github.com/spf13/cobra"
 )

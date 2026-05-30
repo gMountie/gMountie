@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"gmountie/pkg/client/metrics"
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/suite"

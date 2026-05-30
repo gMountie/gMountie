@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"gmountie/pkg/client/config"
-	"gmountie/pkg/proto"
-	"gmountie/pkg/server/controller"
-	"gmountie/pkg/server/service"
-	servertls "gmountie/pkg/server/tls"
+	"go.gmountie.dev/gmountie/pkg/client/config"
+	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/server/controller"
+	"go.gmountie.dev/gmountie/pkg/server/service"
+	servertls "go.gmountie.dev/gmountie/pkg/server/tls"
 
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc"

@@ -8,7 +8,7 @@ import (
 	"io/fs"
 	"path/filepath"
 
-	servertls "gmountie/pkg/server/tls"
+	servertls "go.gmountie.dev/gmountie/pkg/server/tls"
 
 	"github.com/adrg/xdg"
 	"github.com/spf13/cobra"

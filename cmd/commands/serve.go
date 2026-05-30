@@ -5,15 +5,16 @@ package commands
 import (
 	"context"
 	"fmt"
-	"gmountie/pkg/common/config"
-	"gmountie/pkg/common/passhash"
-	"gmountie/pkg/server"
-	serverConfig "gmountie/pkg/server/config"
-	"gmountie/pkg/utils/log"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
+
+	"go.gmountie.dev/gmountie/pkg/common/config"
+	"go.gmountie.dev/gmountie/pkg/common/passhash"
+	"go.gmountie.dev/gmountie/pkg/server"
+	serverConfig "go.gmountie.dev/gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/adrg/xdg"
 	"github.com/pkg/errors"

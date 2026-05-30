@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"gmountie/test/e2e/utils"
+	"go.gmountie.dev/gmountie/test/e2e/utils"
 
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc"

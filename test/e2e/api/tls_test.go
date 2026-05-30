@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	clientconfig "gmountie/pkg/client/config"
-	clienttls "gmountie/pkg/client/tls"
-	servertls "gmountie/pkg/server/tls"
-	"gmountie/test/e2e/utils"
+	clientconfig "go.gmountie.dev/gmountie/pkg/client/config"
+	clienttls "go.gmountie.dev/gmountie/pkg/client/tls"
+	servertls "go.gmountie.dev/gmountie/pkg/server/tls"
+	"go.gmountie.dev/gmountie/test/e2e/utils"
 
 	"github.com/stretchr/testify/suite"
 )

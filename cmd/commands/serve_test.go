@@ -5,12 +5,13 @@ package commands
 import (
 	"bytes"
 	"context"
-	commonConfig "gmountie/pkg/common/config"
-	serverConfig "gmountie/pkg/server/config"
-	"gmountie/test/e2e/utils"
 	"os"
 	"path/filepath"
 	"testing"
+
+	commonConfig "go.gmountie.dev/gmountie/pkg/common/config"
+	serverConfig "go.gmountie.dev/gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/test/e2e/utils"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/suite"

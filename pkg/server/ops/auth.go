@@ -3,8 +3,8 @@ package ops
 import (
 	"net/http"
 
-	"gmountie/pkg/common/passhash"
-	"gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/common/passhash"
+	"go.gmountie.dev/gmountie/pkg/server/config"
 )
 
 // BasicAuth wraps next with HTTP Basic auth backed by argon2id password

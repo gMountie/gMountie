@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"gmountie/pkg/client/config"
+	"go.gmountie.dev/gmountie/pkg/client/config"
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/suite"

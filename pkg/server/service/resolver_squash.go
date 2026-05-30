@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"gmountie/pkg/utils/log"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"go.uber.org/zap"
 )

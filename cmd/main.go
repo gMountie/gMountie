@@ -1,7 +1,7 @@
 package main
 
 import (
-	"gmountie/cmd/commands"
+	"go.gmountie.dev/gmountie/cmd/commands"
 )
 
 func main() {

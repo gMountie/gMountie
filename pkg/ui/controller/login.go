@@ -3,13 +3,13 @@ package controller
 import (
 	"errors"
 	"fmt"
-	"gmountie/pkg/client"
-	clientConfig "gmountie/pkg/client/config"
-	"gmountie/pkg/client/grpc"
-	config2 "gmountie/pkg/common/config"
-	"gmountie/pkg/server/config"
-	"gmountie/pkg/ui/service"
-	"gmountie/pkg/utils/log"
+	"go.gmountie.dev/gmountie/pkg/client"
+	clientConfig "go.gmountie.dev/gmountie/pkg/client/config"
+	"go.gmountie.dev/gmountie/pkg/client/grpc"
+	config2 "go.gmountie.dev/gmountie/pkg/common/config"
+	"go.gmountie.dev/gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/ui/service"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"go.uber.org/zap"
 )

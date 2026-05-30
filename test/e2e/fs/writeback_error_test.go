@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"testing"
 
-	clientConfig "gmountie/pkg/client/config"
-	"gmountie/test/e2e/utils"
+	clientConfig "go.gmountie.dev/gmountie/pkg/client/config"
+	"go.gmountie.dev/gmountie/test/e2e/utils"
 
 	"github.com/stretchr/testify/suite"
 )

@@ -3,8 +3,8 @@ package controller
 import (
 	"syscall"
 
-	"gmountie/pkg/proto"
-	serverio "gmountie/pkg/server/io"
+	"go.gmountie.dev/gmountie/pkg/proto"
+	serverio "go.gmountie.dev/gmountie/pkg/server/io"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"

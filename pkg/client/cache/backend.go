@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"gmountie/pkg/client/cache/persist"
-	"gmountie/pkg/client/io"
-	"gmountie/pkg/client/metrics"
-	"gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
+	"go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
+	"go.gmountie.dev/gmountie/pkg/proto"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 )

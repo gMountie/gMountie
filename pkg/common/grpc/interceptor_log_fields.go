@@ -3,7 +3,7 @@ package grpc
 import (
 	"context"
 
-	"gmountie/pkg/common"
+	"go.gmountie.dev/gmountie/pkg/common"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
 	"google.golang.org/grpc"

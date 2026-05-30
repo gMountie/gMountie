@@ -2,11 +2,12 @@ package client
 
 import (
 	"errors"
-	"gmountie/pkg/client/config"
-	"gmountie/pkg/client/grpc"
-	"gmountie/pkg/client/mount"
-	"gmountie/pkg/client/service"
-	"gmountie/pkg/utils/log"
+
+	"go.gmountie.dev/gmountie/pkg/client/config"
+	"go.gmountie.dev/gmountie/pkg/client/grpc"
+	"go.gmountie.dev/gmountie/pkg/client/mount"
+	"go.gmountie.dev/gmountie/pkg/client/service"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 )
 
 // AppContext is a struct that holds the application context.

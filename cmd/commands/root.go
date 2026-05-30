@@ -2,8 +2,9 @@ package commands
 
 import (
 	"fmt"
-	"gmountie/pkg/common"
 	"os"
+
+	"go.gmountie.dev/gmountie/pkg/common"
 
 	"github.com/spf13/cobra"
 )

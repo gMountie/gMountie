@@ -1,4 +1,4 @@
-module gmountie
+module go.gmountie.dev/gmountie
 
 go 1.26.3
 
@@ -19,6 +19,7 @@ require (
 	github.com/puzpuzpuz/xsync/v3 v3.5.1
 	github.com/samber/slog-zap/v2 v2.7.0
 	github.com/spf13/cobra v1.10.2
+	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	github.com/thanhpk/randstr v1.0.6
@@ -28,6 +29,7 @@ require (
 	go.etcd.io/bbolt v1.4.3
 	go.uber.org/goleak v1.3.0
 	go.uber.org/zap v1.28.0
+	golang.org/x/crypto v0.51.0
 	golang.org/x/sync v0.20.0
 	golang.org/x/sys v0.45.0
 	golang.org/x/term v0.43.0
@@ -169,7 +171,6 @@ require (
 	github.com/skeema/knownhosts v1.3.2 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
-	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.6.0 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
@@ -192,7 +193,6 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/crypto v0.51.0 // indirect
 	golang.org/x/net v0.54.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/text v0.37.0 // indirect

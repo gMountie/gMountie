@@ -2,8 +2,9 @@ package controller
 
 import (
 	"context"
-	"gmountie/pkg/proto"
-	"gmountie/pkg/server/service"
+
+	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/server/service"
 
 	"google.golang.org/grpc"
 )

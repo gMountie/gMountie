@@ -4,8 +4,8 @@ import (
 	"strconv"
 	"strings"
 
-	"gmountie/pkg/client/cache/persist"
-	"gmountie/pkg/client/metrics"
+	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
 )
 
 // dataCache stores file content as fixed-size chunks keyed by
