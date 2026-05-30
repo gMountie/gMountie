@@ -3,11 +3,14 @@ package persist
 import (
 	"bytes"
 	"encoding/binary"
-	"encoding/gob"
 
 	"github.com/pkg/errors"
 	bolt "go.etcd.io/bbolt"
 )
+
+// chunkRefSize is the fixed wire size of an encoded ChunkRef:
+// 16 bytes hash + 4 bytes size + 8 bytes version = 28 bytes.
+const chunkRefSize = 28
 
 // ChunkRef is the value stored under data_idx[path\x00idx]. Sub-spec D
 // will populate Version; Sub-spec C writes zero.
@@ -252,18 +255,30 @@ func (p *Persist) InvalidateChunkRange(path string, firstIdx, lastIdx int) error
 	return nil
 }
 
+// encodeChunkRef serialises r into a fixed 28-byte big-endian layout:
+//
+//	[0:16]  Hash  [16]byte
+//	[16:20] Size  uint32 big-endian
+//	[20:28] Version uint64 big-endian
+//
+// The fixed layout avoids the per-encode gob type-descriptor overhead on
+// the hot write path. formatVersion was bumped to 2 when this layout
+// replaced the gob encoding so old caches are invalidated on first open.
 func encodeChunkRef(r ChunkRef) ([]byte, error) {
-	var buf bytes.Buffer
-	if err := gob.NewEncoder(&buf).Encode(r); err != nil {
-		return nil, errors.Wrap(err, "encode ChunkRef")
-	}
-	return buf.Bytes(), nil
+	buf := make([]byte, chunkRefSize)
+	copy(buf[:16], r.Hash[:])
+	binary.BigEndian.PutUint32(buf[16:20], r.Size)
+	binary.BigEndian.PutUint64(buf[20:28], r.Version)
+	return buf, nil
 }
 
 func decodeChunkRef(b []byte) (ChunkRef, error) {
-	var r ChunkRef
-	if err := gob.NewDecoder(bytes.NewReader(b)).Decode(&r); err != nil {
-		return r, errors.Wrap(err, "decode ChunkRef")
+	if len(b) != chunkRefSize {
+		return ChunkRef{}, errors.Errorf("decodeChunkRef: expected %d bytes, got %d", chunkRefSize, len(b))
 	}
+	var r ChunkRef
+	copy(r.Hash[:], b[:16])
+	r.Size = binary.BigEndian.Uint32(b[16:20])
+	r.Version = binary.BigEndian.Uint64(b[20:28])
 	return r, nil
 }
