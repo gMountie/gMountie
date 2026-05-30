@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/adrg/xdg"
 )
@@ -100,10 +101,16 @@ func (execDaemonizer) spawnAndAwaitReady(childArgs []string) error {
 	}
 	_ = pw.Close() // parent keeps only the read end
 
+	// Bound the wait so --daemon detaches promptly even if the child's first
+	// mount RPC hangs; the detached child keeps running in the background
+	// regardless of whether the parent is still listening.
+	const daemonReadyTimeout = 30 * time.Second
+	_ = pr.SetReadDeadline(time.Now().Add(daemonReadyTimeout))
+
 	buf := make([]byte, 5)
 	n, _ := io.ReadFull(pr, buf) // child writes "ready"
 	if n < 5 {
-		return fmt.Errorf("%w (see %s)", errReady, logPath)
+		return fmt.Errorf("%w (timed out or child exited; see %s)", errReady, logPath)
 	}
 	fmt.Fprintf(os.Stderr, "gMountie: mounted in background (pid %d, logs: %s)\n", cmd.Process.Pid, logPath)
 	return nil
