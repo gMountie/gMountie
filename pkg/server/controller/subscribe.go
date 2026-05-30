@@ -21,7 +21,7 @@ func (r *RpcServerImpl) Subscribe(request *proto.SubscribeRequest, stream proto.
 	// is a long-lived goroutine without per-op ctx; identity-refresh-on-
 	// resume is deferred (spec §11). BindIdentity also validates the volume.
 	ctx := stream.Context()
-	boundFS, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	boundFS, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
 		return err
 	}

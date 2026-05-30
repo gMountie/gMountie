@@ -59,6 +59,322 @@ func NewIdentityBoundFS(fs pathfs.FileSystem, id *Identity) pathfs.FileSystem {
 	return &identityBoundFS{FileSystem: fs, id: id}
 }
 
+// IdentityResolveFunc resolves an authenticated principal to an io.Identity.
+// The service package provides this as a closure, keeping io free of import
+// cycles while allowing per-op fresh resolution via the TTL-cached resolver.
+type IdentityResolveFunc func(principal string) (Identity, error)
+
+// resolverBoundFS is a cached-wrapper variant where every path op resolves the
+// identity fresh via fn (backed by a TTL-cached resolver) before pinning the
+// thread and changing credentials. This makes caching the wrapper itself
+// trivially safe: freshness is fully delegated to the resolver's TTL.
+type resolverBoundFS struct {
+	pathfs.FileSystem
+	resolve   IdentityResolveFunc
+	principal string
+}
+
+// NewResolverBoundFS wraps fs so every path op resolves identity via fn (which
+// is typically a closure over a TTL-cached IdentityResolver) before applying
+// credentials. Safe to cache permanently — no identity snapshot is stored.
+func NewResolverBoundFS(fs pathfs.FileSystem, fn IdentityResolveFunc, principal string) pathfs.FileSystem {
+	return &resolverBoundFS{FileSystem: fs, resolve: fn, principal: principal}
+}
+
+// changeIdentityFor resolves the principal and applies its credentials,
+// returning the cleanup func. Errors are surfaced to callers so they can
+// return EPERM to the kernel consistently with identityBoundFS behaviour.
+func (r *resolverBoundFS) changeIdentityFor() (func(), error) {
+	id, err := r.resolve(r.principal)
+	if err != nil {
+		return nil, err
+	}
+	return changeIdentity(&id)
+}
+
+// wantsFchownFor resolves the identity and checks the dac_override cap.
+// Used in Create/Mkdir/Symlink/etc. wrappers for post-create fchown decisions.
+// On resolve error it returns false (safe: skip the extra chown rather than EPERM).
+func (r *resolverBoundFS) wantsFchownFor() (uint32, uint32, bool) {
+	id, err := r.resolve(r.principal)
+	if err != nil {
+		return 0, 0, false
+	}
+	return id.Uid, id.Gid, wantsFchown(&id)
+}
+
+func (r *resolverBoundFS) GetAttr(name string, context *fuse.Context) (*fuse.Attr, fuse.Status) {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return nil, fuse.EPERM
+	}
+	defer cleanup()
+	return r.FileSystem.GetAttr(name, context)
+}
+
+func (r *resolverBoundFS) Chmod(name string, mode uint32, context *fuse.Context) fuse.Status {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return fuse.EPERM
+	}
+	defer cleanup()
+	return r.FileSystem.Chmod(name, mode, context)
+}
+
+func (r *resolverBoundFS) Chown(name string, uid uint32, gid uint32, context *fuse.Context) fuse.Status {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return fuse.EPERM
+	}
+	defer cleanup()
+	return r.FileSystem.Chown(name, uid, gid, context)
+}
+
+func (r *resolverBoundFS) Utimens(name string, Atime *time.Time, Mtime *time.Time, context *fuse.Context) fuse.Status {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return fuse.EPERM
+	}
+	defer cleanup()
+	return r.FileSystem.Utimens(name, Atime, Mtime, context)
+}
+
+func (r *resolverBoundFS) Truncate(name string, size uint64, context *fuse.Context) fuse.Status {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return fuse.EPERM
+	}
+	defer cleanup()
+	return r.FileSystem.Truncate(name, size, context)
+}
+
+func (r *resolverBoundFS) Access(name string, mode uint32, context *fuse.Context) fuse.Status {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume identity", zap.Error(err))
+		return fuse.EPERM
+	}
+	defer cleanup()
+	id, err := r.resolve(r.principal)
+	if err != nil {
+		log.Log.Error("failed to resolve identity for access check", zap.Error(err))
+		return fuse.EPERM
+	}
+	attr, st := r.FileSystem.GetAttr(name, context)
+	if !st.Ok() {
+		return st
+	}
+	if accessAllowed(attr, &id, mode) {
+		return fuse.OK
+	}
+	return fuse.EACCES
+}
+
+func (r *resolverBoundFS) Link(oldName string, newName string, context *fuse.Context) fuse.Status {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return fuse.EPERM
+	}
+	defer cleanup()
+	st := r.FileSystem.Link(oldName, newName, context)
+	if st.Ok() {
+		if uid, gid, ok := r.wantsFchownFor(); ok {
+			if fst := r.FileSystem.Chown(newName, uid, gid, context); !fst.Ok() {
+				log.Log.Warn("dac_override post-create fchown failed; entry left root-owned",
+					zap.String("path", newName), zap.Uint32("uid", uid), zap.Uint32("gid", gid),
+					zap.Stringer("status", fst))
+			}
+		}
+	}
+	return st
+}
+
+func (r *resolverBoundFS) Mkdir(name string, mode uint32, context *fuse.Context) fuse.Status {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return fuse.EPERM
+	}
+	defer cleanup()
+	st := r.FileSystem.Mkdir(name, mode, context)
+	if st.Ok() {
+		if uid, gid, ok := r.wantsFchownFor(); ok {
+			if fst := r.FileSystem.Chown(name, uid, gid, context); !fst.Ok() {
+				log.Log.Warn("dac_override post-create fchown failed; entry left root-owned",
+					zap.String("path", name), zap.Uint32("uid", uid), zap.Uint32("gid", gid),
+					zap.Stringer("status", fst))
+			}
+		}
+	}
+	return st
+}
+
+func (r *resolverBoundFS) Mknod(name string, mode uint32, dev uint32, context *fuse.Context) fuse.Status {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return fuse.EPERM
+	}
+	defer cleanup()
+	st := r.FileSystem.Mknod(name, mode, dev, context)
+	if st.Ok() {
+		if uid, gid, ok := r.wantsFchownFor(); ok {
+			if fst := r.FileSystem.Chown(name, uid, gid, context); !fst.Ok() {
+				log.Log.Warn("dac_override post-create fchown failed; entry left root-owned",
+					zap.String("path", name), zap.Uint32("uid", uid), zap.Uint32("gid", gid),
+					zap.Stringer("status", fst))
+			}
+		}
+	}
+	return st
+}
+
+func (r *resolverBoundFS) Rename(oldName string, newName string, context *fuse.Context) fuse.Status {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return fuse.EPERM
+	}
+	defer cleanup()
+	return r.FileSystem.Rename(oldName, newName, context)
+}
+
+func (r *resolverBoundFS) Rmdir(name string, context *fuse.Context) fuse.Status {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return fuse.EPERM
+	}
+	defer cleanup()
+	return r.FileSystem.Rmdir(name, context)
+}
+
+func (r *resolverBoundFS) Unlink(name string, context *fuse.Context) fuse.Status {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return fuse.EPERM
+	}
+	defer cleanup()
+	return r.FileSystem.Unlink(name, context)
+}
+
+func (r *resolverBoundFS) GetXAttr(name string, attribute string, context *fuse.Context) ([]byte, fuse.Status) {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return nil, fuse.EPERM
+	}
+	defer cleanup()
+	return r.FileSystem.GetXAttr(name, attribute, context)
+}
+
+func (r *resolverBoundFS) ListXAttr(name string, context *fuse.Context) ([]string, fuse.Status) {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return nil, fuse.EPERM
+	}
+	defer cleanup()
+	return r.FileSystem.ListXAttr(name, context)
+}
+
+func (r *resolverBoundFS) RemoveXAttr(name string, attr string, context *fuse.Context) fuse.Status {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return fuse.EPERM
+	}
+	defer cleanup()
+	return r.FileSystem.RemoveXAttr(name, attr, context)
+}
+
+func (r *resolverBoundFS) SetXAttr(name string, attr string, data []byte, flags int, context *fuse.Context) fuse.Status {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return fuse.EPERM
+	}
+	defer cleanup()
+	return r.FileSystem.SetXAttr(name, attr, data, flags, context)
+}
+
+func (r *resolverBoundFS) Open(name string, flags uint32, context *fuse.Context) (nodefs.File, fuse.Status) {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return nil, fuse.EPERM
+	}
+	defer cleanup()
+	return r.FileSystem.Open(name, flags, context)
+}
+
+func (r *resolverBoundFS) Create(name string, flags uint32, mode uint32, context *fuse.Context) (nodefs.File, fuse.Status) {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return nil, fuse.EPERM
+	}
+	defer cleanup()
+	f, st := r.FileSystem.Create(name, flags, mode, context)
+	if st.Ok() {
+		if uid, gid, ok := r.wantsFchownFor(); ok {
+			if fst := r.FileSystem.Chown(name, uid, gid, context); !fst.Ok() {
+				log.Log.Warn("dac_override post-create fchown failed; entry left root-owned",
+					zap.String("path", name), zap.Uint32("uid", uid), zap.Uint32("gid", gid),
+					zap.Stringer("status", fst))
+			}
+		}
+	}
+	return f, st
+}
+
+func (r *resolverBoundFS) OpenDir(name string, context *fuse.Context) ([]fuse.DirEntry, fuse.Status) {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return nil, fuse.EPERM
+	}
+	defer cleanup()
+	return r.FileSystem.OpenDir(name, context)
+}
+
+func (r *resolverBoundFS) Symlink(value string, linkName string, context *fuse.Context) fuse.Status {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return fuse.EPERM
+	}
+	defer cleanup()
+	st := r.FileSystem.Symlink(value, linkName, context)
+	if st.Ok() {
+		if uid, gid, ok := r.wantsFchownFor(); ok {
+			if fst := r.FileSystem.Chown(linkName, uid, gid, context); !fst.Ok() {
+				log.Log.Warn("dac_override post-create fchown failed; entry left root-owned",
+					zap.String("path", linkName), zap.Uint32("uid", uid), zap.Uint32("gid", gid),
+					zap.Stringer("status", fst))
+			}
+		}
+	}
+	return st
+}
+
+func (r *resolverBoundFS) Readlink(name string, context *fuse.Context) (string, fuse.Status) {
+	cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return "", fuse.EPERM
+	}
+	defer cleanup()
+	return r.FileSystem.Readlink(name, context)
+}
+
 // changeIdentity pins the current OS thread and applies the identity's
 // credentials. Dispatch is based on id.Caps:
 //

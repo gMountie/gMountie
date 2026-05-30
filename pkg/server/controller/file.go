@@ -64,7 +64,7 @@ func (r *RpcFileServerImpl) Open(ctx context.Context, request *proto.OpenRequest
 	if err != nil {
 		return nil, err
 	}
-	fs, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +84,7 @@ func (r *RpcFileServerImpl) Create(ctx context.Context, request *proto.CreateReq
 	if err != nil {
 		return nil, err
 	}
-	fs, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func (r *RpcFileServerImpl) Create(ctx context.Context, request *proto.CreateReq
 			reply.Fd = sess.RegisterFile(request.Path, file)
 			r.metrics.OpenFilesInc(request.Volume, request.SessionId)
 			if attr, gst := fs.GetAttr(request.Path, createContext(ctx, request.Caller)); gst.Ok() {
-				reply.Attributes = toProtoAttr(attr, resolveIdentityOrNil(ctx, r.fsService, request.Volume, request.Caller))
+				reply.Attributes = toProtoAttr(attr, &id)
 				r.bus.Emit(request.Volume, request.Path, serverio.VersionFromAttr(attr), serverio.KindMutated)
 			} else {
 				r.bus.Emit(request.Volume, request.Path, 0, serverio.KindMutated)

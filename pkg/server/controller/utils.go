@@ -20,7 +20,7 @@ import (
 //   - group_name is set IFF the file's gid has a name in id.GroupNames AND the
 //     caller is a member of that group (a.Gid is in id.Gids).
 //
-// A nil id (e.g. ResolveIdentity failed, or the call has no caller) is safe:
+// A nil id (e.g. the call has no caller, StatFs nil-caller path) is safe:
 // no names are filled and the wire shape is identical to the pre-1b-2 reply.
 func toProtoAttr(a *fuse.Attr, id *service.Identity) *proto.Attr {
 	if a == nil {
@@ -56,19 +56,6 @@ func groupMember(gids []uint32, gid uint32) bool {
 		}
 	}
 	return false
-}
-
-// resolveIdentityOrNil is the best-effort identity lookup used by attr-returning
-// handlers to feed toProtoAttr. ResolveIdentity is served from the per-volume
-// TTL identity cache so this is cheap on the hot path. A failure here MUST NOT
-// block the attr return — we drop the names and continue. Returns nil on any
-// error.
-func resolveIdentityOrNil(ctx context.Context, svc service.VolumeService, volume string, caller *proto.Caller) *service.Identity {
-	id, err := svc.ResolveIdentity(ctx, volume, caller)
-	if err != nil {
-		return nil
-	}
-	return &id
 }
 
 // versionAfter re-Stats path on fs and returns the freshness token for use in
