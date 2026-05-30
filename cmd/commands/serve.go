@@ -36,15 +36,17 @@ auth:
       password_hash: %s
 `
 
-// DefaultConfig is the first-run server configuration with a freshly-hashed
-// "admin" password. It is a var (not const) because argon2id salts are random.
-var DefaultConfig = func() string {
+// buildDefaultConfig generates the first-run server configuration with a
+// freshly-hashed "admin" password. Argon2id hashing is expensive (~300ms,
+// 64 MiB), so this is called only when the serve command actually needs to
+// write a first-run config — not at package init time.
+func buildDefaultConfig() (string, error) {
 	h, err := passhash.Hash("admin")
 	if err != nil {
-		panic(fmt.Sprintf("serve: generate default admin hash: %v", err))
+		return "", fmt.Errorf("serve: generate default admin hash: %w", err)
 	}
-	return fmt.Sprintf(defaultConfigTemplate, h)
-}()
+	return fmt.Sprintf(defaultConfigTemplate, h), nil
+}
 
 // For testing purposes
 var serverStart = server.Start
@@ -70,19 +72,27 @@ var serveCmd = &cobra.Command{
 				return err
 			}
 
-			// Config doesn't exist, create default one
+			// Config doesn't exist, create default one.
+			// buildDefaultConfig runs argon2id hashing here (not at package
+			// init) so other subcommands (version, fingerprint, genpass, …)
+			// don't pay the ~300 ms / 64 MiB cost.
 			log.Log.Info("no config file found, creating default configuration",
 				zap.String("path", configFile))
+
+			dc, err := buildDefaultConfig()
+			if err != nil {
+				return err
+			}
 
 			if err := config.EnsureConfigDir(); err != nil {
 				return err
 			}
 
-			if err := config.WriteDefaultConfig(config.DefaultServerConfigFileName, DefaultConfig); err != nil {
+			if err := config.WriteDefaultConfig(config.DefaultServerConfigFileName, dc); err != nil {
 				return err
 			}
 
-			cfgString = DefaultConfig
+			cfgString = dc
 		} else {
 			cfgString = string(data)
 		}
