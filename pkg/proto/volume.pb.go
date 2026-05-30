@@ -145,6 +145,98 @@ func (x *VolumeListReply) GetVolumes() []*Volume {
 	return nil
 }
 
+type VolumeResolveRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VolumeResolveRequest) Reset() {
+	*x = VolumeResolveRequest{}
+	mi := &file_api_proto_volume_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VolumeResolveRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeResolveRequest) ProtoMessage() {}
+
+func (x *VolumeResolveRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_volume_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeResolveRequest.ProtoReflect.Descriptor instead.
+func (*VolumeResolveRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_volume_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *VolumeResolveRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+// VolumeResolveReply.location tells the client where to reach the volume.
+// Empty means "the server you are talking to serves it here" — the OSS default.
+// A non-empty value (e.g. "v-abc.data.example.com:443") is a referral the
+// client should reconnect to.
+type VolumeResolveReply struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Location      string                 `protobuf:"bytes,1,opt,name=location,proto3" json:"location,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VolumeResolveReply) Reset() {
+	*x = VolumeResolveReply{}
+	mi := &file_api_proto_volume_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VolumeResolveReply) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeResolveReply) ProtoMessage() {}
+
+func (x *VolumeResolveReply) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_volume_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeResolveReply.ProtoReflect.Descriptor instead.
+func (*VolumeResolveReply) Descriptor() ([]byte, []int) {
+	return file_api_proto_volume_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *VolumeResolveReply) GetLocation() string {
+	if x != nil {
+		return x.Location
+	}
+	return ""
+}
+
 var File_api_proto_volume_proto protoreflect.FileDescriptor
 
 const file_api_proto_volume_proto_rawDesc = "" +
@@ -154,9 +246,14 @@ const file_api_proto_volume_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"\x13\n" +
 	"\x11VolumeListRequest\"=\n" +
 	"\x0fVolumeListReply\x12*\n" +
-	"\avolumes\x18\x01 \x03(\v2\x10.gmountie.VolumeR\avolumes2O\n" +
+	"\avolumes\x18\x01 \x03(\v2\x10.gmountie.VolumeR\avolumes\"*\n" +
+	"\x14VolumeResolveRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"0\n" +
+	"\x12VolumeResolveReply\x12\x1a\n" +
+	"\blocation\x18\x01 \x01(\tR\blocation2\x98\x01\n" +
 	"\rVolumeService\x12>\n" +
-	"\x04List\x12\x1b.gmountie.VolumeListRequest\x1a\x19.gmountie.VolumeListReplyB\vZ\tpkg/protob\x06proto3"
+	"\x04List\x12\x1b.gmountie.VolumeListRequest\x1a\x19.gmountie.VolumeListReply\x12G\n" +
+	"\aResolve\x12\x1e.gmountie.VolumeResolveRequest\x1a\x1c.gmountie.VolumeResolveReplyB\vZ\tpkg/protob\x06proto3"
 
 var (
 	file_api_proto_volume_proto_rawDescOnce sync.Once
@@ -170,18 +267,22 @@ func file_api_proto_volume_proto_rawDescGZIP() []byte {
 	return file_api_proto_volume_proto_rawDescData
 }
 
-var file_api_proto_volume_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_api_proto_volume_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_api_proto_volume_proto_goTypes = []any{
-	(*Volume)(nil),            // 0: gmountie.Volume
-	(*VolumeListRequest)(nil), // 1: gmountie.VolumeListRequest
-	(*VolumeListReply)(nil),   // 2: gmountie.VolumeListReply
+	(*Volume)(nil),               // 0: gmountie.Volume
+	(*VolumeListRequest)(nil),    // 1: gmountie.VolumeListRequest
+	(*VolumeListReply)(nil),      // 2: gmountie.VolumeListReply
+	(*VolumeResolveRequest)(nil), // 3: gmountie.VolumeResolveRequest
+	(*VolumeResolveReply)(nil),   // 4: gmountie.VolumeResolveReply
 }
 var file_api_proto_volume_proto_depIdxs = []int32{
 	0, // 0: gmountie.VolumeListReply.volumes:type_name -> gmountie.Volume
 	1, // 1: gmountie.VolumeService.List:input_type -> gmountie.VolumeListRequest
-	2, // 2: gmountie.VolumeService.List:output_type -> gmountie.VolumeListReply
-	2, // [2:3] is the sub-list for method output_type
-	1, // [1:2] is the sub-list for method input_type
+	3, // 2: gmountie.VolumeService.Resolve:input_type -> gmountie.VolumeResolveRequest
+	2, // 3: gmountie.VolumeService.List:output_type -> gmountie.VolumeListReply
+	4, // 4: gmountie.VolumeService.Resolve:output_type -> gmountie.VolumeResolveReply
+	3, // [3:5] is the sub-list for method output_type
+	1, // [1:3] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
 	1, // [1:1] is the sub-list for extension extendee
 	0, // [0:1] is the sub-list for field type_name
@@ -198,7 +299,7 @@ func file_api_proto_volume_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_volume_proto_rawDesc), len(file_api_proto_volume_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -13,6 +13,19 @@ message VolumeListReply {
   repeated Volume volumes = 1;
 }
 
+message VolumeResolveRequest {
+  string name = 1;
+}
+
+// VolumeResolveReply.location tells the client where to reach the volume.
+// Empty means "the server you are talking to serves it here" — the OSS default.
+// A non-empty value (e.g. "v-abc.data.example.com:443") is a referral the
+// client should reconnect to.
+message VolumeResolveReply {
+  string location = 1;
+}
+
 service VolumeService {
   rpc List (VolumeListRequest) returns (VolumeListReply);
+  rpc Resolve (VolumeResolveRequest) returns (VolumeResolveReply);
 }
