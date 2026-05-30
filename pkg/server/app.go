@@ -108,6 +108,10 @@ func Start(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 
+	if err := cfg.ValidateVolumePaths(); err != nil {
+		return errors.Wrap(err, "invalid volume configuration")
+	}
+
 	appCtx, err := NewServerAppContext(cfg)
 	if err != nil {
 		return errors.Wrap(err, "build app context")
