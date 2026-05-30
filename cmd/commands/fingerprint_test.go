@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	clientconfig "gmountie/pkg/client/config"
 	servertls "gmountie/pkg/server/tls"
 
 	"github.com/adrg/xdg"
+	"github.com/go-playground/validator/v10"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/suite"
@@ -104,4 +107,33 @@ func (s *FingerprintCmdSuite) TestNonVerbosePrintsPasteSnippet() {
 	out := renderFingerprint("SHA256:abc123")
 	s.Contains(out, "SHA256:abc123")
 	s.Contains(out, "expected_fingerprint: SHA256:abc123")
+}
+
+// TestSnippetIsValidClientTLS round-trips the pasted snippet through the real
+// client TLS config so the emitted `verify:` value can't drift to something the
+// validator rejects (e.g. `verify: true`, which is not in the oneof enum).
+func (s *FingerprintCmdSuite) TestSnippetIsValidClientTLS() {
+	out := renderFingerprint("SHA256:abc123")
+
+	var verify, fp string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#"))
+		switch {
+		case strings.HasPrefix(line, "verify:"):
+			verify = strings.TrimSpace(strings.TrimPrefix(line, "verify:"))
+		case strings.HasPrefix(line, "expected_fingerprint:"):
+			fp = strings.TrimSpace(strings.TrimPrefix(line, "expected_fingerprint:"))
+		}
+	}
+	s.Require().NotEmpty(verify, "snippet must include a verify value")
+	s.Equal("SHA256:abc123", fp)
+
+	v := viper.New()
+	v.Set("address", "127.0.0.1")
+	v.Set("port", 9449)
+	v.Set("tls.verify", verify)
+	v.Set("tls.expected_fingerprint", fp)
+	cfg, err := clientconfig.NewServerConfig(v)
+	s.Require().NoError(err)
+	s.Require().NoError(validator.New().Struct(cfg), "emitted snippet must pass client TLS validation")
 }
