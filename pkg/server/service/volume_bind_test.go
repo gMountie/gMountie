@@ -75,7 +75,7 @@ func (s *BindIdentitySuite) TestPassthroughNoRootSquashKeepsRoot() {
 
 func (s *BindIdentitySuite) TestBindIdentityReturnsFS() {
 	svc := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModeSquash, Uid: 1000, Gid: 1000})
-	fs, err := svc.BindIdentity(context.Background(), "v", nil)
+	fs, _, err := svc.BindIdentity(context.Background(), "v", nil)
 	s.Require().NoError(err)
 	s.NotNil(fs)
 }
@@ -88,7 +88,7 @@ func (s *BindIdentitySuite) TestBindIdentityPrivilegedWrapsIdentity() {
 	svc := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModeSquash, Uid: 1000, Gid: 1000})
 	bare, err := svc.GetVolumeFileSystem("v")
 	s.Require().NoError(err)
-	bound, err := svc.BindIdentity(context.Background(), "v", nil)
+	bound, _, err := svc.BindIdentity(context.Background(), "v", nil)
 	s.Require().NoError(err)
 	s.NotSame(bare, bound) // wrapped with the identity-bound FS
 }
@@ -112,7 +112,7 @@ func (s *BindIdentitySuite) TestBindIdentityUnprivilegedReturnsBareFS() {
 		Users: map[string]config.StaticUser{"alice": {Uid: 1001, Gid: 1001}}})
 	bare, err := svc.GetVolumeFileSystem("v")
 	s.Require().NoError(err)
-	bound, err := svc.BindIdentity(context.Background(), "v", nil)
+	bound, _, err := svc.BindIdentity(context.Background(), "v", nil)
 	s.Require().NoError(err)
 	s.Same(bare, bound)
 }
@@ -136,7 +136,7 @@ func (s *BindIdentitySuite) TestBindIdentityStaticCapsCarriedThrough() {
 	s.Equal([]string{"dac_read_search"}, id.Caps, "service.Identity must carry the configured cap")
 
 	// Verify that BindIdentity succeeds (i.e. Caps does not break the construction path).
-	boundFS, err := svc.BindIdentity(ctx, "v", nil)
+	boundFS, _, err := svc.BindIdentity(ctx, "v", nil)
 	s.Require().NoError(err)
 	s.NotNil(boundFS, "bound FS must be non-nil")
 }

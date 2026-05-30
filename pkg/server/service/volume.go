@@ -14,6 +14,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	"github.com/pkg/errors"
+	"github.com/puzpuzpuz/xsync/v3"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -27,8 +28,9 @@ type VolumeService interface {
 	// GetVolumeFileSystem gets the filesystem for a volume.
 	GetVolumeFileSystem(name string) (pathfs.FileSystem, error)
 	// BindIdentity resolves the request's identity for a volume and returns a
-	// per-request identity-bound filesystem wrapping the volume's loopback.
-	BindIdentity(ctx context.Context, volume string, caller *proto.Caller) (pathfs.FileSystem, error)
+	// per-request identity-bound filesystem wrapping the volume's loopback,
+	// together with the resolved Identity so callers need not re-resolve it.
+	BindIdentity(ctx context.Context, volume string, caller *proto.Caller) (pathfs.FileSystem, Identity, error)
 	// ResolveIdentity resolves the request's server-side identity for a volume
 	// (principal from ctx for mapped modes; wire caller for passthrough).
 	ResolveIdentity(ctx context.Context, volume string, caller *proto.Caller) (Identity, error)
@@ -45,43 +47,71 @@ func WithMiddleware(middleware ...io.Middleware) VolumeServiceOptions {
 	}
 }
 
+// volumeEntry consolidates all per-volume state, eliminating the partial-write
+// hazard from maintaining multiple parallel maps.
+type volumeEntry struct {
+	fs       pathfs.FileSystem
+	resolver IdentityResolver // nil for passthrough
+	mapping  config.MappingConfig
+}
+
+// boundFSCacheKey identifies a cached bound-FS wrapper for mapped modes.
+// Passthrough is never cached (identity depends on per-RPC wire Caller).
+type boundFSCacheKey struct {
+	volume    string
+	principal string
+}
+
 // VolumeServiceImpl is an implementation of the VolumeService interface.
 type VolumeServiceImpl struct {
-	config         *config.Config
-	filesystems    map[string]pathfs.FileSystem
-	middleware     []io.Middleware
-	resolvers      map[string]IdentityResolver
-	mappings       map[string]config.MappingConfig
-	aclByPrincipal map[string][]string // principal → explicit volume list (nil value = unset)
-	defaultAllow   bool                // effective default_allow from auth config
-	aclEnabled     bool                // true when an auth config with users is present
+	config     *config.Config
+	volumes    map[string]*volumeEntry
+	middleware []io.Middleware
+
+	// aclByPrincipal is the O(1) ACL lookup table: principal → set of allowed
+	// volumes. A nil value in the map means the principal has no explicit list
+	// (falls through to defaultAllow). An entry with an empty set means the
+	// principal has an explicit empty list (all denied).
+	aclByPrincipal map[string]map[string]struct{}
+	defaultAllow   bool // effective default_allow from auth config
+	aclEnabled     bool // true when an auth config with users is present
+
+	// boundFSCache caches per-(volume,principal) resolver-bound FS wrappers for
+	// mapped modes. Entries are safe to reuse indefinitely because the wrapper
+	// holds a reference to the TTL-cached resolver and resolves identity fresh on
+	// every op — staleness is bounded by the resolver's own TTL.
+	boundFSCache *xsync.MapOf[boundFSCacheKey, pathfs.FileSystem]
 }
 
 // NewVolumeService creates a new VolumeService.
 func NewVolumeService(cfg *config.Config, options ...VolumeServiceOptions) (VolumeService, error) {
-	fs := make(map[string]pathfs.FileSystem)
 	svc := &VolumeServiceImpl{
 		config:         cfg,
-		filesystems:    fs,
+		volumes:        make(map[string]*volumeEntry),
 		middleware:     make([]io.Middleware, 0),
-		resolvers:      make(map[string]IdentityResolver),
-		mappings:       make(map[string]config.MappingConfig),
-		aclByPrincipal: make(map[string][]string),
+		aclByPrincipal: make(map[string]map[string]struct{}),
 		defaultAllow:   true,
 		aclEnabled:     false,
+		boundFSCache:   xsync.NewMapOf[boundFSCacheKey, pathfs.FileSystem](),
 	}
 	for _, option := range options {
 		option(svc)
 	}
-	// Build ACL model from auth config when available.
+	// Build O(1) ACL model from auth config when available.
 	if cfg.Auth != nil {
 		if bac, ok := cfg.Auth.(*config.BasicAuthConfig); ok {
 			svc.aclEnabled = true
 			svc.defaultAllow = bac.DefaultAllowOrTrue()
 			for _, u := range bac.Users {
 				if u.Volumes != nil {
-					svc.aclByPrincipal[u.Username] = u.Volumes
+					set := make(map[string]struct{}, len(u.Volumes))
+					for _, v := range u.Volumes {
+						set[v] = struct{}{}
+					}
+					svc.aclByPrincipal[u.Username] = set
 				}
+				// Users without an explicit Volumes list get no entry →
+				// defaultAllow policy applies at check time.
 			}
 		}
 	}
@@ -90,18 +120,19 @@ func NewVolumeService(cfg *config.Config, options ...VolumeServiceOptions) (Volu
 		if err != nil {
 			return nil, errors.Wrapf(err, "open volume %q", v.Name)
 		}
-		svc.addFileSystem(v.Name, localFS)
-		svc.mappings[v.Name] = v.Mapping
+		entry := &volumeEntry{mapping: v.Mapping}
+		entry.fs = svc.applyMiddleware(localFS)
 		switch v.Mapping.Mode {
 		case config.MappingModeSquash:
-			svc.resolvers[v.Name] = NewSquashResolver(v.Mapping.Uid, v.Mapping.Gid)
+			entry.resolver = NewSquashResolver(v.Mapping.Uid, v.Mapping.Gid)
 		case config.MappingModeStatic:
-			svc.resolvers[v.Name] = NewCachedResolver(NewStaticResolver(v.Mapping), defaultIdentityTTL)
+			entry.resolver = NewCachedResolver(NewStaticResolver(v.Mapping), defaultIdentityTTL)
 		case config.MappingModeSystem:
-			svc.resolvers[v.Name] = NewCachedResolver(NewSystemResolver(v.Mapping), defaultIdentityTTL)
+			entry.resolver = NewCachedResolver(NewSystemResolver(v.Mapping), defaultIdentityTTL)
 		case config.MappingModePassthrough:
 			// no resolver; identity derives from the wire caller
 		}
+		svc.volumes[v.Name] = entry
 	}
 	return svc, nil
 }
@@ -121,18 +152,18 @@ func (s *VolumeServiceImpl) List(ctx context.Context) ([]common.Volume, error) {
 
 // GetVolumeFileSystem gets the filesystem for a volume.
 func (s *VolumeServiceImpl) GetVolumeFileSystem(name string) (pathfs.FileSystem, error) {
-	fs, ok := s.filesystems[name]
+	entry, ok := s.volumes[name]
 	if !ok {
 		return nil, errors.Errorf("volume %s not found", name)
 	}
-	return fs, nil
+	return entry.fs, nil
 }
 
 // PrincipalCanAccess returns nil if the authenticated principal in ctx is
 // permitted to access the named volume. When no auth config is present (ACL
 // not enabled), all accesses are allowed regardless of principal. When ACL is
-// enabled and the principal has an explicit volume list, membership is checked;
-// otherwise the default_allow policy applies.
+// enabled and the principal has an explicit volume set, membership is checked
+// in O(1); otherwise the default_allow policy applies.
 func (s *VolumeServiceImpl) PrincipalCanAccess(ctx context.Context, volume string) error {
 	// No auth configured → no restrictions; allow everything.
 	if !s.aclEnabled {
@@ -142,11 +173,9 @@ func (s *VolumeServiceImpl) PrincipalCanAccess(ctx context.Context, volume strin
 	if !ok || p == "" {
 		return status.Errorf(codes.PermissionDenied, "no authenticated principal for volume %q", volume)
 	}
-	if list, hasList := s.aclByPrincipal[p]; hasList {
-		for _, v := range list {
-			if v == volume {
-				return nil
-			}
+	if set, hasList := s.aclByPrincipal[p]; hasList {
+		if _, allowed := set[volume]; allowed {
+			return nil
 		}
 		return status.Errorf(codes.PermissionDenied, "principal %q is not granted volume %q", p, volume)
 	}
@@ -157,29 +186,65 @@ func (s *VolumeServiceImpl) PrincipalCanAccess(ctx context.Context, volume strin
 	return status.Errorf(codes.PermissionDenied, "principal %q has no volume grants (default_allow=false)", p)
 }
 
-// BindIdentity resolves the request's identity for a volume and returns a
-// per-request identity-bound filesystem wrapping the volume's loopback.
-func (s *VolumeServiceImpl) BindIdentity(ctx context.Context, volume string, caller *proto.Caller) (pathfs.FileSystem, error) {
+// BindIdentity resolves the request's identity for a volume and returns both
+// the identity-bound filesystem and the resolved Identity, eliminating the
+// double-resolve pattern in attr-returning handlers.
+//
+// For mapped modes (squash/static/system) the returned FS is a resolver-bound
+// wrapper that re-resolves identity on every op via the volume's TTL-cached
+// resolver; the wrapper itself is cached per (volume, principal) so repeated
+// RPCs skip the allocation. For passthrough, identity derives from the per-RPC
+// wire Caller and the wrapper is always built fresh.
+//
+// When identityEnforceable returns false (non-root, dev/CI) the bare loopback
+// is returned alongside a best-effort identity (zero on resolve error) so
+// attr-returning handlers can still populate Owner names without changing creds.
+func (s *VolumeServiceImpl) BindIdentity(ctx context.Context, volume string, caller *proto.Caller) (pathfs.FileSystem, Identity, error) {
 	if err := s.PrincipalCanAccess(ctx, volume); err != nil {
-		return nil, err
+		return nil, Identity{}, err
 	}
-	fs, ok := s.filesystems[volume]
+	entry, ok := s.volumes[volume]
 	if !ok {
-		return nil, errors.Errorf("volume %s not found", volume)
+		return nil, Identity{}, errors.Errorf("volume %s not found", volume)
 	}
 	if !identityEnforceable() {
 		// Not privileged to change thread credentials (non-root dev/CI): run as
-		// the server's own user, with no identity layer. Matches the
-		// pre-identity behaviour (AssumeUser was only wired when root) so the
-		// unprivileged path stays usable; startup warns that enforcement is off.
-		// Production runs as root (the design's precondition).
-		return fs, nil
+		// the server's own user, with no identity layer. Best-effort resolve so
+		// attr-returning handlers can still populate Owner names.
+		id, _ := s.resolveIdentity(ctx, volume, caller) // swallow error; zero Identity is safe
+		return entry.fs, id, nil
 	}
 	id, err := s.resolveIdentity(ctx, volume, caller)
 	if err != nil {
-		return nil, err
+		return nil, Identity{}, err
 	}
-	return io.NewIdentityBoundFS(fs, &io.Identity{Uid: id.Uid, Gid: id.Gid, Gids: id.Gids, Caps: id.Caps}), nil
+
+	var boundFS pathfs.FileSystem
+	if entry.mapping.Mode == config.MappingModePassthrough {
+		// Passthrough: identity is per-RPC (wire Caller uid/gid) — never cache.
+		boundFS = io.NewIdentityBoundFS(entry.fs, &io.Identity{Uid: id.Uid, Gid: id.Gid, Gids: id.Gids, Caps: id.Caps})
+	} else {
+		// Mapped modes: wrapper re-resolves via the TTL-cached resolver on every
+		// op, so caching the wrapper is safe regardless of TTL expiry.
+		p, _ := principal.FromContext(ctx)
+		key := boundFSCacheKey{volume: volume, principal: p}
+		if cached, hit := s.boundFSCache.Load(key); hit {
+			boundFS = cached
+		} else {
+			resolver := entry.resolver
+			resolveFn := io.IdentityResolveFunc(func(principal string) (io.Identity, error) {
+				id, err := resolver.Resolve(principal)
+				if err != nil {
+					return io.Identity{}, err
+				}
+				return io.Identity{Uid: id.Uid, Gid: id.Gid, Gids: id.Gids, Caps: id.Caps}, nil
+			})
+			w := io.NewResolverBoundFS(entry.fs, resolveFn, p)
+			s.boundFSCache.Store(key, w)
+			boundFS = w
+		}
+	}
+	return boundFS, id, nil
 }
 
 // ResolveIdentity resolves the request's server-side identity for a volume.
@@ -200,23 +265,24 @@ var identityEnforceable = func() bool {
 // volume. Mapped modes resolve the authenticated principal (from ctx) through
 // the volume's resolver; passthrough derives the identity from the wire caller.
 func (s *VolumeServiceImpl) resolveIdentity(ctx context.Context, volume string, caller *proto.Caller) (Identity, error) {
-	m, ok := s.mappings[volume]
+	entry, ok := s.volumes[volume]
 	if !ok {
 		return Identity{}, errors.Errorf("volume %s not found", volume)
 	}
+	m := entry.mapping
 	if m.Mode == config.MappingModePassthrough {
 		return passthroughIdentity(m, caller), nil
 	}
 	if m.Mode == config.MappingModeSquash {
 		// Squash maps every caller to one fixed identity, independent of the
 		// authenticated principal, so no principal is required.
-		return s.resolvers[volume].Resolve("")
+		return entry.resolver.Resolve("")
 	}
 	p, ok := principal.FromContext(ctx)
 	if !ok {
 		return Identity{}, errors.Errorf("no authenticated principal for volume %s (mode %s)", volume, m.Mode)
 	}
-	return s.resolvers[volume].Resolve(p)
+	return entry.resolver.Resolve(p)
 }
 
 // passthroughIdentity derives the identity directly from the wire caller,
@@ -247,11 +313,10 @@ func passthroughIdentity(m config.MappingConfig, caller *proto.Caller) Identity 
 // configured. Guarantees root is never squashed to a privileged identity.
 const defaultAnonUid = 65534
 
-// addFileSystem adds a filesystem to the volume service.
-func (s *VolumeServiceImpl) addFileSystem(name string, fs pathfs.FileSystem) {
-	// Apply middleware
-	for _, currentMiddleware := range s.middleware {
-		fs = currentMiddleware(fs)
+// applyMiddleware wraps fs through all registered middleware layers.
+func (s *VolumeServiceImpl) applyMiddleware(fs pathfs.FileSystem) pathfs.FileSystem {
+	for _, mw := range s.middleware {
+		fs = mw(fs)
 	}
-	s.filesystems[name] = fs
+	return fs
 }

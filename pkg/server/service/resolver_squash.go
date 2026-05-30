@@ -14,33 +14,46 @@ import (
 const defaultSquashLookupTimeout = 5 * time.Second
 
 type squashResolver struct {
-	uid, gid   uint32
-	userName   string
-	groupNames map[uint32]string
+	uid, gid    uint32
+	precomputed Identity // resolved once at construction; callers MUST NOT mutate
 }
 
 // NewSquashResolver maps every principal to one fixed identity (NFS all_squash).
 // Names are looked up once via getent at construction; failures are logged and
 // leave the names empty (the numeric ids still serve enforcement correctly).
+// The resolved Identity is precomputed so Resolve is allocation-free.
 func NewSquashResolver(uid, gid uint32) IdentityResolver {
 	return newSquashResolverWithRunner(uid, gid, execRunner, defaultSquashLookupTimeout)
 }
 
 func newSquashResolverWithRunner(uid, gid uint32, run commandRunner, timeout time.Duration) *squashResolver {
-	r := &squashResolver{uid: uid, gid: gid, groupNames: map[uint32]string{}}
+	r := &squashResolver{uid: uid, gid: gid}
+	groupNames := map[uint32]string{}
+	var userName string
+
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	if name, ok := lookupGetentField(ctx, run, "passwd", uid); ok {
-		r.userName = name
+		userName = name
 	} else {
 		log.Log.Warn("squash resolver: getent passwd lookup failed; user_name will be empty",
 			zap.Uint32("uid", uid))
 	}
 	if name, ok := lookupGetentField(ctx, run, "group", gid); ok {
-		r.groupNames[gid] = name
+		groupNames[gid] = name
 	} else {
 		log.Log.Warn("squash resolver: getent group lookup failed; group_name will be empty",
 			zap.Uint32("gid", gid))
+	}
+
+	// Precompute once. Gids and GroupNames are immutable after this point;
+	// all callers (BindIdentity, toProtoAttr, changeIdentity) are read-only.
+	r.precomputed = Identity{
+		Uid:        uid,
+		Gid:        gid,
+		Gids:       []uint32{gid},
+		UserName:   userName,
+		GroupNames: groupNames,
 	}
 	return r
 }
@@ -59,19 +72,10 @@ func lookupGetentField(ctx context.Context, run commandRunner, db string, id uin
 	return "", false
 }
 
+// Resolve returns the precomputed fixed identity, stamping the calling
+// principal into the Principal field. No allocations for Gids or GroupNames.
 func (r *squashResolver) Resolve(principal string) (Identity, error) {
-	gids := []uint32{r.gid}
-	// Copy GroupNames so callers can't mutate the resolver's map.
-	groupNames := make(map[uint32]string, len(r.groupNames))
-	for k, v := range r.groupNames {
-		groupNames[k] = v
-	}
-	return Identity{
-		Principal:  principal,
-		Uid:        r.uid,
-		Gid:        r.gid,
-		Gids:       gids,
-		UserName:   r.userName,
-		GroupNames: groupNames,
-	}, nil
+	id := r.precomputed
+	id.Principal = principal
+	return id, nil
 }

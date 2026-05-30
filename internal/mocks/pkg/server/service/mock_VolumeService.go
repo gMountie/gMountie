@@ -42,7 +42,7 @@ func (_m *MockVolumeService) EXPECT() *MockVolumeService_Expecter {
 }
 
 // BindIdentity provides a mock function for the type MockVolumeService
-func (_mock *MockVolumeService) BindIdentity(ctx context.Context, volume string, caller *proto.Caller) (pathfs.FileSystem, error) {
+func (_mock *MockVolumeService) BindIdentity(ctx context.Context, volume string, caller *proto.Caller) (pathfs.FileSystem, service.Identity, error) {
 	ret := _mock.Called(ctx, volume, caller)
 
 	if len(ret) == 0 {
@@ -50,8 +50,9 @@ func (_mock *MockVolumeService) BindIdentity(ctx context.Context, volume string,
 	}
 
 	var r0 pathfs.FileSystem
-	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, *proto.Caller) (pathfs.FileSystem, error)); ok {
+	var r1 service.Identity
+	var r2 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, *proto.Caller) (pathfs.FileSystem, service.Identity, error)); ok {
 		return returnFunc(ctx, volume, caller)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string, *proto.Caller) pathfs.FileSystem); ok {
@@ -61,12 +62,17 @@ func (_mock *MockVolumeService) BindIdentity(ctx context.Context, volume string,
 			r0 = ret.Get(0).(pathfs.FileSystem)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, *proto.Caller) error); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, *proto.Caller) service.Identity); ok {
 		r1 = returnFunc(ctx, volume, caller)
 	} else {
-		r1 = ret.Error(1)
+		r1 = ret.Get(1).(service.Identity)
 	}
-	return r0, r1
+	if returnFunc, ok := ret.Get(2).(func(context.Context, string, *proto.Caller) error); ok {
+		r2 = returnFunc(ctx, volume, caller)
+	} else {
+		r2 = ret.Error(2)
+	}
+	return r0, r1, r2
 }
 
 // MockVolumeService_BindIdentity_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'BindIdentity'
@@ -105,12 +111,12 @@ func (_c *MockVolumeService_BindIdentity_Call) Run(run func(ctx context.Context,
 	return _c
 }
 
-func (_c *MockVolumeService_BindIdentity_Call) Return(fileSystem pathfs.FileSystem, err error) *MockVolumeService_BindIdentity_Call {
-	_c.Call.Return(fileSystem, err)
+func (_c *MockVolumeService_BindIdentity_Call) Return(fileSystem pathfs.FileSystem, identity service.Identity, err error) *MockVolumeService_BindIdentity_Call {
+	_c.Call.Return(fileSystem, identity, err)
 	return _c
 }
 
-func (_c *MockVolumeService_BindIdentity_Call) RunAndReturn(run func(ctx context.Context, volume string, caller *proto.Caller) (pathfs.FileSystem, error)) *MockVolumeService_BindIdentity_Call {
+func (_c *MockVolumeService_BindIdentity_Call) RunAndReturn(run func(ctx context.Context, volume string, caller *proto.Caller) (pathfs.FileSystem, service.Identity, error)) *MockVolumeService_BindIdentity_Call {
 	_c.Call.Return(run)
 	return _c
 }

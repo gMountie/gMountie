@@ -51,8 +51,8 @@ func newRpcServerWithBus(t *testing.T, bus serverio.EventBus) *RpcServerImpl {
 	t.Helper()
 	fsService := new(mockservice.MockVolumeService)
 	mockFs := new(pathfs2.MockFileSystem)
-	fsService.On("BindIdentity", mock.Anything, "vol-test", mock.Anything).Return(mockFs, nil).Maybe()
-	fsService.On("BindIdentity", mock.Anything, "v", mock.Anything).Return(mockFs, nil).Maybe()
+	fsService.On("BindIdentity", mock.Anything, "vol-test", mock.Anything).Return(mockFs, service.Identity{}, nil).Maybe()
+	fsService.On("BindIdentity", mock.Anything, "v", mock.Anything).Return(mockFs, service.Identity{}, nil).Maybe()
 	// Access always OK — this helper is for tests that don't care about filtering.
 	mockFs.EXPECT().Access(mock.Anything, mock.Anything, mock.Anything).Return(fuse.OK).Maybe()
 	sessionMgr := service.NewSessionManager(service.SessionManagerOptions{})
@@ -121,7 +121,7 @@ func newRpcServerWithAccessFilter(t *testing.T, bus serverio.EventBus, allowedPa
 	t.Helper()
 	fsService := new(mockservice.MockVolumeService)
 	mockFs := new(pathfs2.MockFileSystem)
-	fsService.On("BindIdentity", mock.Anything, "vol-test", mock.Anything).Return(mockFs, nil).Maybe()
+	fsService.On("BindIdentity", mock.Anything, "vol-test", mock.Anything).Return(mockFs, service.Identity{}, nil).Maybe()
 	mockFs.EXPECT().Access(mock.MatchedBy(func(p string) bool { return allowedPaths[p] }),
 		mock.Anything, mock.Anything).Return(fuse.OK).Maybe()
 	mockFs.EXPECT().Access(mock.MatchedBy(func(p string) bool { return !allowedPaths[p] }),
