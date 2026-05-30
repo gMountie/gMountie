@@ -19,6 +19,9 @@ package api
 import (
 	"context"
 	"crypto/tls"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"testing"
 
 	grpcClient "gmountie/pkg/client/grpc"
@@ -36,11 +39,13 @@ type MTLSSuite struct {
 	app     *utils.AppTestingContext
 	ca      *utils.TestCA
 	volName string
+	volDir  string // backing directory for the data volume; used to pre-create test files
 }
 
 func (s *MTLSSuite) SetupSuite() {
 	s.volName = "data"
 	volDir := s.T().TempDir()
+	s.volDir = volDir
 
 	// Generate a test CA with certs for "alice" (granted) and "mallory" (not granted).
 	ca, err := utils.GenerateTestCA("alice", "mallory")
@@ -175,6 +180,44 @@ func (s *MTLSSuite) TestMalloryCannotUseAliceSession() {
 	st, ok = status.FromError(err)
 	s.Require().True(ok)
 	s.Assert().Equal(codes.PermissionDenied, st.Code())
+	s.Assert().Equal("session does not belong to the caller", st.Message())
+
+	// Step 3c: streaming fd op — demonstrates the fd-table attack surface and
+	// exercises principalServerStream (the stream-ctx injector from Part 2c).
+	// alice opens a pre-created file to get an fd; mallory tries to Read from
+	// that fd via the streaming Read RPC with alice's session_id forged in the
+	// request body. The ownership check in resolveSession fires before GetFile.
+	testFile := filepath.Join(s.volDir, "alice-secret.txt")
+	s.Require().NoError(os.WriteFile(testFile, []byte("alice's secret data"), fs.FileMode(0o644)))
+
+	openReply, err := s.app.GetClient().File().Open(ctx, &proto.OpenRequest{
+		Volume:    s.volName,
+		Path:      "/alice-secret.txt",
+		Flags:     0, // O_RDONLY
+		RequestId: "alice-open-secret",
+		SessionId: aliceSessionID,
+		Caller:    caller,
+	})
+	s.Require().NoError(err, "alice must be able to open her own file")
+	s.Require().EqualValues(0, openReply.Status, "alice's Open must succeed")
+	aliceFd := openReply.Fd
+
+	// mallory forges alice's session + uses alice's fd → PermissionDenied on Recv.
+	readStream, err := mallory.File().Read(ctx, &proto.ReadRequest{
+		Volume:    s.volName,
+		Fd:        aliceFd,
+		Offset:    0,
+		Size:      4096,
+		SessionId: aliceSessionID, // forge alice's session into the request body
+	})
+	s.Require().NoError(err, "Read stream setup must not error on the client side")
+	// The PermissionDenied arrives on the first Recv from the server-streaming RPC.
+	_, err = readStream.Recv()
+	s.Require().Error(err, "mallory must be denied on Recv of alice's fd")
+	st, ok = status.FromError(err)
+	s.Require().True(ok)
+	s.Assert().Equal(codes.PermissionDenied, st.Code(),
+		"streaming Read must be denied at the ownership chokepoint, got %s: %s", st.Code(), st.Message())
 	s.Assert().Equal("session does not belong to the caller", st.Message())
 }
 
