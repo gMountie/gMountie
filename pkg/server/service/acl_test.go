@@ -18,26 +18,27 @@ func TestACLSuite(t *testing.T) { suite.Run(t, new(ACLSuite)) }
 
 // buildService constructs a VolumeService with two volumes (photos, team) and
 // the given auth config. Volumes use TempDirs so the loopback constructs cleanly.
-func (s *ACLSuite) buildService(auth config.AuthConfig) *VolumeServiceImpl {
-	falseVal := false
-	_ = falseVal // avoid unused warning
+func buildService(t *testing.T, auth config.AuthConfig) *VolumeServiceImpl {
+	t.Helper()
 	cfg := &config.Config{
 		Volumes: []*config.VolumeConfig{
 			{
 				Name:    "photos",
-				Path:    s.T().TempDir(),
+				Path:    t.TempDir(),
 				Mapping: config.MappingConfig{Mode: config.MappingModeSquash, Uid: 1000, Gid: 1000},
 			},
 			{
 				Name:    "team",
-				Path:    s.T().TempDir(),
+				Path:    t.TempDir(),
 				Mapping: config.MappingConfig{Mode: config.MappingModeSquash, Uid: 1000, Gid: 1000},
 			},
 		},
 		Auth: auth,
 	}
 	svc, err := NewVolumeService(cfg)
-	s.Require().NoError(err)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return svc.(*VolumeServiceImpl)
 }
 
@@ -62,25 +63,25 @@ func boolPtr(b bool) *bool { return &b }
 
 func (s *ACLSuite) TestDefaultAllow_AliceCanAccessPhotos() {
 	alice := config.BasicAuthConfigUser{Username: "alice", PasswordHash: "$argon2id$v=19$m=65536,t=3,p=4$placeholder$placeholder", Volumes: []string{"photos", "team"}}
-	svc := s.buildService(authWithUsers(nil, alice))
+	svc := buildService(s.T(), authWithUsers(nil, alice))
 	s.Require().NoError(svc.PrincipalCanAccess(ctxFor("alice"), "photos"))
 }
 
 func (s *ACLSuite) TestDefaultAllow_AliceCanAccessTeam() {
 	alice := config.BasicAuthConfigUser{Username: "alice", PasswordHash: "$argon2id$v=19$m=65536,t=3,p=4$placeholder$placeholder", Volumes: []string{"photos", "team"}}
-	svc := s.buildService(authWithUsers(nil, alice))
+	svc := buildService(s.T(), authWithUsers(nil, alice))
 	s.Require().NoError(svc.PrincipalCanAccess(ctxFor("alice"), "team"))
 }
 
 func (s *ACLSuite) TestDefaultAllow_BobCanAccessTeam() {
 	bob := config.BasicAuthConfigUser{Username: "bob", PasswordHash: "$argon2id$v=19$m=65536,t=3,p=4$placeholder$placeholder", Volumes: []string{"team"}}
-	svc := s.buildService(authWithUsers(nil, bob))
+	svc := buildService(s.T(), authWithUsers(nil, bob))
 	s.Require().NoError(svc.PrincipalCanAccess(ctxFor("bob"), "team"))
 }
 
 func (s *ACLSuite) TestDefaultAllow_BobCannotAccessPhotos() {
 	bob := config.BasicAuthConfigUser{Username: "bob", PasswordHash: "$argon2id$v=19$m=65536,t=3,p=4$placeholder$placeholder", Volumes: []string{"team"}}
-	svc := s.buildService(authWithUsers(nil, bob))
+	svc := buildService(s.T(), authWithUsers(nil, bob))
 	err := svc.PrincipalCanAccess(ctxFor("bob"), "photos")
 	s.Require().Error(err)
 	st, ok := status.FromError(err)
@@ -91,13 +92,13 @@ func (s *ACLSuite) TestDefaultAllow_BobCannotAccessPhotos() {
 func (s *ACLSuite) TestDefaultAllow_CarolCanAccessPhotos() {
 	// carol has no volumes key → nil → default_allow=true → allowed
 	carol := config.BasicAuthConfigUser{Username: "carol", PasswordHash: "$argon2id$v=19$m=65536,t=3,p=4$placeholder$placeholder"}
-	svc := s.buildService(authWithUsers(nil, carol))
+	svc := buildService(s.T(), authWithUsers(nil, carol))
 	s.Require().NoError(svc.PrincipalCanAccess(ctxFor("carol"), "photos"))
 }
 
 func (s *ACLSuite) TestDefaultAllow_CarolCanAccessTeam() {
 	carol := config.BasicAuthConfigUser{Username: "carol", PasswordHash: "$argon2id$v=19$m=65536,t=3,p=4$placeholder$placeholder"}
-	svc := s.buildService(authWithUsers(nil, carol))
+	svc := buildService(s.T(), authWithUsers(nil, carol))
 	s.Require().NoError(svc.PrincipalCanAccess(ctxFor("carol"), "team"))
 }
 
@@ -105,7 +106,7 @@ func (s *ACLSuite) TestDefaultAllow_CarolCanAccessTeam() {
 
 func (s *ACLSuite) TestDefaultDeny_CarolDeniedPhotos() {
 	carol := config.BasicAuthConfigUser{Username: "carol", PasswordHash: "$argon2id$v=19$m=65536,t=3,p=4$placeholder$placeholder"}
-	svc := s.buildService(authWithUsers(boolPtr(false), carol))
+	svc := buildService(s.T(), authWithUsers(boolPtr(false), carol))
 	err := svc.PrincipalCanAccess(ctxFor("carol"), "photos")
 	s.Require().Error(err)
 	st, _ := status.FromError(err)
@@ -114,7 +115,7 @@ func (s *ACLSuite) TestDefaultDeny_CarolDeniedPhotos() {
 
 func (s *ACLSuite) TestDefaultDeny_CarolDeniedTeam() {
 	carol := config.BasicAuthConfigUser{Username: "carol", PasswordHash: "$argon2id$v=19$m=65536,t=3,p=4$placeholder$placeholder"}
-	svc := s.buildService(authWithUsers(boolPtr(false), carol))
+	svc := buildService(s.T(), authWithUsers(boolPtr(false), carol))
 	err := svc.PrincipalCanAccess(ctxFor("carol"), "team")
 	s.Require().Error(err)
 	st, _ := status.FromError(err)
@@ -123,13 +124,13 @@ func (s *ACLSuite) TestDefaultDeny_CarolDeniedTeam() {
 
 func (s *ACLSuite) TestDefaultDeny_AliceStillCanAccessPhotos() {
 	alice := config.BasicAuthConfigUser{Username: "alice", PasswordHash: "$argon2id$v=19$m=65536,t=3,p=4$placeholder$placeholder", Volumes: []string{"photos", "team"}}
-	svc := s.buildService(authWithUsers(boolPtr(false), alice))
+	svc := buildService(s.T(), authWithUsers(boolPtr(false), alice))
 	s.Require().NoError(svc.PrincipalCanAccess(ctxFor("alice"), "photos"))
 }
 
 func (s *ACLSuite) TestDefaultDeny_BobStillOnlyAccessTeam() {
 	bob := config.BasicAuthConfigUser{Username: "bob", PasswordHash: "$argon2id$v=19$m=65536,t=3,p=4$placeholder$placeholder", Volumes: []string{"team"}}
-	svc := s.buildService(authWithUsers(boolPtr(false), bob))
+	svc := buildService(s.T(), authWithUsers(boolPtr(false), bob))
 	s.Require().NoError(svc.PrincipalCanAccess(ctxFor("bob"), "team"))
 	err := svc.PrincipalCanAccess(ctxFor("bob"), "photos")
 	s.Require().Error(err)
@@ -141,7 +142,7 @@ func (s *ACLSuite) TestDefaultDeny_BobStillOnlyAccessTeam() {
 
 func (s *ACLSuite) TestNoPrincipal_Denied() {
 	alice := config.BasicAuthConfigUser{Username: "alice", PasswordHash: "$argon2id$v=19$m=65536,t=3,p=4$placeholder$placeholder", Volumes: []string{"photos"}}
-	svc := s.buildService(authWithUsers(nil, alice))
+	svc := buildService(s.T(), authWithUsers(nil, alice))
 	err := svc.PrincipalCanAccess(context.Background(), "photos")
 	s.Require().Error(err)
 	st, ok := status.FromError(err)
@@ -153,7 +154,7 @@ func (s *ACLSuite) TestNoPrincipal_Denied() {
 
 func (s *ACLSuite) TestList_BobSeesOnlyTeam() {
 	bob := config.BasicAuthConfigUser{Username: "bob", PasswordHash: "$argon2id$v=19$m=65536,t=3,p=4$placeholder$placeholder", Volumes: []string{"team"}}
-	svc := s.buildService(authWithUsers(nil, bob))
+	svc := buildService(s.T(), authWithUsers(nil, bob))
 	volumes, err := svc.List(ctxFor("bob"))
 	s.Require().NoError(err)
 	s.Require().Len(volumes, 1)
@@ -163,7 +164,7 @@ func (s *ACLSuite) TestList_BobSeesOnlyTeam() {
 // ── Test: no auth config → no restrictions ───────────────────────────────────
 
 func (s *ACLSuite) TestNoAuth_AllAllowed() {
-	svc := s.buildService(nil)
+	svc := buildService(s.T(), nil)
 	s.Require().NoError(svc.PrincipalCanAccess(context.Background(), "photos"))
 	s.Require().NoError(svc.PrincipalCanAccess(context.Background(), "team"))
 }

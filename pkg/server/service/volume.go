@@ -37,6 +37,10 @@ type VolumeService interface {
 	// PrincipalCanAccess returns nil if the principal in ctx is allowed to
 	// access the named volume, or a PermissionDenied status error otherwise.
 	PrincipalCanAccess(ctx context.Context, volume string) error
+	// Resolve returns the location where the named volume is served, after
+	// checking the principal in ctx may access it. An empty string means "this
+	// server serves it locally". Errors: PermissionDenied (ACL) or NotFound.
+	Resolve(ctx context.Context, volume string) (string, error)
 }
 
 type VolumeServiceOptions func(*VolumeServiceImpl)
@@ -184,6 +188,19 @@ func (s *VolumeServiceImpl) PrincipalCanAccess(ctx context.Context, volume strin
 		return nil
 	}
 	return status.Errorf(codes.PermissionDenied, "principal %q has no volume grants (default_allow=false)", p)
+}
+
+// Resolve checks access then reports where the volume lives. The OSS server
+// always serves its configured volumes locally, so it returns "" on success.
+func (s *VolumeServiceImpl) Resolve(ctx context.Context, volume string) (string, error) {
+	// ACL first — do not leak existence to an unauthorized principal.
+	if err := s.PrincipalCanAccess(ctx, volume); err != nil {
+		return "", err
+	}
+	if _, ok := s.volumes[volume]; !ok {
+		return "", status.Errorf(codes.NotFound, "volume %q not found", volume)
+	}
+	return "", nil
 }
 
 // BindIdentity resolves the request's identity for a volume and returns both
