@@ -146,7 +146,7 @@ func (s *StreamingReadSuite) TestRead_DeliversFullPayloadInMultipleFrames() {
 	}
 	fd := s.registerFile(payload)
 
-	stream := newFakeReadStream(context.Background())
+	stream := newFakeReadStream(testAuthedCtx("test-user"))
 	err := s.server.Read(&proto.ReadRequest{
 		Volume:    "testVolume",
 		Fd:        fd,
@@ -180,7 +180,7 @@ func (s *StreamingReadSuite) TestRead_EOFReturnsShortFinalFrame() {
 	}
 	fd := s.registerFile(payload)
 
-	stream := newFakeReadStream(context.Background())
+	stream := newFakeReadStream(testAuthedCtx("test-user"))
 	err := s.server.Read(&proto.ReadRequest{
 		Volume:    "testVolume",
 		Fd:        fd,
@@ -223,7 +223,7 @@ func (s *StreamingReadSuite) TestRead_MidStreamErrorEmitsTerminalErrnoFrame() {
 	sess, _ := s.sessionMgr.Get(s.sessionID)
 	fd := sess.RegisterFile("/test/path", mockFile)
 
-	stream := newFakeReadStream(context.Background())
+	stream := newFakeReadStream(testAuthedCtx("test-user"))
 	err := s.server.Read(&proto.ReadRequest{
 		Volume:    "testVolume",
 		Fd:        fd,
@@ -241,7 +241,7 @@ func (s *StreamingReadSuite) TestRead_MidStreamErrorEmitsTerminalErrnoFrame() {
 }
 
 func (s *StreamingReadSuite) TestRead_ReturnsErrnoOnBadFd() {
-	stream := newFakeReadStream(context.Background())
+	stream := newFakeReadStream(testAuthedCtx("test-user"))
 	err := s.server.Read(&proto.ReadRequest{
 		Volume:    "testVolume",
 		Fd:        99999, // unknown to session

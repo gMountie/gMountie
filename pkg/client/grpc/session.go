@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"gmountie/pkg/common"
 	"gmountie/pkg/proto"
 	"gmountie/pkg/utils/log"
 
@@ -122,10 +123,10 @@ func (h *SessionHandshake) keepaliveLoop(initial proto.SessionService_KeepaliveC
 				}
 				if errors.Is(err, io.EOF) {
 					log.Log.Info("keepalive stream closed by server; recovering",
-						zap.String("session_id", h.SessionID()))
+						zap.String("session_fp", common.FingerprintID(h.SessionID())))
 				} else {
 					log.Log.Warn("keepalive stream errored; recovering",
-						zap.String("session_id", h.SessionID()),
+						zap.String("session_fp", common.FingerprintID(h.SessionID())),
 						zap.Error(err))
 				}
 				// Mark unhealthy before recovery so that basic-auth is
@@ -189,7 +190,7 @@ func (h *SessionHandshake) tryReattach() (proto.SessionService_KeepaliveClient, 
 			return nil, errors.Wrap(err, "resume")
 		}
 		if resp.Resumed {
-			log.Log.Info("session resumed", zap.String("session_id", currentID))
+			log.Log.Info("session resumed", zap.String("session_fp", common.FingerprintID(currentID)))
 			return h.client.Keepalive(h.streamCtx, &proto.KeepaliveRequest{SessionId: currentID})
 		}
 	}
@@ -200,8 +201,8 @@ func (h *SessionHandshake) tryReattach() (proto.SessionService_KeepaliveClient, 
 	}
 	h.setSessionID(resp.SessionId)
 	log.Log.Info("session re-created after resume failure (open fds are now invalid)",
-		zap.String("old_session_id", currentID),
-		zap.String("new_session_id", resp.SessionId))
+		zap.String("old_session_fp", common.FingerprintID(currentID)),
+		zap.String("new_session_fp", common.FingerprintID(resp.SessionId)))
 	return h.client.Keepalive(h.streamCtx, &proto.KeepaliveRequest{SessionId: resp.SessionId})
 }
 

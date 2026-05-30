@@ -77,7 +77,7 @@ func (r *RpcServerImpl) GetAttr(ctx context.Context, request *proto.GetAttrReque
 }
 
 func (r *RpcServerImpl) Mkdir(ctx context.Context, request *proto.MkdirRequest) (*proto.MkdirReply, error) {
-	sess, err := resolveSession(r.sessions, request.SessionId)
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func (r *RpcServerImpl) Mkdir(ctx context.Context, request *proto.MkdirRequest) 
 }
 
 func (r *RpcServerImpl) Rmdir(ctx context.Context, request *proto.RmdirRequest) (*proto.RmdirReply, error) {
-	sess, err := resolveSession(r.sessions, request.SessionId)
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +113,7 @@ func (r *RpcServerImpl) Rmdir(ctx context.Context, request *proto.RmdirRequest) 
 }
 
 func (r *RpcServerImpl) Rename(ctx context.Context, request *proto.RenameRequest) (*proto.RenameReply, error) {
-	sess, err := resolveSession(r.sessions, request.SessionId)
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +144,7 @@ func (r *RpcServerImpl) Readlink(ctx context.Context, request *proto.ReadlinkReq
 }
 
 func (r *RpcServerImpl) Symlink(ctx context.Context, request *proto.SymlinkRequest) (*proto.SymlinkReply, error) {
-	sess, err := resolveSession(r.sessions, request.SessionId)
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +210,7 @@ func (r *RpcServerImpl) StatFs(ctx context.Context, request *proto.StatFsRequest
 }
 
 func (r *RpcServerImpl) Unlink(ctx context.Context, request *proto.UnlinkRequest) (*proto.UnlinkReply, error) {
-	sess, err := resolveSession(r.sessions, request.SessionId)
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +237,7 @@ func (r *RpcServerImpl) Access(ctx context.Context, request *proto.AccessRequest
 }
 
 func (r *RpcServerImpl) Truncate(ctx context.Context, request *proto.TruncateRequest) (*proto.TruncateReply, error) {
-	sess, err := resolveSession(r.sessions, request.SessionId)
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +255,7 @@ func (r *RpcServerImpl) Truncate(ctx context.Context, request *proto.TruncateReq
 }
 
 func (r *RpcServerImpl) Chmod(ctx context.Context, request *proto.ChmodRequest) (*proto.ChmodReply, error) {
-	sess, err := resolveSession(r.sessions, request.SessionId)
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +273,7 @@ func (r *RpcServerImpl) Chmod(ctx context.Context, request *proto.ChmodRequest) 
 }
 
 func (r *RpcServerImpl) Chown(ctx context.Context, request *proto.ChownRequest) (*proto.ChownReply, error) {
-	sess, err := resolveSession(r.sessions, request.SessionId)
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +301,7 @@ func fileTimeToTime(ft *proto.FileTime) *time.Time {
 }
 
 func (r *RpcServerImpl) Utimens(ctx context.Context, request *proto.UtimensRequest) (*proto.UtimensReply, error) {
-	sess, err := resolveSession(r.sessions, request.SessionId)
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
 	}

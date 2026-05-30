@@ -57,20 +57,28 @@ func NewAuthInterceptor(authService service.AuthService, sessions service.Sessio
 func (i *AuthInterceptor) authorize(ctx context.Context, fullMethod string) (context.Context, error) {
 	// Step 1: methods that must always re-prove identity.
 	if fullMethod != methodSessionCreate && fullMethod != methodSessionResume {
-		// Step 2: try session-id fast path.
-		if md, ok := metadata.FromIncomingContext(ctx); ok {
-			ids := md.Get(common.MetadataSessionID)
-			if len(ids) > 0 && ids[0] != "" {
-				sess, err := i.sessions.Get(ids[0])
-				if err == nil {
-					// Known session — skip argon2, inject principal from session.
-					p := sess.Principal()
-					ctx = logging.InjectLogField(ctx, "user", p)
-					ctx = principal.WithPrincipal(ctx, p)
-					return ctx, nil
+		// Step 2: try session-id fast path — but only when no verified client
+		// cert is present. When a cert IS present (mTLS), the principal must come
+		// from the cert so the ownership check in resolveSession is meaningful and
+		// a cert-CN=bob cannot be labeled "alice" by presenting alice's session_id.
+		// For basic-auth the server uses server-only TLS (VerifiedChains is empty),
+		// so VerifiedCertPrincipal returns false and the session fast-path applies
+		// — that is where the argon2-skip perf win is needed.
+		if _, certPresent := service.VerifiedCertPrincipal(ctx); !certPresent {
+			if md, ok := metadata.FromIncomingContext(ctx); ok {
+				ids := md.Get(common.MetadataSessionID)
+				if len(ids) > 0 && ids[0] != "" {
+					sess, err := i.sessions.Get(ids[0])
+					if err == nil {
+						// Known session — skip argon2, inject principal from session.
+						p := sess.Principal()
+						ctx = logging.InjectLogField(ctx, "user", p)
+						ctx = principal.WithPrincipal(ctx, p)
+						return ctx, nil
+					}
+					// Unknown / bogus session_id — fall through to full auth.
+					// This is intentional: treat it identically to "no session_id".
 				}
-				// Unknown / bogus session_id — fall through to full auth.
-				// This is intentional: treat it identically to "no session_id".
 			}
 		}
 	}
@@ -99,16 +107,26 @@ func (i *AuthInterceptor) Unary() grpc.UnaryServerInterceptor {
 	}
 }
 
-// Stream returns a StreamServerInterceptor. It authenticates but does not
-// stash the principal on the stream context (streaming RPCs are the data path
-// and do no identity-bound path resolution). The session-id fast path still
-// applies — argon2 is skipped for authenticated sessions.
+// principalServerStream wraps a grpc.ServerStream to replace its Context.
+// Used by Stream() to inject the post-auth principal into the streaming
+// handler's context so that resolveSession's ownership check can read it.
+type principalServerStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (s *principalServerStream) Context() context.Context { return s.ctx }
+
+// Stream returns a StreamServerInterceptor. It injects the authenticated
+// principal into the stream's context so streaming handlers (Read/Write) can
+// enforce the session-ownership check in resolveSession. The session-id fast
+// path still applies — argon2 is skipped for authenticated sessions.
 func (i *AuthInterceptor) Stream() grpc.StreamServerInterceptor {
 	return func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		_, err := i.authorize(stream.Context(), info.FullMethod)
+		newCtx, err := i.authorize(stream.Context(), info.FullMethod)
 		if err != nil {
 			return err
 		}
-		return handler(srv, stream)
+		return handler(srv, &principalServerStream{ServerStream: stream, ctx: newCtx})
 	}
 }

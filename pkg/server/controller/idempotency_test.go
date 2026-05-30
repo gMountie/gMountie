@@ -12,6 +12,65 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// ResolveSessionOwnershipSuite tests the ownership enforcement in resolveSession.
+type ResolveSessionOwnershipSuite struct {
+	suite.Suite
+	mgr service.SessionManager
+}
+
+func (s *ResolveSessionOwnershipSuite) SetupTest() {
+	s.mgr = service.NewSessionManager(service.SessionManagerOptions{})
+}
+
+func (s *ResolveSessionOwnershipSuite) TearDownTest() {
+	_ = s.mgr.Stop(context.Background())
+}
+
+func (s *ResolveSessionOwnershipSuite) TestOwnSession_Allowed() {
+	// alice creates a session; alice is the caller → OK.
+	id, err := s.mgr.Create("alice")
+	s.Require().NoError(err)
+	sess, err := resolveSession(testAuthedCtx("alice"), s.mgr, id)
+	s.Require().NoError(err)
+	s.Require().NotNil(sess)
+}
+
+func (s *ResolveSessionOwnershipSuite) TestCrossUser_Denied() {
+	// alice creates a session; bob tries to use it → PermissionDenied.
+	id, err := s.mgr.Create("alice")
+	s.Require().NoError(err)
+	_, err = resolveSession(testAuthedCtx("bob"), s.mgr, id)
+	s.Require().Error(err)
+	st, ok := status.FromError(err)
+	s.Require().True(ok)
+	s.Assert().Equal(codes.PermissionDenied, st.Code())
+	s.Assert().Equal("session does not belong to the caller", st.Message())
+}
+
+func (s *ResolveSessionOwnershipSuite) TestUnauthenticatedCallerOnOwnedSession_Denied() {
+	// real session (alice) + empty ctx principal → denied.
+	id, err := s.mgr.Create("alice")
+	s.Require().NoError(err)
+	_, err = resolveSession(context.Background(), s.mgr, id)
+	s.Require().Error(err)
+	st, ok := status.FromError(err)
+	s.Require().True(ok)
+	s.Assert().Equal(codes.PermissionDenied, st.Code())
+}
+
+func (s *ResolveSessionOwnershipSuite) TestEmptyPrincipalSession_NoEnforcement() {
+	// Session created without principal (no-auth server) + no ctx principal → OK.
+	id, err := s.mgr.Create("")
+	s.Require().NoError(err)
+	sess, err := resolveSession(context.Background(), s.mgr, id)
+	s.Require().NoError(err)
+	s.Require().NotNil(sess)
+}
+
+func TestResolveSessionOwnershipSuite(t *testing.T) {
+	suite.Run(t, new(ResolveSessionOwnershipSuite))
+}
+
 type IdempotencyTestSuite struct {
 	suite.Suite
 	mgr     service.SessionManager

@@ -44,7 +44,9 @@ func (s *LogContextInterceptorTestSuite) TestInjectsSessionIDAndVolume() {
 	}
 	_, err := interceptor(context.Background(), withSessionAndVolume{}, info, handler)
 	s.Require().NoError(err)
-	s.Assert().Equal("sess-X", seen["session_id"])
+	fp, hasSessionFP := seen["session_fp"]
+	s.Assert().True(hasSessionFP, "session_fp must be injected when GetSessionId is present")
+	s.Assert().NotEmpty(fp, "session_fp must be non-empty for non-empty session id")
 	s.Assert().Equal("vol-Y", seen["volume"])
 }
 
@@ -58,8 +60,8 @@ func (s *LogContextInterceptorTestSuite) TestInjectsOnlyPresentGetters() {
 	}
 	_, err := interceptor(context.Background(), onlyVolume{}, info, handler)
 	s.Require().NoError(err)
-	_, hasSession := seen["session_id"]
-	s.Assert().False(hasSession, "session_id must not be injected when GetSessionId is absent")
+	_, hasSessionFP := seen["session_fp"]
+	s.Assert().False(hasSessionFP, "session_fp must not be injected when GetSessionId is absent")
 	s.Assert().Equal("vol-only", seen["volume"])
 }
 

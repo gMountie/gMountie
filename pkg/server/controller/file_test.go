@@ -55,7 +55,7 @@ func (s *RpcFileServerTestSuite) TestOpen() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
 	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
-	ctx := context.Background()
+	ctx := testAuthedCtx("test-user")
 	mockFs.EXPECT().Open("/test/path", uint32(0), mock.Anything).Return(nodefs.NewDefaultFile(), fuse.OK)
 
 	// Test.
@@ -72,7 +72,7 @@ func (s *RpcFileServerTestSuite) TestCreate() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
 	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
-	ctx := context.Background()
+	ctx := testAuthedCtx("test-user")
 	mockFs.EXPECT().Create("/test/path", uint32(0), uint32(0), mock.Anything).Return(nodefs.NewDefaultFile(), fuse.OK)
 	// GetAttr is called unconditionally on successful Create to populate reply.Attributes.
 	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{Ino: 42, Mode: 0o100644}, fuse.OK)
@@ -104,7 +104,7 @@ func (s *RpcFileServerTestSuite) TestRead() {
 
 	// Test.
 	request := &proto.ReadRequest{Fd: fd, Size: 1024, Offset: 0, SessionId: s.sessionID}
-	stream := newFakeReadStream(context.Background())
+	stream := newFakeReadStream(testAuthedCtx("test-user"))
 	err := s.server.Read(request, stream)
 
 	// Verify.
@@ -122,7 +122,7 @@ func (s *RpcFileServerTestSuite) TestFsync() {
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	sess, _ := s.sessionMgr.Get(s.sessionID)
 	fd := sess.RegisterFile("/test/path", mockFile)
-	ctx := context.Background()
+	ctx := testAuthedCtx("test-user")
 	mockFile.EXPECT().Fsync(int(0)).Return(fuse.OK)
 	mockFile.EXPECT().Release().Return().Maybe()
 
@@ -143,7 +143,7 @@ func (s *RpcFileServerTestSuite) TestRelease() {
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	sess, _ := s.sessionMgr.Get(s.sessionID)
 	fd := sess.RegisterFile("/test/path", mockFile)
-	ctx := context.Background()
+	ctx := testAuthedCtx("test-user")
 	mockFile.EXPECT().Release().Return()
 
 	// Test.
@@ -162,7 +162,7 @@ func (s *RpcFileServerTestSuite) TestFlush() {
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	sess, _ := s.sessionMgr.Get(s.sessionID)
 	fd := sess.RegisterFile("/test/path", mockFile)
-	ctx := context.Background()
+	ctx := testAuthedCtx("test-user")
 	mockFile.EXPECT().Flush().Return(fuse.OK)
 	mockFile.EXPECT().Release().Return().Maybe()
 
@@ -188,7 +188,7 @@ func (s *RpcFileServerTestSuite) TestOpenNonOkDoesNotRegisterFd() {
 		Caller: CreateCaller(0, 0, 0), SessionId: s.sessionID,
 		RequestId: "test-req-open-non-ok",
 	}
-	reply, err := s.server.Open(context.Background(), request)
+	reply, err := s.server.Open(testAuthedCtx("test-user"), request)
 	s.Require().NoError(err)
 	s.Require().Equal(int32(fuse.ENOENT), reply.Status)
 
@@ -210,7 +210,7 @@ func (s *RpcFileServerTestSuite) TestCreateNonOkDoesNotRegisterFd() {
 		Caller: CreateCaller(0, 0, 0), SessionId: s.sessionID,
 		RequestId: "test-req-create-non-ok",
 	}
-	reply, err := s.server.Create(context.Background(), request)
+	reply, err := s.server.Create(testAuthedCtx("test-user"), request)
 	s.Require().NoError(err)
 	s.Require().Equal(int32(fuse.EACCES), reply.Status)
 
@@ -241,7 +241,7 @@ func (s *RpcFileServerTestSuite) TestOpenEmptyRequestIDFails() {
 		Caller: CreateCaller(0, 0, 0), SessionId: s.sessionID,
 		RequestId: "",
 	}
-	_, err := s.server.Open(context.Background(), request)
+	_, err := s.server.Open(testAuthedCtx("test-user"), request)
 	s.Require().Error(err)
 	st, ok := status.FromError(err)
 	s.Require().True(ok)
@@ -259,10 +259,10 @@ func (s *RpcFileServerTestSuite) TestOpenDuplicateRequestIDReturnsCachedReply() 
 		Caller: CreateCaller(0, 0, 0), SessionId: s.sessionID,
 		RequestId: "dup-req-1",
 	}
-	r1, err := s.server.Open(context.Background(), request)
+	r1, err := s.server.Open(testAuthedCtx("test-user"), request)
 	s.Require().NoError(err)
 
-	r2, err := s.server.Open(context.Background(), request)
+	r2, err := s.server.Open(testAuthedCtx("test-user"), request)
 	s.Require().NoError(err)
 	s.Assert().Equal(r1.Fd, r2.Fd, "duplicate request_id must return the same fd from the cache")
 	s.Assert().Equal(r1.Status, r2.Status)
@@ -275,7 +275,7 @@ func (s *RpcFileServerTestSuite) TestWriteAndFlushWritesThenFlushesAndReturnsAtt
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	sess, _ := s.sessionMgr.Get(s.sessionID)
 	fd := sess.RegisterFile("/waf.txt", mockFile)
-	ctx := context.Background()
+	ctx := testAuthedCtx("test-user")
 
 	mockFile.EXPECT().Write([]byte("hello"), int64(0)).Return(uint32(5), fuse.OK)
 	mockFile.EXPECT().Flush().Return(fuse.OK)
@@ -302,7 +302,7 @@ func (s *RpcFileServerTestSuite) TestWriteAndFlushEmptyDataIsPureFlush() {
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	sess, _ := s.sessionMgr.Get(s.sessionID)
 	fd := sess.RegisterFile("/waf2.txt", mockFile)
-	ctx := context.Background()
+	ctx := testAuthedCtx("test-user")
 
 	mockFile.EXPECT().Flush().Return(fuse.OK)
 	mockFs.EXPECT().GetAttr("/waf2.txt", mock.Anything).Return(&fuse.Attr{Size: 0}, fuse.OK)
@@ -328,7 +328,7 @@ func (s *RpcFileServerTestSuite) TestWriteAndFlushWriteErrorSkipsFlush() {
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	sess, _ := s.sessionMgr.Get(s.sessionID)
 	fd := sess.RegisterFile("/err.txt", mockFile)
-	ctx := context.Background()
+	ctx := testAuthedCtx("test-user")
 
 	mockFile.EXPECT().Write([]byte("data"), int64(0)).Return(uint32(0), fuse.EIO)
 	mockFile.EXPECT().Release().Return().Maybe()
@@ -356,7 +356,7 @@ func (s *RpcFileServerTestSuite) TestWriteAndFlushEmitsMutationEventOnSuccess() 
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	sess, _ := s.sessionMgr.Get(s.sessionID)
 	fd := sess.RegisterFile("/emit.txt", mockFile)
-	ctx := context.Background()
+	ctx := testAuthedCtx("test-user")
 
 	mockFile.EXPECT().Write([]byte("hi"), int64(0)).Return(uint32(2), fuse.OK)
 	mockFile.EXPECT().Flush().Return(fuse.OK)

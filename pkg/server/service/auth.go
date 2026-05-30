@@ -129,6 +129,31 @@ func (mtlsAuthService) Authorize(ctx context.Context, _ string) (bool, *UserDeta
 	return true, &UserDetails{Username: name}, nil
 }
 
+// VerifiedCertPrincipal returns the verified client-cert principal (CN, or
+// first DNS SAN) and true when a verified client certificate is present on
+// the connection. Returns ("", false) when there is no client cert (e.g.
+// server-only TLS with basic-auth, or no peer info).
+//
+// Key subtlety: basic-auth connections also carry TLSInfo (the server always
+// terminates TLS) but VerifiedChains is empty — RequireAndVerifyClientCert is
+// only set in mTLS mode. This function gates on a non-empty VerifiedChains so
+// basic-auth connections correctly return present=false.
+func VerifiedCertPrincipal(ctx context.Context) (principal string, present bool) {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return "", false
+	}
+	ti, ok := p.AuthInfo.(credentials.TLSInfo)
+	if !ok {
+		return "", false
+	}
+	if len(ti.State.VerifiedChains) == 0 || len(ti.State.VerifiedChains[0]) == 0 {
+		// Server-only TLS (basic-auth case): no client cert was verified.
+		return "", false
+	}
+	return principalFromVerifiedChains(ti.State.VerifiedChains), true
+}
+
 // principalFromVerifiedChains returns the leaf cert's CN, or its first DNS SAN
 // when CN is empty. Empty string when there is no verified leaf.
 func principalFromVerifiedChains(chains [][]*x509.Certificate) string {
