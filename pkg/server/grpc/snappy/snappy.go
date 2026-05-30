@@ -64,13 +64,19 @@ func (w *writeCloser) Close() error {
 
 type reader struct {
 	*snappy.Reader
+	done bool // guards pool return; Put happens at most once
 }
 
 func (r *reader) Read(p []byte) (n int, err error) {
 	n, err = r.Reader.Read(p)
-	if errors.Is(err, io.EOF) {
+	if errors.Is(err, io.EOF) && !r.done {
+		r.done = true
 		dcmpPool.Put(r)
 	}
-
 	return n, err
+}
+
+func (r *reader) Reset(rd io.Reader) {
+	r.Reader.Reset(rd)
+	r.done = false
 }
