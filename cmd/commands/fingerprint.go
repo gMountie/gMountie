@@ -51,7 +51,7 @@ func runFingerprint(cmd *cobra.Command, _ []string) error {
 
 	out := cmd.OutOrStdout()
 	if !fingerprintVerbose {
-		_, _ = fmt.Fprintln(out, fp)
+		_, _ = fmt.Fprint(out, renderFingerprint(fp))
 		return nil
 	}
 
@@ -70,6 +70,12 @@ func runFingerprint(cmd *cobra.Command, _ []string) error {
 	_, _ = fmt.Fprintf(out, "NotAfter:    %s\n", c.NotAfter.UTC().Format("2006-01-02 15:04:05 UTC"))
 	_, _ = fmt.Fprintf(out, "Fingerprint: %s\n", fp)
 	return nil
+}
+
+// renderFingerprint formats the one-line (non-verbose) output: the raw
+// fingerprint plus a copy-paste-ready client config snippet.
+func renderFingerprint(fp string) string {
+	return fmt.Sprintf("%s\n\n# Add to client.yaml under server.tls:\n#   verify: true\n#   expected_fingerprint: %s\n", fp, fp)
 }
 
 // resolveCertPath returns the cert path the command will read, and a flag
