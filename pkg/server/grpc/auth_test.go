@@ -21,7 +21,7 @@ type countingAuthService struct {
 	calls int
 }
 
-func (c *countingAuthService) Authorize(ctx context.Context, method string) (bool, *service.UserDetails, error) {
+func (c *countingAuthService) Authorize(ctx context.Context, method string) (*service.UserDetails, error) {
 	c.calls++
 	return c.inner.Authorize(ctx, method)
 }
@@ -64,16 +64,16 @@ func newAlwaysGrantAuthService(principal string) *alwaysGrantAuthService {
 	return &alwaysGrantAuthService{principal: principal}
 }
 
-func (a *alwaysGrantAuthService) Authorize(ctx context.Context, _ string) (bool, *service.UserDetails, error) {
+func (a *alwaysGrantAuthService) Authorize(ctx context.Context, _ string) (*service.UserDetails, error) {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return false, nil, status.Errorf(codes.Unauthenticated, "no metadata")
+		return nil, status.Errorf(codes.Unauthenticated, "no metadata")
 	}
 	users := md.Get(common.MetadataAuthBasicUsername)
 	if len(users) > 0 && users[0] == a.principal {
-		return true, &service.UserDetails{Username: a.principal}, nil
+		return &service.UserDetails{Username: a.principal}, nil
 	}
-	return false, nil, status.Errorf(codes.Unauthenticated, "invalid credentials")
+	return nil, status.Errorf(codes.Unauthenticated, "invalid credentials")
 }
 
 // ctxWithBasicAuth injects basic-auth metadata into the context.

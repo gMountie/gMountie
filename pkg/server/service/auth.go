@@ -21,8 +21,9 @@ type UserDetails struct {
 
 // AuthService is a service for authentication
 type AuthService interface {
-	// Authorize checks if the user is authorized
-	Authorize(ctx context.Context, method string) (bool, *UserDetails, error)
+	// Authorize authenticates the caller. A non-nil *UserDetails and nil error
+	// means authorized; a non-nil error means denied (caller receives the error).
+	Authorize(ctx context.Context, method string) (*UserDetails, error)
 }
 
 // --------------------------- Factory ---------------------------
@@ -60,8 +61,8 @@ func NewAuthServiceFromConfig(cfg config.AuthConfig) AuthService {
 // misconfiguration denies rather than silently runs unauthenticated.
 type denyAllAuthService struct{}
 
-func (denyAllAuthService) Authorize(_ context.Context, _ string) (bool, *UserDetails, error) {
-	return false, nil, status.Errorf(codes.Unauthenticated, "authentication is not configured")
+func (denyAllAuthService) Authorize(_ context.Context, _ string) (*UserDetails, error) {
+	return nil, status.Errorf(codes.Unauthenticated, "authentication is not configured")
 }
 
 // ----------- BasicAuthService -----------
@@ -77,17 +78,17 @@ func NewBasicAuthService(users map[string]string) *BasicAuthService {
 }
 
 // Authorize checks if the user is authorized
-func (a *BasicAuthService) Authorize(ctx context.Context, _ string) (bool, *UserDetails, error) {
+func (a *BasicAuthService) Authorize(ctx context.Context, _ string) (*UserDetails, error) {
 	// Get the user and password from the metadata
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return false, nil, status.Errorf(codes.Internal, "metadata is not provided")
+		return nil, status.Errorf(codes.Internal, "metadata is not provided")
 	}
 
 	user := md.Get(common.MetadataAuthBasicUsername)
 	password := md.Get(common.MetadataAuthBasicPassword)
 	if len(user) == 0 || len(password) == 0 {
-		return false, nil, status.Errorf(codes.Unauthenticated, "user or password is not provided")
+		return nil, status.Errorf(codes.Unauthenticated, "user or password is not provided")
 	}
 
 	// Check if the user exists
@@ -96,11 +97,11 @@ func (a *BasicAuthService) Authorize(ctx context.Context, _ string) (bool, *User
 		// On a malformed hash treat as auth-denied (fail closed); never panic.
 		match, err := passhash.Verify(storedHash, password[0])
 		if err != nil || !match {
-			return false, nil, status.Errorf(codes.Unauthenticated, "invalid user or password")
+			return nil, status.Errorf(codes.Unauthenticated, "invalid user or password")
 		}
-		return true, &UserDetails{Username: user[0]}, nil
+		return &UserDetails{Username: user[0]}, nil
 	}
-	return false, nil, status.Errorf(codes.Unauthenticated, "invalid user or password")
+	return nil, status.Errorf(codes.Unauthenticated, "invalid user or password")
 }
 
 // ----------- mtlsAuthService -----------
@@ -113,20 +114,20 @@ func (a *BasicAuthService) Authorize(ctx context.Context, _ string) (bool, *User
 // (VolumeService.PrincipalCanAccess), run later in BindIdentity.
 type mtlsAuthService struct{}
 
-func (mtlsAuthService) Authorize(ctx context.Context, _ string) (bool, *UserDetails, error) {
+func (mtlsAuthService) Authorize(ctx context.Context, _ string) (*UserDetails, error) {
 	p, ok := peer.FromContext(ctx)
 	if !ok {
-		return false, nil, status.Error(codes.Unauthenticated, "no peer info")
+		return nil, status.Error(codes.Unauthenticated, "no peer info")
 	}
 	ti, ok := p.AuthInfo.(credentials.TLSInfo)
 	if !ok {
-		return false, nil, status.Error(codes.Unauthenticated, "connection is not mTLS")
+		return nil, status.Error(codes.Unauthenticated, "connection is not mTLS")
 	}
 	name := principalFromVerifiedChains(ti.State.VerifiedChains)
 	if name == "" {
-		return false, nil, status.Error(codes.Unauthenticated, "no verified client certificate")
+		return nil, status.Error(codes.Unauthenticated, "no verified client certificate")
 	}
-	return true, &UserDetails{Username: name}, nil
+	return &UserDetails{Username: name}, nil
 }
 
 // VerifiedCertPrincipal returns the verified client-cert principal (CN, or

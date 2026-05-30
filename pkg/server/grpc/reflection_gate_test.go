@@ -21,8 +21,8 @@ import (
 // allowAllAuth is a minimal AuthService that permits every request.
 type allowAllAuth struct{}
 
-func (allowAllAuth) Authorize(_ context.Context, _ string) (bool, *service.UserDetails, error) {
-	return true, &service.UserDetails{Username: "test"}, nil
+func (allowAllAuth) Authorize(_ context.Context, _ string) (*service.UserDetails, error) {
+	return &service.UserDetails{Username: "test"}, nil
 }
 
 type ReflectionGateSuite struct {
