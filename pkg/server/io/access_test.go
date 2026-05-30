@@ -64,11 +64,9 @@ func (s *AccessSuite) TestDacOverride_DeniesExecOnRegularNoExecBit() {
 }
 
 func (s *AccessSuite) TestDacOverride_GrantsExecOnRegularWithExecBit() {
-	// 0711 regular file has exec bit: dac_override grants X_OK (other has x bit set,
-	// but we use uid=3000 as non-owner to ensure the cap path is exercised via the
-	// group/other check — other gets only x, so req for R+X (5) needs cap).
-	// Simpler: use mode 0o100100 (only exec for owner) and caller uid=3000 (non-owner):
-	// normal perm check would deny R and X for non-owner; dac_override grants R+W+X.
+	// 0100 regular file has an exec bit (owner-only exec). Caller uid=3000 is a
+	// non-owner non-group member: normal perm check denies all access. dac_override
+	// sees hasExecBit=true and grants X_OK.
 	s.True(accessAllowed(attr(1001, 2000, 0o100100), &Identity{Uid: 3000, Gid: 3000, Gids: []uint32{3000}, Caps: []string{CapDacOverride}}, 1))
 }
 
