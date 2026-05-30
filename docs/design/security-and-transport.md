@@ -114,9 +114,19 @@ t=3 / p=4 (OWASP 2026). `pkg/common/passhash` owns `Hash`/`Verify`
 - **Startup is fail-closed:** any `password_hash` not starting with
   `$argon2id$` aborts startup pointing at `gmountie genpass`. No silent
   acceptance of plaintext.
-- First-run default config writes a *hashed* `admin` password with a
-  `# CHANGE ME` comment — onboarding still "just works" but the weak
-  credential is discoverable.
+- **First-run default config** (no `-c` flag): the server generates a
+  **random** admin password via `crypto/rand`, hashes it with argon2id,
+  writes the hash into `~/.config/gmountie/server.yaml`, and prints the
+  plaintext password **once** to the console. The default bind is
+  `0.0.0.0` (not loopback) — this is intentional: the random password
+  eliminates the fixed-default-credential risk, and auto-TLS (§2.1)
+  encrypts the channel, so the zero-config first run is safe to expose
+  without a prior manual hardening step. Rotate with `gmountie genpass`.
+- **TOFU pinning workflow:** run `gmountie fingerprint` on the server
+  (prints `expected_fingerprint: SHA256:…`); paste the value into
+  `server.tls.expected_fingerprint` in the client config with
+  `verify: tofu`. The client will pin on first connect and refuse any
+  cert change thereafter — same pattern as SSH `known_hosts`.
 
 ### 4a. Session-scoped authentication
 

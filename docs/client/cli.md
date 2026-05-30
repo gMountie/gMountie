@@ -10,10 +10,29 @@ description: Flags for `gmountie mount` — the client entry point. CLI flags ov
 
 ## Basic Usage
 
-The basic syntax for mounting a remote filesystem is:
+The recommended shorthand form:
 
 ```bash
-gmountie mount [flags] <mountpoint>
+gmountie mount [user@]host[:port]/volume mountpoint
+```
+
+Or the explicit flag form (still supported):
+
+```bash
+gmountie mount mountpoint -s host:port -n volume -u username [flags]
+```
+
+Examples:
+
+```bash
+# Shorthand — prompts for password interactively (no echo)
+gmountie mount admin@your-server.example:9449/shared ~/mnt/shared
+
+# Default port 9449 can be omitted
+gmountie mount admin@your-server.example/shared ~/mnt/shared
+
+# Flag form
+gmountie mount ~/mnt/shared -s your-server.example:9449 -n shared -u admin
 ```
 
 ## Command Flags
@@ -24,10 +43,20 @@ gmountie mount [flags] <mountpoint>
 | `--volume`   | `-n`  | _(required)_   | Volume name to mount.                                                                  |
 | `--auth-type`| `-t`  | basic          | Authentication scheme. Only `basic` is supported today.                                |
 | `--username` | `-u`  | _(required)_   | Username for basic auth.                                                                |
-| `--password` | `-p`  | _(required)_   | Password for basic auth.                                                                |
+| `--password` | `-p`  | _(optional)_   | Password for basic auth (visible in shell history; prefer the prompt or `$GMOUNTIE_AUTH_PASSWORD`). |
+| `--daemon`   |       | false          | Mount in the background; detaches after mount is ready. Logs go to `$XDG_STATE_HOME/gmountie/mount-daemon.log`. |
 | `--raw-ids`  |       | false          | Expose the server's raw uid/gid on file metadata instead of mapping to the local user. |
 | `--verbose`  | `-v`  | false          | Enable verbose (debug-level) logging.                                                   |
 | `--config`   | `-c`  |                | Path to client.yaml. CLI flags override fields in this file.                            |
+
+### Password resolution
+
+The password is never required on the command line. Resolution order (first non-empty wins):
+
+1. `--password` flag
+2. `auth.password` in the client config file (if `-c` is used)
+3. `$GMOUNTIE_AUTH_PASSWORD` environment variable
+4. Interactive no-echo prompt on the terminal
 
 ### `--raw-ids`
 
@@ -45,39 +74,40 @@ For day-to-day mounts, leave it off.
 
 The client supports the following authentication method:
 
-1. Basic (username/password)
-   ```bash
-   gmountie mount -s server:9449 -n volume -t basic -u user -p pass /mountpoint
-   ```
+1. Basic (username/password) — password is resolved as described above; never required on the CLI.
 
 ## Examples
 
-1. Mount with default settings (local server):
+1. Mount with shorthand (interactive password prompt):
    ```bash
-   gmountie mount -n shared /mnt/shared
+   gmountie mount admin@192.168.1.100:9449/shared /mnt/shared
    ```
 
-2. Mount remote volume with basic auth:
+2. Mount with shorthand using default port:
    ```bash
-   gmountie mount -s 192.168.1.100:9449 -n documents -t basic -u admin -p secret /home/user/docs
+   gmountie mount admin@myserver.example/documents /home/user/docs
    ```
 
-3. Mount with verbose logging:
+3. Mount in the background:
    ```bash
-   gmountie mount -v -s server:9449 -n media /mnt/media
+   gmountie mount admin@myserver.example:9449/shared /mnt/shared --daemon
+   ```
+
+4. Mount with verbose logging for troubleshooting:
+   ```bash
+   gmountie mount -v admin@server:9449/media /mnt/media
+   ```
+
+5. Mount from a config file (password from config or prompt):
+   ```bash
+   gmountie mount -c ~/.config/gmountie/client.yaml
    ```
 
 ## Security Considerations
 
-1. Password Security
-    - Avoid passing passwords on the command line in production
-    - Use configuration files instead
-    - Consider using environment variables
+1. **Password:** Never pass passwords on the command line in production — they show up in `ps` output and shell history. Use the interactive prompt, `$GMOUNTIE_AUTH_PASSWORD`, or a config file instead.
 
-2. Network Security
-    - Use TLS in production environments
-    - Avoid mounting over untrusted networks
-    - Consider using VPN for remote mounts
+2. **TLS:** The connection is TLS-encrypted. For self-signed server certs (the default on first run), use TOFU mode so the client pins the server fingerprint on first connect. See **[Client configuration → TLS](./config.md#tls)** and `gmountie fingerprint`.
 
 ## Unmounting
 
@@ -109,5 +139,5 @@ To unmount a filesystem:
 
 ## See Also
 
-- [Client Configuration](client/config.md) - Detailed configuration file options
-- [Quickstart Guide](quickstart.mdx) - Getting started with gMountie
+- [Client Configuration](./config.md) - Detailed configuration file options
+- [Quickstart Guide](../quickstart.mdx) - Getting started with gMountie

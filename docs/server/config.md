@@ -26,10 +26,10 @@ auth:
   type: basic
   users:
     - username: admin
-      password: admin
+      password_hash: $argon2id$v=19$m=19456,t=2,p=1$...  # output of: gmountie genpass
 volumes:
   - name: shared
-    path: /shared
+    path: /srv/shared
 ```
 
 ## Server Options
@@ -96,16 +96,22 @@ Authentication is required; every server must configure at least one user.
 
 ### Basic Authentication
 
-Enables username/password authentication:
+Enables username/password authentication. The `password_hash` field must be an argon2id PHC string — the server rejects any value that doesn't start with `$argon2id$` and points you at `gmountie genpass`. Generate a hash with:
+
+```bash
+gmountie genpass
+# Password: (enter password, no echo)
+# $argon2id$v=19$... (copy this into password_hash)
+```
 
 ```yaml
 auth:
   type: basic
   users:
     - username: admin
-      password: admin
+      password_hash: $argon2id$v=19$m=19456,t=2,p=1$...  # output of: gmountie genpass
     - username: user1
-      password: pass123
+      password_hash: $argon2id$v=19$m=19456,t=2,p=1$...  # output of: gmountie genpass
 ```
 
 ## Volume Configuration
@@ -253,13 +259,15 @@ auth:
   type: basic
   users:
     - username: admin
-      password: admin
+      password_hash: $argon2id$v=19$m=19456,t=2,p=1$...  # output of: gmountie genpass
 volumes:
   - name: shared
-    path: /shared
+    path: /srv/shared
   - name: private
-    path: /private
+    path: /srv/private
 ```
+
+On **first run** (`gmountie serve` with no `-c`), gMountie auto-generates this config at `~/.config/gmountie/server.yaml` with a randomly generated admin password (printed once to the console) and a `shared` volume at `$XDG_DATA_HOME/gmountie/shared`.
 
 ## See also
 

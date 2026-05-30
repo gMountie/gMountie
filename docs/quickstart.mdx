@@ -30,7 +30,15 @@ Or grab the release archive for your platform from the [releases page](https://g
 
 ## 2 · Start the server
 
-Write a `server.yaml` next to the directory you want to share:
+**Zero-config first run:** just run `gmountie serve` with no arguments. On first start it auto-generates `~/.config/gmountie/server.yaml`, creates a `shared` volume at `$XDG_DATA_HOME/gmountie/shared`, generates a random admin password, and prints it **once** to the console. The hash is stored in the config — you never need to write it down.
+
+```bash
+gmountie serve
+# First run: generated config at ~/.config/gmountie/server.yaml
+# Admin password (save this — shown once): <random>
+```
+
+Or write your own `server.yaml` from the start:
 
 ```yaml title="server.yaml"
 server:
@@ -40,7 +48,7 @@ auth:
   type: basic
   users:
     - username: admin
-      password: change-me
+      password_hash: $argon2id$v=19$m=19456,t=2,p=1$...  # output of: gmountie genpass
 volumes:
   - name: shared
     path: /srv/shared
@@ -52,30 +60,36 @@ Then start it:
 gmountie serve -c server.yaml
 ```
 
-The server listens on `:9449` and exposes `/srv/shared` as the volume named `shared`. If you skip `-c`, gMountie writes a default config to `~/.config/gmountie/server.yaml` on first run and uses it from then on.
+The server listens on `:9449` and exposes `/srv/shared` as the volume `shared`. It also auto-generates a TLS cert on first run — the fingerprint is logged at startup.
 
-:::warning[Change the default password]
-The default config ships with `admin / admin`. Change it in `server.yaml` before exposing the server beyond localhost. TLS isn't shipped yet — see the [roadmap](./roadmap.md) — so basic-auth credentials travel as base64 over the gRPC channel today.
+:::tip[Rotating the password]
+Run `gmountie genpass`, copy the printed `$argon2id$…` string, and paste it into `auth.users[0].password_hash` in your config. The server rejects any value that doesn't start with `$argon2id$` — no plaintext passwords are ever stored.
 :::
 
 ## 3 · Mount the volume from a client
 
+Use the shorthand form — the password is prompted interactively with no echo:
+
 ```bash
 mkdir -p ~/mnt/shared
-gmountie mount ~/mnt/shared \
-  --server <host>:9449 \
-  --auth-type basic --username admin --password change-me \
-  --volume shared
+gmountie mount admin@your-server.example:9449/shared ~/mnt/shared
+# Password: (enter the password printed on first server run)
 ```
 
-`~/mnt/shared` now behaves like a local folder — every read, write, and `stat` flows to the server over a gRPC stream:
+`~/mnt/shared` now behaves like a local folder — every read, write, and `stat` flows to the server over a TLS-wrapped gRPC stream:
 
 ```bash
 ls ~/mnt/shared          # listing comes from /srv/shared on the server
 cat ~/mnt/shared/file    # bytes stream over the wire
 ```
 
-Press `Ctrl-C` in the `gmountie mount` terminal to unmount cleanly, or run `umount ~/mnt/shared` from another shell.
+To see what volumes a server exposes before mounting:
+
+```bash
+gmountie ls admin@your-server.example:9449
+```
+
+Press `Ctrl-C` in the `gmountie mount` terminal to unmount cleanly, or run `umount ~/mnt/shared` from another shell. To mount in the background, add `--daemon` — the process detaches once the mount is ready and logs go to `$XDG_STATE_HOME/gmountie/mount-daemon.log`.
 
 ## What's next
 
