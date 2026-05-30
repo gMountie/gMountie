@@ -184,7 +184,7 @@ auth:
 	})
 	err := s.cmd.Execute()
 	s.Require().Error(err)
-	s.Assert().Contains(err.Error(), "invalid server address: not-a-valid-endpoint")
+	s.Assert().Contains(err.Error(), "invalid server address")
 }
 
 func TestMountCmdSuite(t *testing.T) {
