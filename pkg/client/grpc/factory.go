@@ -67,17 +67,16 @@ func NewClientFromConfig(cfg *config.Config) (Client, error) {
 	// Build TLS transport credentials unconditionally. The verify mode
 	// defaults to "verify" (full chain check) when empty; "insecure" skips
 	// it for local dev/testing.
-	tlsServer := cfg.Server
-	endpoint := createEndpoint(tlsServer)
+	endpoint := createEndpoint(cfg.Server)
 	tlsCfg, err := clienttls.BuildConfig(clienttls.Config{
 		Endpoint:            endpoint,
-		Mode:                tlsServer.TLS.Verify,
-		CAFile:              tlsServer.TLS.CAFile,
-		ExpectedFingerprint: tlsServer.TLS.ExpectedFingerprint,
-		ServerName:          tlsServer.TLS.ServerName,
-		KnownHostsPath:      tlsServer.TLS.KnownHostsPath,
-		CertFile:            tlsServer.TLS.CertFile,
-		KeyFile:             tlsServer.TLS.KeyFile,
+		Mode:                cfg.Server.TLS.Verify,
+		CAFile:              cfg.Server.TLS.CAFile,
+		ExpectedFingerprint: cfg.Server.TLS.ExpectedFingerprint,
+		ServerName:          cfg.Server.TLS.ServerName,
+		KnownHostsPath:      cfg.Server.TLS.KnownHostsPath,
+		CertFile:            cfg.Server.TLS.CertFile,
+		KeyFile:             cfg.Server.TLS.KeyFile,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "build client TLS config")
@@ -86,37 +85,30 @@ func NewClientFromConfig(cfg *config.Config) (Client, error) {
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 	}))
 
-	// Build and register client metrics once per factory call. Register
+	// Build and register client metrics for this factory call. Register
 	// tolerates AlreadyRegisteredError so tests building multiple clients
-	// against the default registerer do not panic. Install the retry hook
-	// here too — the io layer can't import metrics state lazily without
-	// creating an import cycle, so metrics owns the global hook.
+	// against the default registerer do not panic — it adopts the existing
+	// series. RegisterInstance adds m to the per-instance dispatcher so the
+	// io/cache layers (which call metrics.OnRetry, CacheHit, etc.) fan-out
+	// to every live client without overwriting a shared global hook.
 	m := metrics.NewMetrics()
 	if err := m.Register(prometheus.DefaultRegisterer); err != nil {
 		return nil, errors.Wrap(err, "register client metrics")
 	}
-	metrics.SetRetryHook(m.RetryInc)
-	metrics.SetCacheHitHook(m.CacheHitInc)
-	metrics.SetCacheMissHook(m.CacheMissInc)
-	metrics.SetCacheDedupeHitHook(m.CacheDedupeHitInc)
-	metrics.SetCacheRevalidationHook(m.CacheRevalidationInc)
-	metrics.SetSubscribeEventReceivedHook(m.SubscribeEventReceivedInc)
-	metrics.SetSubscribeStreamStateHook(m.SubscribeStreamStateSet)
-	metrics.SetCacheUnverifiedHook(m.CacheUnverifiedAdd)
-	opts = append(opts, WithUnaryInterceptors(UnaryClientInFlightInterceptor(m)))
+	metrics.RegisterInstance(m)
+	opts = append(opts, WithMetrics(m))
 
 	if c, ok := authConfig.(*config.BasicAuthConfig); ok {
 		opts = append(opts, WithBasicAuth(c.Username, c.Password))
 	}
 
-	client, err := NewClient(createEndpoint(cfg.Server), opts...)
+	client, err := NewClient(endpoint, opts...)
 	if err != nil {
 		return nil, err
 	}
-	client.Connect()
-	if client.SessionID() == "" {
+	if err := client.Connect(); err != nil {
 		_ = client.Close()
-		return nil, errors.New("session handshake failed; client unusable")
+		return nil, errors.Wrap(err, "session handshake failed; client unusable")
 	}
 	return client, nil
 }

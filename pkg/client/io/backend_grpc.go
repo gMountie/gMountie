@@ -129,7 +129,7 @@ func joinPath(parent, name string) string {
 // fd-level sibling. The blocking lock wait (SetLkw) intentionally keeps the
 // cancellable context so a signal can still interrupt it.
 func (b *BackendClient) metaCtx(ctx context.Context) (context.Context, context.CancelFunc) {
-	return withMetaTimeout(context.WithoutCancel(ctx), b.client.MetaTimeout())
+	return withTimeout(context.WithoutCancel(ctx), b.client.MetaTimeout())
 }
 
 // ioCtx is metaCtx's sibling for fd-level RPCs: it bounds the call with the
@@ -141,7 +141,7 @@ func (b *BackendClient) metaCtx(ctx context.Context) (context.Context, context.C
 // nor by prefetch / streamingWrite, which already run off h.lifeCtx /
 // context.Background() rather than the FUSE op ctx.
 func ioCtx(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	return withIOTimeout(context.WithoutCancel(parent), timeout)
+	return withTimeout(context.WithoutCancel(parent), timeout)
 }
 
 // Stat returns the attributes of path. Idempotent; no request_id stamping.
@@ -171,11 +171,13 @@ func (b *BackendClient) Stat(ctx context.Context, path string) (*Attr, fuse.Stat
 func (b *BackendClient) GetAttrIfChanged(ctx context.Context, path string, knownVersion uint64) (*Attr, bool, fuse.Status) {
 	ctx2, cancel := b.metaCtx(ctx)
 	defer cancel()
-	reply, err := b.client.Fs().GetAttrIfChanged(ctx2, &proto.GetAttrIfChangedRequest{
-		Volume:       b.volume,
-		Caller:       callerFromCtx(ctx2),
-		Path:         path,
-		KnownVersion: knownVersion,
+	reply, err := retryableCall(ctx2, "GetAttrIfChanged", func(ctx context.Context) (*proto.GetAttrIfChangedReply, error) {
+		return b.client.Fs().GetAttrIfChanged(ctx, &proto.GetAttrIfChangedRequest{
+			Volume:       b.volume,
+			Caller:       callerFromCtx(ctx),
+			Path:         path,
+			KnownVersion: knownVersion,
+		})
 	})
 	if err != nil {
 		if st, ok := grpcstatus.FromError(err); ok && st.Code() == codes.NotFound {
@@ -262,28 +264,48 @@ func (b *BackendClient) Readlink(ctx context.Context, path string) (string, fuse
 	return res.Target, fuse.Status(res.Status)
 }
 
+// mutatePath is the shared body for all single-path mutating RPCs. It
+// allocates a request_id outside the retry closure (idempotency), applies
+// the meta context, and calls retryableCall. fn receives the per-attempt
+// context and the pre-allocated requestID; it is responsible for stamping
+// both the request_id and the session_id fields. Returns fuse.EIO on gRPC
+// error, otherwise fuse.Status as returned by statusOf.
+func mutatePath[Rep any](
+	ctx context.Context,
+	op string,
+	metaCtxFn func(context.Context) (context.Context, context.CancelFunc),
+	fn func(ctx context.Context, requestID string) (Rep, error),
+	statusOf func(Rep) int32,
+) fuse.Status {
+	ctx2, cancel := metaCtxFn(ctx)
+	defer cancel()
+	requestID := uuid.NewString()
+	res, err := retryableCall(ctx2, op, func(ctx context.Context) (Rep, error) {
+		return fn(ctx, requestID)
+	})
+	if err != nil {
+		log.Log.Error("error in call: "+op, zap.Error(err))
+		return fuse.EIO
+	}
+	return fuse.Status(statusOf(res))
+}
+
 // Symlink creates a new symbolic link at linkPath pointing at target.
 // Mutating — request_id stamped outside retry for idempotency.
 func (b *BackendClient) Symlink(ctx context.Context, target, linkPath string) fuse.Status {
-	ctx2, cancel := b.metaCtx(ctx)
-	defer cancel()
-	requestID := uuid.NewString()
-	res, err := retryableCall(ctx2, "Symlink", func(ctx context.Context) (*proto.SymlinkReply, error) {
-		return b.client.Fs().Symlink(ctx, &proto.SymlinkRequest{
-			Volume:    b.volume,
-			Caller:    callerFromCtx(ctx),
-			Target:    target,
-			LinkPath:  linkPath,
-			SessionId: b.client.SessionID(),
-			RequestId: requestID,
-		})
-	})
-	if err != nil || res == nil {
-		log.Log.Error("error in call: Symlink",
-			zap.String("link_path", linkPath), zap.String("target", target), zap.Error(err))
-		return fuse.EIO
-	}
-	return fuse.Status(res.Status)
+	return mutatePath(ctx, "Symlink", b.metaCtx,
+		func(ctx context.Context, requestID string) (*proto.SymlinkReply, error) {
+			return b.client.Fs().Symlink(ctx, &proto.SymlinkRequest{
+				Volume:    b.volume,
+				Caller:    callerFromCtx(ctx),
+				Target:    target,
+				LinkPath:  linkPath,
+				SessionId: b.client.SessionID(),
+				RequestId: requestID,
+			})
+		},
+		func(r *proto.SymlinkReply) int32 { return r.Status },
+	)
 }
 
 // StatFs returns filesystem statistics for the volume containing path.
@@ -327,155 +349,120 @@ func (b *BackendClient) GetXAttr(ctx context.Context, path, attr string) ([]byte
 
 // Mkdir creates a directory. Mutating — request_id stamped outside retry.
 func (b *BackendClient) Mkdir(ctx context.Context, path string, mode uint32) fuse.Status {
-	ctx2, cancel := b.metaCtx(ctx)
-	defer cancel()
-	requestID := uuid.NewString()
-	res, err := retryableCall(ctx2, "Mkdir", func(ctx context.Context) (*proto.MkdirReply, error) {
-		return b.client.Fs().Mkdir(ctx, &proto.MkdirRequest{
-			Volume:    b.volume,
-			Caller:    callerFromCtx(ctx),
-			Path:      path,
-			Mode:      mode,
-			SessionId: b.client.SessionID(),
-			RequestId: requestID,
-		})
-	})
-	if err != nil || res == nil {
-		log.Log.Error("error in call: MkDir", zap.String("path", path), zap.Error(err))
-		return fuse.EIO
-	}
-	return fuse.Status(res.Status)
+	return mutatePath(ctx, "Mkdir", b.metaCtx,
+		func(ctx context.Context, requestID string) (*proto.MkdirReply, error) {
+			return b.client.Fs().Mkdir(ctx, &proto.MkdirRequest{
+				Volume:    b.volume,
+				Caller:    callerFromCtx(ctx),
+				Path:      path,
+				Mode:      mode,
+				SessionId: b.client.SessionID(),
+				RequestId: requestID,
+			})
+		},
+		func(r *proto.MkdirReply) int32 { return r.Status },
+	)
 }
 
 // Rmdir removes an empty directory.
 func (b *BackendClient) Rmdir(ctx context.Context, path string) fuse.Status {
-	ctx2, cancel := b.metaCtx(ctx)
-	defer cancel()
-	requestID := uuid.NewString()
-	res, err := retryableCall(ctx2, "Rmdir", func(ctx context.Context) (*proto.RmdirReply, error) {
-		return b.client.Fs().Rmdir(ctx, &proto.RmdirRequest{
-			Volume:    b.volume,
-			Caller:    callerFromCtx(ctx),
-			Path:      path,
-			SessionId: b.client.SessionID(),
-			RequestId: requestID,
-		})
-	})
-	if err != nil || res == nil {
-		log.Log.Error("error in call: RmDir", zap.String("path", path), zap.Error(err))
-		return fuse.EIO
-	}
-	return fuse.Status(res.Status)
+	return mutatePath(ctx, "Rmdir", b.metaCtx,
+		func(ctx context.Context, requestID string) (*proto.RmdirReply, error) {
+			return b.client.Fs().Rmdir(ctx, &proto.RmdirRequest{
+				Volume:    b.volume,
+				Caller:    callerFromCtx(ctx),
+				Path:      path,
+				SessionId: b.client.SessionID(),
+				RequestId: requestID,
+			})
+		},
+		func(r *proto.RmdirReply) int32 { return r.Status },
+	)
 }
 
 // Unlink removes a non-directory.
 func (b *BackendClient) Unlink(ctx context.Context, path string) fuse.Status {
-	ctx2, cancel := b.metaCtx(ctx)
-	defer cancel()
-	requestID := uuid.NewString()
-	res, err := retryableCall(ctx2, "Unlink", func(ctx context.Context) (*proto.UnlinkReply, error) {
-		return b.client.Fs().Unlink(ctx, &proto.UnlinkRequest{
-			Volume:    b.volume,
-			Caller:    callerFromCtx(ctx),
-			Path:      path,
-			SessionId: b.client.SessionID(),
-			RequestId: requestID,
-		})
-	})
-	if err != nil || res == nil {
-		log.Log.Error("error in call: Unlink", zap.String("path", path), zap.Error(err))
-		return fuse.EIO
-	}
-	return fuse.Status(res.Status)
+	return mutatePath(ctx, "Unlink", b.metaCtx,
+		func(ctx context.Context, requestID string) (*proto.UnlinkReply, error) {
+			return b.client.Fs().Unlink(ctx, &proto.UnlinkRequest{
+				Volume:    b.volume,
+				Caller:    callerFromCtx(ctx),
+				Path:      path,
+				SessionId: b.client.SessionID(),
+				RequestId: requestID,
+			})
+		},
+		func(r *proto.UnlinkReply) int32 { return r.Status },
+	)
 }
 
 // Rename moves a file/directory.
 func (b *BackendClient) Rename(ctx context.Context, oldPath, newPath string) fuse.Status {
-	ctx2, cancel := b.metaCtx(ctx)
-	defer cancel()
-	requestID := uuid.NewString()
-	res, err := retryableCall(ctx2, "Rename", func(ctx context.Context) (*proto.RenameReply, error) {
-		return b.client.Fs().Rename(ctx, &proto.RenameRequest{
-			Volume:    b.volume,
-			Caller:    callerFromCtx(ctx),
-			OldName:   oldPath,
-			NewName:   newPath,
-			SessionId: b.client.SessionID(),
-			RequestId: requestID,
-		})
-	})
-	if err != nil || res == nil {
-		log.Log.Error("error in call: Rename", zap.String("oldName", oldPath), zap.String("newName", newPath), zap.Error(err))
-		return fuse.EIO
-	}
-	return fuse.Status(res.Status)
+	return mutatePath(ctx, "Rename", b.metaCtx,
+		func(ctx context.Context, requestID string) (*proto.RenameReply, error) {
+			return b.client.Fs().Rename(ctx, &proto.RenameRequest{
+				Volume:    b.volume,
+				Caller:    callerFromCtx(ctx),
+				OldName:   oldPath,
+				NewName:   newPath,
+				SessionId: b.client.SessionID(),
+				RequestId: requestID,
+			})
+		},
+		func(r *proto.RenameReply) int32 { return r.Status },
+	)
 }
 
 // Truncate changes a file's length.
 func (b *BackendClient) Truncate(ctx context.Context, path string, size uint64) fuse.Status {
-	ctx2, cancel := b.metaCtx(ctx)
-	defer cancel()
-	requestID := uuid.NewString()
-	res, err := retryableCall(ctx2, "Truncate", func(ctx context.Context) (*proto.TruncateReply, error) {
-		return b.client.Fs().Truncate(ctx, &proto.TruncateRequest{
-			Volume:    b.volume,
-			Caller:    callerFromCtx(ctx),
-			Path:      path,
-			Size:      size,
-			SessionId: b.client.SessionID(),
-			RequestId: requestID,
-		})
-	})
-	if err != nil || res == nil {
-		log.Log.Error("error in call: Truncate", zap.String("path", path), zap.Error(err))
-		return fuse.EIO
-	}
-	return fuse.Status(res.Status)
+	return mutatePath(ctx, "Truncate", b.metaCtx,
+		func(ctx context.Context, requestID string) (*proto.TruncateReply, error) {
+			return b.client.Fs().Truncate(ctx, &proto.TruncateRequest{
+				Volume:    b.volume,
+				Caller:    callerFromCtx(ctx),
+				Path:      path,
+				Size:      size,
+				SessionId: b.client.SessionID(),
+				RequestId: requestID,
+			})
+		},
+		func(r *proto.TruncateReply) int32 { return r.Status },
+	)
 }
 
 // Chmod changes file permissions.
 func (b *BackendClient) Chmod(ctx context.Context, path string, mode uint32) fuse.Status {
-	ctx2, cancel := b.metaCtx(ctx)
-	defer cancel()
-	requestID := uuid.NewString()
-	res, err := retryableCall(ctx2, "Chmod", func(ctx context.Context) (*proto.ChmodReply, error) {
-		return b.client.Fs().Chmod(ctx, &proto.ChmodRequest{
-			Volume:    b.volume,
-			Caller:    callerFromCtx(ctx),
-			Path:      path,
-			Mode:      mode,
-			SessionId: b.client.SessionID(),
-			RequestId: requestID,
-		})
-	})
-	if err != nil || res == nil {
-		log.Log.Error("error in call: Chmod", zap.String("path", path), zap.Error(err))
-		return fuse.EIO
-	}
-	return fuse.Status(res.Status)
+	return mutatePath(ctx, "Chmod", b.metaCtx,
+		func(ctx context.Context, requestID string) (*proto.ChmodReply, error) {
+			return b.client.Fs().Chmod(ctx, &proto.ChmodRequest{
+				Volume:    b.volume,
+				Caller:    callerFromCtx(ctx),
+				Path:      path,
+				Mode:      mode,
+				SessionId: b.client.SessionID(),
+				RequestId: requestID,
+			})
+		},
+		func(r *proto.ChmodReply) int32 { return r.Status },
+	)
 }
 
 // Chown changes ownership.
 func (b *BackendClient) Chown(ctx context.Context, path string, uid, gid uint32) fuse.Status {
-	ctx2, cancel := b.metaCtx(ctx)
-	defer cancel()
-	requestID := uuid.NewString()
-	res, err := retryableCall(ctx2, "Chown", func(ctx context.Context) (*proto.ChownReply, error) {
-		return b.client.Fs().Chown(ctx, &proto.ChownRequest{
-			Volume:    b.volume,
-			Caller:    callerFromCtx(ctx),
-			Path:      path,
-			Uid:       uid,
-			Gid:       gid,
-			SessionId: b.client.SessionID(),
-			RequestId: requestID,
-		})
-	})
-	if err != nil || res == nil {
-		log.Log.Error("error in call: Chown", zap.String("path", path), zap.Error(err))
-		return fuse.EIO
-	}
-	return fuse.Status(res.Status)
+	return mutatePath(ctx, "Chown", b.metaCtx,
+		func(ctx context.Context, requestID string) (*proto.ChownReply, error) {
+			return b.client.Fs().Chown(ctx, &proto.ChownRequest{
+				Volume:    b.volume,
+				Caller:    callerFromCtx(ctx),
+				Path:      path,
+				Uid:       uid,
+				Gid:       gid,
+				SessionId: b.client.SessionID(),
+				RequestId: requestID,
+			})
+		},
+		func(r *proto.ChownReply) int32 { return r.Status },
+	)
 }
 
 // timeToFileTime maps a Go time to the wire FileTime. A nil input yields a
@@ -490,25 +477,20 @@ func timeToFileTime(t *time.Time) *proto.FileTime {
 // Utimens sets atime and/or mtime. A nil pointer leaves that timestamp
 // unchanged (UTIME_OMIT).
 func (b *BackendClient) Utimens(ctx context.Context, path string, atime, mtime *time.Time) fuse.Status {
-	ctx2, cancel := b.metaCtx(ctx)
-	defer cancel()
-	requestID := uuid.NewString()
-	res, err := retryableCall(ctx2, "Utimens", func(ctx context.Context) (*proto.UtimensReply, error) {
-		return b.client.Fs().Utimens(ctx, &proto.UtimensRequest{
-			Volume:    b.volume,
-			Caller:    callerFromCtx(ctx),
-			Path:      path,
-			Atime:     timeToFileTime(atime),
-			Mtime:     timeToFileTime(mtime),
-			SessionId: b.client.SessionID(),
-			RequestId: requestID,
-		})
-	})
-	if err != nil || res == nil {
-		log.Log.Error("error in call: Utimens", zap.String("path", path), zap.Error(err))
-		return fuse.EIO
-	}
-	return fuse.Status(res.Status)
+	return mutatePath(ctx, "Utimens", b.metaCtx,
+		func(ctx context.Context, requestID string) (*proto.UtimensReply, error) {
+			return b.client.Fs().Utimens(ctx, &proto.UtimensRequest{
+				Volume:    b.volume,
+				Caller:    callerFromCtx(ctx),
+				Path:      path,
+				Atime:     timeToFileTime(atime),
+				Mtime:     timeToFileTime(mtime),
+				SessionId: b.client.SessionID(),
+				RequestId: requestID,
+			})
+		},
+		func(r *proto.UtimensReply) int32 { return r.Status },
+	)
 }
 
 // Open opens an existing file. The returned FileHandle is a
@@ -656,7 +638,7 @@ func (b *BackendClient) doPrefetch(h *grpcFileHandle, off int64) {
 		return
 	}
 	chunk := h.readahead.chunkSize
-	ctx, cancel := withIOTimeout(h.lifeCtx, h.ioTimeout)
+	ctx, cancel := withTimeout(h.lifeCtx, h.ioTimeout)
 	defer cancel()
 	stream, err := h.fileClient.Read(ctx, &proto.ReadRequest{
 		Volume:    h.volume,
@@ -710,7 +692,7 @@ func (b *BackendClient) doPrefetch(h *grpcFileHandle, off int64) {
 // offset) plus the first writeFrameSizeBytes of data. Subsequent frames
 // carry only the data slice.
 func (b *BackendClient) streamingWrite(h *grpcFileHandle, data []byte, off int64, requestID string) (uint32, fuse.Status) {
-	ctx, cancel := withIOTimeout(context.Background(), h.ioTimeout)
+	ctx, cancel := withTimeout(context.Background(), h.ioTimeout)
 	defer cancel()
 	res, err := retryableCall(ctx, "Write", func(ctx context.Context) (*proto.WriteReply, error) {
 		stream, err := h.fileClient.Write(ctx)
@@ -1016,7 +998,7 @@ func (b *BackendClient) SetLkw(ctx context.Context, fh FileHandle, owner uint64,
 	}
 	// SetLkw is a BLOCKING lock acquisition (F_SETLKW): keep it cancellable so a
 	// signal can interrupt a stuck wait, rather than detaching it via ioCtx.
-	ctx2, cancel := withIOTimeout(ctx, h.ioTimeout)
+	ctx2, cancel := withTimeout(ctx, h.ioTimeout)
 	defer cancel()
 	res, err := h.fileClient.SetLkw(ctx2, &proto.SetLkwRequest{
 		Volume:    h.volume,

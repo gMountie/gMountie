@@ -53,7 +53,7 @@ func (h *SessionHandshake) SessionID() string {
 	return h.sessionID
 }
 
-func (h *SessionHandshake) IsRunning() bool {
+func (h *SessionHandshake) isRunning() bool {
 	return h.running.Load()
 }
 
@@ -87,7 +87,15 @@ func (h *SessionHandshake) Establish(ctx context.Context) error {
 	h.setSessionID(reply.SessionId)
 
 	streamCtx, cancel := context.WithCancel(context.Background())
-	stream, err := h.client.Keepalive(streamCtx, &proto.KeepaliveRequest{SessionId: reply.SessionId})
+	// Bound the initial Keepalive open with the same deadline that the
+	// caller passed into Establish (typically context.Background() + 5s
+	// from the factory). A hung session service must not stall Connect
+	// indefinitely. The steady-state recovery loop uses streamCtx
+	// directly (no deadline) because it must survive across network
+	// interruptions — only the first open needs a bound.
+	openCtx, openCancel := context.WithTimeout(ctx, 10*time.Second)
+	stream, err := h.client.Keepalive(openCtx, &proto.KeepaliveRequest{SessionId: reply.SessionId})
+	openCancel()
 	if err != nil {
 		cancel()
 		h.setSessionID("")
@@ -165,11 +173,14 @@ func (h *SessionHandshake) recover() (proto.SessionService_KeepaliveClient, erro
 			zap.Duration("backoff", backoff),
 			zap.Error(err))
 
+		t := time.NewTimer(backoff)
 		select {
 		case <-h.streamCtx.Done():
+			t.Stop()
 			return nil, h.streamCtx.Err()
-		case <-time.After(backoff):
+		case <-t.C:
 		}
+		t.Stop()
 		if backoff < recoveryMaxBackoff {
 			backoff *= 2
 			if backoff > recoveryMaxBackoff {

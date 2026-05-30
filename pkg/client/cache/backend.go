@@ -32,6 +32,10 @@ type cachedBackend struct {
 	validity   *validityTracker
 	subscriber *subscribeConsumer
 	subCancel  context.CancelFunc
+	// persist is the on-disk backing store. Non-nil only when NewCachedBackend
+	// was called with a non-nil *persist.Persist. Owned by this cachedBackend:
+	// Close() shuts it down after stopping the subscriber.
+	persist *persist.Persist
 }
 
 // NewCachedBackend wraps inner. cfg.MemoryMaxBytes <= 0 disables byte-cap
@@ -49,6 +53,7 @@ func NewCachedBackend(inner io.FileSystemBackend, cfg Config, p *persist.Persist
 		dir:      newDirCacheWithPersist(acct, cfg.DirTTL, nil, p),
 		data:     newDataCacheWithPersist(acct, cfg.ChunkSizeBytes, p),
 		validity: newValidityTracker(),
+		persist:  p,
 	}
 	if !cfg.SubscribeEnabled {
 		// Subscribe disabled: freshness is TTL-driven only. Mark the
@@ -70,14 +75,26 @@ func NewCachedBackend(inner io.FileSystemBackend, cfg Config, p *persist.Persist
 	return b
 }
 
-// Close stops the subscriber goroutine (if running) and closes the inner
-// backend if it implements io.FileSystemBackend (e.g. a future closeable
-// wrapper). Mount code calls Close before discarding a backend on Unmount.
+// Close stops the subscriber goroutine (if running), closes the persist
+// tier (if owned), and closes the inner backend. Mount code calls Close
+// before discarding a backend on Unmount.
 func (b *cachedBackend) Close() error {
 	if b.subCancel != nil {
 		b.subCancel()
 	}
-	return b.inner.Close()
+	var errs []error
+	if b.persist != nil {
+		if err := b.persist.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if err := b.inner.Close(); err != nil {
+		errs = append(errs, err)
+	}
+	if len(errs) > 0 {
+		return errs[0]
+	}
+	return nil
 }
 
 // subscribeBackendAdapter bridges cachedBackend to the subscribeBackendOps
