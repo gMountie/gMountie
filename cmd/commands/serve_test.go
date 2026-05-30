@@ -6,7 +6,7 @@ import (
 	"bytes"
 	"context"
 	commonConfig "gmountie/pkg/common/config"
-	"gmountie/pkg/server/config"
+	serverConfig "gmountie/pkg/server/config"
 	"gmountie/test/e2e/utils"
 	"os"
 	"path/filepath"
@@ -22,7 +22,7 @@ type ServeCmdTestSuite struct {
 	buf                 *bytes.Buffer
 	tempDir             string
 	serverStartCalled   bool
-	originalServerStart func(ctx context.Context, cfg *config.Config) error
+	originalServerStart func(ctx context.Context, cfg *serverConfig.Config) error
 }
 
 func (s *ServeCmdTestSuite) SetupTest() {
@@ -37,7 +37,7 @@ func (s *ServeCmdTestSuite) SetupTest() {
 
 	s.serverStartCalled = false
 	s.originalServerStart = serverStart
-	serverStart = func(ctx context.Context, cfg *config.Config) error {
+	serverStart = func(ctx context.Context, cfg *serverConfig.Config) error {
 		s.serverStartCalled = true
 		return nil
 	}
@@ -57,10 +57,21 @@ func (s *ServeCmdTestSuite) TestServeCmd_ExecuteWithoutConfig() {
 	s.Require().NoError(err)
 	s.Assert().True(s.serverStartCalled)
 
-	// Check if default config was created
+	// Check if default config was created with the first-run template.
 	defaultConfigPath := commonConfig.GetDefaultConfigPath(commonConfig.DefaultServerConfigFileName)
-	_, err = os.Stat(defaultConfigPath)
-	s.Assert().NoError(err)
+	written, err := os.ReadFile(defaultConfigPath)
+	s.Require().NoError(err)
+	s.Assert().Contains(string(written), "address: 0.0.0.0")
+	s.Assert().Contains(string(written), "name: shared")
+
+	// The generated password is printed once to the console.
+	s.Assert().Contains(s.buf.String(), "Password:")
+
+	// The default volume's data dir is created with 0700.
+	volDir := filepath.Join(s.tempDir, ".local", "share", "gmountie", "shared")
+	fi, err := os.Stat(volDir)
+	s.Require().NoError(err)
+	s.Assert().Equal(os.FileMode(0o700), fi.Mode().Perm())
 }
 
 func (s *ServeCmdTestSuite) TestServeCmd_ExecuteWithInvalidConfig() {
@@ -75,6 +86,24 @@ func (s *ServeCmdTestSuite) TestServeCmd_ExecuteWithInvalidConfig() {
 
 	// Verify
 	s.Require().Error(err, "failed to parse config")
+}
+
+func (s *ServeCmdTestSuite) TestFirstRunConfigIsUsable() {
+	dataDir := s.T().TempDir()
+	pw, cfgYAML, err := buildFirstRunConfig(dataDir)
+	s.Require().NoError(err)
+
+	s.NotEqual("admin", pw, "must not ship the fixed admin password")
+	s.GreaterOrEqual(len(pw), 20)
+	s.Contains(cfgYAML, "address: 0.0.0.0")
+	s.Contains(cfgYAML, "name: shared")
+	s.Contains(cfgYAML, dataDir)
+	s.NotContains(cfgYAML, pw, "plaintext password must not be written to the file")
+
+	cfg, err := serverConfig.LoadConfigFromString(cfgYAML)
+	s.Require().NoError(err)
+	s.Require().Len(cfg.Volumes, 1)
+	s.Equal("shared", cfg.Volumes[0].Name)
 }
 
 func TestServeCmdSuite(t *testing.T) {
