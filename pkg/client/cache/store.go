@@ -56,10 +56,6 @@ func newStore(acct *accountant, cacheType string) *store {
 	return &store{entries: make(map[string]*entry), acct: acct, cacheType: cacheType}
 }
 
-func newStoreWithLoader(acct *accountant, loader Loader, putter Putter, cacheType string) *store {
-	return &store{entries: make(map[string]*entry), acct: acct, loader: loader, putter: putter, cacheType: cacheType}
-}
-
 func newStoreWithPersist(acct *accountant, loader Loader, putter Putter, remover Remover, cacheType string) *store {
 	return &store{entries: make(map[string]*entry), acct: acct, loader: loader, putter: putter, remover: remover, cacheType: cacheType}
 }
