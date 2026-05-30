@@ -3,6 +3,8 @@ package grpc
 import (
 	"context"
 
+	"gmountie/pkg/common"
+
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
 	"google.golang.org/grpc"
 )
@@ -20,7 +22,7 @@ func ServerUnaryLogContext() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if r, ok := req.(SessionIDCarrier); ok {
 			if id := r.GetSessionId(); id != "" {
-				ctx = logging.InjectLogField(ctx, "session_id", id)
+				ctx = logging.InjectLogField(ctx, "session_fp", common.FingerprintID(id))
 			}
 		}
 		if r, ok := req.(VolumeCarrier); ok {

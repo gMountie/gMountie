@@ -64,7 +64,7 @@ func (r *RpcFileServerImpl) versionAfterPath(ctx context.Context, volume, path s
 }
 
 func (r *RpcFileServerImpl) Open(ctx context.Context, request *proto.OpenRequest) (*proto.OpenReply, error) {
-	sess, err := resolveSession(r.sessions, request.SessionId)
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +84,7 @@ func (r *RpcFileServerImpl) Open(ctx context.Context, request *proto.OpenRequest
 }
 
 func (r *RpcFileServerImpl) Create(ctx context.Context, request *proto.CreateRequest) (*proto.CreateReply, error) {
-	sess, err := resolveSession(r.sessions, request.SessionId)
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +115,7 @@ func (r *RpcFileServerImpl) Create(ctx context.Context, request *proto.CreateReq
 // streaming loop lives in service.ReadStreamer; this handler is a thin
 // resolve+delegate.
 func (r *RpcFileServerImpl) Read(request *proto.ReadRequest, stream proto.RpcFile_ReadServer) error {
-	sess, err := resolveSession(r.sessions, request.SessionId)
+	sess, err := resolveSession(stream.Context(), r.sessions, request.SessionId)
 	if err != nil {
 		return err
 	}
@@ -177,7 +177,7 @@ func (r *RpcFileServerImpl) Write(stream proto.RpcFile_WriteServer) error {
 		return status.Error(codes.InvalidArgument, "Write: first frame must carry volume, fd, session_id and request_id")
 	}
 
-	sess, err := resolveSession(r.sessions, first.SessionId)
+	sess, err := resolveSession(stream.Context(), r.sessions, first.SessionId)
 	if err != nil {
 		return err
 	}
@@ -304,8 +304,8 @@ func drainWriteStream(stream proto.RpcFile_WriteServer) error {
 	}
 }
 
-func (r *RpcFileServerImpl) Fsync(_ context.Context, request *proto.FsyncRequest) (*proto.FsyncReply, error) {
-	sess, err := resolveSession(r.sessions, request.SessionId)
+func (r *RpcFileServerImpl) Fsync(ctx context.Context, request *proto.FsyncRequest) (*proto.FsyncReply, error) {
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
 	}
@@ -316,8 +316,8 @@ func (r *RpcFileServerImpl) Fsync(_ context.Context, request *proto.FsyncRequest
 	return &proto.FsyncReply{Status: int32(entry.File.Fsync(int(request.Flags)))}, nil
 }
 
-func (r *RpcFileServerImpl) Release(_ context.Context, request *proto.ReleaseRequest) (*proto.ReleaseReply, error) {
-	sess, err := resolveSession(r.sessions, request.SessionId)
+func (r *RpcFileServerImpl) Release(ctx context.Context, request *proto.ReleaseRequest) (*proto.ReleaseReply, error) {
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
 	}
@@ -326,8 +326,8 @@ func (r *RpcFileServerImpl) Release(_ context.Context, request *proto.ReleaseReq
 	return &proto.ReleaseReply{}, nil
 }
 
-func (r *RpcFileServerImpl) Flush(_ context.Context, request *proto.FlushRequest) (*proto.FlushReply, error) {
-	sess, err := resolveSession(r.sessions, request.SessionId)
+func (r *RpcFileServerImpl) Flush(ctx context.Context, request *proto.FlushRequest) (*proto.FlushReply, error) {
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
 	}
@@ -338,8 +338,8 @@ func (r *RpcFileServerImpl) Flush(_ context.Context, request *proto.FlushRequest
 	return &proto.FlushReply{Status: int32(entry.File.Flush())}, nil
 }
 
-func (r *RpcFileServerImpl) GetLk(_ context.Context, request *proto.GetLkRequest) (*proto.GetLkReply, error) {
-	sess, err := resolveSession(r.sessions, request.SessionId)
+func (r *RpcFileServerImpl) GetLk(ctx context.Context, request *proto.GetLkRequest) (*proto.GetLkReply, error) {
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
 	}
@@ -356,8 +356,8 @@ func (r *RpcFileServerImpl) GetLk(_ context.Context, request *proto.GetLkRequest
 	}, nil
 }
 
-func (r *RpcFileServerImpl) SetLk(_ context.Context, request *proto.SetLkRequest) (*proto.SetLkReply, error) {
-	sess, err := resolveSession(r.sessions, request.SessionId)
+func (r *RpcFileServerImpl) SetLk(ctx context.Context, request *proto.SetLkRequest) (*proto.SetLkReply, error) {
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
 	}
@@ -369,8 +369,8 @@ func (r *RpcFileServerImpl) SetLk(_ context.Context, request *proto.SetLkRequest
 	return &proto.SetLkReply{Status: int32(entry.File.SetLk(request.Owner, lock, request.Flags))}, nil
 }
 
-func (r *RpcFileServerImpl) SetLkw(_ context.Context, request *proto.SetLkwRequest) (*proto.SetLkwReply, error) {
-	sess, err := resolveSession(r.sessions, request.SessionId)
+func (r *RpcFileServerImpl) SetLkw(ctx context.Context, request *proto.SetLkwRequest) (*proto.SetLkwReply, error) {
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
 	}
@@ -386,7 +386,7 @@ func (r *RpcFileServerImpl) SetLkw(_ context.Context, request *proto.SetLkwReque
 // A write error short-circuits the flush and is what close() will see. The
 // reply carries the post-op Attr so the client needn't re-stat.
 func (r *RpcFileServerImpl) WriteAndFlush(ctx context.Context, req *proto.WriteAndFlushRequest) (*proto.WriteAndFlushReply, error) {
-	sess, err := resolveSession(r.sessions, req.SessionId)
+	sess, err := resolveSession(ctx, r.sessions, req.SessionId)
 	if err != nil {
 		return nil, err
 	}
@@ -429,7 +429,7 @@ func (r *RpcFileServerImpl) WriteAndFlush(ctx context.Context, req *proto.WriteA
 }
 
 func (r *RpcFileServerImpl) Allocate(ctx context.Context, request *proto.AllocateRequest) (*proto.AllocateReply, error) {
-	sess, err := resolveSession(r.sessions, request.SessionId)
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
 	}

@@ -69,7 +69,7 @@ func (s *RpcServerTestSuite) TestMkdir() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
 	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
-	ctx := context.Background()
+	ctx := testAuthedCtx("test-user")
 	mockFs.EXPECT().Mkdir("/test/path", uint32(0), mock.Anything).Return(fuse.OK)
 	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
 
@@ -92,7 +92,7 @@ func (s *RpcServerTestSuite) TestRmdir() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
 	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
-	ctx := context.Background()
+	ctx := testAuthedCtx("test-user")
 	mockFs.EXPECT().Rmdir("/test/path", mock.Anything).Return(fuse.OK)
 
 	// Test.
@@ -114,7 +114,7 @@ func (s *RpcServerTestSuite) TestRename() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
 	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
-	ctx := context.Background()
+	ctx := testAuthedCtx("test-user")
 	mockFs.EXPECT().Rename("/old/path", "/new/path", mock.Anything).Return(fuse.OK)
 	mockFs.EXPECT().GetAttr("/new/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
 
@@ -187,7 +187,7 @@ func (s *RpcServerTestSuite) TestUnlink() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
 	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
-	ctx := context.Background()
+	ctx := testAuthedCtx("test-user")
 	mockFs.EXPECT().Unlink("/test/path", mock.Anything).Return(fuse.OK)
 
 	// Test.
@@ -252,7 +252,7 @@ func (s *RpcServerTestSuite) TestTruncate() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
 	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
-	ctx := context.Background()
+	ctx := testAuthedCtx("test-user")
 	mockFs.EXPECT().Truncate("/test/path", uint64(0), mock.Anything).Return(fuse.OK)
 	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
 
@@ -275,7 +275,7 @@ func (s *RpcServerTestSuite) TestChmod() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
 	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
-	ctx := context.Background()
+	ctx := testAuthedCtx("test-user")
 	mockFs.EXPECT().Chmod("/test/path", uint32(0), mock.Anything).Return(fuse.OK)
 	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
 
@@ -298,7 +298,7 @@ func (s *RpcServerTestSuite) TestChown() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
 	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
-	ctx := context.Background()
+	ctx := testAuthedCtx("test-user")
 	mockFs.EXPECT().Chown("/test/path", uint32(0), uint32(0), mock.Anything).Return(fuse.OK)
 	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
 
@@ -344,7 +344,7 @@ func (s *RpcServerTestSuite) TestMkdirEmptyRequestIDFails() {
 		SessionId: s.sessionID,
 		RequestId: "",
 	}
-	_, err := s.server.Mkdir(context.Background(), request)
+	_, err := s.server.Mkdir(testAuthedCtx("test-user"), request)
 	s.Require().Error(err)
 	st, ok := status.FromError(err)
 	s.Require().True(ok)
@@ -363,10 +363,10 @@ func (s *RpcServerTestSuite) TestMkdirDuplicateRequestIDReturnsCachedReply() {
 		SessionId: s.sessionID,
 		RequestId: "dup-req-mkdir",
 	}
-	r1, err := s.server.Mkdir(context.Background(), request)
+	r1, err := s.server.Mkdir(testAuthedCtx("test-user"), request)
 	s.Require().NoError(err)
 
-	r2, err := s.server.Mkdir(context.Background(), request)
+	r2, err := s.server.Mkdir(testAuthedCtx("test-user"), request)
 	s.Require().NoError(err)
 	s.Assert().Equal(r1.Status, r2.Status, "duplicate request_id must return the cached reply")
 }
@@ -400,7 +400,7 @@ func (s *RpcServerTestSuite) TestUnlinkEmitsDeletedEvent() {
 		SessionId: s.sessionID,
 		RequestId: "test-req-unlink-emit",
 	}
-	reply, err := s.server.Unlink(context.Background(), request)
+	reply, err := s.server.Unlink(testAuthedCtx("test-user"), request)
 	s.Require().NoError(err)
 	s.Require().Equal(int32(fuse.OK), reply.Status)
 
@@ -531,7 +531,7 @@ func (s *RpcServerTestSuite) TestUtimens() {
 	// Setup.
 	mockFs := new(pathfs2.MockFileSystem)
 	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, nil)
-	ctx := context.Background()
+	ctx := testAuthedCtx("test-user")
 	expectedMtime := time.Unix(1577836800, 0)
 	mockFs.EXPECT().Utimens(
 		"/test/path",
@@ -578,7 +578,7 @@ func (s *RpcServerTestSuite) TestSymlink() {
 	mockFs.EXPECT().Symlink("../target", "/link", mock.Anything).Return(fuse.OK)
 	mockFs.EXPECT().GetAttr("/link", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
 
-	reply, err := s.server.Symlink(context.Background(), &proto.SymlinkRequest{
+	reply, err := s.server.Symlink(testAuthedCtx("test-user"), &proto.SymlinkRequest{
 		Volume:    "testVolume",
 		Caller:    CreateCaller(0, 0, 0),
 		Target:    "../target",

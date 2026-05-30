@@ -120,6 +120,64 @@ func (s *MTLSSuite) TestMalloryCertDenied() {
 		"denial must be PermissionDenied, got %s: %s", st.Code(), st.Message())
 }
 
+// TestMalloryCannotUseAliceSession is the cross-user security gate:
+// mallory presents her own CA-signed cert (so she passes mTLS auth and gets
+// principal="mallory"), then forges alice's session_id into the request body.
+// The server must return codes.PermissionDenied with the ownership message —
+// proving the ownership check at resolveSession fires and not the volume ACL.
+//
+// Attack flow:
+//  1. alice creates a session via the primary client (already done in SetupSuite).
+//  2. mallory builds a raw gRPC client with her own cert.
+//  3. mallory issues Mkdir with SessionId = alice's session_id in the request body.
+//  4. Server: cert present → skip session fast-path → ctx principal = "mallory";
+//     resolveSession: sess.Principal()="alice" ≠ "mallory" → PermissionDenied.
+func (s *MTLSSuite) TestMalloryCannotUseAliceSession() {
+	// Step 1: get alice's session_id from the already-established primary client.
+	aliceSessionID := s.app.GetClient().SessionID()
+	s.Require().NotEmpty(aliceSessionID, "alice must have an established session")
+
+	// Step 2: build a mallory client (CA-signed cert, CN=mallory).
+	mallory := s.buildMalloryClient()
+	defer func() { _ = mallory.Close() }()
+
+	ctx := context.Background()
+	caller := &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 1000}}
+
+	// Step 3a: metadata op — Mkdir with alice's session_id forged into request body.
+	// mallory's own session_id flows in the metadata header (from mallory's session
+	// handshake), but the request body carries alice's id — that is what the
+	// controller's resolveSession sees.
+	_, err := mallory.Fs().Mkdir(ctx, &proto.MkdirRequest{
+		Volume:    s.volName,
+		Path:      "/evil-mallory-dir",
+		RequestId: "mallory-forge-mkdir",
+		SessionId: aliceSessionID,
+		Caller:    caller,
+	})
+	s.Require().Error(err, "mallory must not be able to use alice's session_id for Mkdir")
+	st, ok := status.FromError(err)
+	s.Require().True(ok)
+	s.Assert().Equal(codes.PermissionDenied, st.Code(),
+		"must be PermissionDenied (ownership check), not ACL denial; got %s: %s", st.Code(), st.Message())
+	s.Assert().Equal("session does not belong to the caller", st.Message(),
+		"error message must identify the session-ownership chokepoint")
+
+	// Step 3b: truncate op (another session-consuming handler) — same expectation.
+	_, err = mallory.Fs().Truncate(ctx, &proto.TruncateRequest{
+		Volume:    s.volName,
+		Path:      "/any-file",
+		RequestId: "mallory-forge-truncate",
+		SessionId: aliceSessionID,
+		Caller:    caller,
+	})
+	s.Require().Error(err, "mallory must not be able to use alice's session_id for Truncate")
+	st, ok = status.FromError(err)
+	s.Require().True(ok)
+	s.Assert().Equal(codes.PermissionDenied, st.Code())
+	s.Assert().Equal("session does not belong to the caller", st.Message())
+}
+
 func TestMTLSSuite(t *testing.T) {
 	suite.Run(t, new(MTLSSuite))
 }

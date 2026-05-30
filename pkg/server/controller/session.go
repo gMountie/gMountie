@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"gmountie/pkg/common"
 	"gmountie/pkg/proto"
 	"gmountie/pkg/server/principal"
 	"gmountie/pkg/server/service"
@@ -48,7 +49,7 @@ func (c *SessionController) Create(ctx context.Context, _ *proto.SessionCreateRe
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to create session: %v", err)
 	}
-	log.Log.Info("session created", zap.String("session_id", id), zap.String("principal", p))
+	log.Log.Info("session created", zap.String("session_fp", common.FingerprintID(id)), zap.String("principal", p))
 	return &proto.SessionCreateReply{SessionId: id}, nil
 }
 
@@ -61,7 +62,7 @@ func (c *SessionController) Resume(_ context.Context, req *proto.SessionResumeRe
 		return nil, status.Errorf(codes.Internal, "resume failed: %v", err)
 	}
 	log.Log.Info("session resume requested",
-		zap.String("session_id", req.SessionId),
+		zap.String("session_fp", common.FingerprintID(req.SessionId)),
 		zap.Bool("resumed", resumed))
 	return &proto.SessionResumeReply{Resumed: resumed}, nil
 }
@@ -92,11 +93,11 @@ func (c *SessionController) Keepalive(req *proto.KeepaliveRequest, stream proto.
 		return status.Errorf(codes.NotFound, "unknown session: %s", req.SessionId)
 	}
 
-	log.Log.Info("keepalive stream opened", zap.String("session_id", req.SessionId))
+	log.Log.Info("keepalive stream opened", zap.String("session_fp", common.FingerprintID(req.SessionId)))
 	defer func() {
 		c.sessions.MarkDisconnected(req.SessionId)
 		log.Log.Info("keepalive stream closed; session marked disconnected",
-			zap.String("session_id", req.SessionId))
+			zap.String("session_fp", common.FingerprintID(req.SessionId)))
 	}()
 
 	ticker := time.NewTicker(keepalivePingInterval)

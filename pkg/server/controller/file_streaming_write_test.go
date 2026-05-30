@@ -142,7 +142,7 @@ func (s *StreamingWriteSuite) TestWrite_SingleFrameAppendsAndReturnsByteCount() 
 	fd, writer := s.registerWriter()
 	data := []byte("hello world")
 
-	stream := newFakeWriteStream(context.Background(), &proto.WriteFrame{
+	stream := newFakeWriteStream(testAuthedCtx("test-user"), &proto.WriteFrame{
 		Volume:    "testVolume",
 		Fd:        fd,
 		SessionId: s.sessionID,
@@ -166,7 +166,7 @@ func (s *StreamingWriteSuite) TestWrite_MultipleFramesContiguousOffsetsAppend() 
 	chunk1 := []byte("chunk-one-")
 	chunk2 := []byte("chunk-two")
 
-	stream := newFakeWriteStream(context.Background(),
+	stream := newFakeWriteStream(testAuthedCtx("test-user"),
 		&proto.WriteFrame{
 			Volume:    "testVolume",
 			Fd:        fd,
@@ -197,7 +197,7 @@ func (s *StreamingWriteSuite) TestWrite_DuplicateRequestIDReturnsCachedReply() {
 	original := []byte("first-write-data")
 	replay := []byte("totally-different-bytes-that-must-NOT-land")
 
-	first := newFakeWriteStream(context.Background(), &proto.WriteFrame{
+	first := newFakeWriteStream(testAuthedCtx("test-user"), &proto.WriteFrame{
 		Volume:    "testVolume",
 		Fd:        fd,
 		SessionId: s.sessionID,
@@ -209,7 +209,7 @@ func (s *StreamingWriteSuite) TestWrite_DuplicateRequestIDReturnsCachedReply() {
 	s.Require().NotNil(first.reply)
 	originalReply := first.reply
 
-	second := newFakeWriteStream(context.Background(),
+	second := newFakeWriteStream(testAuthedCtx("test-user"),
 		&proto.WriteFrame{
 			Volume:    "testVolume",
 			Fd:        fd,
@@ -277,7 +277,7 @@ func (s *StreamingWriteSuite) TestWrite_FrameMissingFirstHeaderFails() {
 	}
 	for _, c := range cases {
 		s.Run(c.name, func() {
-			stream := newFakeWriteStream(context.Background(), c.frame)
+			stream := newFakeWriteStream(testAuthedCtx("test-user"), c.frame)
 			err := s.server.Write(stream)
 			s.Require().Error(err)
 			st, ok := status.FromError(err)
@@ -294,7 +294,7 @@ func (s *StreamingWriteSuite) TestWrite_FrameMissingFirstHeaderFails() {
 func (s *StreamingWriteSuite) TestWrite_ContinuationFrameHeaderMismatchRejected() {
 	fd, writer := s.registerWriter()
 
-	stream := newFakeWriteStream(context.Background(),
+	stream := newFakeWriteStream(testAuthedCtx("test-user"),
 		&proto.WriteFrame{
 			Volume:    "testVolume",
 			Fd:        fd,

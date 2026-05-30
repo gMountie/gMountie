@@ -1,21 +1,36 @@
 package controller
 
 import (
+	"context"
+
+	"gmountie/pkg/server/principal"
 	"gmountie/pkg/server/service"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// resolveSession looks up a session by id. Empty id → InvalidArgument;
-// unknown id → NotFound. Shared by file.go and fs.go handlers.
-func resolveSession(sessions service.SessionManager, sessionID string) (service.Session, error) {
+// resolveSession looks up a session by id and enforces ownership.
+// Empty id → InvalidArgument; unknown id → NotFound.
+// When the session was created with a non-empty principal, the caller's
+// principal (from ctx) must match — otherwise PermissionDenied is returned.
+// This check is a no-op for sessions created without an auth layer (empty
+// principal) and for basic-auth (the interceptor sets ctx principal = session
+// principal, so they are equal by construction). It binds only mTLS callers
+// to their own sessions, preventing cert-CN=bob from using alice's session_id.
+func resolveSession(ctx context.Context, sessions service.SessionManager, sessionID string) (service.Session, error) {
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
 	sess, err := sessions.Get(sessionID)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "session not found: %s", sessionID)
+	}
+	// Ownership check: reject if session belongs to a specific principal and
+	// the caller is different (or unauthenticated under a session-owning server).
+	ctxP, _ := principal.FromContext(ctx)
+	if sess.Principal() != "" && ctxP != sess.Principal() {
+		return nil, status.Error(codes.PermissionDenied, "session does not belong to the caller")
 	}
 	return sess, nil
 }
