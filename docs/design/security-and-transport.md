@@ -149,11 +149,40 @@ therefore **session-scoped**:
 
 **Model shift:** post-handshake, the `session_id` is a bearer credential for
 the session's lifetime (until it is reaped, `GracePeriod` after disconnect). It
-is a 122-bit UUIDv4 that travels only over TLS (§1), so it is at least as strong
-as the username+password it replaces in the same metadata. mTLS is unaffected
-(its per-call cert check is already cheap). This is consistent with the threat
-model (§7): a stolen `session_id` is equivalent to a stolen credential, and
-compromised clients/binaries are already out of scope.
+is a 122-bit UUIDv4 (`crypto/rand`) that travels only over TLS (§1), so it is at
+least as strong as the username+password it replaces in the same metadata. This
+is consistent with the threat model (§7): a stolen `session_id` is equivalent to
+a stolen credential, and compromised clients/binaries are already out of scope.
+
+### 4b. Session ownership binding and token hygiene
+
+The bearer model only holds if the token stays secret and possession is the
+*only* way to act as its owner. Two reinforcements:
+
+- **Never log the live token.** `session_id` is a secret, so it is never logged
+  in full. Every log site emits `session_fp` — the first 64 bits of
+  `sha256(session_id)` (`common.FingerprintID`) — which correlates a session
+  across log lines without exposing a replayable credential.
+- **Bind the session to the caller's identity where one exists.** Under mTLS the
+  connection carries an independent, unforgeable identity (the client cert), so
+  the `session_id` must not override it. The auth interceptor therefore takes the
+  argon2-skip fast path **only when no verified client cert is present** (the
+  basic-auth case); with a client cert it always runs the cheap cert check, so
+  the principal comes from the cert. Every consumer of a `session_id` —
+  `resolveSession` (which hands out the open-fd table + idempotency cache),
+  `Resume`, and `Keepalive` — then enforces `principal == session.Principal()`.
+  This is a **no-op for basic-auth** (there the principal is derived from the
+  session, so it matches by construction — the documented bearer model) and
+  **binds mTLS**: a cert-CN=bob presenting alice's `session_id` is denied
+  `PermissionDenied`, for both data access (her fds) and lifecycle ops (reaping
+  her session). The fd-table guard is the important half — fd numbers are small
+  per-session integers, so without it a leaked/guessed `session_id` would expose
+  another principal's open handles.
+
+Not yet addressed: an absolute **session lifetime cap** / `session_id` rotation
+to bound a leaked basic-auth token's window — deferred because a filesystem
+session is long-lived (holds open fds), so the robust form is live re-keying,
+not a max-age that would break active mounts.
 
 ## 5. Server surface hardening
 
