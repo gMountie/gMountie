@@ -66,6 +66,51 @@ func applyMountSpec(v *viper.Viper, spec mountSpec) string {
 	return spec.Volume
 }
 
+// resolveAuth fills viper's auth.* keys for a client command (mount/ls),
+// resolving the password without leaving it on the command line.
+//
+// auth.type falls back to the flag default ("basic") when empty, so a config
+// file that omits it still authenticates. For basic auth it writes the COMPLETE
+// tuple (type, username, password) as a single override: viper's Sub("auth")
+// (used by ParseConfig) does not deep-merge a partial override over the
+// config-file map, so setting only auth.password would otherwise drop a config
+// file's auth.username. Non-basic auth leaves the config sub-tree untouched.
+//
+// Password precedence: --password flag > config file / spec > $GMOUNTIE_AUTH_PASSWORD > prompt.
+func resolveAuth(cmd *cobra.Command, v *viper.Viper) error {
+	authTypeVal := v.GetString("auth.type")
+	if authTypeVal == "" || cmd.Flags().Changed("auth-type") {
+		authTypeVal = authType
+	}
+	if authTypeVal != "basic" {
+		return nil
+	}
+
+	user := v.GetString("auth.username")
+	if cmd.Flags().Changed("username") {
+		user = username
+	}
+	if user == "" {
+		return fmt.Errorf("username is required for basic auth (use user@host or -u)")
+	}
+
+	pw := v.GetString("auth.password")
+	if cmd.Flags().Changed("password") {
+		pw = password
+	} else if pw == "" {
+		resolved, err := resolvePassword("", cmd.InOrStdin(), cmd.ErrOrStderr())
+		if err != nil {
+			return err
+		}
+		pw = resolved
+	}
+
+	v.Set("auth.type", "basic")
+	v.Set("auth.username", user)
+	v.Set("auth.password", pw)
+	return nil
+}
+
 var mountCmd = &cobra.Command{
 	Use:   "mount [user@host[:port]/volume] mountpoint",
 	Short: "Mount a gMountie volume",
@@ -124,36 +169,12 @@ var mountCmd = &cobra.Command{
 			v.Set("server.port", port)
 		}
 
-		// Layer explicit flags; fall back to a flag default only when nothing
-		// (config or spec) already supplied the value.
-		setFromFlag := func(name, viperKey, value string) {
-			if cmd.Flags().Changed(name) || (!hasConfig && v.GetString(viperKey) == "") {
-				v.Set(viperKey, value)
-			}
-		}
-		setFromFlag("auth-type", "auth.type", authType)
-		setFromFlag("username", "auth.username", username)
-
 		if volumeName == "" {
 			return fmt.Errorf("volume name is required (use the shorthand host/volume or -n)")
 		}
 
-		// Resolve the basic-auth password without leaving it on the command
-		// line: explicit --password wins, then the config file's value, then
-		// $GMOUNTIE_AUTH_PASSWORD, then an interactive prompt.
-		if v.GetString("auth.type") == "basic" {
-			if v.GetString("auth.username") == "" {
-				return fmt.Errorf("username is required for basic auth (use user@host or -u)")
-			}
-			if cmd.Flags().Changed("password") {
-				v.Set("auth.password", password)
-			} else if v.GetString("auth.password") == "" {
-				pw, err := resolvePassword("", cmd.InOrStdin(), cmd.ErrOrStderr())
-				if err != nil {
-					return err
-				}
-				v.Set("auth.password", pw)
-			}
+		if err := resolveAuth(cmd, v); err != nil {
+			return err
 		}
 
 		var err error

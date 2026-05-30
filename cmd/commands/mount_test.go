@@ -120,6 +120,28 @@ func (s *MountCmdTestSuite) TestMountCmd_ShorthandSpec() {
 	s.Assert().NotContains(err.Error(), "username is required")
 }
 
+// TestMountCmd_ConfigFile_DefaultsAuthType proves a client.yaml that omits
+// auth.type still authenticates as basic (matching `gmountie ls`) rather than
+// failing with "invalid auth type". Password comes from the env; we stop at the
+// non-existent mountpoint, which means auth resolution succeeded.
+func (s *MountCmdTestSuite) TestMountCmd_ConfigFile_DefaultsAuthType() {
+	s.T().Setenv("GMOUNTIE_AUTH_PASSWORD", "secret")
+	cfgPath := filepath.Join(s.tempDir, "client.yaml")
+	cfgYAML := `server:
+  address: 192.168.11.11
+  port: 9449
+auth:
+  username: demo
+`
+	s.Require().NoError(os.WriteFile(cfgPath, []byte(cfgYAML), 0o600))
+	missingMount := filepath.Join(s.tempDir, "no-such-mount")
+	s.cmd.SetArgs([]string{"mount", missingMount, "--volume", "test-volume", "--config", cfgPath})
+	err := s.cmd.Execute()
+	s.Require().Error(err)
+	s.Assert().Contains(err.Error(), fmt.Sprintf("mountpoint %s does not exist", missingMount))
+	s.Assert().NotContains(err.Error(), "invalid auth type")
+}
+
 func (s *MountCmdTestSuite) TestApplyMountSpecPopulatesFlags() {
 	v := viper.New()
 	spec := mountSpec{Username: "admin", Host: "10.0.0.5", Port: 9449, Volume: "shared"}
