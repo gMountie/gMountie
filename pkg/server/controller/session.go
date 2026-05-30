@@ -53,9 +53,19 @@ func (c *SessionController) Create(ctx context.Context, _ *proto.SessionCreateRe
 	return &proto.SessionCreateReply{SessionId: id}, nil
 }
 
-func (c *SessionController) Resume(_ context.Context, req *proto.SessionResumeRequest) (*proto.SessionResumeReply, error) {
+func (c *SessionController) Resume(ctx context.Context, req *proto.SessionResumeRequest) (*proto.SessionResumeReply, error) {
 	if req.SessionId == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+	// Ownership: only the session's owner may resume it. An unknown session is
+	// owned by no one (already reaped) — let Resume report resumed=false so the
+	// client falls back to Create. No-op for basic-auth (principal is derived
+	// from the session); binds mTLS (cert CN is independent of the session_id).
+	if sess, err := c.sessions.Get(req.SessionId); err == nil {
+		ctxP, _ := principal.FromContext(ctx)
+		if sess.Principal() != "" && ctxP != sess.Principal() {
+			return nil, status.Error(codes.PermissionDenied, "session does not belong to the caller")
+		}
 	}
 	resumed, err := c.sessions.Resume(req.SessionId)
 	if err != nil {
@@ -89,8 +99,17 @@ func (c *SessionController) Keepalive(req *proto.KeepaliveRequest, stream proto.
 	if req.SessionId == "" {
 		return status.Error(codes.InvalidArgument, "session_id is required")
 	}
-	if _, err := c.sessions.Get(req.SessionId); err != nil {
+	sess, err := c.sessions.Get(req.SessionId)
+	if err != nil {
 		return status.Errorf(codes.NotFound, "unknown session: %s", req.SessionId)
+	}
+	// Ownership: only the session's owner may drive its keepalive — otherwise a
+	// cross-user caller could open+close a keepalive on someone else's session
+	// and trigger MarkDisconnected, reaping their fds mid-use (availability DoS).
+	// No-op for basic-auth (bearer model); binds mTLS via the cert principal.
+	ctxP, _ := principal.FromContext(stream.Context())
+	if sess.Principal() != "" && ctxP != sess.Principal() {
+		return status.Error(codes.PermissionDenied, "session does not belong to the caller")
 	}
 
 	log.Log.Info("keepalive stream opened", zap.String("session_fp", common.FingerprintID(req.SessionId)))
