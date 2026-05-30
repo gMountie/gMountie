@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"gmountie/pkg/client/metrics"
 	"gmountie/pkg/common"
 	commongrpc "gmountie/pkg/common/grpc"
 	"gmountie/pkg/proto"
@@ -20,8 +21,10 @@ import (
 type Client interface {
 	// GetEndpoint returns the gRPC Client endpoint.
 	GetEndpoint() string
-	// Connect connects to the gRPC server.
-	Connect()
+	// Connect connects to the gRPC server and completes the session handshake.
+	// Returns an error if the handshake fails; callers should treat a non-nil
+	// error as fatal and close the client.
+	Connect() error
 	// Close closes the gRPC Client connection.
 	Close() error
 	// File returns the gRPC File client.
@@ -83,6 +86,9 @@ type ClientImpl struct {
 	metaTimeout       time.Duration
 	ioTimeout         time.Duration
 	perFile           PerFileConfig
+	// metrics is the per-client collector set. Set via WithMetrics; nil
+	// means no in-flight interceptor is wired (the factory always provides one).
+	metrics *metrics.Metrics
 }
 
 // -------------------- ClientImpl Options --------------------
@@ -149,6 +155,17 @@ func WithWriteCoalesce(bytes int) ClientOption {
 	}
 }
 
+// WithMetrics attaches a pre-built *metrics.Metrics to the client. The
+// factory (NewClientFromConfig) uses this to avoid overwriting the package-
+// level metric hooks when multiple clients are constructed in the same process
+// (e.g. in tests). If not supplied, NewClient itself does not register or
+// wire any metrics — the factory is the only production code path that does.
+func WithMetrics(m *metrics.Metrics) ClientOption {
+	return func(c *ClientImpl) {
+		c.metrics = m
+	}
+}
+
 // ---------------------- Constructor ----------------------
 
 // NewClient creates a new gRPC ClientImpl
@@ -211,12 +228,16 @@ func (c *ClientImpl) Version() proto.VersionServiceClient {
 	return c.version
 }
 
-// Connect connects to the gRPC server
-func (c *ClientImpl) Connect() {
+// Connect connects to the gRPC server and completes the session handshake.
+// Returns the handshake error so callers can fail fast instead of discovering
+// the broken state via SessionID() == "".
+func (c *ClientImpl) Connect() error {
 	c.conn.Connect()
 	if err := c.handshake.Establish(context.Background()); err != nil {
 		log.Log.Error("session handshake failed", zap.Error(err))
+		return err
 	}
+	return nil
 }
 
 // Close closes the gRPC ClientImpl connection
@@ -306,7 +327,9 @@ func (c *ClientImpl) sessionIDStreamInterceptor() grpc.StreamClientInterceptor {
 
 // getInterceptors returns the ClientImpl unary interceptors, including any
 // extras registered via WithUnaryInterceptors. Built-ins (request-id,
-// logging, session-id) run first; extras run closer to the invoker.
+// logging, session-id) run first; the per-instance in-flight interceptor
+// (when metrics are attached via WithMetrics) runs next; extras run closest
+// to the invoker.
 func (c *ClientImpl) getInterceptors() []grpc.UnaryClientInterceptor {
 	opts := []logging.Option{
 		logging.WithLogOnEvents(logging.FinishCall),
@@ -315,6 +338,9 @@ func (c *ClientImpl) getInterceptors() []grpc.UnaryClientInterceptor {
 		commongrpc.ClientUnaryRequestID(),
 		logging.UnaryClientInterceptor(commongrpc.InterceptorLogger(log.Log), opts...),
 		c.sessionIDUnaryInterceptor(),
+	}
+	if c.metrics != nil {
+		base = append(base, UnaryClientInFlightInterceptor(c.metrics))
 	}
 	return append(base, c.extraInterceptors...)
 }

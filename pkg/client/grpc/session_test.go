@@ -81,7 +81,7 @@ func (s *SessionHandshakeTestSuite) TestEstablishCallsCreateAndStartsKeepalive()
 
 	s.Require().NoError(handshake.Close())
 	s.Require().Eventually(func() bool {
-		return !handshake.IsRunning()
+		return !handshake.isRunning()
 	}, time.Second, 10*time.Millisecond)
 }
 
@@ -152,7 +152,7 @@ func (s *SessionHandshakeTestSuite) TestKeepaliveStreamErrorTriggersResume() {
 	s.Require().NoError(handshake.Establish(context.Background()))
 	// Loop parked in stream1.Recv (release not yet closed): deterministic state.
 	s.Require().Equal("abc-123", handshake.SessionID())
-	s.Require().True(handshake.IsRunning())
+	s.Require().True(handshake.isRunning())
 
 	close(release) // let stream1 break → Resume → reopen
 	select {
@@ -163,7 +163,7 @@ func (s *SessionHandshakeTestSuite) TestKeepaliveStreamErrorTriggersResume() {
 	s.Require().Equal("abc-123", handshake.SessionID()) // Resume kept the id
 
 	s.Require().NoError(handshake.Close())
-	s.Require().Eventually(func() bool { return !handshake.IsRunning() }, time.Second, 5*time.Millisecond)
+	s.Require().Eventually(func() bool { return !handshake.isRunning() }, time.Second, 5*time.Millisecond)
 }
 
 func (s *SessionHandshakeTestSuite) TestKeepaliveResumeFailureFallsBackToCreate() {
@@ -210,7 +210,7 @@ func (s *SessionHandshakeTestSuite) TestKeepaliveResumeFailureFallsBackToCreate(
 	s.Require().Equal("xyz-789", handshake.SessionID())
 
 	s.Require().NoError(handshake.Close())
-	s.Require().Eventually(func() bool { return !handshake.IsRunning() }, time.Second, 5*time.Millisecond)
+	s.Require().Eventually(func() bool { return !handshake.isRunning() }, time.Second, 5*time.Millisecond)
 }
 
 func (s *SessionHandshakeTestSuite) TestCloseInterruptsRecovery() {
@@ -344,7 +344,7 @@ func (s *SessionHandshakeTestSuite) TestHealthyTransitions() {
 
 	// 4. After Close: healthy == false.
 	s.Require().NoError(handshake.Close())
-	s.Require().Eventually(func() bool { return !handshake.IsRunning() }, time.Second, 5*time.Millisecond)
+	s.Require().Eventually(func() bool { return !handshake.isRunning() }, time.Second, 5*time.Millisecond)
 	s.Assert().False(handshake.IsHealthy(), "IsHealthy must be false after Close")
 }
 

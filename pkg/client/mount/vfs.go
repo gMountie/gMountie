@@ -48,11 +48,10 @@ type VFSVolumeMounterImpl struct {
 	// volumes tracks the persistent child inode for each mounted volume
 	volumes *xsync.MapOf[string, *gofs.Inode]
 	// backends tracks the FileSystemBackend for each mounted volume so Close
-	// can be called on Unmount to stop subscriber goroutines.
+	// can be called on Unmount to stop subscriber goroutines and close the
+	// persist tier (ownership transferred to cachedBackend.Close when cache
+	// is enabled; plain BackendClient.Close is a no-op).
 	backends *xsync.MapOf[string, io.FileSystemBackend]
-	// persists tracks the open persist handle for each mounted volume;
-	// only populated when cache.Enabled is true.
-	persists *xsync.MapOf[string, *persist.Persist]
 	// client is the grpc client
 	client grpc.Client
 	// fuse is the FUSE-kernel-side tuning config.
@@ -73,7 +72,6 @@ func NewMultiVolumeMounter(client grpc.Client, path string, fuseCfg *config.FUSE
 		path:        path,
 		volumes:     xsync.NewMapOf[string, *gofs.Inode](),
 		backends:    xsync.NewMapOf[string, io.FileSystemBackend](),
-		persists:    xsync.NewMapOf[string, *persist.Persist](),
 		client:      client,
 		fuse:        fuseCfg,
 		cache:       cacheCfg,
@@ -106,6 +104,12 @@ func (m *VFSVolumeMounterImpl) Mount(volumeName string) error {
 	// a persistent child of the in-memory parent. NewPersistentInode
 	// keeps the child alive across kernel forgets so the subtree
 	// survives until we explicitly RmChild it.
+	//
+	// The backend is constructed locally first and stored into the tracking
+	// map ONLY after AddChild succeeds. On failure the local backend is
+	// closed so subscriber goroutines and the flock do not outlive the call.
+	// When cache is enabled, cachedBackend.Close() owns and closes the
+	// *persist.Persist — vfs.go does not manage it separately.
 	var backend io.FileSystemBackend = io.NewBackendClient(m.client, volumeName)
 	if m.cache.Enabled {
 		root := filepath.Join(m.cache.Path, volumeName)
@@ -113,10 +117,8 @@ func (m *VFSVolumeMounterImpl) Mount(volumeName string) error {
 		if err != nil {
 			return pkgerrors.Wrap(err, "open cache persist")
 		}
-		m.persists.Store(volumeName, p)
 		backend = cache.NewCachedBackend(backend, cache.ConfigFromClient(m.cache), p, m.client.Fs(), volumeName)
 	}
-	m.backends.Store(volumeName, backend)
 	// TODO(phase1b): per-volume identity rewriting for the VFS mounter
 	volRoot := io.NewMountieRoot(backend, nil)
 	ctx := context.Background()
@@ -124,9 +126,12 @@ func (m *VFSVolumeMounterImpl) Mount(volumeName string) error {
 	childInode := parent.NewPersistentInode(ctx, volRoot, gofs.StableAttr{Mode: fuse.S_IFDIR})
 	if !parent.AddChild(volumeName, childInode, true) {
 		childInode.ForgetPersistent()
+		_ = backend.Close()
 		log.Log.Error("attaching the volume failed", zap.String("volume", volumeName))
 		return fmt.Errorf("attaching the volume failed: %s", volumeName)
 	}
+	// Kernel op succeeded — commit the backend to the tracking map.
+	m.backends.Store(volumeName, backend)
 	m.volumes.Store(volumeName, childInode)
 	log.Log.Info("volume mounted", zap.String("volume", volumeName))
 	return nil
@@ -152,10 +157,6 @@ func (m *VFSVolumeMounterImpl) Unmount(volumeName string) error {
 	if be, ok := m.backends.Load(volumeName); ok {
 		_ = be.Close()
 		m.backends.Delete(volumeName)
-	}
-	if p, ok := m.persists.Load(volumeName); ok {
-		_ = p.Close()
-		m.persists.Delete(volumeName)
 	}
 	log.Log.Info("volume unmounted", zap.String("volume", volumeName))
 	return nil
@@ -189,18 +190,18 @@ func (m *VFSVolumeMounterImpl) Close() error {
 		return err
 	}
 	log.Log.Info("root filesystem unmounted", zap.String("path", m.path))
-	// Close any persist handles that were not already drained by UnmountAll.
-	// The kernel connection is gone at this point, so no in-flight requests
-	// can reach the cached backend.
-	var persistErrs []error
-	m.persists.Range(func(volume string, p *persist.Persist) bool {
-		if err := p.Close(); err != nil {
-			persistErrs = append(persistErrs, err)
+	// Close any backends not already drained by UnmountAll. Each backend's
+	// Close() stops its subscriber goroutines and (for cachedBackend) closes
+	// the owned persist handle.
+	var closeErrs []error
+	m.backends.Range(func(volume string, be io.FileSystemBackend) bool {
+		if err := be.Close(); err != nil {
+			closeErrs = append(closeErrs, err)
 		}
-		m.persists.Delete(volume)
+		m.backends.Delete(volume)
 		return true
 	})
-	return errors.Join(persistErrs...)
+	return errors.Join(closeErrs...)
 }
 
 // mountMemFS mounts the in-memory parent inode to the path. gofs.Mount

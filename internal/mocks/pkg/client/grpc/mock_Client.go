@@ -85,9 +85,20 @@ func (_c *MockClient_Close_Call) RunAndReturn(run func() error) *MockClient_Clos
 }
 
 // Connect provides a mock function for the type MockClient
-func (_mock *MockClient) Connect() {
-	_mock.Called()
-	return
+func (_mock *MockClient) Connect() error {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Connect")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func() error); ok {
+		r0 = returnFunc()
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
 }
 
 // MockClient_Connect_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Connect'
@@ -107,13 +118,13 @@ func (_c *MockClient_Connect_Call) Run(run func()) *MockClient_Connect_Call {
 	return _c
 }
 
-func (_c *MockClient_Connect_Call) Return() *MockClient_Connect_Call {
-	_c.Call.Return()
+func (_c *MockClient_Connect_Call) Return(err error) *MockClient_Connect_Call {
+	_c.Call.Return(err)
 	return _c
 }
 
-func (_c *MockClient_Connect_Call) RunAndReturn(run func()) *MockClient_Connect_Call {
-	_c.Run(run)
+func (_c *MockClient_Connect_Call) RunAndReturn(run func() error) *MockClient_Connect_Call {
+	_c.Call.Return(run)
 	return _c
 }
 

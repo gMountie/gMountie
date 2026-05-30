@@ -747,9 +747,9 @@ func (c *AppTestingContext) NewSiblingClient(cacheCfg *clientConfig.CacheConfig)
 	if err != nil {
 		return nil, errors.Wrap(err, "sibling gRPC client")
 	}
-	siblingClient.Connect()
-	if siblingClient.SessionID() == "" {
-		return nil, errors.New("sibling client session handshake failed")
+	if err := siblingClient.Connect(); err != nil {
+		_ = siblingClient.Close()
+		return nil, errors.Wrap(err, "sibling client session handshake failed")
 	}
 	return client.NewAppContext(siblingClient, "", c.fuseCfg, cacheCfg), nil
 }
@@ -779,10 +779,9 @@ func (c *AppTestingContext) NewClientAs(username, password string) (grpcClient.C
 	if err != nil {
 		return nil, errors.Wrap(err, "NewClientAs: dial")
 	}
-	cl.Connect()
-	if cl.SessionID() == "" {
+	if err := cl.Connect(); err != nil {
 		_ = cl.Close()
-		return nil, errors.New("NewClientAs: session handshake failed")
+		return nil, errors.Wrap(err, "NewClientAs: session handshake failed")
 	}
 	return cl, nil
 }
@@ -809,10 +808,9 @@ func (c *AppTestingContext) NewRawClientWithTLS(tlsCfg *tls.Config) (grpcClient.
 	if err != nil {
 		return nil, errors.Wrap(err, "NewRawClientWithTLS: dial")
 	}
-	cl.Connect()
-	if cl.SessionID() == "" {
+	if err := cl.Connect(); err != nil {
 		_ = cl.Close()
-		return nil, errors.New("NewRawClientWithTLS: session handshake failed")
+		return nil, errors.Wrap(err, "NewRawClientWithTLS: session handshake failed")
 	}
 	return cl, nil
 }
@@ -850,9 +848,8 @@ func (c *AppTestingContext) Start() error {
 	if err := c.waitHealthy(5 * time.Second); err != nil {
 		return errors.Wrap(err, "server readiness")
 	}
-	c.client.Connect()
-	if c.client.SessionID() == "" {
-		return errors.New("client session handshake failed; test harness cannot proceed")
+	if err := c.client.Connect(); err != nil {
+		return errors.Wrap(err, "client session handshake failed; test harness cannot proceed")
 	}
 	return nil
 }
