@@ -36,7 +36,7 @@ func EnsureConfigDir() error {
 // WriteDefaultConfig writes the default config to the default location
 func WriteDefaultConfig(configName, content string) error {
 	configPath := GetDefaultConfigPath(configName)
-	return os.WriteFile(configPath, []byte(content), 0644)
+	return os.WriteFile(configPath, []byte(content), 0600)
 }
 
 // GetDefaultMountPath returns the default mount path
