@@ -106,3 +106,72 @@ func (s *ReferralSuite) TestTLSConfigForReferral_RejectsBadLocation() {
 	_, err := tlsConfigForReferral(baseConfig(), "not-a-host-port")
 	s.Require().Error(err)
 }
+
+// withStubbedBuilder swaps newUnconnectedClientFn for the duration of fn,
+// routing each (cfg,endpoint) build to a caller-supplied factory so the
+// referral re-dial branch is exercised without real network dials.
+func (s *ReferralSuite) withStubbedBuilder(build func(cfg *config.Config, endpoint string) (Client, error), fn func()) {
+	orig := newUnconnectedClientFn
+	newUnconnectedClientFn = build
+	defer func() { newUnconnectedClientFn = orig }()
+	fn()
+}
+
+func (s *ReferralSuite) TestNewClientForVolume_LocalConnectsConfigured() {
+	cfg := baseConfig()
+	local := &fakeClient{vc: s.newVolumeClient("")} // empty location = served here
+
+	var dialed []string
+	s.withStubbedBuilder(func(_ *config.Config, endpoint string) (Client, error) {
+		dialed = append(dialed, endpoint)
+		return local, nil
+	}, func() {
+		got, err := NewClientForVolume(cfg, "photos")
+		s.Require().NoError(err)
+		s.Equal(local, got)
+		s.True(local.connected)
+		s.False(local.closed)
+	})
+	// Only the configured endpoint was dialed; no referral re-dial.
+	s.Equal([]string{createEndpoint(cfg.Server)}, dialed)
+}
+
+func (s *ReferralSuite) TestNewClientForVolume_FollowsReferral() {
+	cfg := baseConfig()
+	const loc = "v-abc.data.example.com:443"
+	resolver := &fakeClient{vc: s.newVolumeClient(loc)}
+	data := &fakeClient{}
+
+	var dialed []string
+	s.withStubbedBuilder(func(_ *config.Config, endpoint string) (Client, error) {
+		dialed = append(dialed, endpoint)
+		if endpoint == loc {
+			return data, nil
+		}
+		return resolver, nil
+	}, func() {
+		got, err := NewClientForVolume(cfg, "photos")
+		s.Require().NoError(err)
+		s.Equal(data, got) // the referred client is returned
+		s.True(resolver.closed)
+		s.True(data.connected)
+	})
+	s.Equal([]string{createEndpoint(cfg.Server), loc}, dialed)
+}
+
+func (s *ReferralSuite) TestNewClientForVolume_ResolveErrorIsFatal() {
+	cfg := baseConfig()
+	vc := protomocks.NewMockVolumeServiceClient(s.T())
+	vc.On("Resolve", mock.Anything, mock.Anything).
+		Return((*proto.VolumeResolveReply)(nil), errors.New("denied"))
+	resolver := &fakeClient{vc: vc}
+
+	s.withStubbedBuilder(func(_ *config.Config, _ string) (Client, error) {
+		return resolver, nil
+	}, func() {
+		_, err := NewClientForVolume(cfg, "photos")
+		s.Require().Error(err) // no fallback; resolve failure fails the mount
+		s.True(resolver.closed)
+		s.False(resolver.connected)
+	})
+}
