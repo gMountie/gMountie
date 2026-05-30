@@ -1,8 +1,10 @@
 package grpc
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"go.gmountie.dev/gmountie/pkg/client/config"
 	"go.gmountie.dev/gmountie/pkg/client/metrics"
@@ -122,6 +124,71 @@ func NewClientFromConfig(cfg *config.Config) (Client, error) {
 		return nil, errors.Wrap(err, "session handshake failed; client unusable")
 	}
 	return client, nil
+}
+
+// resolveTimeout bounds the pre-session Resolve RPC when the config carries no
+// explicit meta timeout. A referral lookup is one cheap round-trip.
+const resolveTimeout = 5 * time.Second
+
+// newUnconnectedClientFn is the un-connected client builder, indirected through
+// a package var so referral orchestration tests can stub the dial.
+var newUnconnectedClientFn = newUnconnectedClient
+
+// NewClientForVolume connects to wherever a volume lives. It builds an
+// un-connected client to the configured endpoint, calls Resolve (pre-session),
+// then completes the session handshake on the configured endpoint when the
+// location is empty ("served here") or on a freshly-dialed connection to the
+// referred location otherwise. A Resolve failure is fatal — there is no silent
+// fallback (the configured endpoint may be a resolve-only control plane).
+func NewClientForVolume(cfg *config.Config, volume string) (Client, error) {
+	if cfg == nil || cfg.Server == nil {
+		return nil, errors.New("config is empty")
+	}
+	resolver, err := newUnconnectedClientFn(cfg, createEndpoint(cfg.Server))
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), resolveMetaTimeout(cfg))
+	defer cancel()
+	location, err := resolveLocation(ctx, resolver, volume)
+	if err != nil {
+		_ = resolver.Close()
+		return nil, errors.Wrap(err, "resolve volume location")
+	}
+
+	if location == "" {
+		if err := resolver.Connect(); err != nil {
+			_ = resolver.Close()
+			return nil, errors.Wrap(err, "session handshake failed; client unusable")
+		}
+		return resolver, nil
+	}
+
+	// Referral: drop the resolver connection and dial the data plane.
+	_ = resolver.Close()
+	dataCfg, err := tlsConfigForReferral(cfg, location)
+	if err != nil {
+		return nil, err
+	}
+	data, err := newUnconnectedClientFn(dataCfg, location)
+	if err != nil {
+		return nil, err
+	}
+	if err := data.Connect(); err != nil {
+		_ = data.Close()
+		return nil, errors.Wrap(err, "session handshake failed; client unusable")
+	}
+	return data, nil
+}
+
+// resolveMetaTimeout picks the per-RPC timeout for the Resolve lookup: the
+// configured meta timeout when present, else resolveTimeout.
+func resolveMetaTimeout(cfg *config.Config) time.Duration {
+	if cfg.Rpc != nil && cfg.Rpc.TimeoutMeta > 0 {
+		return cfg.Rpc.TimeoutMeta
+	}
+	return resolveTimeout
 }
 
 // createEndpoint creates the endpoint from the client config
