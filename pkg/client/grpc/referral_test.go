@@ -143,11 +143,18 @@ func (s *ReferralSuite) TestNewClientForVolume_FollowsReferral() {
 	data := &fakeClient{}
 
 	var dialed []string
-	s.withStubbedBuilder(func(_ *config.Config, endpoint string) (Client, error) {
+	s.withStubbedBuilder(func(buildCfg *config.Config, endpoint string) (Client, error) {
 		dialed = append(dialed, endpoint)
 		if endpoint == loc {
+			// The data-plane build must receive the retargeted TLS config, not
+			// the original — else it dials the referred host but verifies its
+			// cert against the origin's ServerName and the mount fails.
+			s.Equal("v-abc.data.example.com", buildCfg.Server.TLS.ServerName)
+			s.Empty(buildCfg.Server.TLS.ExpectedFingerprint)
 			return data, nil
 		}
+		// The resolver build dials the original endpoint with the original TLS.
+		s.Equal("origin.example.com", buildCfg.Server.TLS.ServerName)
 		return resolver, nil
 	}, func() {
 		got, err := NewClientForVolume(cfg, "photos")

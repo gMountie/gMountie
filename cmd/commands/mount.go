@@ -208,8 +208,9 @@ var mountCmd = &cobra.Command{
 
 		startPprofIfEnabled()
 
-		// Create client
-		c, err := grpc.NewClientFromConfig(cfg)
+		// Create client (follows a VolumeService.Resolve referral if the
+		// server points this volume at a different data-plane location).
+		c, err := grpc.NewClientForVolume(cfg, volumeName)
 		if err != nil {
 			return remediate(err, addr, volumeName)
 		}
