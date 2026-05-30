@@ -74,14 +74,9 @@ func retryableCall[T any](ctx context.Context, op string, fn func(context.Contex
 	return result, err
 }
 
-// withMetaTimeout returns a context bounded by the configured metadata
-// timeout. Callers must defer the returned cancel function.
-func withMetaTimeout(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(parent, timeout)
-}
-
-// withIOTimeout returns a context bounded by the configured I/O timeout.
+// withTimeout returns a context bounded by timeout. Used for both metadata
+// (metaCtx) and I/O (ioCtx) bounding — the two callers were byte-identical.
 // Callers must defer the returned cancel function.
-func withIOTimeout(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+func withTimeout(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(parent, timeout)
 }
