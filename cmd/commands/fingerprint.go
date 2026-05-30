@@ -75,7 +75,7 @@ func runFingerprint(cmd *cobra.Command, _ []string) error {
 // renderFingerprint formats the one-line (non-verbose) output: the raw
 // fingerprint plus a copy-paste-ready client config snippet.
 func renderFingerprint(fp string) string {
-	return fmt.Sprintf("%s\n\n# Add to client.yaml under server.tls:\n#   verify: true\n#   expected_fingerprint: %s\n", fp, fp)
+	return fmt.Sprintf("%s\n\n# Add to client.yaml under server.tls:\n#   verify: tofu\n#   expected_fingerprint: %s\n", fp, fp)
 }
 
 // resolveCertPath returns the cert path the command will read, and a flag
