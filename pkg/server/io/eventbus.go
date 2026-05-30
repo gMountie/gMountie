@@ -73,6 +73,7 @@ type localEventBus struct {
 	opts        EventBusOptions
 	mu          sync.RWMutex
 	subscribers map[string][]*subscriber
+	closed      bool // set under mu; guards Subscribe-after-Close
 	stopCh      chan struct{}
 	stopOnce    sync.Once
 }
@@ -103,8 +104,15 @@ func (b *localEventBus) EmitRename(volume, oldPath, newPath string, newVersion u
 }
 
 func (b *localEventBus) Subscribe(volume string) (<-chan Event, func()) {
-	s := &subscriber{ch: make(chan Event, b.opts.BufferSize)}
 	b.mu.Lock()
+	if b.closed {
+		// Return an already-closed channel so the caller can range/drain cleanly.
+		b.mu.Unlock()
+		ch := make(chan Event)
+		close(ch)
+		return ch, func() {}
+	}
+	s := &subscriber{ch: make(chan Event, b.opts.BufferSize)}
 	b.subscribers[volume] = append(b.subscribers[volume], s)
 	b.mu.Unlock()
 	cancel := func() {
@@ -136,6 +144,7 @@ func (b *localEventBus) Close() {
 		}
 	}
 	b.subscribers = nil
+	b.closed = true
 }
 
 // eventKindString returns the Prometheus label string for an EventKind.
