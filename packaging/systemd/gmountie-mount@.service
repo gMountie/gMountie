@@ -1,0 +1,14 @@
+[Unit]
+Description=gMountie mount of volume %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/gmountie/%i.env
+# %i is the volume name; SERVER and MOUNTPOINT come from the env file.
+ExecStart=/usr/local/bin/gmountie mount ${SERVER}/%i ${MOUNTPOINT}
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=gMountie server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gmountie serve
+Restart=on-failure
+# Config defaults to ~/.config/gmountie/server.yaml; set GMOUNTIE_* overrides here.
+Environment=XDG_CONFIG_HOME=%h/.config
+
+[Install]
+WantedBy=multi-user.target
