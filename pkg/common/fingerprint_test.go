@@ -9,12 +9,14 @@ import (
 type FingerprintIDTestSuite struct{ suite.Suite }
 
 func (s *FingerprintIDTestSuite) TestEmptyInput() {
-	s.Equal("", FingerprintID(""), "empty input must return empty string")
+	s.Empty(FingerprintID(""), "empty input must return empty string")
 }
 
 func (s *FingerprintIDTestSuite) TestDeterministic() {
 	id := "some-session-uuid-1234"
-	s.Equal(FingerprintID(id), FingerprintID(id), "same input must produce same fingerprint")
+	first := FingerprintID(id)
+	second := FingerprintID(id)
+	s.Equal(first, second, "same input must produce same fingerprint")
 }
 
 func (s *FingerprintIDTestSuite) TestLength() {
