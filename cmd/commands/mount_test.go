@@ -1,3 +1,5 @@
+//go:build linux
+
 package commands
 
 import (
@@ -9,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -38,6 +41,9 @@ func (s *MountCmdTestSuite) SetupTest() {
 	s.buf = new(bytes.Buffer)
 	s.cmd.SetOut(s.buf)
 	s.cmd.SetErr(s.buf)
+	// Empty stdin so any accidental password prompt returns EOF (an error)
+	// rather than blocking on a developer's terminal.
+	s.cmd.SetIn(bytes.NewReader(nil))
 }
 
 func (s *MountCmdTestSuite) TearDownTest() {
@@ -47,6 +53,8 @@ func (s *MountCmdTestSuite) TearDownTest() {
 	username = ""
 	password = ""
 	configFile = ""
+	daemonFlag = false
+	rawIDs = false
 	// Reset cobra flag Changed state so each test starts with a clean slate.
 	mountCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
 	if s.tempDir != "" {
@@ -90,9 +98,36 @@ func (s *MountCmdTestSuite) TestMountCmd_BasicAuthMissingCredentials() {
 	})
 	err := s.cmd.Execute()
 
-	// Verify
+	// Verify: with no username supplied, the username check trips first
+	// (the password is resolved only after a username is present).
 	s.Require().Error(err)
-	s.Assert().Contains(err.Error(), "username and password are required")
+	s.Assert().Contains(err.Error(), "username is required for basic auth")
+}
+
+// TestMountCmd_ShorthandSpec proves the sshfs-style positional form
+// "[user@]host[:port]/volume mountpoint" populates server/username/volume,
+// and that the password is taken from $GMOUNTIE_AUTH_PASSWORD (no prompt).
+// We point at a non-existent mountpoint so the command stops before
+// networking — reaching that guard proves parsing/auth wiring succeeded.
+func (s *MountCmdTestSuite) TestMountCmd_ShorthandSpec() {
+	s.T().Setenv("GMOUNTIE_AUTH_PASSWORD", "secret")
+	missing := filepath.Join(s.tempDir, "no-such-mount")
+	s.cmd.SetArgs([]string{"mount", "admin@192.168.11.11:9449/shared", missing})
+	err := s.cmd.Execute()
+	s.Require().Error(err)
+	s.Assert().Contains(err.Error(), fmt.Sprintf("mountpoint %s does not exist", missing))
+	s.Assert().NotContains(err.Error(), "volume name is required")
+	s.Assert().NotContains(err.Error(), "username is required")
+}
+
+func (s *MountCmdTestSuite) TestApplyMountSpecPopulatesFlags() {
+	v := viper.New()
+	spec := mountSpec{Username: "admin", Host: "10.0.0.5", Port: 9449, Volume: "shared"}
+	gotVol := applyMountSpec(v, spec)
+	s.Equal("10.0.0.5", v.GetString("server.address"))
+	s.Equal("9449", v.GetString("server.port"))
+	s.Equal("admin", v.GetString("auth.username"))
+	s.Equal("shared", gotVol)
 }
 
 func (s *MountCmdTestSuite) TestMountCmd_NonExistentMountPoint() {
