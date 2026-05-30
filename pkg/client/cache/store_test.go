@@ -95,7 +95,7 @@ func (s *PersistedStoreSuite) TestMemoryMissFallsThroughToLoader() {
 		return nil, 0, false
 	}
 	acct := newAccountant(0)
-	st := newStoreWithLoader(acct, loader, func(string, any, int) {}, "attr")
+	st := newStoreWithPersist(acct, loader, func(string, any, int) {}, nil, "attr")
 
 	e := st.get("k1")
 	s.Require().NotNil(e)
@@ -111,7 +111,7 @@ func (s *PersistedStoreSuite) TestPutAlsoWritesThrough() {
 	var putCalls int
 	loader := func(string) (any, int, bool) { return nil, 0, false }
 	putter := func(_ string, _ any, _ int) { putCalls++ }
-	st := newStoreWithLoader(newAccountant(0), loader, putter, "attr")
+	st := newStoreWithPersist(newAccountant(0), loader, putter, nil, "attr")
 	st.put("k", "v", 1)
 	s.Assert().Equal(1, putCalls, "write-through must call putter")
 }

@@ -19,7 +19,7 @@ import (
 // Lookup returns the first match so the duplicate is harmless.
 type KnownHosts struct {
 	path string
-	mu   sync.Mutex
+	mu   sync.RWMutex
 }
 
 func openKnownHosts(override string) (*KnownHosts, error) {
@@ -34,7 +34,17 @@ func openKnownHosts(override string) (*KnownHosts, error) {
 }
 
 // Lookup returns the pinned fingerprint for endpoint, or ("", false) if not found.
+// Acquires RLock so it is safe to call from multiple goroutines concurrently
+// and does not race with Pin's write.
 func (k *KnownHosts) Lookup(endpoint string) (string, bool) {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	return k.lookupLocked(endpoint)
+}
+
+// lookupLocked is the lock-free inner body of Lookup. It must only be called
+// while mu is held (either RLock from Lookup or Lock from Pin).
+func (k *KnownHosts) lookupLocked(endpoint string) (string, bool) {
 	f, err := os.Open(k.path)
 	if err != nil {
 		return "", false
@@ -64,7 +74,7 @@ func (k *KnownHosts) Pin(endpoint, fingerprint string) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 
-	if existing, ok := k.Lookup(endpoint); ok {
+	if existing, ok := k.lookupLocked(endpoint); ok {
 		if existing == fingerprint {
 			return nil
 		}
