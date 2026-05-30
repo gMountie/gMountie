@@ -99,3 +99,9 @@ func (s *FingerprintCmdSuite) TestMissingXdgCertReturnsError() {
 	s.Require().Error(err)
 	s.Contains(err.Error(), "run 'gmountie serve' once to auto-generate, or set server.tls.cert_file")
 }
+
+func (s *FingerprintCmdSuite) TestNonVerbosePrintsPasteSnippet() {
+	out := renderFingerprint("SHA256:abc123")
+	s.Contains(out, "SHA256:abc123")
+	s.Contains(out, "expected_fingerprint: SHA256:abc123")
+}
