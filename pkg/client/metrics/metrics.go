@@ -1,6 +1,8 @@
 package metrics
 
 import (
+	"sync"
+
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -174,126 +176,118 @@ func (m *Metrics) CacheUnverifiedAdd(seconds float64) {
 	m.CacheUnverifiedDurationSecs.Add(seconds)
 }
 
-// --- Retry hook ---
+// --- Per-instance hook registry ---
+//
+// The dispatchers below call every registered *Metrics instance so that
+// multi-client processes (including tests building multiple clients in one
+// process) do not cross-wire. Each NewClientFromConfig registers its
+// private *Metrics via RegisterInstance; the dispatchers fan-out to all
+// of them. Protected by instancesMu.
 
-// retryHook receives a callback each time retry.Do fires a retry attempt.
-// Single-client-per-process is the normal shape, so a global hook is
-// acceptable here. nil means no-op.
-var retryHook func(op, code string)
+var (
+	instancesMu sync.RWMutex
+	instances   []*Metrics
+)
 
-// SetRetryHook installs a callback invoked on every retry attempt with
-// (op_label, grpc_status_code_string). Call once at client startup.
-// Living here (not in pkg/client/io) avoids an import cycle: pkg/client/io
-// already imports pkg/client/grpc, which would then need to import io to
-// set the hook from the factory.
-func SetRetryHook(fn func(op, code string)) { retryHook = fn }
+// RegisterInstance adds m to the global dispatcher. It is idempotent:
+// registering the same pointer twice is a no-op. Called by NewClientFromConfig
+// after Register() succeeds so the prometheus series are in place.
+func RegisterInstance(m *Metrics) {
+	instancesMu.Lock()
+	defer instancesMu.Unlock()
+	for _, existing := range instances {
+		if existing == m {
+			return
+		}
+	}
+	instances = append(instances, m)
+}
 
-// OnRetry fires the installed hook if one is set. Safe to call when no
-// hook is installed.
+// UnregisterInstance removes m from the global dispatcher. Used in tests
+// to clean up instances registered within a single test case so they do not
+// bleed into subsequent tests.
+func UnregisterInstance(m *Metrics) {
+	instancesMu.Lock()
+	defer instancesMu.Unlock()
+	out := instances[:0]
+	for _, existing := range instances {
+		if existing != m {
+			out = append(out, existing)
+		}
+	}
+	instances = out
+}
+
+// OnRetry fires RetryInc on all registered instances. Called by the
+// io-layer retry helper; living in this package avoids an import cycle
+// (pkg/client/io → pkg/client/grpc → pkg/client/metrics).
 func OnRetry(op, code string) {
-	if retryHook != nil {
-		retryHook(op, code)
+	instancesMu.RLock()
+	defer instancesMu.RUnlock()
+	for _, m := range instances {
+		m.RetryInc(op, code)
 	}
 }
 
-// --- Cache hooks ---
-// Global callbacks, nil until wired by the binary. Safe to call without
-// a hook installed (no-op). Wire up with SetCacheHitHook /
-// SetCacheMissHook / SetCacheDedupeHitHook at client startup, alongside
-// SetRetryHook.
-
-var (
-	cacheHitHook       func(tier, cacheType string)
-	cacheMissHook      func(cacheType string)
-	cacheDedupeHitHook func()
-)
-
-// SetCacheHitHook installs a callback invoked on a cache hit.
-func SetCacheHitHook(fn func(tier, cacheType string)) { cacheHitHook = fn }
-
-// SetCacheMissHook installs a callback invoked on a cache miss (both tiers missed).
-func SetCacheMissHook(fn func(cacheType string)) { cacheMissHook = fn }
-
-// SetCacheDedupeHitHook installs a callback invoked when WriteChunk dedupes a chunk.
-func SetCacheDedupeHitHook(fn func()) { cacheDedupeHitHook = fn }
-
-// CacheHit fires the hit hook for the given tier and sub-cache type.
-// Safe to call when no hook is installed.
+// CacheHit fires CacheHitInc on all registered instances.
 func CacheHit(tier, cacheType string) {
-	if cacheHitHook != nil {
-		cacheHitHook(tier, cacheType)
+	instancesMu.RLock()
+	defer instancesMu.RUnlock()
+	for _, m := range instances {
+		m.CacheHitInc(tier, cacheType)
 	}
 }
 
-// CacheMiss fires the miss hook for the given sub-cache type.
-// Safe to call when no hook is installed.
+// CacheMiss fires CacheMissInc on all registered instances.
 func CacheMiss(cacheType string) {
-	if cacheMissHook != nil {
-		cacheMissHook(cacheType)
+	instancesMu.RLock()
+	defer instancesMu.RUnlock()
+	for _, m := range instances {
+		m.CacheMissInc(cacheType)
 	}
 }
 
-// CacheDedupeHit fires the dedupe-hit hook.
-// Safe to call when no hook is installed.
+// CacheDedupeHit fires CacheDedupeHitInc on all registered instances.
 func CacheDedupeHit() {
-	if cacheDedupeHitHook != nil {
-		cacheDedupeHitHook()
+	instancesMu.RLock()
+	defer instancesMu.RUnlock()
+	for _, m := range instances {
+		m.CacheDedupeHitInc()
 	}
 }
 
-// --- Subscribe / revalidation hooks ---
-// Global callbacks wired at client startup by pkg/client/grpc/factory.go.
-// Safe to call when unset (no-op).
-
-var (
-	cacheRevalidationHook      func(result string)
-	subscribeEventReceivedHook func(kind string)
-	subscribeStreamStateHook   func(up bool)
-	cacheUnverifiedHook        func(seconds float64)
-)
-
-// SetCacheRevalidationHook installs a callback invoked on each revalidation outcome.
-func SetCacheRevalidationHook(fn func(result string)) { cacheRevalidationHook = fn }
-
-// SetSubscribeEventReceivedHook installs a callback invoked for each Subscribe event handled.
-func SetSubscribeEventReceivedHook(fn func(kind string)) { subscribeEventReceivedHook = fn }
-
-// SetSubscribeStreamStateHook installs a callback invoked when the Subscribe stream
-// transitions between up (true) and down/unverified (false).
-func SetSubscribeStreamStateHook(fn func(up bool)) { subscribeStreamStateHook = fn }
-
-// SetCacheUnverifiedHook installs a callback invoked with the number of seconds
-// spent in unverified mode when the stream transitions back to verified.
-func SetCacheUnverifiedHook(fn func(seconds float64)) { cacheUnverifiedHook = fn }
-
-// CacheRevalidation fires the revalidation hook for the given result.
-// Safe to call when no hook is installed.
+// CacheRevalidation fires CacheRevalidationInc on all registered instances.
 func CacheRevalidation(result string) {
-	if cacheRevalidationHook != nil {
-		cacheRevalidationHook(result)
+	instancesMu.RLock()
+	defer instancesMu.RUnlock()
+	for _, m := range instances {
+		m.CacheRevalidationInc(result)
 	}
 }
 
-// SubscribeEventReceived fires the subscribe-event-received hook for the given kind.
-// Safe to call when no hook is installed.
+// SubscribeEventReceived fires SubscribeEventReceivedInc on all registered instances.
 func SubscribeEventReceived(kind string) {
-	if subscribeEventReceivedHook != nil {
-		subscribeEventReceivedHook(kind)
+	instancesMu.RLock()
+	defer instancesMu.RUnlock()
+	for _, m := range instances {
+		m.SubscribeEventReceivedInc(kind)
 	}
 }
 
-// SubscribeStreamStateChanged fires the stream-state hook.
-// Safe to call when no hook is installed.
+// SubscribeStreamStateChanged fires SubscribeStreamStateSet on all registered instances.
 func SubscribeStreamStateChanged(up bool) {
-	if subscribeStreamStateHook != nil {
-		subscribeStreamStateHook(up)
+	instancesMu.RLock()
+	defer instancesMu.RUnlock()
+	for _, m := range instances {
+		m.SubscribeStreamStateSet(up)
 	}
 }
 
-// CacheUnverifiedElapsed fires the unverified-duration hook with elapsed seconds.
-// Safe to call when no hook is installed.
+// CacheUnverifiedElapsed fires CacheUnverifiedAdd on all registered instances.
 func CacheUnverifiedElapsed(seconds float64) {
-	if cacheUnverifiedHook != nil {
-		cacheUnverifiedHook(seconds)
+	instancesMu.RLock()
+	defer instancesMu.RUnlock()
+	for _, m := range instances {
+		m.CacheUnverifiedAdd(seconds)
 	}
 }

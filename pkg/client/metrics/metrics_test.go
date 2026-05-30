@@ -3,6 +3,7 @@ package metrics
 import (
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/suite"
 )
@@ -14,14 +15,17 @@ type ClientMetricsTestSuite struct {
 
 func (s *ClientMetricsTestSuite) SetupTest() {
 	s.m = NewMetrics()
-	// Reset global hooks so tests are isolated from each other.
-	SetCacheHitHook(nil)
-	SetCacheMissHook(nil)
-	SetCacheDedupeHitHook(nil)
-	SetCacheRevalidationHook(nil)
-	SetSubscribeEventReceivedHook(nil)
-	SetSubscribeStreamStateHook(nil)
-	SetCacheUnverifiedHook(nil)
+	// Reset the global instance registry so tests are isolated.
+	instancesMu.Lock()
+	instances = nil
+	instancesMu.Unlock()
+}
+
+func (s *ClientMetricsTestSuite) TearDownTest() {
+	// Clean up: remove any instance registered by this test.
+	instancesMu.Lock()
+	instances = nil
+	instancesMu.Unlock()
 }
 
 func (s *ClientMetricsTestSuite) TestRetryInc() {
@@ -37,21 +41,13 @@ func (s *ClientMetricsTestSuite) TestInFlightIncDec() {
 	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.InFlight.WithLabelValues("Mkdir"))))
 }
 
-func (s *ClientMetricsTestSuite) TestRetryHook_FiresWhenSet() {
-	var seenOp, seenCode string
-	SetRetryHook(func(op, code string) {
-		seenOp = op
-		seenCode = code
-	})
-	defer SetRetryHook(nil)
-
+func (s *ClientMetricsTestSuite) TestOnRetry_FiresWhenRegistered() {
+	RegisterInstance(s.m)
 	OnRetry("Read", "Unavailable")
-	s.Assert().Equal("Read", seenOp)
-	s.Assert().Equal("Unavailable", seenCode)
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.RetryTotal.WithLabelValues("Read", "Unavailable"))))
 }
 
-func (s *ClientMetricsTestSuite) TestRetryHook_NoopWhenUnset() {
-	SetRetryHook(nil)
+func (s *ClientMetricsTestSuite) TestOnRetry_NoopWhenEmpty() {
 	// must not panic
 	OnRetry("Read", "Unavailable")
 }
@@ -85,71 +81,56 @@ func (s *ClientMetricsTestSuite) TestCacheDedupeHitInc() {
 	s.Assert().Equal(2, int(testutil.ToFloat64(s.m.CacheDedupeHits)))
 }
 
-func (s *ClientMetricsTestSuite) TestCacheHitHook_FiresWhenSet() {
-	var seenTier, seenType string
-	SetCacheHitHook(func(tier, cacheType string) {
-		seenTier = tier
-		seenType = cacheType
-	})
+func (s *ClientMetricsTestSuite) TestCacheHit_DispatchesToRegistered() {
+	RegisterInstance(s.m)
 	CacheHit("memory", "attr")
-	s.Assert().Equal("memory", seenTier)
-	s.Assert().Equal("attr", seenType)
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.CacheHits.WithLabelValues("memory", "attr"))))
 }
 
-func (s *ClientMetricsTestSuite) TestCacheHitHook_NoopWhenUnset() {
+func (s *ClientMetricsTestSuite) TestCacheHit_NoopWhenEmpty() {
 	// must not panic
 	CacheHit("memory", "attr")
 }
 
-func (s *ClientMetricsTestSuite) TestCacheMissHook_FiresWhenSet() {
-	var seenType string
-	SetCacheMissHook(func(cacheType string) { seenType = cacheType })
+func (s *ClientMetricsTestSuite) TestCacheMiss_DispatchesToRegistered() {
+	RegisterInstance(s.m)
 	CacheMiss("data")
-	s.Assert().Equal("data", seenType)
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.CacheMisses.WithLabelValues("data"))))
 }
 
-func (s *ClientMetricsTestSuite) TestCacheMissHook_NoopWhenUnset() {
+func (s *ClientMetricsTestSuite) TestCacheMiss_NoopWhenEmpty() {
 	// must not panic
 	CacheMiss("data")
 }
 
-func (s *ClientMetricsTestSuite) TestCacheDedupeHitHook_FiresWhenSet() {
-	fired := false
-	SetCacheDedupeHitHook(func() { fired = true })
-	CacheDedupeHit()
-	s.Assert().True(fired)
-}
-
-func (s *ClientMetricsTestSuite) TestCacheDedupeHitHook_NoopWhenUnset() {
-	// must not panic
-	CacheDedupeHit()
-}
-
-func (s *ClientMetricsTestSuite) TestHookWiredToMetric_MemoryHit() {
-	SetCacheHitHook(s.m.CacheHitInc)
-	CacheHit("memory", "dir")
-	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.CacheHits.WithLabelValues("memory", "dir"))))
-}
-
-func (s *ClientMetricsTestSuite) TestHookWiredToMetric_DiskHit() {
-	SetCacheHitHook(s.m.CacheHitInc)
-	CacheHit("disk", "attr")
-	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.CacheHits.WithLabelValues("disk", "attr"))))
-}
-
-func (s *ClientMetricsTestSuite) TestHookWiredToMetric_Miss() {
-	SetCacheMissHook(s.m.CacheMissInc)
-	CacheMiss("dir")
-	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.CacheMisses.WithLabelValues("dir"))))
-}
-
-func (s *ClientMetricsTestSuite) TestHookWiredToMetric_Dedupe() {
-	SetCacheDedupeHitHook(s.m.CacheDedupeHitInc)
+func (s *ClientMetricsTestSuite) TestCacheDedupeHit_DispatchesToRegistered() {
+	RegisterInstance(s.m)
 	CacheDedupeHit()
 	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.CacheDedupeHits)))
 }
 
-// --- Revalidation hook tests ---
+func (s *ClientMetricsTestSuite) TestCacheDedupeHit_NoopWhenEmpty() {
+	// must not panic
+	CacheDedupeHit()
+}
+
+// --- Multi-instance tests: two clients must each see their own counts ---
+
+func (s *ClientMetricsTestSuite) TestMultiInstance_NoGlobalCrossWire() {
+	reg := prometheus.NewRegistry()
+	m2 := NewMetrics()
+	s.Require().NoError(m2.Register(reg))
+
+	RegisterInstance(s.m)
+	RegisterInstance(m2)
+
+	CacheHit("memory", "dir")
+
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.CacheHits.WithLabelValues("memory", "dir"))))
+	s.Assert().Equal(1, int(testutil.ToFloat64(m2.CacheHits.WithLabelValues("memory", "dir"))))
+}
+
+// --- Revalidation tests ---
 
 func (s *ClientMetricsTestSuite) TestCacheRevalidationInc() {
 	s.m.CacheRevalidationInc("not_modified")
@@ -159,25 +140,18 @@ func (s *ClientMetricsTestSuite) TestCacheRevalidationInc() {
 	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.CacheRevalidations.WithLabelValues("changed"))))
 }
 
-func (s *ClientMetricsTestSuite) TestCacheRevalidationHook_FiresWhenSet() {
-	var seen string
-	SetCacheRevalidationHook(func(result string) { seen = result })
+func (s *ClientMetricsTestSuite) TestCacheRevalidation_DispatchesToRegistered() {
+	RegisterInstance(s.m)
 	CacheRevalidation("enoent")
-	s.Assert().Equal("enoent", seen)
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.CacheRevalidations.WithLabelValues("enoent"))))
 }
 
-func (s *ClientMetricsTestSuite) TestCacheRevalidationHook_NoopWhenUnset() {
+func (s *ClientMetricsTestSuite) TestCacheRevalidation_NoopWhenEmpty() {
 	// must not panic
 	CacheRevalidation("error")
 }
 
-func (s *ClientMetricsTestSuite) TestHookWiredToMetric_Revalidation() {
-	SetCacheRevalidationHook(s.m.CacheRevalidationInc)
-	CacheRevalidation("not_modified")
-	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.CacheRevalidations.WithLabelValues("not_modified"))))
-}
-
-// --- SubscribeEventReceived hook tests ---
+// --- SubscribeEventReceived tests ---
 
 func (s *ClientMetricsTestSuite) TestSubscribeEventReceivedInc() {
 	s.m.SubscribeEventReceivedInc("mutated")
@@ -187,25 +161,18 @@ func (s *ClientMetricsTestSuite) TestSubscribeEventReceivedInc() {
 	s.Assert().Equal(2, int(testutil.ToFloat64(s.m.SubscribeEventsReceived.WithLabelValues("heartbeat"))))
 }
 
-func (s *ClientMetricsTestSuite) TestSubscribeEventReceivedHook_FiresWhenSet() {
-	var seen string
-	SetSubscribeEventReceivedHook(func(kind string) { seen = kind })
+func (s *ClientMetricsTestSuite) TestSubscribeEventReceived_DispatchesToRegistered() {
+	RegisterInstance(s.m)
 	SubscribeEventReceived("deleted")
-	s.Assert().Equal("deleted", seen)
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.SubscribeEventsReceived.WithLabelValues("deleted"))))
 }
 
-func (s *ClientMetricsTestSuite) TestSubscribeEventReceivedHook_NoopWhenUnset() {
+func (s *ClientMetricsTestSuite) TestSubscribeEventReceived_NoopWhenEmpty() {
 	// must not panic
 	SubscribeEventReceived("renamed")
 }
 
-func (s *ClientMetricsTestSuite) TestHookWiredToMetric_SubscribeEventReceived() {
-	SetSubscribeEventReceivedHook(s.m.SubscribeEventReceivedInc)
-	SubscribeEventReceived("mutated")
-	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.SubscribeEventsReceived.WithLabelValues("mutated"))))
-}
-
-// --- SubscribeStreamState hook tests ---
+// --- SubscribeStreamState tests ---
 
 func (s *ClientMetricsTestSuite) TestSubscribeStreamStateSet() {
 	s.m.SubscribeStreamStateSet(true)
@@ -214,27 +181,20 @@ func (s *ClientMetricsTestSuite) TestSubscribeStreamStateSet() {
 	s.Assert().Equal(0, int(testutil.ToFloat64(s.m.SubscribeStreamState)))
 }
 
-func (s *ClientMetricsTestSuite) TestSubscribeStreamStateHook_FiresWhenSet() {
-	var seen bool
-	SetSubscribeStreamStateHook(func(up bool) { seen = up })
-	SubscribeStreamStateChanged(true)
-	s.Assert().True(seen)
-}
-
-func (s *ClientMetricsTestSuite) TestSubscribeStreamStateHook_NoopWhenUnset() {
-	// must not panic
-	SubscribeStreamStateChanged(false)
-}
-
-func (s *ClientMetricsTestSuite) TestHookWiredToMetric_SubscribeStreamState() {
-	SetSubscribeStreamStateHook(s.m.SubscribeStreamStateSet)
+func (s *ClientMetricsTestSuite) TestSubscribeStreamStateChanged_DispatchesToRegistered() {
+	RegisterInstance(s.m)
 	SubscribeStreamStateChanged(true)
 	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.SubscribeStreamState)))
 	SubscribeStreamStateChanged(false)
 	s.Assert().Equal(0, int(testutil.ToFloat64(s.m.SubscribeStreamState)))
 }
 
-// --- CacheUnverified hook tests ---
+func (s *ClientMetricsTestSuite) TestSubscribeStreamStateChanged_NoopWhenEmpty() {
+	// must not panic
+	SubscribeStreamStateChanged(false)
+}
+
+// --- CacheUnverified tests ---
 
 func (s *ClientMetricsTestSuite) TestCacheUnverifiedAdd() {
 	s.m.CacheUnverifiedAdd(3.5)
@@ -242,22 +202,26 @@ func (s *ClientMetricsTestSuite) TestCacheUnverifiedAdd() {
 	s.Assert().Equal(5, int(testutil.ToFloat64(s.m.CacheUnverifiedDurationSecs)))
 }
 
-func (s *ClientMetricsTestSuite) TestCacheUnverifiedHook_FiresWhenSet() {
-	var seen float64
-	SetCacheUnverifiedHook(func(seconds float64) { seen = seconds })
-	CacheUnverifiedElapsed(7.25)
-	s.Assert().InDelta(7.25, seen, 0.0001)
+func (s *ClientMetricsTestSuite) TestCacheUnverifiedElapsed_DispatchesToRegistered() {
+	RegisterInstance(s.m)
+	CacheUnverifiedElapsed(4.0)
+	s.Assert().Equal(4, int(testutil.ToFloat64(s.m.CacheUnverifiedDurationSecs)))
 }
 
-func (s *ClientMetricsTestSuite) TestCacheUnverifiedHook_NoopWhenUnset() {
+func (s *ClientMetricsTestSuite) TestCacheUnverifiedElapsed_NoopWhenEmpty() {
 	// must not panic
 	CacheUnverifiedElapsed(1.0)
 }
 
-func (s *ClientMetricsTestSuite) TestHookWiredToMetric_CacheUnverified() {
-	SetCacheUnverifiedHook(s.m.CacheUnverifiedAdd)
-	CacheUnverifiedElapsed(4.0)
-	s.Assert().Equal(4, int(testutil.ToFloat64(s.m.CacheUnverifiedDurationSecs)))
+func (s *ClientMetricsTestSuite) TestRegisterInstance_Idempotent() {
+	RegisterInstance(s.m)
+	RegisterInstance(s.m)
+	RegisterInstance(s.m)
+
+	instancesMu.RLock()
+	count := len(instances)
+	instancesMu.RUnlock()
+	s.Assert().Equal(1, count, "RegisterInstance must deduplicate")
 }
 
 func TestClientMetricsTestSuite(t *testing.T) { suite.Run(t, new(ClientMetricsTestSuite)) }

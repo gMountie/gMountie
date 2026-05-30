@@ -3,12 +3,12 @@ package io
 import (
 	"context"
 	"errors"
-	"sync"
 	"testing"
 	"time"
 
 	"gmountie/pkg/client/metrics"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -99,33 +99,21 @@ func (s *RetryTestSuite) TestRetryableCall_RespectsContextCancellation() {
 	s.Less(calls, 3)
 }
 
-func (s *RetryTestSuite) TestWithMetaTimeout_DerivesDeadline() {
+func (s *RetryTestSuite) TestWithTimeout_DerivesDeadline() {
 	parent := context.Background()
-	ctx, cancel := withMetaTimeout(parent, 100*time.Millisecond)
+	ctx, cancel := withTimeout(parent, 100*time.Millisecond)
 	defer cancel()
 	deadline, ok := ctx.Deadline()
 	s.True(ok)
 	s.WithinDuration(time.Now().Add(100*time.Millisecond), deadline, 50*time.Millisecond)
 }
 
-func (s *RetryTestSuite) TestWithIOTimeout_DerivesDeadline() {
-	parent := context.Background()
-	ctx, cancel := withIOTimeout(parent, 100*time.Millisecond)
-	defer cancel()
-	deadline, ok := ctx.Deadline()
-	s.True(ok)
-	s.WithinDuration(time.Now().Add(100*time.Millisecond), deadline, 50*time.Millisecond)
-}
-
-func (s *RetryTestSuite) TestRetryableCall_MetricsHookFiresOnRetry() {
-	var mu sync.Mutex
-	seen := map[string]string{}
-	metrics.SetRetryHook(func(op, code string) {
-		mu.Lock()
-		defer mu.Unlock()
-		seen[op] = code
-	})
-	defer metrics.SetRetryHook(nil)
+func (s *RetryTestSuite) TestRetryableCall_MetricsDispatchesOnRetry() {
+	m := metrics.NewMetrics()
+	metrics.RegisterInstance(m)
+	defer func() {
+		metrics.UnregisterInstance(m)
+	}()
 
 	calls := 0
 	_, err := retryableCall(context.Background(), "FakeOp", func(ctx context.Context) (int, error) {
@@ -136,9 +124,8 @@ func (s *RetryTestSuite) TestRetryableCall_MetricsHookFiresOnRetry() {
 		return 42, nil
 	})
 	s.Require().NoError(err)
-	mu.Lock()
-	defer mu.Unlock()
-	s.Assert().Equal("Unavailable", seen["FakeOp"])
+	// At least one retry was fired for "FakeOp" / "Unavailable".
+	s.Assert().GreaterOrEqual(int(testutil.ToFloat64(m.RetryTotal.WithLabelValues("FakeOp", "Unavailable"))), 1)
 }
 
 func TestRetryTestSuite(t *testing.T) {
