@@ -57,7 +57,7 @@ func (c *Config) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return errors.Wrapf(err, "error opening file: %s", path)
 	}
@@ -84,6 +84,29 @@ func LoadConfigFromString(cfg string) (*Config, error) {
 	return c, nil
 }
 
+// mirrorEnvToSub binds each "section.key" in the parent viper so
+// AutomaticEnv can resolve them, then copies any set values into the
+// sub-viper so nested unmarshal picks them up. Returns a non-nil sub-viper
+// (creates a fresh one if the YAML section is absent).
+//
+// This is required because viper.Sub() returns a snapshot of the in-file
+// values and does not inherit env-var overrides from the parent.
+func mirrorEnvToSub(parent *viper.Viper, section string, keys []string) *viper.Viper {
+	for _, k := range keys {
+		_ = parent.BindEnv(section + "." + k)
+	}
+	sub := parent.Sub(section)
+	if sub == nil {
+		sub = viper.New()
+	}
+	for _, k := range keys {
+		if parent.IsSet(section + "." + k) {
+			sub.Set(k, parent.Get(section+"."+k))
+		}
+	}
+	return sub
+}
+
 // ParseConfig parses a Config from a viper.Viper
 func ParseConfig(v *viper.Viper) (*Config, error) {
 	var result Config
@@ -96,41 +119,22 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
-	// Parse server config. Env-var overrides for nested TLS keys require
-	// explicit BindEnv on the parent viper (AutomaticEnv doesn't propagate
-	// through Sub), then mirror into the sub-tree before unmarshal.
-	for _, key := range []string{
-		"server.tls.verify",
-		"server.tls.ca_file",
-		"server.tls.expected_fingerprint",
-		"server.tls.server_name",
-		"server.tls.cert_file",
-		"server.tls.key_file",
-	} {
-		_ = v.BindEnv(key)
-	}
-	v.SetDefault("server", make(map[string]string))
-	serverSub := v.Sub("server")
-	if serverSub == nil {
-		serverSub = viper.New()
-	}
-	for _, key := range []string{
+	// Parse server config. mirrorEnvToSub binds env vars and copies any
+	// overridden values into the sub-tree so UnmarshalExact sees them.
+	serverSub := mirrorEnvToSub(v, "server", []string{
 		"tls.verify",
 		"tls.ca_file",
 		"tls.expected_fingerprint",
 		"tls.server_name",
 		"tls.cert_file",
 		"tls.key_file",
-	} {
-		if v.IsSet("server." + key) {
-			serverSub.Set(key, v.Get("server."+key))
-		}
-	}
+	})
 	if cfg, err := NewServerConfig(serverSub); err == nil {
 		result.Server = cfg
 	} else {
 		return nil, err
 	}
+
 	// Parse auth config
 	v.SetDefault("auth", make(map[string]string))
 	if cfg, err := NewAuthFromConfig(v.Sub("auth")); err == nil {
@@ -138,6 +142,7 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	} else {
 		return nil, err
 	}
+
 	// Parse mount config
 	mount := v.Sub("mount")
 	if mount != nil {
@@ -162,27 +167,9 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		return nil, err
 	}
 
-	// Parse cache config (defaults if absent). Env-var overrides for
-	// nested keys require explicit BindEnv on the parent viper (see
-	// comment above re AutomaticEnv vs Sub); the values are then mirrored
-	// into the sub-tree before sub-unmarshal.
-	for _, key := range []string{
-		"cache.enabled",
-		"cache.path",
-		"cache.memory_max_bytes",
-		"cache.disk_max_bytes",
-		"cache.chunk_size_bytes",
-		"cache.attr_ttl",
-		"cache.dir_ttl",
-		"cache.negative_ttl",
-	} {
-		_ = v.BindEnv(key)
-	}
-	cacheSub := v.Sub("cache")
-	if cacheSub == nil {
-		cacheSub = viper.New()
-	}
-	for _, key := range []string{
+	// Parse cache config. mirrorEnvToSub wires env-var overrides into the
+	// sub-tree (AutomaticEnv doesn't propagate through viper.Sub).
+	cacheSub := mirrorEnvToSub(v, "cache", []string{
 		"enabled",
 		"path",
 		"memory_max_bytes",
@@ -191,11 +178,7 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		"attr_ttl",
 		"dir_ttl",
 		"negative_ttl",
-	} {
-		if v.IsSet("cache." + key) {
-			cacheSub.Set(key, v.Get("cache."+key))
-		}
-	}
+	})
 	if cfg, err := NewCacheConfig(cacheSub); err == nil {
 		result.Cache = cfg
 	} else {
