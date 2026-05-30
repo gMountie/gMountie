@@ -10,10 +10,12 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-// formatVersion is bumped any time the on-disk layout or value gob
-// shapes change. Mismatch triggers a wipe (no migration code; the
-// project's no-BC stance applies — release notes document the wipe).
-const formatVersion uint64 = 1
+// formatVersion is bumped any time the on-disk layout or value encoding
+// changes. Mismatch triggers a wipe (no migration code; the project's
+// no-BC stance applies — release notes document the wipe).
+// v2: ChunkRef encoding switched from gob to fixed 28-byte big-endian
+// (16B hash + 4B size + 8B version) — no gob type-descriptor overhead.
+const formatVersion uint64 = 2
 
 // Bucket name constants. Sibling files use these directly; external
 // packages reach them via typed methods.
