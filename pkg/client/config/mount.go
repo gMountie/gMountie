@@ -73,7 +73,7 @@ func NewVFSMountConfig(v *viper.Viper) (*VFSMountConfig, error) {
 	if err := v.Unmarshal(&mount); err != nil {
 		return nil, err
 	}
-	mount.Type = MountTypeSingle
+	mount.Type = MountTypeVFS
 	return &mount, nil
 }
 
