@@ -24,8 +24,10 @@ that allows sharing directories over the network using FUSE.`,
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "", "config file path")
-	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enable verbose logging")
+	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "",
+		"path to a server.yaml or client.yaml; explicit flags override file values, which override $GMOUNTIE_* env vars")
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false,
+		"enable verbose (debug-level) logging")
 }
 
 func Execute() {
