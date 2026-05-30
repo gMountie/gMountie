@@ -31,10 +31,10 @@ func defaultCallOptions(rpc *config.RpcConfig) []grpc.CallOption {
 	return opts
 }
 
-// NewClientFromConfig creates a new gRPC Client from the config and
-// triggers the session handshake. Returns an error if the handshake fails
-// — without it, every fd-carrying RPC would be rejected by the server.
-func NewClientFromConfig(cfg *config.Config) (Client, error) {
+// newUnconnectedClient builds a Client dialed at endpoint but does NOT run the
+// session handshake. Split out so the referral path (NewClientForVolume) can
+// call Resolve on the connection before deciding where to complete the session.
+func newUnconnectedClient(cfg *config.Config, endpoint string) (Client, error) {
 	if cfg == nil || cfg.Server == nil || cfg.Auth == nil {
 		return nil, errors.New("config is empty or auth config is empty")
 	}
@@ -68,7 +68,6 @@ func NewClientFromConfig(cfg *config.Config) (Client, error) {
 	// Build TLS transport credentials unconditionally. The verify mode
 	// defaults to "verify" (full chain check) when empty; "insecure" skips
 	// it for local dev/testing.
-	endpoint := createEndpoint(cfg.Server)
 	tlsCfg, err := clienttls.BuildConfig(clienttls.Config{
 		Endpoint:            endpoint,
 		Mode:                cfg.Server.TLS.Verify,
@@ -103,7 +102,18 @@ func NewClientFromConfig(cfg *config.Config) (Client, error) {
 		opts = append(opts, WithBasicAuth(c.Username, c.Password))
 	}
 
-	client, err := NewClient(endpoint, opts...)
+	return NewClient(endpoint, opts...)
+}
+
+// NewClientFromConfig builds a client to the configured endpoint and completes
+// the session handshake. Returns an error if the handshake fails — without it,
+// every fd-carrying RPC would be rejected by the server. Used by paths that do
+// not follow referrals (ls, the multi-volume mounter).
+func NewClientFromConfig(cfg *config.Config) (Client, error) {
+	if cfg == nil || cfg.Server == nil {
+		return nil, errors.New("config is empty or auth config is empty")
+	}
+	client, err := newUnconnectedClient(cfg, createEndpoint(cfg.Server))
 	if err != nil {
 		return nil, err
 	}
