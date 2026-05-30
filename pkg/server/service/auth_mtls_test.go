@@ -65,9 +65,8 @@ func (s *MTLSAuthSuite) TestCN_Alice() {
 	cert := &x509.Certificate{
 		Subject: pkix.Name{CommonName: "alice"},
 	}
-	ok, details, err := s.svc.Authorize(ctxWithClientCert(cert), "/any.Service/Method")
+	details, err := s.svc.Authorize(ctxWithClientCert(cert), "/any.Service/Method")
 	s.Require().NoError(err)
-	s.True(ok)
 	s.Require().NotNil(details)
 	s.Equal("alice", details.Username)
 }
@@ -77,9 +76,8 @@ func (s *MTLSAuthSuite) TestDNSSAN_Bob() {
 	cert := &x509.Certificate{
 		DNSNames: []string{"bob", "bob.example.com"},
 	}
-	ok, details, err := s.svc.Authorize(ctxWithClientCert(cert), "/any.Service/Method")
+	details, err := s.svc.Authorize(ctxWithClientCert(cert), "/any.Service/Method")
 	s.Require().NoError(err)
-	s.True(ok)
 	s.Require().NotNil(details)
 	s.Equal("bob", details.Username)
 }
@@ -87,8 +85,7 @@ func (s *MTLSAuthSuite) TestDNSSAN_Bob() {
 // TestEmptyVerifiedChains — TLSInfo present but no verified chain →
 // Unauthenticated (no verified client certificate).
 func (s *MTLSAuthSuite) TestEmptyVerifiedChains() {
-	ok, details, err := s.svc.Authorize(ctxWithEmptyChains(), "/any.Service/Method")
-	s.False(ok)
+	details, err := s.svc.Authorize(ctxWithEmptyChains(), "/any.Service/Method")
 	s.Nil(details)
 	s.Require().Error(err)
 	s.Equal(codes.Unauthenticated, status.Code(err))
@@ -104,8 +101,7 @@ func (s *MTLSAuthSuite) TestNonTLSAuthInfo() {
 	ctx := peer.NewContext(context.Background(), &peer.Peer{
 		AuthInfo: fakeAuthInfo{},
 	})
-	ok, details, err := s.svc.Authorize(ctx, "/any.Service/Method")
-	s.False(ok)
+	details, err := s.svc.Authorize(ctx, "/any.Service/Method")
 	s.Nil(details)
 	s.Require().Error(err)
 	s.Equal(codes.Unauthenticated, status.Code(err))
@@ -113,8 +109,7 @@ func (s *MTLSAuthSuite) TestNonTLSAuthInfo() {
 
 // TestNoPeerInfo — no peer in context → Unauthenticated (no peer info).
 func (s *MTLSAuthSuite) TestNoPeerInfo() {
-	ok, details, err := s.svc.Authorize(context.Background(), "/any.Service/Method")
-	s.False(ok)
+	details, err := s.svc.Authorize(context.Background(), "/any.Service/Method")
 	s.Nil(details)
 	s.Require().Error(err)
 	s.Equal(codes.Unauthenticated, status.Code(err))

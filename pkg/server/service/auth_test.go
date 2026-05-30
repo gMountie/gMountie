@@ -52,8 +52,7 @@ func (s *DenyAllAuthServiceTestSuite) SetupTest() {
 }
 
 func (s *DenyAllAuthServiceTestSuite) TestAuthorize_DeniesWithError() {
-	authorized, details, err := s.service.Authorize(s.ctx, "test-method")
-	s.Assert().False(authorized)
+	details, err := s.service.Authorize(s.ctx, "test-method")
 	s.Assert().Nil(details)
 	s.Require().Error(err)
 }
@@ -76,18 +75,17 @@ func (s *BasicAuthServiceTestSuite) SetupTest() {
 func (s *BasicAuthServiceTestSuite) TestAuthorize_ValidCredentials() {
 	// Test with valid credentials
 	ctx := s.createContextWithBasicAuth("testuser", "testpass")
-	authorized, details, err := s.service.Authorize(ctx, "test-method")
+	details, err := s.service.Authorize(ctx, "test-method")
 	s.Require().NoError(err)
-	s.Assert().True(authorized)
+	s.Require().NotNil(details)
 	s.Assert().Equal("testuser", details.Username)
 }
 
 func (s *BasicAuthServiceTestSuite) TestAuthorize_InvalidPassword() {
 	// Test with invalid password
 	ctx := s.createContextWithBasicAuth("testuser", "wrongpass")
-	authorized, details, err := s.service.Authorize(ctx, "test-method")
+	details, err := s.service.Authorize(ctx, "test-method")
 	s.Require().Error(err)
-	s.Assert().False(authorized)
 	s.Assert().Nil(details)
 	s.Assert().Contains(err.Error(), "invalid user or password")
 }
@@ -95,18 +93,16 @@ func (s *BasicAuthServiceTestSuite) TestAuthorize_InvalidPassword() {
 func (s *BasicAuthServiceTestSuite) TestAuthorize_NonexistentUser() {
 	// Test with nonexistent user
 	ctx := s.createContextWithBasicAuth("nonexistent", "pass")
-	authorized, details, err := s.service.Authorize(ctx, "test-method")
+	details, err := s.service.Authorize(ctx, "test-method")
 	s.Require().Error(err)
-	s.Assert().False(authorized)
 	s.Assert().Nil(details)
 	s.Assert().Contains(err.Error(), "invalid user or password")
 }
 
 func (s *BasicAuthServiceTestSuite) TestAuthorize_NoMetadata() {
 	// Test with no metadata
-	authorized, details, err := s.service.Authorize(s.ctx, "test-method")
+	details, err := s.service.Authorize(s.ctx, "test-method")
 	s.Require().Error(err)
-	s.Assert().False(authorized)
 	s.Assert().Nil(details)
 	s.Assert().Contains(err.Error(), "metadata is not provided")
 }
@@ -116,9 +112,8 @@ func (s *BasicAuthServiceTestSuite) TestAuthorize_EmptyCredentials() {
 	md := metadata.New(map[string]string{})
 	ctx := metadata.NewIncomingContext(s.ctx, md)
 
-	authorized, details, err := s.service.Authorize(ctx, "test-method")
+	details, err := s.service.Authorize(ctx, "test-method")
 	s.Require().Error(err)
-	s.Assert().False(authorized)
 	s.Assert().Nil(details)
 	s.Assert().Contains(err.Error(), "user or password is not provided")
 }
@@ -131,9 +126,8 @@ func (s *BasicAuthServiceTestSuite) TestAuthorize_RejectsMalformedHash() {
 		"baduser": "not-a-phc",
 	})
 	ctx := s.createContextWithBasicAuth("baduser", "anything")
-	authorized, details, err := svc.Authorize(ctx, "test-method")
+	details, err := svc.Authorize(ctx, "test-method")
 	s.Require().Error(err)
-	s.Assert().False(authorized)
 	s.Assert().Nil(details)
 	s.Assert().Contains(err.Error(), "invalid user or password")
 }

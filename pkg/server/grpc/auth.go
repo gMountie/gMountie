@@ -84,11 +84,11 @@ func (i *AuthInterceptor) authorize(ctx context.Context, fullMethod string) (con
 	}
 
 	// Step 3: full auth path (argon2 or mTLS cert check).
-	ok, user, err := i.authService.Authorize(ctx, fullMethod)
+	user, err := i.authService.Authorize(ctx, fullMethod)
 	if err != nil {
 		return nil, err
 	}
-	if !ok {
+	if user == nil {
 		return nil, status.Errorf(codes.PermissionDenied, "unauthorized")
 	}
 	ctx = logging.InjectLogField(ctx, "user", user.Username)
