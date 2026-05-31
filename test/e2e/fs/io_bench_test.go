@@ -1,10 +1,11 @@
 package fs
 
 import (
-	"go.gmountie.dev/gmountie/test/e2e/utils"
 	"runtime"
 	"testing"
 	"time"
+
+	"go.gmountie.dev/gmountie/test/e2e/utils"
 
 	"github.com/stretchr/testify/require"
 	"github.com/typomedia/diskspeed/bench"

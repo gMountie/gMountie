@@ -1,8 +1,9 @@
 package utils
 
 import (
-	"go.gmountie.dev/gmountie/pkg/utils/log"
 	"testing"
+
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/stretchr/testify/suite"
 	"go.uber.org/zap"
