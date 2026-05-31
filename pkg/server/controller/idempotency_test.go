@@ -28,7 +28,7 @@ func (s *ResolveSessionOwnershipSuite) TearDownTest() {
 
 func (s *ResolveSessionOwnershipSuite) TestOwnSession_Allowed() {
 	// alice creates a session; alice is the caller → OK.
-	id, err := s.mgr.Create("alice")
+	id, err := s.mgr.Create("alice", "")
 	s.Require().NoError(err)
 	sess, err := resolveSession(testAuthedCtx("alice"), s.mgr, id)
 	s.Require().NoError(err)
@@ -37,7 +37,7 @@ func (s *ResolveSessionOwnershipSuite) TestOwnSession_Allowed() {
 
 func (s *ResolveSessionOwnershipSuite) TestCrossUser_Denied() {
 	// alice creates a session; bob tries to use it → PermissionDenied.
-	id, err := s.mgr.Create("alice")
+	id, err := s.mgr.Create("alice", "")
 	s.Require().NoError(err)
 	_, err = resolveSession(testAuthedCtx("bob"), s.mgr, id)
 	s.Require().Error(err)
@@ -49,7 +49,7 @@ func (s *ResolveSessionOwnershipSuite) TestCrossUser_Denied() {
 
 func (s *ResolveSessionOwnershipSuite) TestUnauthenticatedCallerOnOwnedSession_Denied() {
 	// real session (alice) + empty ctx principal → denied.
-	id, err := s.mgr.Create("alice")
+	id, err := s.mgr.Create("alice", "")
 	s.Require().NoError(err)
 	_, err = resolveSession(context.Background(), s.mgr, id)
 	s.Require().Error(err)
@@ -60,7 +60,7 @@ func (s *ResolveSessionOwnershipSuite) TestUnauthenticatedCallerOnOwnedSession_D
 
 func (s *ResolveSessionOwnershipSuite) TestEmptyPrincipalSession_NoEnforcement() {
 	// Session created without principal (no-auth server) + no ctx principal → OK.
-	id, err := s.mgr.Create("")
+	id, err := s.mgr.Create("", "")
 	s.Require().NoError(err)
 	sess, err := resolveSession(context.Background(), s.mgr, id)
 	s.Require().NoError(err)
@@ -79,7 +79,7 @@ type IdempotencyTestSuite struct {
 
 func (s *IdempotencyTestSuite) SetupTest() {
 	s.mgr = service.NewSessionManager(service.SessionManagerOptions{})
-	id, err := s.mgr.Create("test-user")
+	id, err := s.mgr.Create("test-user", "")
 	s.Require().NoError(err)
 	s.session, err = s.mgr.Get(id)
 	s.Require().NoError(err)

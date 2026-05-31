@@ -45,7 +45,8 @@ func (c *SessionController) Create(ctx context.Context, _ *proto.SessionCreateRe
 	// interceptor), bind an empty string — an empty principal will fail any
 	// subsequent PrincipalCanAccess check and cannot grant volume access.
 	p, _ := principal.FromContext(ctx)
-	id, err := c.sessions.Create(p)
+	serial, _ := service.VerifiedCertSerial(ctx)
+	id, err := c.sessions.Create(p, serial)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to create session: %v", err)
 	}
