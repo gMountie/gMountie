@@ -70,13 +70,7 @@ jobs:
       - name: govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          # Scope to the trees we care about. ./ui and ./pkg/ui are
-          # excluded — Wails 3 alpha needs CGO + GTK/WebKit headers
-          # that this lightweight scan job doesn't install, and the
-          # UI is Phase 8 (deferred). Listing the trees explicitly
-          # (rather than `go list ./... | grep -v ui`) avoids needing
-          # go list itself to succeed on the ui packages.
-          govulncheck ./cmd/... ./pkg/client/... ./pkg/server/... ./pkg/common/... ./pkg/utils/... ./pkg/proto/...
+          govulncheck ./...
 
   test:
     runs-on: ubuntu-latest
@@ -85,7 +79,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: awalsh128/cache-apt-pkgs-action@v1
         with:
-          packages: fio libwebkit2gtk-4.1-dev gtk+-3.0
+          packages: fio
           version: 2.0
       - name: Setup Go
         uses: actions/setup-go@v6
@@ -130,7 +124,7 @@ jobs:
         # on busy shared runners.
         run: go install github.com/go-task/task/v3/cmd/task@v3.51.1
       # Scoped to the concurrent logic packages (see Taskfile test:race) — no
-      # fio/GTK apt deps needed since the e2e suite and ./pkg/ui are excluded.
+      # fio apt deps needed since the e2e suite is excluded.
       - name: Race detector
         run: task test:race
 
