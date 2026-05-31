@@ -18,7 +18,7 @@ func (s *RevocationSuite) TestSerialKeyCanonical() {
 }
 
 func (s *RevocationSuite) TestSerialKeyNilIsEmpty() {
-	s.Equal("", SerialKey(nil)) // must not panic; absent serial = empty key
+	s.Empty(SerialKey(nil)) // must not panic; absent serial = empty key
 }
 
 func (s *RevocationSuite) TestParseSerialKeyNormalizesFormats() {
@@ -36,7 +36,7 @@ func (s *RevocationSuite) TestParseSerialKeyNormalizesFormats() {
 func (s *RevocationSuite) TestSetAndIsBlocked() {
 	store := NewRevocationStore()
 	s.False(store.IsBlocked(SerialKey(big.NewInt(0xABCD))))
-	s.False(store.IsBlocked("")) // no-cert path must never be blocked
+	s.False(store.IsBlocked(""))            // no-cert path must never be blocked
 	store.Set([]string{"AB:CD", "garbage"}) // garbage silently dropped
 	s.True(store.IsBlocked(SerialKey(big.NewInt(0xABCD))))
 	s.False(store.IsBlocked(SerialKey(big.NewInt(0x1234))))
