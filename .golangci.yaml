@@ -105,14 +105,6 @@ linters:
         - suite-extra-assert-call
 
   exclusions:
-    # Skip the desktop UI tree entirely. Wails 3 alpha pulls in CGO +
-    # GTK/WebKit headers that the lint job doesn't install; the UI is
-    # Phase 8 (deferred). Re-enable when the desktop build returns to
-    # CI.
-    paths:
-      - ^ui/
-      - ^pkg/ui/
-
     rules:
       # Tests have different conventions: short-lived contexts, ignored
       # errors in setup, intentional resource leaks across t.Cleanup.
