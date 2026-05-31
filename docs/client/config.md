@@ -48,6 +48,15 @@ The `server` section configures the connection to the gMountie server:
 | tls.server_name  | string  | _(from endpoint)_ | Override the TLS server name (SNI)               |
 | tls.cert_file    | string  | _(none)_  | mTLS client cert                                         |
 | tls.key_file     | string  | _(none)_  | mTLS client key                                          |
+| tls.ca_pem       | string  | _(none)_  | Inline CA cert PEM — alternative to `tls.ca_file`        |
+| tls.cert_pem     | string  | _(none)_  | Inline mTLS client cert PEM — alternative to `tls.cert_file` |
+| tls.key_pem      | string  | _(none)_  | Inline mTLS client key PEM — alternative to `tls.key_file`   |
+
+**Inline PEM vs file paths:** each of CA / client cert / client key may be given
+either as a file path (`*_file`) or inline as PEM (`*_pem`) — the latter is
+handy for container-native injection (e.g. `GMOUNTIE_SERVER_TLS_CERT_PEM` env
+var or a mounted Secret). Setting both the inline PEM and the file path for the
+same item is an error; cert and key must be supplied together.
 
 **Verification modes:**
 - `verify` (default) — full chain validation against `tls.ca_file` or system roots; add `tls.expected_fingerprint` to also pin the leaf cert.
