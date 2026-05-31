@@ -238,14 +238,50 @@ Restricts which volumes a principal may list, mount, or call.
   (set by the auth interceptor from the basic-auth username or the mTLS
   cert CN). A request with no authenticated principal is denied.
 
-## 8. Threat model — out of scope
+## 8. Revocation — reload + cert-serial blocklist
+
+Client certs are long-lived (no short TTL), so revocation — not expiry — is
+the protection against a lost device or a removed user. An operator revokes
+**without restarting** the server (a restart kills *all* sessions on a volume;
+revocation reaps only the revoked ones).
+
+- **`auth.revoked_serials: [<hex>…]`** — the cert-serial blocklist. Read at
+  startup **and** on reload, so a restart re-reads it and stays **fail-closed**.
+  Any hex format (`ab:cd`, `0xABCD`, `abcd`) normalizes to one canonical key
+  (`service.SerialKey`), so a config entry and a presented cert serial can never
+  miss on formatting.
+- **`POST /ops/acl/reload`** (ops plane) — re-reads the config file, validates
+  it, atomically swaps the ACL (`VolumeService.ReloadAuth`) and the serial
+  blocklist (`RevocationStore.Set`), then reaps. A bad/invalid config →
+  **`400`, nothing swapped or reaped** (fail-safe — the prior good state
+  stands). Only auth state is hot-reloaded; volumes/FS are untouched.
+- **Reap predicate (`SessionManager.ReapIf`):** reap a session **iff** its cert
+  serial is now blocked **OR** its principal can access no configured volume.
+  An additive reload (grant a user, enrol a device) blocks no serial and removes
+  no access → **reaps nothing**. Reaping `ReleaseAll`s the session's fds; an
+  in-flight Read/Write then fails `EBADF` (~sub-second).
+- **Three enforcement layers for a blocked serial:** the TLS handshake
+  (`VerifyPeerCertificate`) rejects new connections; the gRPC auth interceptor
+  rejects per-RPC (catching connections that handshook before revocation, before
+  the session fast-path); the reaper force-closes already-open fds. Basic-auth
+  connections carry no client cert → never matched.
+- **Ops-plane auth:** basic-auth (default, loopback) or **operator mTLS** —
+  `server.ops.tls.{cert_file,key_file,client_ca_file}` + `server.ops.auth.type:
+  mtls` turns the ops listener into `RequireAndVerifyClientCert`. The reload
+  endpoint mutates authorization, so production uses operator mTLS.
+
+**Known gap (accepted):** `SessionService.Create` does not itself check the ACL
+— a revoked-but-cert-holding caller can obtain a new session id but is denied at
+the first file op, and rejected at the handshake once its serial is blocked.
+
+## 9. Threat model — out of scope
 
 - A compromised server binary (same model as NFS/SSHFS).
 - TLS side channels beyond standard Go hardening.
 - An operator with config write access (can always reset creds / disable
   TLS).
 
-## 9. Deferred follow-ups
+## 10. Deferred follow-ups
 
 - **OIDC / JWT** auth (JWKS cache, key rotation, audience) — schedule
   once mTLS has real-deployment mileage.
@@ -254,7 +290,7 @@ Restricts which volumes a principal may list, mount, or call.
 - **OS-keyring client credential storage** (libsecret) — today the client
   reads passwords from YAML; shares the desktop-UI scope problem (Phase 8).
 
-## 10. North-star acceptance
+## 11. North-star acceptance
 
 A server bound to `0.0.0.0:9244`, TLS-terminated, `default_allow: false`,
 operated under steady authenticated traffic plus `nmap`/`testssl.sh` and
