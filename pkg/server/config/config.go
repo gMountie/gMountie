@@ -29,6 +29,11 @@ type Config struct {
 	// Log is the optional logger configuration. Nil keeps the
 	// init-time auto-detected defaults.
 	Log *log.LogConfig
+
+	// ConfigPath is the file this config was loaded from, set by the loader
+	// (serve.go / ReloadFromFile). Empty when built from a string/defaults.
+	// Used by /ops/acl/reload to re-read the file. Not parsed from YAML.
+	ConfigPath string `mapstructure:"-"`
 }
 
 func LoadConfigFromString(cfg string) (*Config, error) {
@@ -180,6 +185,11 @@ func parseOpsConfig(v *viper.Viper) OpsConfig {
 		Addr: v.GetString("server.ops.addr"),
 		Auth: OpsAuthConfig{
 			Type: v.GetString("server.ops.auth.type"),
+		},
+		TLS: OpsTLSConfig{
+			CertFile:     v.GetString("server.ops.tls.cert_file"),
+			KeyFile:      v.GetString("server.ops.tls.key_file"),
+			ClientCAFile: v.GetString("server.ops.tls.client_ca_file"),
 		},
 	}
 	// Unmarshal the users slice (only present when auth.type: basic).

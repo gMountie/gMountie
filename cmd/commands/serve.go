@@ -141,6 +141,7 @@ var serveCmd = &cobra.Command{
 		if err != nil {
 			return errors.Wrap(err, "failed to parse config")
 		}
+		cfg.ConfigPath = configFile
 
 		// Start server
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

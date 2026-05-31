@@ -78,19 +78,28 @@ type TLSConfig struct {
 	Disabled     bool   `mapstructure:"disabled"`
 }
 
-// OpsAuthConfig — Type is "none" (default) or "basic".
+// OpsAuthConfig — Type is "none" (default), "basic", or "mtls".
 type OpsAuthConfig struct {
-	Type  string                `mapstructure:"type" validate:"omitempty,oneof=none basic"`
+	Type  string                `mapstructure:"type" validate:"omitempty,oneof=none basic mtls"`
 	Users []BasicAuthConfigUser `mapstructure:"users"`
 }
 
+// OpsTLSConfig enables TLS (and, for type: mtls, client-cert verification) on
+// the ops listener. Empty CertFile/KeyFile ⇒ plain HTTP (the default).
+type OpsTLSConfig struct {
+	CertFile     string `mapstructure:"cert_file"`
+	KeyFile      string `mapstructure:"key_file"`
+	ClientCAFile string `mapstructure:"client_ca_file"`
+}
+
 // OpsConfig controls the operational HTTP endpoint (/metrics, /healthz,
-// /readyz, /version, /debug/pprof). Bound to 127.0.0.1:9090 by default so
-// cluster ops reach it via a sidecar / port-forward; binding to a
-// non-loopback addr requires Auth.Type != "none" (enforced at startup).
+// /readyz, /version, /debug/pprof, /ops/acl/reload). Bound to 127.0.0.1:9090
+// by default so cluster ops reach it via a sidecar / port-forward; binding to
+// a non-loopback addr requires Auth.Type != "none" (enforced at startup).
 type OpsConfig struct {
 	Addr string        `mapstructure:"addr"`
 	Auth OpsAuthConfig `mapstructure:"auth"`
+	TLS  OpsTLSConfig  `mapstructure:"tls"`
 }
 
 // GRPCConfig controls gRPC server-side behavior that isn't transport
