@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"math/big"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -113,4 +114,20 @@ func (s *MTLSAuthSuite) TestNoPeerInfo() {
 	s.Nil(details)
 	s.Require().Error(err)
 	s.Equal(codes.Unauthenticated, status.Code(err))
+}
+
+func (s *MTLSAuthSuite) TestVerifiedCertSerial() {
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(0xABCD)}
+	ti := credentials.TLSInfo{State: tls.ConnectionState{
+		VerifiedChains: [][]*x509.Certificate{{leaf}},
+	}}
+	ctx := peer.NewContext(context.Background(), &peer.Peer{AuthInfo: ti})
+
+	key, present := service.VerifiedCertSerial(ctx)
+	s.Require().True(present)
+	s.Equal("abcd", key)
+
+	// No client cert (basic-auth): absent.
+	_, present = service.VerifiedCertSerial(context.Background())
+	s.False(present)
 }
