@@ -38,6 +38,11 @@ type AppContext struct {
 	SessionManager service.SessionManager
 	Metrics        *metrics.Metrics
 	Bus            io.EventBus
+	// Revocation is the shared cert-serial blocklist. All three readers
+	// (TLS handshake hook, gRPC auth interceptor, session reaper) and the
+	// ops reload writer share this single pointer so updates are immediately
+	// visible without restarting the server.
+	Revocation *service.RevocationStore
 }
 
 // NewServerAppContext creates a new ServerContext.
@@ -63,6 +68,8 @@ func NewServerAppContext(cfg *config.Config) (*AppContext, error) {
 		HeartbeatInterval: cfg.Server.SubscribeHeartbeatInterval,
 		Metrics:           m,
 	})
+	revocation := service.NewRevocationStore()
+	revocation.Set(revokedSerialsFromConfig(cfg))
 	return &AppContext{
 		Config:         cfg,
 		VolumeService:  volumeService,
@@ -70,7 +77,28 @@ func NewServerAppContext(cfg *config.Config) (*AppContext, error) {
 		SessionManager: sessionMgr,
 		Metrics:        m,
 		Bus:            bus,
+		Revocation:     revocation,
 	}, nil
+}
+
+// revokedSerialsFromConfig extracts the startup blocklist from config. Both
+// basic and mtls auth use *BasicAuthConfig (NewMTLSAuthConfig also returns
+// that type), so a single type assertion covers both modes. Loaded at startup
+// so a restart is fail-closed — a revoked cert in config stays blocked across
+// server restarts without depending on the ops reload handler.
+func revokedSerialsFromConfig(cfg *config.Config) []string {
+	if bac, ok := cfg.Auth.(*config.BasicAuthConfig); ok {
+		return bac.RevokedSerials
+	}
+	// Defensive: if a future auth type that supports revocation is ever added as
+	// a separate concrete type, returning nil here would start the server with
+	// an empty blocklist — a silent fail-OPEN on restart. Surface it loudly so
+	// it can't pass unnoticed. (Today mtls is *BasicAuthConfig, so unreachable.)
+	if cfg.Auth != nil && cfg.Auth.GetType() == config.AuthConfigTypeMTLS {
+		log.Log.Error("revokedSerialsFromConfig: mTLS auth config is not *BasicAuthConfig; " +
+			"cert-serial blocklist will be EMPTY (fail-open on restart) — wire the new type here")
+	}
+	return nil
 }
 
 // GetGrpcServices returns the gRPC services.
@@ -151,6 +179,9 @@ func Start(ctx context.Context, cfg *config.Config) error {
 			}
 			tlsCfg.ClientCAs = pool
 			tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
+			tlsCfg.VerifyPeerCertificate = func(_ [][]byte, verifiedChains [][]*x509.Certificate) error {
+				return rejectIfRevoked(appCtx.Revocation, verifiedChains)
+			}
 			log.Log.Info("mTLS client authentication enabled",
 				zap.String("client_ca_file", cfg.Server.TLS.ClientCAFile))
 		}
@@ -176,6 +207,9 @@ func Start(ctx context.Context, cfg *config.Config) error {
 		// Wire the same SessionManager the SessionController uses so that
 		// principals bound at Create are visible to the AuthInterceptor.
 		grpc.WithSessionManager(appCtx.SessionManager),
+		// Wire the shared RevocationStore so the AuthInterceptor can deny
+		// blocked cert serials per-RPC (covers already-established conns).
+		grpc.WithRevocation(appCtx.Revocation),
 	}
 	if serverCreds != nil {
 		grpcOpts = append(grpcOpts, grpc.WithCredentials(serverCreds))
@@ -202,7 +236,7 @@ func Start(ctx context.Context, cfg *config.Config) error {
 		cfg,
 		appCtx.VolumeService,
 		appCtx.SessionManager,
-		service.NewRevocationStore(), // temporary; a later task swaps in appCtx.Revocation
+		appCtx.Revocation,
 	)
 	go opsServer.Start()
 
@@ -354,6 +388,21 @@ func isLoopback(bind string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// rejectIfRevoked is the VerifyPeerCertificate body: it rejects a verified
+// chain whose leaf serial is blocked. Called at the TLS handshake so a newly
+// revoked cert is denied on NEW connections immediately; the per-RPC interceptor
+// check covers already-established connections. Safe under concurrent handshakes:
+// RevocationStore.IsBlocked is an atomic load.
+func rejectIfRevoked(rs *service.RevocationStore, verifiedChains [][]*x509.Certificate) error {
+	if len(verifiedChains) == 0 || len(verifiedChains[0]) == 0 {
+		return nil
+	}
+	if rs.IsBlocked(service.SerialKey(verifiedChains[0][0].SerialNumber)) {
+		return errors.New("client certificate revoked")
+	}
+	return nil
 }
 
 // warnIfIdentityEnforcementUnprivileged emits a loud startup warning when the

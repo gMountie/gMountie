@@ -35,13 +35,17 @@ const (
 type AuthInterceptor struct {
 	authService service.AuthService
 	sessions    service.SessionManager
+	revocation  *service.RevocationStore
 }
 
 // NewAuthInterceptor creates a new AuthInterceptor.
 // sessions must be the same SessionManager instance used by the
 // SessionController so principals written at Create are visible here.
-func NewAuthInterceptor(authService service.AuthService, sessions service.SessionManager) *AuthInterceptor {
-	return &AuthInterceptor{authService: authService, sessions: sessions}
+// revocation is consulted per-RPC to reject blocked cert serials on
+// already-established connections (complements the TLS handshake hook).
+// Passing nil disables the per-RPC check (safe for non-mTLS servers).
+func NewAuthInterceptor(authService service.AuthService, sessions service.SessionManager, revocation *service.RevocationStore) *AuthInterceptor {
+	return &AuthInterceptor{authService: authService, sessions: sessions, revocation: revocation}
 }
 
 // authorize is the single point of auth decision for both Unary and Stream.
@@ -55,6 +59,15 @@ func NewAuthInterceptor(authService service.AuthService, sessions service.Sessio
 // FAIL-CLOSED: an absent, empty, or unknown session_id NEVER short-circuits to
 // "allowed" — it always falls through to Authorize, which denies missing creds.
 func (i *AuthInterceptor) authorize(ctx context.Context, fullMethod string) (context.Context, error) {
+	// Step 0: per-RPC revocation check — catches connections that handshook
+	// before a serial was added to the blocklist. Nil-guarded so non-mTLS
+	// servers and tests without a store are unaffected.
+	if i.revocation != nil {
+		if serial, ok := service.VerifiedCertSerial(ctx); ok && i.revocation.IsBlocked(serial) {
+			return nil, status.Errorf(codes.Unauthenticated, "client certificate revoked")
+		}
+	}
+
 	// Step 1: methods that must always re-prove identity.
 	if fullMethod != methodSessionCreate && fullMethod != methodSessionResume {
 		// Step 2: try session-id fast path — but only when no verified client

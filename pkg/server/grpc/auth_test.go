@@ -2,6 +2,9 @@ package grpc
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"math/big"
 	"testing"
 
 	"go.gmountie.dev/gmountie/pkg/common"
@@ -11,7 +14,9 @@ import (
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -48,7 +53,7 @@ func (s *AuthInterceptorTestSuite) SetupTest() {
 	s.authSvc = &countingAuthService{
 		inner: newAlwaysGrantAuthService("alice"),
 	}
-	s.interceptor = NewAuthInterceptor(s.authSvc, s.sessions)
+	s.interceptor = NewAuthInterceptor(s.authSvc, s.sessions, service.NewRevocationStore())
 }
 
 func (s *AuthInterceptorTestSuite) TearDownTest() {
@@ -282,6 +287,29 @@ func (f *fakeServerStream) SetTrailer(_ metadata.MD)       {}
 func (f *fakeServerStream) Context() context.Context       { return f.ctx }
 func (f *fakeServerStream) SendMsg(_ interface{}) error    { return nil }
 func (f *fakeServerStream) RecvMsg(_ interface{}) error    { return nil }
+
+// TestBlockedSerialDenied verifies that a blocked cert serial is denied per-RPC.
+// The message must contain "revoked" to distinguish from a fallthrough denial
+// ("no metadata") — the assertion is load-bearing: if the revocation check never
+// fires, the fallthrough returns codes.Unauthenticated but NOT "revoked".
+func (s *AuthInterceptorTestSuite) TestBlockedSerialDenied() {
+	rs := service.NewRevocationStore()
+	rs.Set([]string{"dead"})
+	i := NewAuthInterceptor(s.authSvc, s.sessions, rs)
+
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(0xdead)}
+	ti := credentials.TLSInfo{State: tls.ConnectionState{
+		VerifiedChains: [][]*x509.Certificate{{leaf}},
+	}}
+	ctx := peer.NewContext(context.Background(), &peer.Peer{AuthInfo: ti})
+
+	_, err := i.authorize(ctx, "/gmountie.RpcFile/Read")
+	s.Require().Error(err)
+	st, ok := status.FromError(err)
+	s.Require().True(ok)
+	s.Equal(codes.Unauthenticated, st.Code())
+	s.Contains(st.Message(), "revoked")
+}
 
 func TestAuthInterceptorTestSuite(t *testing.T) {
 	suite.Run(t, new(AuthInterceptorTestSuite))

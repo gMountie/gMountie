@@ -37,7 +37,11 @@ type Server struct {
 	authService service.AuthService
 	// sessionManager is the SAME instance used by the SessionController so
 	// that principals written at Create are visible to the AuthInterceptor.
-	sessionManager          service.SessionManager
+	sessionManager service.SessionManager
+	// revocation is the shared RevocationStore consulted per-RPC to deny
+	// blocked cert serials on already-established connections. Nil when not
+	// provided (non-mTLS or tests that don't need revocation).
+	revocation              *service.RevocationStore
 	listener                net.Listener
 	creds                   credentials.TransportCredentials
 	extraUnaryInterceptors  []grpc.UnaryServerInterceptor
@@ -91,6 +95,15 @@ func WithExtraStreamInterceptors(stream ...grpc.StreamServerInterceptor) ServerO
 func WithSessionManager(mgr service.SessionManager) ServerOption {
 	return func(s *Server) {
 		s.sessionManager = mgr
+	}
+}
+
+// WithRevocation sets the RevocationStore the AuthInterceptor consults to deny
+// blocked cert serials per RPC. Always a pointer — RevocationStore holds an
+// atomic.Pointer and must never be copied by value.
+func WithRevocation(rs *service.RevocationStore) ServerOption {
+	return func(s *Server) {
+		s.revocation = rs
 	}
 }
 
@@ -190,7 +203,7 @@ func (s *Server) createListener() (net.Listener, error) {
 // getOptions returns the gRPC server options.
 func (s *Server) getOptions() []grpc.ServerOption {
 	unaryLog, streamLog := s.getLoggingInterceptor()
-	authInterceptor := NewAuthInterceptor(s.authService, s.sessionManager)
+	authInterceptor := NewAuthInterceptor(s.authService, s.sessionManager, s.revocation)
 
 	unaryInterceptors := append(
 		[]grpc.UnaryServerInterceptor{
