@@ -20,6 +20,14 @@ type TLSConfig struct {
 	KnownHostsPath      string `mapstructure:"known_hosts_path"` // override default XDG path; used by TOFU tests
 	CertFile            string `mapstructure:"cert_file"`        // mTLS, reserved for PR 3
 	KeyFile             string `mapstructure:"key_file"`         // mTLS, reserved for PR 3
+
+	// Inline PEM alternatives to the *_file paths, for container-native
+	// credential injection (e.g. GMOUNTIE_SERVER_TLS_CERT_PEM env var or a
+	// mounted Secret). Inline wins; setting both inline and file for one item
+	// is an error. File paths still work.
+	CAPEM   string `mapstructure:"ca_pem"`
+	CertPEM string `mapstructure:"cert_pem"`
+	KeyPEM  string `mapstructure:"key_pem"`
 }
 
 // ServerConfig is a struct that holds the configuration for the server

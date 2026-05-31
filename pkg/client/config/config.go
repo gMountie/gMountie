@@ -128,6 +128,9 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		"tls.server_name",
 		"tls.cert_file",
 		"tls.key_file",
+		"tls.ca_pem",
+		"tls.cert_pem",
+		"tls.key_pem",
 	})
 	if cfg, err := NewServerConfig(serverSub); err == nil {
 		result.Server = cfg

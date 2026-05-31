@@ -367,6 +367,44 @@ rpc:
 	s.Require().Error(err)
 }
 
+// TestParse_TLSInlinePEMFromYAML verifies the inline-PEM TLS keys parse onto
+// cfg.Server.TLS (the config layer stores the strings; verify.BuildConfig
+// validates them).
+func (s *ConfigTestSuite) TestParse_TLSInlinePEMFromYAML() {
+	conf := `
+server:
+  address: 127.0.0.1
+  port: 9449
+  tls:
+    ca_pem: "ca-pem-value"
+    cert_pem: "cert-pem-value"
+    key_pem: "key-pem-value"
+auth:
+  type: basic
+  username: admin
+  password: admin
+`
+	result, err := LoadConfigFromString(conf)
+	s.Require().NoError(err)
+	s.Equal("ca-pem-value", result.Server.TLS.CAPEM)
+	s.Equal("cert-pem-value", result.Server.TLS.CertPEM)
+	s.Equal("key-pem-value", result.Server.TLS.KeyPEM)
+}
+
+// TestParse_TLSInlinePEMEnvOverride verifies GMOUNTIE_SERVER_TLS_*_PEM env vars
+// reach cfg.Server.TLS — the container-native credential-injection path.
+func (s *ConfigTestSuite) TestParse_TLSInlinePEMEnvOverride() {
+	s.T().Setenv("GMOUNTIE_SERVER_TLS_CERT_PEM", "env-cert-pem")
+	s.T().Setenv("GMOUNTIE_SERVER_TLS_KEY_PEM", "env-key-pem")
+	s.T().Setenv("GMOUNTIE_SERVER_TLS_CA_PEM", "env-ca-pem")
+
+	result, err := LoadConfigFromString(s.minimalConf)
+	s.Require().NoError(err)
+	s.Equal("env-cert-pem", result.Server.TLS.CertPEM)
+	s.Equal("env-key-pem", result.Server.TLS.KeyPEM)
+	s.Equal("env-ca-pem", result.Server.TLS.CAPEM)
+}
+
 // Test Runner
 func TestConfigTestSuite(t *testing.T) {
 	suite.Run(t, new(ConfigTestSuite))
