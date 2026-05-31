@@ -2,10 +2,14 @@ package ops
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"net/http"
 	"net/http/pprof"
+	"os"
 
+	pkgerrors "github.com/pkg/errors"
 	"go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/server/service"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
@@ -19,6 +23,7 @@ import (
 // handlers and the readiness service.
 type Server struct {
 	server *http.Server
+	tls    *tls.Config
 }
 
 // NewServer constructs an ops server bound to addr that delegates
@@ -63,11 +68,65 @@ func NewServer(
 	}
 }
 
+// ApplyTLS builds a TLS config from the ops TLS settings and attaches it to
+// the server. When CertFile and KeyFile are both empty this is a no-op and the
+// server remains plain HTTP. When ClientCAFile is set the resulting config
+// requires and verifies client certificates (mTLS).
+func (s *Server) ApplyTLS(cfg config.OpsTLSConfig) error {
+	if cfg.CertFile == "" && cfg.KeyFile == "" {
+		return nil
+	}
+	cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+	if err != nil {
+		return pkgerrors.Wrap(err, "load ops TLS keypair")
+	}
+	tc := &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		Certificates: []tls.Certificate{cert},
+	}
+	if cfg.ClientCAFile != "" {
+		caPEM, err := os.ReadFile(cfg.ClientCAFile)
+		if err != nil {
+			return pkgerrors.Wrap(err, "read ops client CA")
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caPEM) {
+			return pkgerrors.New("ops client_ca_file: no valid PEM certificates")
+		}
+		tc.ClientCAs = pool
+		tc.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+	s.tls = tc
+	s.server.TLSConfig = tc
+	return nil
+}
+
+// tlsConfig is a test-only accessor for the attached tls.Config (nil = plain HTTP).
+func (s *Server) tlsConfig() *tls.Config { return s.tls }
+
+// NewServerWithTLS builds a minimal ops Server with TLS applied. When
+// tlsCfg is empty (CertFile/KeyFile both unset) the server is plain HTTP.
+// This is the constructor used by tests and by app.go's ApplyTLS call path.
+func NewServerWithTLS(addr string, tlsCfg config.OpsTLSConfig) (*Server, error) {
+	s := &Server{server: &http.Server{Addr: addr, Handler: http.NewServeMux()}}
+	if err := s.ApplyTLS(tlsCfg); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
 // Start blocks running ListenAndServe. Typical callers run it in a
 // goroutine. Returns when the server stops.
 func (s *Server) Start() {
 	log.Log.Info("ops server starting", zap.String("addr", s.server.Addr))
-	if err := s.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	var err error
+	if s.tls != nil {
+		// Certs are already embedded in TLSConfig — pass empty strings.
+		err = s.server.ListenAndServeTLS("", "")
+	} else {
+		err = s.server.ListenAndServe()
+	}
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Log.Error("ops server stopped", zap.Error(err))
 	}
 }

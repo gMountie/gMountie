@@ -330,6 +330,15 @@ func validateOpsConfig(ops config.OpsConfig) error {
 			}
 		}
 	}
+	if authType == "mtls" {
+		if ops.TLS.CertFile == "" || ops.TLS.KeyFile == "" || ops.TLS.ClientCAFile == "" {
+			return errors.New(
+				"server.ops.auth.type: mtls requires server.ops.tls.cert_file, " +
+					"key_file and client_ca_file",
+			)
+		}
+		return nil
+	}
 	return nil
 }
 
