@@ -11,6 +11,7 @@ import (
 	mock "github.com/stretchr/testify/mock"
 	"go.gmountie.dev/gmountie/pkg/common"
 	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/server/service"
 )
 
@@ -299,6 +300,46 @@ func (_c *MockVolumeService_PrincipalCanAccess_Call) Return(err error) *MockVolu
 
 func (_c *MockVolumeService_PrincipalCanAccess_Call) RunAndReturn(run func(ctx context.Context, volume string) error) *MockVolumeService_PrincipalCanAccess_Call {
 	_c.Call.Return(run)
+	return _c
+}
+
+// ReloadAuth provides a mock function for the type MockVolumeService
+func (_mock *MockVolumeService) ReloadAuth(cfg *config.Config) {
+	_mock.Called(cfg)
+	return
+}
+
+// MockVolumeService_ReloadAuth_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ReloadAuth'
+type MockVolumeService_ReloadAuth_Call struct {
+	*mock.Call
+}
+
+// ReloadAuth is a helper method to define mock.On call
+//   - cfg *config.Config
+func (_e *MockVolumeService_Expecter) ReloadAuth(cfg interface{}) *MockVolumeService_ReloadAuth_Call {
+	return &MockVolumeService_ReloadAuth_Call{Call: _e.mock.On("ReloadAuth", cfg)}
+}
+
+func (_c *MockVolumeService_ReloadAuth_Call) Run(run func(cfg *config.Config)) *MockVolumeService_ReloadAuth_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 *config.Config
+		if args[0] != nil {
+			arg0 = args[0].(*config.Config)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockVolumeService_ReloadAuth_Call) Return() *MockVolumeService_ReloadAuth_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockVolumeService_ReloadAuth_Call) RunAndReturn(run func(cfg *config.Config)) *MockVolumeService_ReloadAuth_Call {
+	_c.Run(run)
 	return _c
 }
 

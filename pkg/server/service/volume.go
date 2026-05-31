@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"runtime"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -20,6 +21,39 @@ import (
 )
 
 const defaultIdentityTTL = 60 * time.Second
+
+// aclSnapshot is an immutable view of the per-principal ACL, swapped atomically
+// on reload. byPrincipal maps principal → allowed-volume set (an entry exists
+// only for principals with an explicit list; absence ⇒ defaultAllow applies).
+type aclSnapshot struct {
+	byPrincipal  map[string]map[string]struct{}
+	defaultAllow bool
+	enabled      bool
+}
+
+func buildACLSnapshot(cfg *config.Config) *aclSnapshot {
+	snap := &aclSnapshot{
+		byPrincipal:  make(map[string]map[string]struct{}),
+		defaultAllow: true,
+		enabled:      false,
+	}
+	if cfg.Auth != nil {
+		if bac, ok := cfg.Auth.(*config.BasicAuthConfig); ok {
+			snap.enabled = true
+			snap.defaultAllow = bac.DefaultAllowOrTrue()
+			for _, u := range bac.Users {
+				if u.Volumes != nil {
+					set := make(map[string]struct{}, len(u.Volumes))
+					for _, v := range u.Volumes {
+						set[v] = struct{}{}
+					}
+					snap.byPrincipal[u.Username] = set
+				}
+			}
+		}
+	}
+	return snap
+}
 
 // VolumeService is a service that manages volumes.
 type VolumeService interface {
@@ -41,6 +75,10 @@ type VolumeService interface {
 	// checking the principal in ctx may access it. An empty string means "this
 	// server serves it locally". Errors: PermissionDenied (ACL) or NotFound.
 	Resolve(ctx context.Context, volume string) (string, error)
+	// ReloadAuth atomically swaps the ACL to reflect cfg.Auth. Only the ACL is
+	// affected; volumes and filesystems are untouched. Called by the ops reload
+	// path so an operator can change grants without a restart.
+	ReloadAuth(cfg *config.Config)
 }
 
 type VolumeServiceOptions func(*VolumeServiceImpl)
@@ -72,13 +110,10 @@ type VolumeServiceImpl struct {
 	volumes    map[string]*volumeEntry
 	middleware []io.Middleware
 
-	// aclByPrincipal is the O(1) ACL lookup table: principal → set of allowed
-	// volumes. A nil value in the map means the principal has no explicit list
-	// (falls through to defaultAllow). An entry with an empty set means the
-	// principal has an explicit empty list (all denied).
-	aclByPrincipal map[string]map[string]struct{}
-	defaultAllow   bool // effective default_allow from auth config
-	aclEnabled     bool // true when an auth config with users is present
+	// acl is the atomically-swappable per-principal ACL. Read once per
+	// PrincipalCanAccess; swapped by ReloadAuth so a concurrent read always
+	// sees a consistent snapshot.
+	acl atomic.Pointer[aclSnapshot]
 
 	// boundFSCache caches per-(volume,principal) resolver-bound FS wrappers for
 	// mapped modes. Entries are safe to reuse indefinitely because the wrapper
@@ -90,35 +125,15 @@ type VolumeServiceImpl struct {
 // NewVolumeService creates a new VolumeService.
 func NewVolumeService(cfg *config.Config, options ...VolumeServiceOptions) (VolumeService, error) {
 	svc := &VolumeServiceImpl{
-		config:         cfg,
-		volumes:        make(map[string]*volumeEntry),
-		middleware:     make([]io.Middleware, 0),
-		aclByPrincipal: make(map[string]map[string]struct{}),
-		defaultAllow:   true,
-		aclEnabled:     false,
-		boundFSCache:   xsync.NewMapOf[boundFSCacheKey, pathfs.FileSystem](),
+		config:       cfg,
+		volumes:      make(map[string]*volumeEntry),
+		middleware:   make([]io.Middleware, 0),
+		boundFSCache: xsync.NewMapOf[boundFSCacheKey, pathfs.FileSystem](),
 	}
 	for _, option := range options {
 		option(svc)
 	}
-	// Build O(1) ACL model from auth config when available.
-	if cfg.Auth != nil {
-		if bac, ok := cfg.Auth.(*config.BasicAuthConfig); ok {
-			svc.aclEnabled = true
-			svc.defaultAllow = bac.DefaultAllowOrTrue()
-			for _, u := range bac.Users {
-				if u.Volumes != nil {
-					set := make(map[string]struct{}, len(u.Volumes))
-					for _, v := range u.Volumes {
-						set[v] = struct{}{}
-					}
-					svc.aclByPrincipal[u.Username] = set
-				}
-				// Users without an explicit Volumes list get no entry →
-				// defaultAllow policy applies at check time.
-			}
-		}
-	}
+	svc.acl.Store(buildACLSnapshot(cfg))
 	for _, v := range cfg.Volumes {
 		localFS, err := io.NewLocalFilesystem(v.Path)
 		if err != nil {
@@ -169,25 +184,30 @@ func (s *VolumeServiceImpl) GetVolumeFileSystem(name string) (pathfs.FileSystem,
 // enabled and the principal has an explicit volume set, membership is checked
 // in O(1); otherwise the default_allow policy applies.
 func (s *VolumeServiceImpl) PrincipalCanAccess(ctx context.Context, volume string) error {
-	// No auth configured → no restrictions; allow everything.
-	if !s.aclEnabled {
+	snap := s.acl.Load()
+	if !snap.enabled {
 		return nil
 	}
 	p, ok := principal.FromContext(ctx)
 	if !ok || p == "" {
 		return status.Errorf(codes.PermissionDenied, "no authenticated principal for volume %q", volume)
 	}
-	if set, hasList := s.aclByPrincipal[p]; hasList {
+	if set, hasList := snap.byPrincipal[p]; hasList {
 		if _, allowed := set[volume]; allowed {
 			return nil
 		}
 		return status.Errorf(codes.PermissionDenied, "principal %q is not granted volume %q", p, volume)
 	}
-	// No explicit list → default policy.
-	if s.defaultAllow {
+	if snap.defaultAllow {
 		return nil
 	}
 	return status.Errorf(codes.PermissionDenied, "principal %q has no volume grants (default_allow=false)", p)
+}
+
+// ReloadAuth atomically swaps the ACL to reflect cfg.Auth. Only the ACL is
+// affected; volumes and filesystems are untouched.
+func (s *VolumeServiceImpl) ReloadAuth(cfg *config.Config) {
+	s.acl.Store(buildACLSnapshot(cfg))
 }
 
 // Resolve checks access then reports where the volume lives. The OSS server

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"go.gmountie.dev/gmountie/pkg/server/config"
@@ -167,4 +168,56 @@ func (s *ACLSuite) TestNoAuth_AllAllowed() {
 	svc := buildService(s.T(), nil)
 	s.Require().NoError(svc.PrincipalCanAccess(context.Background(), "photos"))
 	s.Require().NoError(svc.PrincipalCanAccess(context.Background(), "team"))
+}
+
+// ── Tests: ReloadAuth atomically swaps the ACL ───────────────────────────────
+
+func (s *ACLSuite) TestReloadAuth_GrantsNewAccess() {
+	// bob starts with only "team"; default_allow=false.
+	svc := buildService(s.T(), authWithUsers(boolPtr(false),
+		config.BasicAuthConfigUser{Username: "bob", Volumes: []string{"team"}},
+	))
+	s.Require().Error(svc.PrincipalCanAccess(ctxFor("bob"), "photos"))
+
+	// Reload with bob now granted "photos" too.
+	svc.ReloadAuth(&config.Config{Auth: authWithUsers(boolPtr(false),
+		config.BasicAuthConfigUser{Username: "bob", Volumes: []string{"team", "photos"}},
+	)})
+	s.Require().NoError(svc.PrincipalCanAccess(ctxFor("bob"), "photos"))
+}
+
+func (s *ACLSuite) TestReloadAuth_RevokesAccess() {
+	svc := buildService(s.T(), authWithUsers(boolPtr(false),
+		config.BasicAuthConfigUser{Username: "bob", Volumes: []string{"team", "photos"}},
+	))
+	s.Require().NoError(svc.PrincipalCanAccess(ctxFor("bob"), "photos"))
+
+	svc.ReloadAuth(&config.Config{Auth: authWithUsers(boolPtr(false),
+		config.BasicAuthConfigUser{Username: "bob", Volumes: []string{"team"}},
+	)})
+	s.Require().Error(svc.PrincipalCanAccess(ctxFor("bob"), "photos"))
+}
+
+// TestReloadAuth_ConcurrentReadsDontRace exercises the atomic swap under the
+// race detector: a PrincipalCanAccess racing a ReloadAuth must see a whole
+// snapshot, never a torn one. Mirrors RevocationStore's concurrency test.
+func (s *ACLSuite) TestReloadAuth_ConcurrentReadsDontRace() {
+	svc := buildService(s.T(), authWithUsers(boolPtr(false),
+		config.BasicAuthConfigUser{Username: "alice", Volumes: []string{"photos"}},
+	))
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			svc.ReloadAuth(&config.Config{Auth: authWithUsers(boolPtr(false),
+				config.BasicAuthConfigUser{Username: "alice", Volumes: []string{"photos"}},
+			)})
+		}()
+		go func() {
+			defer wg.Done()
+			_ = svc.PrincipalCanAccess(ctxFor("alice"), "photos")
+		}()
+	}
+	wg.Wait()
 }
