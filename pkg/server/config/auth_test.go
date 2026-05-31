@@ -61,6 +61,27 @@ func (s *BasicAuthConfigTestSuite) TestAcceptsValidPHCHash() {
 	s.Assert().Equal(validPHC, cfg.Users[0].PasswordHash)
 }
 
+func (s *BasicAuthConfigTestSuite) TestRevokedSerialsParsed() {
+	cfg, err := LoadConfigFromString(`
+server:
+  tls:
+    client_ca_file: /etc/ca.pem
+auth:
+  type: mtls
+  revoked_serials: ["ab:cd", "0xEF01"]
+  users:
+    - username: alice
+      volumes: [photos]
+volumes:
+  - name: photos
+    path: /tmp
+`)
+	s.Require().NoError(err)
+	bac, ok := cfg.Auth.(*BasicAuthConfig)
+	s.Require().True(ok)
+	s.Equal([]string{"ab:cd", "0xEF01"}, bac.RevokedSerials)
+}
+
 func TestBasicAuthConfigTestSuite(t *testing.T) {
 	suite.Run(t, new(BasicAuthConfigTestSuite))
 }
