@@ -33,21 +33,29 @@ func newBackendReadStreamStub(t *testing.T, frames ...*proto.ReadFrame) *mockPro
 	return stub
 }
 
-// newBackendReadStreamStubOptional is like newBackendReadStreamStub but each
-// frame is optional (at-most-once, in order) rather than required. Use it for
-// streams handed to ASYNC prefetch goroutines: the test asserts how many Read
-// RPCs were issued (a counter), not that every prefetch goroutine fully drains
-// its stream before the test returns. A goroutine still mid-drain at test end
-// would otherwise leave a strict .Once() Recv expectation unmet and fail
-// AssertExpectations at cleanup — the source of a recurring -race flake in
-// TestReadFillsPrefetchWindow. Times(1) preserves ordered sequential frames
-// (data → ok → EOF) and caps each at one call; Maybe() makes them not-required.
+// newBackendReadStreamStubOptional is like newBackendReadStreamStub but the
+// stream need not be fully drained. Use it for streams handed to ASYNC prefetch
+// goroutines: the test asserts how many Read RPCs were issued (a counter), not
+// that every prefetch goroutine drains its stream before the test returns.
+//
+// It uses a single Recv() expectation whose RunAndReturn walks the frames in
+// order (data → ok → …) and returns EOF thereafter, gated by Maybe() so any
+// number of calls — including zero — satisfies AssertExpectations. The earlier
+// per-frame `.Times(1).Maybe()` form did NOT achieve this: `.Times(1)` sets a
+// Repeatability that cleanup checks independently of `.Maybe()`, so a prefetch
+// goroutine abandoned mid-drain left an unmet count and failed AssertExpectations
+// — the recurring flake in TestReadFillsPrefetchWindow (seen on both the test
+// and test-race jobs).
 func newBackendReadStreamStubOptional(t *testing.T, frames ...*proto.ReadFrame) *mockProto.MockRpcFile_ReadClient {
 	stub := mockProto.NewMockRpcFile_ReadClient(t)
-	for _, f := range frames {
-		stub.EXPECT().Recv().Return(f, nil).Times(1).Maybe()
-	}
-	stub.EXPECT().Recv().Return(nil, stdio.EOF).Maybe()
+	var idx atomic.Int64
+	stub.EXPECT().Recv().RunAndReturn(func() (*proto.ReadFrame, error) {
+		i := int(idx.Add(1) - 1)
+		if i < len(frames) {
+			return frames[i], nil
+		}
+		return nil, stdio.EOF
+	}).Maybe()
 	return stub
 }
 
