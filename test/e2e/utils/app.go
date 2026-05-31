@@ -4,6 +4,11 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"net"
+	"os"
+	"path/filepath"
+	"time"
+
 	"go.gmountie.dev/gmountie/pkg/client"
 	clientConfig "go.gmountie.dev/gmountie/pkg/client/config"
 	grpcClient "go.gmountie.dev/gmountie/pkg/client/grpc"
@@ -13,10 +18,6 @@ import (
 	"go.gmountie.dev/gmountie/pkg/server"
 	"go.gmountie.dev/gmountie/pkg/server/config"
 	grpcServer "go.gmountie.dev/gmountie/pkg/server/grpc"
-	"net"
-	"os"
-	"path/filepath"
-	"time"
 
 	"github.com/pkg/errors"
 	"github.com/thanhpk/randstr"
@@ -561,7 +562,7 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 		return nil, err
 	}
 	appCtx.client = c
-	appCtx.clientCtx = client.NewAppContext(c, "", appCtx.fuseCfg, appCtx.cacheCfg)
+	appCtx.clientCtx = client.NewAppContext(c, appCtx.fuseCfg, appCtx.cacheCfg)
 	return appCtx, nil
 }
 
@@ -751,7 +752,7 @@ func (c *AppTestingContext) NewSiblingClient(cacheCfg *clientConfig.CacheConfig)
 		_ = siblingClient.Close()
 		return nil, errors.Wrap(err, "sibling client session handshake failed")
 	}
-	return client.NewAppContext(siblingClient, "", c.fuseCfg, cacheCfg), nil
+	return client.NewAppContext(siblingClient, c.fuseCfg, cacheCfg), nil
 }
 
 // NewClientAs builds a raw gRPC client that authenticates as the named
@@ -763,9 +764,7 @@ func (c *AppTestingContext) NewClientAs(username, password string) (grpcClient.C
 	// the TLS dial option appended after options apply) and replace auth.
 	// Build a fresh option slice: no auth yet, then add this principal's basic-auth.
 	opts := make([]grpcClient.ClientOption, 0, len(c.userClientOptions)+2)
-	for _, o := range c.userClientOptions {
-		opts = append(opts, o)
-	}
+	opts = append(opts, c.userClientOptions...)
 	opts = append(opts, grpcClient.WithBasicAuth(username, password))
 	// Wire the transport dialer (bufconn or TCP).
 	if c.listener != nil {
@@ -887,7 +886,7 @@ func (c *AppTestingContext) StartServer() error {
 		return errors.New("StartServer is only supported with WithTCPTransport (bufconn cannot rebind)")
 	}
 	addr := c.tcpListener.Addr().String()
-	lis, err := net.Listen("tcp", addr)
+	lis, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", addr)
 	if err != nil {
 		return errors.Wrap(err, "StartServer: rebind TCP listener")
 	}
