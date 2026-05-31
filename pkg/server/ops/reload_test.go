@@ -134,12 +134,12 @@ func (s *ReloadSuite) TestReloadReapsByACLRevocationKeepsRetained() {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/ops/acl/reload", nil))
 
 	s.Equal(http.StatusOK, rec.Code)
-	s.Equal(1, reapedCount(s, rec))         // exactly one reaped
-	s.False(rs.IsBlocked("alicecert"))      // reaped by ACL, not by serial block
+	s.Equal(1, reapedCount(s, rec))    // exactly one reaped
+	s.False(rs.IsBlocked("alicecert")) // reaped by ACL, not by serial block
 	_, errAlice := sm.Get(aliceID)
-	s.Require().Error(errAlice)             // alice reaped (no accessible volume)
+	s.Require().Error(errAlice) // alice reaped (no accessible volume)
 	_, errBob := sm.Get(bobID)
-	s.Require().NoError(errBob)             // bob retained access → not reaped
+	s.Require().NoError(errBob) // bob retained access → not reaped
 }
 
 func (s *ReloadSuite) TestReloadBadConfigKeepsState() {
