@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/pprof"
 
+	"go.gmountie.dev/gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/server/service"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -27,12 +29,24 @@ type Server struct {
 // path. The underlying *http.Server is built synchronously here so Stop
 // always has a non-nil target regardless of goroutine scheduling between
 // Start and Stop.
-func NewServer(addr string, readiness ReadinessChecker, enablePprof bool, auth *BasicAuth) *Server {
+func NewServer(
+	addr string,
+	readiness ReadinessChecker,
+	enablePprof bool,
+	auth *BasicAuth,
+	reloadCfg *config.Config,
+	vs service.VolumeService,
+	sm service.SessionManager,
+	rs *service.RevocationStore,
+) *Server {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.Handle("/healthz", LivenessHandler())
 	mux.Handle("/readyz", ReadinessHandler(readiness))
 	mux.Handle("/version", VersionHandler())
+	if reloadCfg != nil && vs != nil && sm != nil && rs != nil {
+		mux.Handle("/ops/acl/reload", ReloadHandler(reloadCfg, vs, sm, rs))
+	}
 	if enablePprof {
 		// net/http/pprof registers on DefaultServeMux on import; we use a
 		// private mux, so attach the handlers explicitly. Order matters

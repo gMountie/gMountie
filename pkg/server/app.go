@@ -199,6 +199,10 @@ func Start(ctx context.Context, cfg *config.Config) error {
 		readiness,
 		cfg.Server.Pprof,
 		ops.NewBasicAuth(cfg.Server.Ops.Auth.Users),
+		cfg,
+		appCtx.VolumeService,
+		appCtx.SessionManager,
+		service.NewRevocationStore(), // temporary; a later task swaps in appCtx.Revocation
 	)
 	go opsServer.Start()
 
