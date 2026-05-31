@@ -75,6 +75,10 @@ type BasicAuthConfig struct {
 	// DefaultAllow controls access for principals that have no explicit volumes
 	// list. nil (unset) is treated as true for backwards compatibility.
 	DefaultAllow *bool `mapstructure:"default_allow"`
+	// RevokedSerials is the cert-serial blocklist (any hex format; normalized
+	// at load). Read at startup and on /ops/acl/reload — durable across restart,
+	// so revocation is fail-closed. Empty for basic-auth deployments.
+	RevokedSerials []string `mapstructure:"revoked_serials"`
 }
 
 // DefaultAllowOrTrue returns the effective default_allow value.
