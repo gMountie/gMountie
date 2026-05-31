@@ -204,8 +204,47 @@ func (s *VerifyTestSuite) TestNoClientCertByDefault() {
 	s.Empty(cfg.Certificates)
 }
 
-// TestClientCertRequiresBothPaths — supplying only CertFile (no KeyFile) must
-// return an error that mentions "both cert_file and key_file".
+// TestClientCertPresentedFromInlinePEM — inline CertPEM/KeyPEM (no files, as a
+// container would inject via env) presents the client cert.
+func (s *VerifyTestSuite) TestClientCertPresentedFromInlinePEM() {
+	certPEM, keyPEM, err := servertls.Generate("client.example")
+	s.Require().NoError(err)
+
+	cfg, err := BuildConfig(Config{
+		Mode: ModeInsecure, Endpoint: "x:1",
+		CertPEM: string(certPEM), KeyPEM: string(keyPEM),
+	})
+	s.Require().NoError(err)
+	s.Len(cfg.Certificates, 1, "expected exactly one client certificate from inline PEM")
+}
+
+// TestCAFromInlinePEM — inline CAPEM (verify mode) populates RootCAs.
+func (s *VerifyTestSuite) TestCAFromInlinePEM() {
+	caPEM, _, err := servertls.Generate("ca.example")
+	s.Require().NoError(err)
+
+	cfg, err := BuildConfig(Config{Mode: ModeVerify, Endpoint: "x:1", CAPEM: string(caPEM)})
+	s.Require().NoError(err)
+	s.NotNil(cfg.RootCAs, "expected RootCAs populated from inline CA PEM")
+}
+
+// TestPEMAndFileMutuallyExclusive — supplying both inline PEM and a file path
+// for the same item is an ambiguous config and must error.
+func (s *VerifyTestSuite) TestPEMAndFileMutuallyExclusive() {
+	certPEM, keyPEM, err := servertls.Generate("client.example")
+	s.Require().NoError(err)
+	certPath, keyPath := writeTempKeypair(s.T(), certPEM, keyPEM)
+
+	_, err = BuildConfig(Config{
+		Mode: ModeInsecure, Endpoint: "x:1",
+		CertFile: certPath, CertPEM: string(certPEM), KeyFile: keyPath,
+	})
+	s.Require().Error(err)
+	s.Contains(err.Error(), "cert")
+}
+
+// TestClientCertRequiresBothPaths — supplying only the cert (no key) must
+// return an error that mentions both a client cert and key are required.
 func (s *VerifyTestSuite) TestClientCertRequiresBothPaths() {
 	certPEM, _, err := servertls.Generate("client.example")
 	s.Require().NoError(err)
@@ -216,7 +255,7 @@ func (s *VerifyTestSuite) TestClientCertRequiresBothPaths() {
 
 	cfg, err := BuildConfig(Config{Mode: ModeInsecure, Endpoint: "x:1", CertFile: certPath})
 	s.Require().Error(err)
-	s.Contains(err.Error(), "both cert_file and key_file")
+	s.Contains(err.Error(), "both a client cert and key")
 	s.Nil(cfg)
 }
 
