@@ -34,6 +34,34 @@ type Config struct {
 	KnownHostsPath      string // overridable; default $XDG_STATE_HOME/gmountie/known_hosts
 	CertFile            string // client cert for mTLS; both CertFile and KeyFile required together, or neither
 	KeyFile             string // client key for mTLS; both CertFile and KeyFile required together, or neither
+
+	// Inline PEM alternatives to the *File paths above, for container-native
+	// credential injection (env var / mounted Secret). When set, the inline PEM
+	// replaces reading the corresponding file; supplying both the inline PEM and
+	// the file path for the same item is an error.
+	CAPEM   string
+	CertPEM string
+	KeyPEM  string
+}
+
+// resolvePEM returns the PEM bytes for an item that may be supplied inline or as
+// a file path. Inline wins; supplying both is an ambiguous config and errors.
+// Returns (nil, nil) when neither is set.
+func resolvePEM(name, inline, file string) ([]byte, error) {
+	if inline != "" && file != "" {
+		return nil, fmt.Errorf("client TLS %s: set either the inline PEM or the file path, not both", name)
+	}
+	if inline != "" {
+		return []byte(inline), nil
+	}
+	if file != "" {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("read %s file %q: %w", name, file, err)
+		}
+		return b, nil
+	}
+	return nil, nil
 }
 
 // BuildConfig returns a *tls.Config wired with the right verification policy
@@ -54,14 +82,14 @@ func BuildConfig(cfg Config) (*tls.Config, error) {
 	}
 	switch mode {
 	case ModeVerify:
-		if cfg.CAFile != "" {
+		ca, err := resolvePEM("ca", cfg.CAPEM, cfg.CAFile)
+		if err != nil {
+			return nil, err
+		}
+		if ca != nil {
 			pool := x509.NewCertPool()
-			ca, err := os.ReadFile(cfg.CAFile)
-			if err != nil {
-				return nil, fmt.Errorf("read ca_file %q: %w", cfg.CAFile, err)
-			}
 			if !pool.AppendCertsFromPEM(ca) {
-				return nil, fmt.Errorf("no certs found in ca_file %q", cfg.CAFile)
+				return nil, fmt.Errorf("no certs found in client TLS CA PEM")
 			}
 			out.RootCAs = pool
 		}
@@ -87,13 +115,21 @@ func BuildConfig(cfg Config) (*tls.Config, error) {
 		return nil, fmt.Errorf("unknown tls.verify mode %q", mode)
 	}
 
-	// mTLS: present a client certificate when configured. Both paths required
-	// together — one without the other is a config error.
-	if (cfg.CertFile == "") != (cfg.KeyFile == "") {
-		return nil, fmt.Errorf("client mTLS requires both cert_file and key_file (got cert_file=%q key_file=%q)", cfg.CertFile, cfg.KeyFile)
+	// mTLS: present a client certificate when configured. Cert and key may each
+	// come from an inline PEM or a file; both must be present together.
+	certPEM, err := resolvePEM("cert", cfg.CertPEM, cfg.CertFile)
+	if err != nil {
+		return nil, err
 	}
-	if cfg.CertFile != "" {
-		cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+	keyPEM, err := resolvePEM("key", cfg.KeyPEM, cfg.KeyFile)
+	if err != nil {
+		return nil, err
+	}
+	if (certPEM == nil) != (keyPEM == nil) {
+		return nil, fmt.Errorf("client mTLS requires both a client cert and key (cert set: %t, key set: %t)", certPEM != nil, keyPEM != nil)
+	}
+	if certPEM != nil {
+		cert, err := tls.X509KeyPair(certPEM, keyPEM)
 		if err != nil {
 			return nil, fmt.Errorf("load client cert/key: %w", err)
 		}
