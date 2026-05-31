@@ -156,6 +156,26 @@ func VerifiedCertPrincipal(ctx context.Context) (principal string, present bool)
 	return principalFromVerifiedChains(ti.State.VerifiedChains), true
 }
 
+// VerifiedCertSerial returns the canonical SerialKey of the verified client
+// cert's leaf and true when a verified client certificate is present. Mirrors
+// VerifiedCertPrincipal: basic-auth connections (empty VerifiedChains) return
+// ("", false). The session records this key so the reaper can match a blocked
+// serial out of band; the handshake hook and interceptor compute it live.
+func VerifiedCertSerial(ctx context.Context) (serialKey string, present bool) {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return "", false
+	}
+	ti, ok := p.AuthInfo.(credentials.TLSInfo)
+	if !ok {
+		return "", false
+	}
+	if len(ti.State.VerifiedChains) == 0 || len(ti.State.VerifiedChains[0]) == 0 {
+		return "", false
+	}
+	return SerialKey(ti.State.VerifiedChains[0][0].SerialNumber), true
+}
+
 // principalFromVerifiedChains returns the leaf cert's CN, or its first DNS SAN
 // when CN is empty. Empty string when there is no verified leaf.
 func principalFromVerifiedChains(chains [][]*x509.Certificate) string {
