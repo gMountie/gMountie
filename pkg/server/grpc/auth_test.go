@@ -122,7 +122,7 @@ func (s *AuthInterceptorTestSuite) TestFailClosed_NoSessionID_BadCreds_Denied() 
 // bypasses argon2 even when basic-auth creds are garbage.
 func (s *AuthInterceptorTestSuite) TestValidSessionID_GarbageCreds_Allowed() {
 	// Seed a session for "alice".
-	id, err := s.sessions.Create("alice")
+	id, err := s.sessions.Create("alice", "")
 	s.Require().NoError(err)
 
 	callsBefore := s.authSvc.calls
@@ -148,7 +148,7 @@ func (s *AuthInterceptorTestSuite) TestValidSessionID_GarbageCreds_Allowed() {
 // the session was seeded directly — no Create RPC in this unit test).
 func (s *AuthInterceptorTestSuite) TestArgon2OncePer50Calls() {
 	// Seed the session directly (simulating the effect of a successful Create).
-	id, err := s.sessions.Create("alice")
+	id, err := s.sessions.Create("alice", "")
 	s.Require().NoError(err)
 
 	callsBefore := s.authSvc.calls
@@ -166,7 +166,7 @@ func (s *AuthInterceptorTestSuite) TestArgon2OncePer50Calls() {
 // TestCreateBindsPrincipal verifies that after a Create authorized as "alice",
 // the created session's Principal() == "alice".
 func (s *AuthInterceptorTestSuite) TestCreateBindsPrincipal() {
-	id, err := s.sessions.Create("alice")
+	id, err := s.sessions.Create("alice", "")
 	s.Require().NoError(err)
 
 	sess, err := s.sessions.Get(id)
@@ -178,7 +178,7 @@ func (s *AuthInterceptorTestSuite) TestCreateBindsPrincipal() {
 // Authorize regardless of any session_id in metadata.
 func (s *AuthInterceptorTestSuite) TestResumeRunsFullAuth() {
 	// Seed a session so the session_id is valid.
-	id, err := s.sessions.Create("alice")
+	id, err := s.sessions.Create("alice", "")
 	s.Require().NoError(err)
 
 	callsBefore := s.authSvc.calls
@@ -201,7 +201,7 @@ func (s *AuthInterceptorTestSuite) TestResumeRunsFullAuth() {
 // Authorize regardless of any session_id in metadata.
 func (s *AuthInterceptorTestSuite) TestCreateRunsFullAuth() {
 	// Even if someone passes a valid session_id with Create, full auth runs.
-	id, err := s.sessions.Create("alice")
+	id, err := s.sessions.Create("alice", "")
 	s.Require().NoError(err)
 
 	callsBefore := s.authSvc.calls
@@ -235,7 +235,7 @@ func (s *AuthInterceptorTestSuite) TestNoSessionIDValidCreds_Allowed() {
 // TestUnaryInterceptor_UsesReturnedCtx verifies the unary interceptor passes
 // the enriched context to the handler.
 func (s *AuthInterceptorTestSuite) TestUnaryInterceptor_UsesReturnedCtx() {
-	id, err := s.sessions.Create("alice")
+	id, err := s.sessions.Create("alice", "")
 	s.Require().NoError(err)
 
 	interceptor := s.interceptor.Unary()
@@ -257,7 +257,7 @@ func (s *AuthInterceptorTestSuite) TestUnaryInterceptor_UsesReturnedCtx() {
 // TestStreamInterceptor_Authorizes verifies the stream interceptor authorizes
 // correctly (does not panic, returns no error for valid session).
 func (s *AuthInterceptorTestSuite) TestStreamInterceptor_Authorizes() {
-	id, err := s.sessions.Create("alice")
+	id, err := s.sessions.Create("alice", "")
 	s.Require().NoError(err)
 
 	interceptor := s.interceptor.Stream()

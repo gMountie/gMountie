@@ -28,6 +28,9 @@ type Session interface {
 	// Principal returns the authenticated principal that created this session.
 	// Set once at Create time; never mutated.
 	Principal() string
+	// Serial returns the canonical cert SerialKey bound at Create (empty for
+	// basic-auth). Used by the reaper to match a blocked serial out of band.
+	Serial() string
 	RegisterFile(path string, file nodefs.File) uint64
 	GetFile(fd uint64) (*FileEntry, bool)
 	ReleaseFile(fd uint64)
@@ -43,11 +46,9 @@ type Session interface {
 
 // SessionManager is the per-server registry of sessions.
 type SessionManager interface {
-	// Create creates a new session for the given principal and returns the
-	// session id. The principal is immutably bound to the session for its
-	// lifetime so later RPCs can authorize by session_id without re-running
-	// argon2.
-	Create(principal string) (string, error)
+	// Create creates a new session bound to principal and the canonical cert
+	// SerialKey (empty for basic-auth), returning the session id.
+	Create(principal, serial string) (string, error)
 	Get(id string) (Session, error)
 	// Resume cancels a pending reap timer for the given session if there is
 	// one. Returns (true, nil) if the session existed and was reattached;
@@ -57,6 +58,11 @@ type SessionManager interface {
 	// session. Idempotent: calling twice without a Resume in between is a
 	// no-op.
 	MarkDisconnected(id string)
+	// ReapIf releases all fds of, and removes, every session for which pred
+	// returns true; returns the count reaped. Called by the ops reload path to
+	// evict revoked principals/serials without a restart. pred receives the
+	// session's principal and cert SerialKey.
+	ReapIf(pred func(principal, serial string) bool) int
 	// Stop cancels any in-flight grace timers and forcibly releases all fds.
 	// Called on server shutdown.
 	Stop(ctx context.Context) error
@@ -91,6 +97,7 @@ const DefaultIdempotencyCacheSize = 256
 type sessionImpl struct {
 	id        string
 	principal string // set once at Create; never mutated
+	serial    string // canonical cert SerialKey; "" for basic-auth
 	fdNum     atomic.Uint64
 	files     *xsync.MapOf[uint64, *FileEntry]
 	replies   *lru.Cache[string, any]
@@ -99,6 +106,7 @@ type sessionImpl struct {
 
 func (s *sessionImpl) ID() string        { return s.id }
 func (s *sessionImpl) Principal() string { return s.principal }
+func (s *sessionImpl) Serial() string    { return s.serial }
 
 func (s *sessionImpl) RegisterFile(path string, file nodefs.File) uint64 {
 	fd := s.fdNum.Add(1)
@@ -176,7 +184,7 @@ func NewSessionManager(opts SessionManagerOptions) SessionManager {
 	}
 }
 
-func (m *sessionManagerImpl) Create(principal string) (string, error) {
+func (m *sessionManagerImpl) Create(principal, serial string) (string, error) {
 	id := uuid.NewString()
 	replies, err := lru.New[string, any](DefaultIdempotencyCacheSize)
 	if err != nil {
@@ -185,6 +193,7 @@ func (m *sessionManagerImpl) Create(principal string) (string, error) {
 	sess := &sessionImpl{
 		id:        id,
 		principal: principal,
+		serial:    serial,
 		files:     xsync.NewMapOf[uint64, *FileEntry](),
 		replies:   replies,
 	}
@@ -237,12 +246,39 @@ func (m *sessionManagerImpl) MarkDisconnected(id string) {
 			if _, ok := m.reapers.LoadAndDelete(sess.id); !ok {
 				return
 			}
+			// The sessions LoadAndDelete is the single authoritative release
+			// token: only the winner releases the fds. Without this guard a
+			// concurrent ReapIf (which also claims via sessions) could
+			// double-ReleaseAll the same session and double-close its fds.
 			if _, ok := m.sessions.LoadAndDelete(sess.id); ok {
 				m.metrics.SessionsActiveDec()
+				sess.ReleaseAll()
 			}
-			sess.ReleaseAll()
 		}
 	}()
+}
+
+func (m *sessionManagerImpl) ReapIf(pred func(principal, serial string) bool) int {
+	reaped := 0
+	m.sessions.Range(func(id string, sess *sessionImpl) bool {
+		if !pred(sess.principal, sess.serial) {
+			return true
+		}
+		if _, ok := m.sessions.LoadAndDelete(id); ok {
+			// Cancel any pending grace-reaper for this session so its goroutine
+			// doesn't linger (up to GracePeriod) holding the WaitGroup and
+			// delaying Stop. Safe: the grace goroutine no-ops once we've won the
+			// sessions claim above.
+			if r, had := m.reapers.LoadAndDelete(id); had {
+				r.cancel()
+			}
+			m.metrics.SessionsActiveDec()
+			sess.ReleaseAll()
+			reaped++
+		}
+		return true
+	})
+	return reaped
 }
 
 func (m *sessionManagerImpl) Stop(ctx context.Context) error {

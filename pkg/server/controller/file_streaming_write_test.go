@@ -110,7 +110,7 @@ type StreamingWriteSuite struct {
 func (s *StreamingWriteSuite) SetupTest() {
 	s.fsService = new(mockservice.MockVolumeService)
 	s.sessionMgr = service.NewSessionManager(service.SessionManagerOptions{})
-	sid, err := s.sessionMgr.Create("test-user")
+	sid, err := s.sessionMgr.Create("test-user", "")
 	s.Require().NoError(err)
 	s.sessionID = sid
 	s.bus = serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
