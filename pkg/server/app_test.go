@@ -2,13 +2,16 @@ package server
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
+	"math/big"
 	"net"
 	"testing"
 	"time"
 
 	"go.gmountie.dev/gmountie/pkg/common/passhash"
 	"go.gmountie.dev/gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/server/service"
 
 	"github.com/stretchr/testify/suite"
 )
@@ -83,6 +86,20 @@ func (s *ServerAppTestSuite) TestStart_ContextCancellationShutsDownGracefully() 
 	case <-time.After(5 * time.Second):
 		s.T().Fatal("Start did not return within 5s of context cancel")
 	}
+}
+
+// TestRejectIfRevoked verifies the TLS handshake hook helper:
+//   - blocked leaf serial → error
+//   - unblocked leaf serial → nil
+//   - nil verifiedChains → nil (no client cert present)
+func (s *ServerAppTestSuite) TestRejectIfRevoked() {
+	rs := service.NewRevocationStore()
+	rs.Set([]string{"dead"})
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(0xdead)}
+	ok := &x509.Certificate{SerialNumber: big.NewInt(0x1234)}
+	s.Require().Error(rejectIfRevoked(rs, [][]*x509.Certificate{{leaf}}))
+	s.Require().NoError(rejectIfRevoked(rs, [][]*x509.Certificate{{ok}}))
+	s.Require().NoError(rejectIfRevoked(rs, nil))
 }
 
 func TestServerAppTestSuite(t *testing.T) {
