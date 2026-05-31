@@ -79,8 +79,6 @@ One-line definitions. Cross-linked into the rest of the docs — when you hit an
 
 **Mountpoint** — The local directory where `gmountie mount` attaches a volume. Must be an empty directory.
 
-**Multi-volume / VFS mount** — Client mode that puts each remote volume under one parent path (`/mnt/gmountie/<volume>`), instead of one separate mount per volume. See [Recipes — Multi-volume VFS](./recipes/multi-volume-vfs.md).
-
 ## N
 
 **NSS** — Name Service Switch. The server's user/group database (`/etc/passwd`, `/etc/group`, optionally LDAP/SSSD). The `system` mapping mode resolves principals against it.
@@ -134,8 +132,6 @@ One-line definitions. Cross-linked into the rest of the docs — when you hit an
 **TTL** — Time-to-live for cache entries (`cache.attr_ttl`, `cache.dir_ttl`, `cache.negative_ttl`).
 
 ## V
-
-**VFS mount** — See [Multi-volume / VFS mount](#m).
 
 **Volume** — A named directory the server exposes (e.g., `shared: /srv/shared`). Every RPC is volume-scoped — the client tells the server which volume it's asking about; the server has no implicit "current volume" state.
 
