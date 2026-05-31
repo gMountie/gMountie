@@ -19,6 +19,10 @@ The work that will ship in the next `v0.3.0-alpha.x` cut. Tracks `develop`.
 
 Operators who explicitly set any of these in `~/.config/gmountie/client.yaml` need to update:
 
+- **`mount.type: vfs` removed.** The VFS multi-volume mounter and `VFSMountConfig` have been extracted to a separate future desktop repo. Only `type: single` is valid. Any config with `type: vfs` will get "invalid mount type: vfs" at startup — change to `type: single` with an explicit `volume:` field.
+- **`NewAppContext` signature changed (library users).** The `multiMountPath string` positional argument has been removed. Callers must drop that argument.
+- **`github.com/wailsapp/wails/v3` and `github.com/samber/slog-zap/v2` removed from `go.mod`.** Any downstream code that imported these transitively through this module must now take them directly.
+
 - **`cache.max_size_bytes` removed.** Replaced by two independent caps: `cache.memory_max_bytes` (256 MiB default) and `cache.disk_max_bytes` (10 GiB default). Sub-spec C made the cache a two-tier memory + disk structure with separate budgets — one cap can no longer express both.
 - **`cache.enabled` default flipped to `true`.** Anyone running `gmountie mount` with no cache config now gets the cache turned on. To opt out: set `cache.enabled: false` explicitly. Cache directory defaults to `$XDG_CACHE_HOME/gmountie`.
 - **`cache.attr_ttl` / `cache.dir_ttl` / `cache.negative_ttl` defaults relaxed.** Previously 5 s / 5 s / 2 s when TTL was the only freshness signal; now 5 min / 5 min / 30 s with Subscribe push handling fast invalidation. Zero on any TTL disables that tier for operators who fully trust Subscribe.
