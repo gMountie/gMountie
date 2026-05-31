@@ -79,6 +79,9 @@ func newUnconnectedClient(cfg *config.Config, endpoint string) (Client, error) {
 		KnownHostsPath:      cfg.Server.TLS.KnownHostsPath,
 		CertFile:            cfg.Server.TLS.CertFile,
 		KeyFile:             cfg.Server.TLS.KeyFile,
+		CAPEM:               cfg.Server.TLS.CAPEM,
+		CertPEM:             cfg.Server.TLS.CertPEM,
+		KeyPEM:              cfg.Server.TLS.KeyPEM,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "build client TLS config")
