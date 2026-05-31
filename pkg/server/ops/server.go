@@ -106,7 +106,8 @@ func (s *Server) tlsConfig() *tls.Config { return s.tls }
 
 // NewServerWithTLS builds a minimal ops Server with TLS applied. When
 // tlsCfg is empty (CertFile/KeyFile both unset) the server is plain HTTP.
-// This is the constructor used by tests and by app.go's ApplyTLS call path.
+// Used by tests; the production path is NewServer(...) followed by ApplyTLS in
+// app.go.
 func NewServerWithTLS(addr string, tlsCfg config.OpsTLSConfig) (*Server, error) {
 	s := &Server{server: &http.Server{Addr: addr, Handler: http.NewServeMux()}}
 	if err := s.ApplyTLS(tlsCfg); err != nil {

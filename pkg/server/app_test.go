@@ -102,6 +102,29 @@ func (s *ServerAppTestSuite) TestRejectIfRevoked() {
 	s.Require().NoError(rejectIfRevoked(rs, nil))
 }
 
+// TestNewOpsServer_WiresTLS guards the operator-mTLS wiring: ApplyTLS must run
+// as part of building the ops server, so a dropped call cannot silently serve
+// the mutating /ops/acl/reload endpoint as plaintext. A no-TLS config builds
+// fine; a TLS config pointing at missing key material fails the build (and thus
+// startup) — which only happens if ApplyTLS is actually invoked.
+func (s *ServerAppTestSuite) TestNewOpsServer_WiresTLS() {
+	base := func(tls config.OpsTLSConfig) *config.Config {
+		return &config.Config{Server: &config.ServerConfig{Ops: config.OpsConfig{
+			Addr: "127.0.0.1:0",
+			TLS:  tls,
+		}}}
+	}
+
+	_, err := newOpsServer(base(config.OpsTLSConfig{}), &AppContext{})
+	s.Require().NoError(err) // plain HTTP ops server builds fine
+
+	_, err = newOpsServer(base(config.OpsTLSConfig{
+		CertFile: "/nonexistent/ops.crt",
+		KeyFile:  "/nonexistent/ops.key",
+	}), &AppContext{})
+	s.Require().Error(err) // ApplyTLS is wired: a missing keypair fails the build
+}
+
 func TestServerAppTestSuite(t *testing.T) {
 	suite.Run(t, new(ServerAppTestSuite))
 }
