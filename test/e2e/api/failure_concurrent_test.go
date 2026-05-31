@@ -15,6 +15,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -117,7 +118,7 @@ func readFileContent(ctx context.Context, cli grpcClient.Client, volumeName, pat
 	var buf bytes.Buffer
 	for {
 		frame, err := stream.Recv()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

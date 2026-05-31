@@ -2,9 +2,10 @@ package api
 
 import (
 	"context"
+	"testing"
+
 	"go.gmountie.dev/gmountie/pkg/server/principal"
 	"go.gmountie.dev/gmountie/test/e2e/utils"
-	"testing"
 
 	"github.com/stretchr/testify/suite"
 )

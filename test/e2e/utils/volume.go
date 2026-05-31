@@ -1,10 +1,11 @@
 package utils
 
 import (
-	"go.gmountie.dev/gmountie/pkg/utils/log"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"go.uber.org/zap"
 )

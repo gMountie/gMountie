@@ -221,7 +221,7 @@ func (s *ReconnectOpenFDSuite) TestOpenFDSurvivesConnectionDrop() {
 
 	// --- Verify content integrity ---
 	full := append(chunk0, rest...)
-	s.Require().Equal(seedSize, len(full),
+	s.Require().Len(full, seedSize,
 		"total bytes read must equal the seeded file size")
 	gotSHA := sha256.Sum256(full)
 	s.Require().True(bytes.Equal(wantSHA, gotSHA[:]),

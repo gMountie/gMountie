@@ -5,13 +5,14 @@ import (
 	"context"
 	"embed"
 	"errors"
-	"go.gmountie.dev/gmountie/test/e2e/utils"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"go.gmountie.dev/gmountie/test/e2e/utils"
 
 	"github.com/stretchr/testify/suite"
 )

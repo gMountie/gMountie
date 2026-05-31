@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"context"
 	"io"
 	"net"
 	"sync"
@@ -34,7 +35,7 @@ type TCPProxy struct {
 // traffic to upstream (host:port). The proxy begins accepting connections
 // immediately; call Addr to learn the listen address.
 func NewTCPProxy(upstream string) (*TCPProxy, error) {
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	lis, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, errors.Wrap(err, "TCPProxy: listen")
 	}
@@ -121,7 +122,7 @@ func (p *TCPProxy) acceptLoop() {
 			continue
 		}
 
-		up, err := net.Dial("tcp", p.upstream)
+		up, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", p.upstream)
 		if err != nil {
 			_ = client.Close()
 			continue

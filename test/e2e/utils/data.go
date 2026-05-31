@@ -1,10 +1,11 @@
 package utils
 
 import (
-	"go.gmountie.dev/gmountie/pkg/utils/log"
 	"math/rand"
 	"os"
 	"path"
+
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/thanhpk/randstr"
 	"go.uber.org/zap"

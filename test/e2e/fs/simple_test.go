@@ -1,11 +1,12 @@
 package fs
 
 import (
-	"go.gmountie.dev/gmountie/test/e2e/utils"
 	"os"
 	"path/filepath"
 	"testing"
 	"testing/fstest"
+
+	"go.gmountie.dev/gmountie/test/e2e/utils"
 
 	"github.com/stretchr/testify/suite"
 )
