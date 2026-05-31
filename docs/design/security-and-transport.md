@@ -270,6 +270,15 @@ revocation reaps only the revoked ones).
   mtls` turns the ops listener into `RequireAndVerifyClientCert`. The reload
   endpoint mutates authorization, so production uses operator mTLS.
 
+**Operational footgun — revoke-by-deletion under `default_allow: true`.**
+Deleting a principal from `users[]` is **not** revocation when `default_allow`
+is `true` (the compat default): the principal falls through to "allowed", so the
+reaper keeps the session and the cert still authenticates. To actually revoke a
+**user**, set their `volumes: []`, or run `default_allow: false`. To revoke a
+**device**, add its serial to `revoked_serials` (always effective regardless of
+`default_allow`). The reload handler logs a warning when `default_allow: true`
+so an operator isn't misled.
+
 **Known gap (accepted):** `SessionService.Create` does not itself check the ACL
 — a revoked-but-cert-holding caller can obtain a new session id but is denied at
 the first file op, and rejected at the handshake once its serial is blocked.

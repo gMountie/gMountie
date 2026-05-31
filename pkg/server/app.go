@@ -123,6 +123,28 @@ func firstVolumePath(cfg *config.Config) string {
 	return cfg.Volumes[0].Path
 }
 
+// newOpsServer builds the ops HTTP server and applies operator mTLS when
+// configured. ApplyTLS is part of construction here so a future change cannot
+// drop it and silently serve the mutating /ops/acl/reload endpoint as plaintext
+// — a missing/invalid keypair fails the build (and thus startup) instead.
+func newOpsServer(cfg *config.Config, appCtx *AppContext) (*ops.Server, error) {
+	readiness := ops.PathReadinessChecker{Path: firstVolumePath(cfg)}
+	srv := ops.NewServer(
+		cfg.Server.Ops.Addr,
+		readiness,
+		cfg.Server.Pprof,
+		ops.NewBasicAuth(cfg.Server.Ops.Auth.Users),
+		cfg,
+		appCtx.VolumeService,
+		appCtx.SessionManager,
+		appCtx.Revocation,
+	)
+	if err := srv.ApplyTLS(cfg.Server.Ops.TLS); err != nil {
+		return nil, errors.Wrap(err, "configure ops TLS")
+	}
+	return srv, nil
+}
+
 // Start runs the server until ctx is cancelled. On cancellation it triggers a
 // graceful shutdown bounded by shutdownDeadline; if that doesn't complete in
 // time it forces a stop. Returns the first non-nil error among serve errors
@@ -226,18 +248,12 @@ func Start(ctx context.Context, cfg *config.Config) error {
 		return errors.Wrap(err, "ops config")
 	}
 
-	// Build the ops HTTP server (/metrics, /healthz, /readyz, /version).
-	readiness := ops.PathReadinessChecker{Path: firstVolumePath(cfg)}
-	opsServer := ops.NewServer(
-		cfg.Server.Ops.Addr,
-		readiness,
-		cfg.Server.Pprof,
-		ops.NewBasicAuth(cfg.Server.Ops.Auth.Users),
-		cfg,
-		appCtx.VolumeService,
-		appCtx.SessionManager,
-		appCtx.Revocation,
-	)
+	// Build the ops HTTP server (/metrics, /healthz, /readyz, /version,
+	// /ops/acl/reload) with operator mTLS applied when configured.
+	opsServer, err := newOpsServer(cfg, appCtx)
+	if err != nil {
+		return errors.Wrap(err, "build ops server")
+	}
 	go opsServer.Start()
 
 	serveErr := make(chan error, 1)
