@@ -31,11 +31,11 @@ This is a roadmap, not an implementation plan. Each phase below is scoped tightl
 
 This roadmap deliberately does not target "production-ready" in the strict sense. It targets **functional reliability, observable behavior, good internet performance, and the headline client-cache feature** — with security hardening tracked separately.
 
-**The desktop UI is deferred to last.** Phases 1–7 target the CLI (`gmountie mount`, `gmountie serve`), the shared library (`pkg/client/`, `pkg/server/`, `pkg/common/`), and the protocol (`api/proto/`). The Wails desktop app under `ui/` and `pkg/ui/` is Phase 8 — once the library underneath it is correct, the UI is mostly re-binding work. Until Phase 8, the UI policy is: **"don't actively break, don't actively improve."**
+**The desktop UI has been extracted to a separate repository.** Phases 1–7 targeted the CLI (`gmountie mount`, `gmountie serve`), the shared library (`pkg/client/`, `pkg/server/`, `pkg/common/`), and the protocol (`api/proto/`). The Wails desktop app and VFS multi-volume mounter have been removed from this repo and extracted to a future separate desktop repo. This repo is CLI + library only.
 
 ## What "works perfectly end-to-end" means
 
-A successful endpoint of Phases 1–6 (CLI and library only; desktop UI excluded until Phase 8):
+A successful endpoint of Phases 1–6 (CLI and library only; desktop UI is a separate repo):
 
 - The CLI client mounts a volume from a server on the public internet (real DNS, real NAT, real ISP-grade RTT in the tens of milliseconds) with one command.
 - That mount survives a 30-second network drop, an ISP IP renumber, and a server restart — without manual `umount` or re-mount.
@@ -69,7 +69,7 @@ Performance comes before the cache because the cache layer reuses the streaming 
 
 The client cache is its own phase, not a perf sub-task, because it touches the protocol (invalidation signals), the client architecture (unifying the two-layer seam between `pathfs.FileSystem` and `GrpcFile`), persistence (on-disk format reusable across process restarts), and configuration. It's the headline feature for the internet-NFS goal.
 
-Quality / deps / docs and Ops & packaging follow. Security is next-to-last, but capped (see Phase 7). The desktop UI is intentionally last (Phase 8).
+Quality / deps / docs and Ops & packaging follow. Security is next-to-last, but capped (see Phase 7). The desktop UI is in a separate repo.
 
 ---
 
@@ -161,7 +161,7 @@ See [Caching & Consistency](design/caching-and-consistency.md) for the design, c
 
 **Out of scope (still deferred):**
 - Write-back caching in general (the opt-in above covers a narrow single-writer case; the general case remains deferred).
-- Shared cache across multiple client processes (Phase 8, UI).
+- Shared cache across multiple client processes (desktop UI scope, separate repo).
 - Encrypted cache at rest.
 - Cache pre-warming / explicit prefetch APIs.
 
@@ -187,14 +187,14 @@ See [Caching & Consistency](design/caching-and-consistency.md) for the design, c
    - Large files (≥ 4 GiB).
    - Many concurrent clients on the same volume.
    - Cache hit/miss/eviction paths (Phase 4 coverage).
-   - (`VFSVolumeMounter` multi-volume e2e coverage is deferred to Phase 8.)
+   - (VFSVolumeMounter and multi-volume e2e coverage are in the separate desktop repo.)
 
 3. **Drop the 1-second sleep readiness gate** in `test/e2e/utils/app.go` — wait on the gRPC health probe instead.
 
 4. **Dependency refresh (server + CLI only).**
    - `cobra v0.0.3` → current.
    - Replace `github.com/pkg/errors` with stdlib `errors` + `fmt.Errorf("%w", err)` incrementally.
-   - (Wails v3 alpha pin: leave alone; reassessed in Phase 8.)
+   - (Wails dependency removed from this repo; lives in the separate desktop repo.)
 
 5. **Proto package rename.** Move `api/proto/*.proto` to `package gmountie.v1;` and `pkg/proto/v1/` for naming clarity. Do it once after Phase 1 + 3 + 4 have stopped churning fields. (No wire-compatibility obligation — see Appendix C.)
 
@@ -208,8 +208,8 @@ See [Caching & Consistency](design/caching-and-consistency.md) for the design, c
 7. **CLI client config profiles.** `gmountie mount` currently takes every parameter on the command line. Add `~/.config/gmountie/profiles.yaml` for named profiles (`gmountie mount <mountpoint> --profile myserver`). Each profile gets its own cache path / size. Pure UX; no protocol changes.
 
 **Out of scope:**
-- Frontend (SvelteKit) test scaffolding — Phase 8.
-- Anything under `ui/` or `pkg/ui/`.
+- Frontend (SvelteKit) test scaffolding — separate desktop repo.
+- Desktop app work of any kind — separate desktop repo.
 
 **Definition of done:**
 - CI red on `-race` failures or coverage drop.
@@ -235,12 +235,12 @@ compose hygiene, keyless release signing + SBOMs).
 
 3. **docker-compose example hygiene.** Replace the `fix-permissions` sidecar that `chmod 777`'s the data dir with explicit uid/gid mapping. Move `admin/admin` credentials to a `.env` example file with a "change me" note.
 
-4. **Goreleaser.** SBOM generation, cosign signing for the server binary and Docker image, `-trimpath` / `-buildvcs=true`. Desktop binary (`gMountie-desktop`, AppImage) continues to build to keep the pipeline alive but is not actively maintained — desktop release artifacts are deferred to Phase 8.
+4. **Goreleaser.** SBOM generation, cosign signing for the server binary and Docker image, `-trimpath` / `-buildvcs=true`.
 
 **Out of scope:**
-- macOS / Windows server builds (Linux-only; desktop UI is the only Wails target, Phase 8).
+- macOS / Windows server builds (Linux-only server; the macOS client CLI cross-compiles via CGO_ENABLED=0).
 - Kubernetes operator.
-- Anything under `ui/` or `pkg/ui/`.
+- Desktop release artifacts — separate desktop repo.
 
 **Definition of done:**
 - `docker run` of the released image as a non-root user serves a volume.
@@ -277,38 +277,14 @@ Delivered:
 Every gap in [Appendix A](#appendix-a--known-security-gaps) is closed.
 
 **Deferred follow-ups (not blockers):** OIDC/JWT auth, per-connection
-byte-rate limiting, OS-keyring client credential storage (the last shares
-the desktop-UI scope — Phase 8).
+byte-rate limiting, OS-keyring client credential storage (the last is a
+desktop-UI concern — separate desktop repo).
 
 ---
 
-## Phase 8 — Desktop UI (Wails) — **Deferred**
+## Phase 8 — Desktop UI — **Extracted to separate repo**
 
-**Goal:** bring the desktop app up to parity with the now-mature CLI/library.
-
-**In scope:**
-
-1. **Adopt the matured library.** Re-validate `pkg/ui/service/AppService` and `pkg/ui/controller/*` against the post-Phase-6 `AppContext`. Add unit tests for the controller and service packages.
-2. **Remove the Wails type leak.** `VolumeControllerImpl.OnStartup` currently takes `application.ServiceOptions` (a Wails v3 type). Move the lifecycle hook behind a UI-local `Lifecycle` interface so `AppContext` stays framework-agnostic.
-3. **Introduce a `VolumeRegistry` abstraction.** Move `vfsMounted` boolean and lazy MemFS initialisation out of `VolumeControllerImpl` into a domain object that owns volume lifecycle and routing. Replace or wrap `VFSVolumeMounterImpl` with this registry.
-4. **Wails v3 alpha reassessment.** Pin to the newest stable alpha (or beta/release if available), document the version rationale, add an upgrade-tracking note.
-5. **Cache sharing across mounts in one UI process.** The Phase 4 cache is per-process / per-server in the CLI. The UI mounts multiple volumes on the same server in one process; the cache should be a single instance shared across those mounts.
-6. **Connection sharing across mounts in one UI process.** Share one `grpc.ClientConn` across mounts to the same server. (Deferred from Phase 3.)
-7. **Frontend test scaffolding.** Vitest + smoke tests in `ui/frontend/`. Add `task ui:test`. At least one component test for the login flow and one for the volume list.
-8. **E2E coverage of `VFSVolumeMounter` / `VolumeRegistry`.** (Deferred from Phase 5.)
-9. **Desktop release artifacts.** Resume active maintenance of the goreleaser `gMountie-desktop` build, the AppImage, and signing in parity with the Phase 6 server pipeline.
-10. **UI surface for Phase 7 security hardening.** TLS settings, credential storage (OS keyring rather than YAML config), ACL UI if applicable.
-
-**Out of scope:**
-- macOS / Windows desktop builds (Linux-only; revisit only if there is user demand).
-- Native menus, system tray, autoupdate.
-- Mobile clients.
-
-**Definition of done:**
-- `pkg/ui/` package has meaningful test coverage (target the same threshold as the rest of the codebase).
-- `task ui:test` runs Svelte tests green.
-- A user can install the AppImage, point it at a server, mount three volumes simultaneously, see them all in the UI, and observe shared cache hits across them.
-- TLS toggle in the UI actually negotiates TLS (depends on Phase 7).
+The Wails desktop app (`ui/`, `pkg/ui/`) and the VFS multi-volume mounter (`pkg/client/mount/vfs.go`) have been removed from this repository. The desktop UI and all work that depends on it lives in a dedicated future repo. This repo is CLI + library only (`cmd/`, `pkg/client/`, `pkg/server/`, `pkg/common/`, `pkg/utils/`).
 
 ---
 
@@ -353,11 +329,11 @@ Design-level observations from the architecture review. Not separate phases; add
 
 1. **Two-layer client seam.** `pkg/client/io/fs.go` (a `pathfs.FileSystem`) and `pkg/client/io/file.go` (a `nodefs.File`) independently talked gRPC, making cache/retry middleware silently incomplete if only one was wrapped. **Addressed in Phase 4** as part of the `FileSystemBackend` interface unification and the `pathfs` → `go-fuse/v2/fs` migration.
 
-2. **`VolumeRegistry` abstraction missing.** `pkg/ui/controller/volume.go` carries a `vfsMounted` boolean and lazy-init logic that belongs in a domain object, not a UI controller. The two mount modes (`SingleVolumeMounter`, `VFSVolumeMounterImpl`) would benefit from a registry that owns lifecycle and routing decisions. **Addressed in Phase 8** (UI phase).
+2. **`VolumeRegistry` abstraction missing.** The desktop UI controller carried a `vfsMounted` boolean and lazy-init logic that belongs in a domain object. This was a desktop-UI concern; it moved to the separate desktop repo along with `ui/` and `pkg/ui/`. **Resolved by extraction.**
 
 3. **Config schema duplication.** `pkg/common/config/load.go` is a shell; `pkg/server/config` and `pkg/client/config` each re-implement Viper sub-key parsing by hand; client config imports `pkg/server/config.AuthConfig` (asymmetric dependency); `GMOUNTIE_` env-var prefix wired on server but not client. **Addressed in Phase 5** alongside doc cleanup.
 
-4. **Wails v3 type leak.** `VolumeControllerImpl.OnStartup` takes `application.ServiceOptions`, a Wails-specific type. `AppContext` is otherwise framework-agnostic. **Addressed in Phase 8.**
+4. **Wails v3 type leak.** `VolumeControllerImpl.OnStartup` took `application.ServiceOptions`, a Wails-specific type. Moved to the separate desktop repo along with the entire UI layer. **Resolved by extraction.**
 
 5. **`pathfs` vs `fs` go-fuse API.** Promoted into Phase 4 scope — see Phase 4 above. The cache layer depends on inode stability; migrating once in the same change that introduces the cache was cheaper than building on `pathfs` and ripping it out later. **Done.**
 

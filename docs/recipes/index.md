@@ -2,7 +2,7 @@
 title: Recipes
 sidebar_label: Recipes
 slug: /recipes
-description: Concrete, copy-paste-runnable walkthroughs for common gMountie setups — systemd, Docker, reverse proxy, multi-volume.
+description: Concrete, copy-paste-runnable walkthroughs for common gMountie setups — systemd, Docker, reverse proxy.
 ---
 
 # Recipes
@@ -17,10 +17,6 @@ Concrete walkthroughs. Each one starts with what you'll end up with, lists what 
 ## Networking
 
 - **[TLS via Caddy reverse proxy](./caddy-reverse-proxy.md)** — gMountie speaks plain gRPC today; until native TLS lands ([roadmap](../roadmap.md)) you can put Caddy in front to terminate TLS with an automatic Let's Encrypt cert.
-
-## Client setups
-
-- **[Multi-volume VFS mount](./multi-volume-vfs.md)** — put every remote volume under one parent path on the client instead of running one `gmountie mount` per volume.
 
 ## Need one that's not here?
 

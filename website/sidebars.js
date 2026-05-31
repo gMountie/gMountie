@@ -43,7 +43,6 @@ const sidebars = {
         'recipes/systemd',
         'recipes/docker',
         'recipes/caddy-reverse-proxy',
-        'recipes/multi-volume-vfs',
       ],
     },
     'troubleshooting',

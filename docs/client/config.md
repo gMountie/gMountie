@@ -6,7 +6,7 @@ description: Every client.yaml field — server, RPC tuning, FUSE knobs, optiona
 
 # Client configuration
 
-The client reads a YAML file with up to six sections: **`server`** (where to connect), **`rpc`** (per-RPC timeouts, message size, [readahead](#readahead), [write coalescing](#write-coalescing), keepalive), **`fuse`** (kernel-side mount knobs), **`cache`** (optional client-side cache), **`auth`** (credentials), and **`mount`** (single-volume or VFS). CLI flags override the corresponding fields — see **[Client CLI](./cli.md)** for the override list.
+The client reads a YAML file with up to six sections: **`server`** (where to connect), **`rpc`** (per-RPC timeouts, message size, [readahead](#readahead), [write coalescing](#write-coalescing), keepalive), **`fuse`** (kernel-side mount knobs), **`cache`** (optional client-side cache), **`auth`** (credentials), and **`mount`** (volume and path). CLI flags override the corresponding fields — see **[Client CLI](./cli.md)** for the override list.
 
 ## Configuration File Structure
 
@@ -289,18 +289,11 @@ auth:
 
 ## Mount Configuration
 
-The `mount` section defines how volumes are mounted. There are two mount types:
-
-1. Single volume mount
-2. VFS (Virtual File System) mount
-
-### Single Volume Mount
-
-Mounts a single volume at a specified path:
+The `mount` section defines how a volume is mounted.
 
 | Option | Type   | Required | Description            |
 |--------|--------|----------|------------------------|
-| type   | string | yes      | Must be "single"       |
+| type   | string | yes      | Must be `"single"`     |
 | volume | string | yes      | Volume name to mount   |
 | path   | string | yes      | Local mount point path |
 
@@ -313,33 +306,7 @@ mount:
   path: /home/user/documents
 ```
 
-### VFS Mount
-
-Mounts multiple volumes under a single mount point:
-
-| Option    | Type     | Required | Description                       |
-|-----------|----------|----------|-----------------------------------|
-| type      | string   | yes      | Must be "vfs"                     |
-| path      | string   | yes      | Base mount point path             |
-| mount_all | boolean  | no       | Mount all available volumes       |
-| volumes   | []string | no       | List of specific volumes to mount |
-
-Example:
-
-```yaml
-mount:
-  type: vfs
-  path: /mnt/gmountie
-  mount_all: false
-  volumes:
-  - documents
-  - media
-  - backup
-```
-
-## Complete Configuration Examples
-
-### Single Volume Mount Example
+## Complete Configuration Example
 
 ```yaml
 server:
@@ -356,26 +323,5 @@ mount:
   type: single
   volume: shared
   path: /home/user/shared
-```
-
-### VFS Mount Example
-
-```yaml
-server:
-  address: your-server.example
-  port: 9449
-  tls:
-    verify: tofu
-auth:
-  type: basic
-  username: admin
-mount:
-  type: vfs
-  path: /mnt/gmountie
-  mount_all: false
-  volumes:
-    - documents
-    - media
-    - backup
 ```
 
