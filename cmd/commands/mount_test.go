@@ -244,6 +244,25 @@ auth:
 	s.Assert().Contains(err.Error(), "invalid server address")
 }
 
+// TestWaitForUnmount_ReturnsOnServerExit proves the mount loop wakes when the
+// FUSE server exits out-of-band (e.g. an external `fusermount -u`), reporting
+// the unmount was external — the property that stops a daemon mount lingering.
+func (s *MountCmdTestSuite) TestWaitForUnmount_ReturnsOnServerExit() {
+	sig := make(chan os.Signal, 1)
+	served := make(chan struct{})
+	close(served)
+	s.True(waitForUnmount(sig, served))
+}
+
+// TestWaitForUnmount_ReturnsOnSignal proves an interrupt/SIGTERM still wakes
+// the loop and is reported as a local (non-external) unmount.
+func (s *MountCmdTestSuite) TestWaitForUnmount_ReturnsOnSignal() {
+	sig := make(chan os.Signal, 1)
+	served := make(chan struct{})
+	sig <- os.Interrupt
+	s.False(waitForUnmount(sig, served))
+}
+
 func TestMountCmdSuite(t *testing.T) {
 	suite.Run(t, new(MountCmdTestSuite))
 }
