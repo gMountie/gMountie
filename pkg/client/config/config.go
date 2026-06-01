@@ -199,7 +199,7 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	}
 
 	if err := result.Validate(); err != nil {
-		return nil, err
+		return nil, config.FriendlyValidationError(err)
 	}
 	return &result, nil
 }

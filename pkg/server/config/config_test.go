@@ -134,6 +134,31 @@ volumes:
 	s.Require().Error(err)
 }
 
+// TestParse_FriendlyValidationMessage verifies a validation failure surfaces
+// as a human-readable "config error" with the snake_case key path and an
+// actionable hint, not raw validator.ValidationErrors noise.
+func (s *ConfigTestSuite) TestParse_FriendlyValidationMessage() {
+	conf := `
+server:
+  address: localhost
+  port: 8000
+auth:
+  type: basic
+  users:
+  - username: admin
+    password_hash: ` + testAdminPHC + `
+volumes:
+  - name: test
+    path: /tmp
+`
+	_, err := LoadConfigFromString(conf)
+	s.Require().Error(err)
+	s.Contains(err.Error(), "config error")
+	s.Contains(err.Error(), "server.address")
+	s.Contains(err.Error(), "IP")
+	s.NotContains(err.Error(), "Field validation for")
+}
+
 func (s *ConfigTestSuite) TestParse_InvalidServerPort() {
 	conf := `
 server:

@@ -167,11 +167,11 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		Level:  v.GetString("log.level"),
 	}
 
-	// Validate.
+	// Validate. Surface validation failures as human-readable config errors
+	// rather than raw validator.ValidationErrors noise.
 	validate := validator.New()
-	err = validate.Struct(result)
-	if err != nil {
-		return nil, err
+	if err = validate.Struct(result); err != nil {
+		return nil, config.FriendlyValidationError(err)
 	}
 
 	return &result, nil
