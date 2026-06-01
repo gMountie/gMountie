@@ -24,6 +24,11 @@ import (
 // SingleVolumeMounter is the interface for the mounter that supports a single volume
 type SingleVolumeMounter interface {
 	Mount(volumeName, path string) error
+	// Wait blocks until the named volume's FUSE server exits — whether from
+	// our own Unmount or an out-of-band detach (a direct `fusermount -u`) —
+	// then releases that volume's client-side state. It lets a foreground
+	// mount notice an external unmount and exit instead of blocking forever.
+	Wait(volume string)
 	Mounter
 }
 
@@ -145,6 +150,22 @@ func (m *SingleVolumeMounterImpl) GetMounts() []string {
 	return mounts
 }
 
+// Wait blocks until the named volume's FUSE server exits, then releases the
+// volume's client-side state. server.Wait() returns when the Serve loop ends —
+// for our own Unmount or for an out-of-band detach (a direct `fusermount -u`) —
+// so a foreground mount can use this to exit on an external unmount rather than
+// blocking on its signal wait forever. No-op if the volume isn't mounted.
+func (m *SingleVolumeMounterImpl) Wait(volume string) {
+	server, ok := m.mounts.Load(volume)
+	if !ok {
+		return
+	}
+	server.Wait()
+	// The server is gone; drop bookkeeping so a later Unmount/Close is a clean
+	// no-op (and we don't redundantly fusermount an already-detached path).
+	m.releaseVolume(volume)
+}
+
 // Unmount unmounts a volume
 func (m *SingleVolumeMounterImpl) Unmount(volume string) error {
 	server, ok := m.mounts.Load(volume)
@@ -155,18 +176,25 @@ func (m *SingleVolumeMounterImpl) Unmount(volume string) error {
 	if err := stopServer(server, mountPath); err != nil {
 		return err
 	}
-	m.mounts.Delete(volume)
-	m.mountPaths.Delete(volume)
-	if be, ok := m.backends.Load(volume); ok {
-		_ = be.Close()
-		m.backends.Delete(volume)
-	}
-	if p, ok := m.persists.Load(volume); ok {
-		_ = p.Close()
-		m.persists.Delete(volume)
-	}
+	m.releaseVolume(volume)
 	log.Log.Info("unmounted volume", zap.String("volume", volume))
 	return nil
+}
+
+// releaseVolume drops a volume's bookkeeping and closes its backend/cache.
+// It is safe to call concurrently and more than once for the same volume: the
+// atomic LoadAndDelete guarantees each backend/persist is closed exactly once,
+// which matters because both Unmount (signal path) and Wait (server-exit path)
+// can race to release the same volume after a clean unmount.
+func (m *SingleVolumeMounterImpl) releaseVolume(volume string) {
+	m.mounts.Delete(volume)
+	m.mountPaths.Delete(volume)
+	if be, ok := m.backends.LoadAndDelete(volume); ok {
+		_ = be.Close()
+	}
+	if p, ok := m.persists.LoadAndDelete(volume); ok {
+		_ = p.Close()
+	}
 }
 
 // UnmountAll unmounts all volumes

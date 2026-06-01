@@ -257,13 +257,36 @@ var mountCmd = &cobra.Command{
 
 		log.Log.Sugar().Info("Press Ctrl+C to unmount")
 
-		// Wait for interrupt signal
-		ch := make(chan os.Signal, 1)
-		signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
-		<-ch
+		// Wait until either the user signals us (Ctrl-C / SIGTERM) or the FUSE
+		// filesystem is detached out-of-band (e.g. someone runs `fusermount -u`
+		// directly). Without the latter, an external unmount would leave this
+		// process blocked on the signal wait forever — see mounter.Wait.
+		served := make(chan struct{})
+		go func() {
+			mounter.Wait(volumeName)
+			close(served)
+		}()
+
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+		if waitForUnmount(sig, served) {
+			log.Log.Sugar().Infof("Volume %s was unmounted; exiting", volumeName)
+		}
 
 		return nil
 	},
+}
+
+// waitForUnmount blocks until either an OS signal arrives or the served channel
+// is closed (the FUSE server exited, e.g. an external unmount). It returns true
+// when the wait ended because the filesystem went away rather than a signal.
+func waitForUnmount(sig <-chan os.Signal, served <-chan struct{}) (external bool) {
+	select {
+	case <-sig:
+		return false
+	case <-served:
+		return true
+	}
 }
 
 func init() {
