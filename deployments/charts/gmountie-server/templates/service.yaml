@@ -18,10 +18,14 @@ spec:
       targetPort: grpc
       protocol: TCP
       name: grpc
-      # gRPC is HTTP/2. appProtocol h2c tells Gateway-API implementations
-      # (Envoy Gateway, etc.) to speak cleartext HTTP/2 upstream so a
-      # GRPCRoute/HTTPRoute reaches the server correctly.
-      appProtocol: kubernetes.io/h2c
+      {{- with .Values.service.appProtocol }}
+      # appProtocol steers how Gateway-API implementations talk to the
+      # backend. Leave empty (default) for a TLS gRPC server fronted by a
+      # GRPCRoute + BackendTLSPolicy — Envoy negotiates h2 over TLS via
+      # ALPN. Set kubernetes.io/h2c only for a cleartext-h2 backend (this
+      # server refuses cleartext on a non-loopback bind, so that's rare).
+      appProtocol: {{ . }}
+      {{- end }}
     - port: {{ .Values.service.metricsPort }}
       targetPort: metrics
       protocol: TCP
