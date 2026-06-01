@@ -87,15 +87,15 @@ func (h *SessionHandshake) Establish(ctx context.Context) error {
 	h.setSessionID(reply.SessionId)
 
 	streamCtx, cancel := context.WithCancel(context.Background())
-	// Bound the initial Keepalive open with the same deadline that the
-	// caller passed into Establish (typically context.Background() + 5s
-	// from the factory). A hung session service must not stall Connect
-	// indefinitely. The steady-state recovery loop uses streamCtx
-	// directly (no deadline) because it must survive across network
-	// interruptions — only the first open needs a bound.
-	openCtx, openCancel := context.WithTimeout(ctx, 10*time.Second)
-	stream, err := h.client.Keepalive(openCtx, &proto.KeepaliveRequest{SessionId: reply.SessionId})
-	openCancel()
+	// Open the initial Keepalive on the long-lived streamCtx. A streaming
+	// RPC's stream lives for the life of the context it was opened with, so
+	// opening it on a short-lived/bounded context and cancelling that would
+	// tear the stream down the instant Establish returned — forcing a
+	// spurious recover() and a misleading "keepalive stream errored" warning
+	// on every connect. The open itself doesn't block (gRPC returns the
+	// stream before the first Recv), and the unary Create above is already
+	// bounded by ctx, so Connect can't hang here.
+	stream, err := h.client.Keepalive(streamCtx, &proto.KeepaliveRequest{SessionId: reply.SessionId})
 	if err != nil {
 		cancel()
 		h.setSessionID("")
@@ -168,6 +168,12 @@ func (h *SessionHandshake) recover() (proto.SessionService_KeepaliveClient, erro
 		stream, err := h.tryReattach()
 		if err == nil {
 			return stream, nil
+		}
+		// If Close cancelled streamCtx while we were reattaching, this
+		// failure is just teardown — exit quietly instead of logging a
+		// recovery warning and backing off.
+		if h.streamCtx.Err() != nil {
+			return nil, h.streamCtx.Err()
 		}
 		log.Log.Warn("session recovery attempt failed; backing off",
 			zap.Duration("backoff", backoff),

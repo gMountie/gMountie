@@ -85,6 +85,40 @@ func (s *SessionHandshakeTestSuite) TestEstablishCallsCreateAndStartsKeepalive()
 	}, time.Second, 10*time.Millisecond)
 }
 
+// The initial Keepalive must be opened on the long-lived streamCtx, not a
+// context that Establish cancels before returning — otherwise the loop tears
+// the stream down and runs a spurious recover() on every connect (logging a
+// misleading "keepalive stream errored" warning). Resume is intentionally not
+// mocked here: a recovery cycle would fail the test.
+func (s *SessionHandshakeTestSuite) TestEstablishKeepaliveUsesLiveContext() {
+	s.sessionClient.EXPECT().Create(mock.Anything, mock.Anything).
+		Return(&proto.SessionCreateReply{SessionId: "abc-123"}, nil).Once()
+
+	gotCtx := make(chan context.Context, 1)
+	stream, bind := newParkingKeepaliveStream(s.T())
+	s.sessionClient.EXPECT().Keepalive(mock.Anything, mock.Anything).
+		RunAndReturn(func(ctx context.Context, _ *proto.KeepaliveRequest, _ ...grpc.CallOption) (proto.SessionService_KeepaliveClient, error) {
+			gotCtx <- ctx
+			bind(ctx)
+			return stream, nil
+		}).Once()
+
+	handshake := NewSessionHandshake(s.sessionClient)
+	s.Require().NoError(handshake.Establish(context.Background()))
+
+	// The context the keepalive was opened with must still be live right
+	// after Establish — a cancelled one means the stream is dead on arrival.
+	keepaliveCtx := <-gotCtx
+	s.Require().NoError(keepaliveCtx.Err(),
+		"initial keepalive must be opened on a live context, not a pre-cancelled one")
+	s.Assert().True(handshake.IsHealthy())
+
+	s.Require().NoError(handshake.Close())
+	s.Require().Eventually(func() bool {
+		return !handshake.isRunning()
+	}, time.Second, 10*time.Millisecond)
+}
+
 func (s *SessionHandshakeTestSuite) TestEstablishReturnsErrorWhenCreateFails() {
 	s.sessionClient.EXPECT().Create(mock.Anything, mock.Anything).
 		Return(nil, errors.New("network")).Once()
