@@ -32,8 +32,10 @@ type TLSConfig struct {
 
 // ServerConfig is a struct that holds the configuration for the server
 type ServerConfig struct {
-	// Address is the address that the server will listen on
-	Address string `validate:"required,ip"`
+	// Address is the server host to dial — an IP or a hostname. The client
+	// dials Address:Port (gRPC resolves DNS) and, when tls.server_name is
+	// unset, uses Address as the TLS SNI / cert-verification name.
+	Address string `validate:"required,hostname_rfc1123|ip"`
 	// Port is the port that the server will listen on
 	Port uint `validate:"required,gte=1,lte=65535"`
 	// Endpoint is "address:port" used as a dial target and TOFU key.

@@ -46,11 +46,29 @@ auth:
 	s.Assert().Empty(result.Server.TLS.Verify)       // empty == "verify" at dial time
 }
 
-// Test validation cases
-func (s *ServerConfigTestSuite) TestParse_InvalidServerAddress() {
+// A hostname (not just an IP) is a valid server address — the client dials
+// host:port via DNS and derives the TLS SNI from the host.
+func (s *ServerConfigTestSuite) TestParse_HostnameServerAddress() {
 	conf := `
 server:
-  address: not-an-ip
+  address: gmountie.home.buluba.net
+  port: 443
+auth:
+  type: basic
+  username: admin
+  password: admin
+`
+	result, err := LoadConfigFromString(conf)
+	s.Require().NoError(err)
+	s.Assert().Equal("gmountie.home.buluba.net", result.Server.Address)
+}
+
+// Test validation cases
+func (s *ServerConfigTestSuite) TestParse_InvalidServerAddress() {
+	// Neither a valid hostname nor an IP (contains a space and '!').
+	conf := `
+server:
+  address: "bad host!"
   port: 9449
 auth:
   type: basic
