@@ -25,3 +25,74 @@ func (s *ConfigShowSuite) TestRedactsPasswordHash() {
 	s.NotContains(out, "argon2id$abc")
 	s.Contains(out, "REDACTED")
 }
+
+// TestRedactsBlockScalarKeyPEM is the real hole: an inline mTLS private key is
+// written as a YAML block scalar, so its secret bytes live on indented lines
+// after `key_pem: |`, which the single-line redactor never touched.
+func (s *ConfigShowSuite) TestRedactsBlockScalarKeyPEM() {
+	in := "server:\n" +
+		"  address: 1.2.3.4\n" +
+		"  tls:\n" +
+		"    ca_pem: |\n" +
+		"      -----BEGIN CERTIFICATE-----\n" +
+		"      PUBLICCABYTES\n" +
+		"      -----END CERTIFICATE-----\n" +
+		"    key_pem: |\n" +
+		"      -----BEGIN PRIVATE KEY-----\n" +
+		"      SUPERSECRETKEYBYTES\n" +
+		"      -----END PRIVATE KEY-----\n"
+	out := redactConfigYAML(in)
+	// The private key and its PEM envelope must be gone.
+	s.NotContains(out, "SUPERSECRETKEYBYTES")
+	s.NotContains(out, "BEGIN PRIVATE KEY")
+	s.Contains(out, "REDACTED")
+	// Public material and surrounding structure must be preserved.
+	s.Contains(out, "PUBLICCABYTES")
+	s.Contains(out, "1.2.3.4")
+	s.Contains(out, "key_pem:")
+}
+
+// TestBlockScalarRedactionStopsAtDedent ensures redacting a block-scalar
+// secret consumes only its own indented body and leaves the following sibling
+// keys and their values intact.
+func (s *ConfigShowSuite) TestBlockScalarRedactionStopsAtDedent() {
+	in := "server:\n" +
+		"  tls:\n" +
+		"    key_pem: |\n" +
+		"      -----BEGIN PRIVATE KEY-----\n" +
+		"      SUPERSECRETKEYBYTES\n" +
+		"      -----END PRIVATE KEY-----\n" +
+		"    cert_pem: PUBLICCERT\n" +
+		"  address: 1.2.3.4\n"
+	out := redactConfigYAML(in)
+	s.NotContains(out, "SUPERSECRETKEYBYTES")
+	// The sibling cert_pem and the dedented address must survive untouched.
+	s.Contains(out, "cert_pem: PUBLICCERT")
+	s.Contains(out, "address: 1.2.3.4")
+}
+
+// TestRedactsBlockScalarWithTrailingComment guards a bypass: YAML allows a
+// comment after the block-scalar indicator (`key_pem: | # note`). If that line
+// isn't recognized as a block header, the indented secret body leaks.
+func (s *ConfigShowSuite) TestRedactsBlockScalarWithTrailingComment() {
+	in := "server:\n" +
+		"  tls:\n" +
+		"    key_pem: |   # operator's mTLS key\n" +
+		"      -----BEGIN PRIVATE KEY-----\n" +
+		"      STILLLEAKSBYTES\n" +
+		"      -----END PRIVATE KEY-----\n" +
+		"  address: 1.2.3.4\n"
+	out := redactConfigYAML(in)
+	s.NotContains(out, "STILLLEAKSBYTES")
+	s.NotContains(out, "BEGIN PRIVATE KEY")
+	s.Contains(out, "address: 1.2.3.4")
+}
+
+// TestRedactsInlineKeyPEM covers a key_pem given as a single-line scalar.
+func (s *ConfigShowSuite) TestRedactsInlineKeyPEM() {
+	in := "server:\n  tls:\n    key_pem: secretinline\n  address: 1.2.3.4\n"
+	out := redactConfigYAML(in)
+	s.NotContains(out, "secretinline")
+	s.Contains(out, "REDACTED")
+	s.Contains(out, "1.2.3.4")
+}
