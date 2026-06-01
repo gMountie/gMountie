@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 412" width="820" height="412" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" role="img" aria-label="Terminal demo: gmountie mount admin@fileserver:9449/photos ~/photos, then ls and du over the mounted volume.">
+  <style>
+    text { font-size: 15.5px; }
+    .cream  { fill: #f4ecd8; }
+    .ember  { fill: #d9822b; }
+    .dim    { fill: #8a8076; }
+    .green  { fill: #8bb05f; }
+    /* Visible at rest: any renderer that ignores the animation (IDE preview,
+       GitHub mobile, link unfurls) shows the full terminal, not a blank box. */
+    .ln { opacity: 1; }
+    /* Sequential reveal on one shared 13s timeline: each line turns on at its
+       point and HOLDS on. backwards fill applies the hidden 0% state on load. */
+    .l1 { animation: r1 13s infinite backwards; }
+    .l2 { animation: r2 13s infinite backwards; }
+    .l3 { animation: r3 13s infinite backwards; }
+    .l4 { animation: r4 13s infinite backwards; }
+    .l5 { animation: r5 13s infinite backwards; }
+    .l6 { animation: r6 13s infinite backwards; }
+    .l7 { animation: r7 13s infinite backwards; }
+    .l8 { animation: r8 13s infinite backwards; }
+    .l9 { animation: r9 13s infinite backwards; }
+    @keyframes r1 { 0%,2%   { opacity: 0; } 3%,100%  { opacity: 1; } }
+    @keyframes r2 { 0%,10%  { opacity: 0; } 11%,100% { opacity: 1; } }
+    @keyframes r3 { 0%,17%  { opacity: 0; } 18%,100% { opacity: 1; } }
+    @keyframes r4 { 0%,28%  { opacity: 0; } 29%,100% { opacity: 1; } }
+    @keyframes r5 { 0%,35%  { opacity: 0; } 36%,100% { opacity: 1; } }
+    @keyframes r6 { 0%,46%  { opacity: 0; } 47%,100% { opacity: 1; } }
+    @keyframes r7 { 0%,53%  { opacity: 0; } 54%,100% { opacity: 1; } }
+    @keyframes r8 { 0%,65%  { opacity: 0; } 66%,100% { opacity: 1; } }
+    @keyframes r9 { 0%,74%  { opacity: 0; } 75%,100% { opacity: 1; } }
+    .cursor { animation: blink 1.05s infinite; }
+    @keyframes blink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) {
+      .ln, .cursor { animation: none; opacity: 1; }
+    }
+  </style>
+
+  <!-- window -->
+  <rect x="1" y="1" width="818" height="410" rx="12" fill="#211d1a" stroke="#3a332d" stroke-width="1.5"/>
+  <!-- title bar -->
+  <path d="M1 13 a12 12 0 0 1 12 -12 h794 a12 12 0 0 1 12 12 v25 h-818 z" fill="#2c2723"/>
+  <circle cx="22" cy="20" r="6" fill="#e06c5b"/>
+  <circle cx="42" cy="20" r="6" fill="#e0b341"/>
+  <circle cx="62" cy="20" r="6" fill="#8bb05f"/>
+  <text xml:space="preserve" x="410" y="25" text-anchor="middle" class="dim" font-size="13">gmountie — your filesystem's best friend</text>
+
+  <!-- body -->
+  <g transform="translate(24, 0)">
+    <!-- mount -->
+    <text xml:space="preserve" y="78" class="ln l1"><tspan class="ember">$</tspan> <tspan class="cream">gmountie mount </tspan><tspan class="ember">admin@fileserver:9449/photos</tspan><tspan class="cream"> ~/photos</tspan></text>
+    <text xml:space="preserve" y="106" class="ln l2"><tspan class="dim">Password: </tspan><tspan class="cream">••••••••</tspan></text>
+    <text xml:space="preserve" y="134" class="ln l3"><tspan class="green">✓</tspan> <tspan class="cream">Mounted volume </tspan><tspan class="ember">"photos"</tspan><tspan class="cream"> at ~/photos</tspan></text>
+
+    <!-- ls -->
+    <text xml:space="preserve" y="186" class="ln l4"><tspan class="ember">$</tspan> <tspan class="cream">ls ~/photos</tspan></text>
+    <text xml:space="preserve" y="214" class="ln l5"><tspan class="cream">2024-japan/   iceland/   raw/   selects.csv</tspan></text>
+
+    <!-- du -->
+    <text xml:space="preserve" y="266" class="ln l6"><tspan class="ember">$</tspan> <tspan class="cream">du -sh ~/photos/2024-japan</tspan></text>
+    <text xml:space="preserve" y="294" class="ln l7"><tspan class="ember">4.2G</tspan>  <tspan class="cream">~/photos/2024-japan</tspan>   <tspan class="dim"># streamed on demand · cached after the first read</tspan></text>
+
+    <!-- resilience note -->
+    <text xml:space="preserve" y="346" class="ln l8"><tspan class="dim"># ISP hiccup or server restart? the mount rides it out — open files stay valid.</tspan></text>
+
+    <!-- fresh prompt -->
+    <g class="ln l9"><text xml:space="preserve" y="382"><tspan class="ember">$</tspan> </text><rect x="14" y="370" width="9" height="16" class="cream cursor"/></g>
+  </g>
+</svg>
