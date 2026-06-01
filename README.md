@@ -1,5 +1,5 @@
 <div align="center">
-  <img class="logo" src="assets/wordmark.png" alt="gMountie" width="360"/>
+  <img class="logo" src="assets/lockup-mascot-stack.png" alt="gMountie" width="320"/>
   <h3>Your Filesystem's Best Friend</h3>
   <p><i>Because remote filesystems shouldn't feel so... remote</i></p>
 
@@ -124,7 +124,7 @@ Dig deeper: **[Architecture & Protocol](docs/design/architecture.md)** · **[Cac
 
 Full documentation lives at **[docs.gmountie.dev](https://docs.gmountie.dev)**. Highlights:
 
-- [Quick Start](docs/quickstart.md)
+- [Quick Start](docs/quickstart.mdx)
 - [Architecture & Protocol](docs/design/architecture.md)
 - [Caching & Consistency](docs/design/caching-and-consistency.md)
 - [Performance](docs/design/performance.md)
