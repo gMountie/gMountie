@@ -27,6 +27,7 @@ var lsCmd = &cobra.Command{
 }
 
 func init() {
+	addProfileFlag(lsCmd)
 	lsCmd.PersistentFlags().StringVarP(&authType, "auth-type", "t", "basic", "authentication type (basic)")
 	lsCmd.PersistentFlags().StringVarP(&username, "username", "u", "", "username for basic auth")
 	lsCmd.PersistentFlags().StringVarP(&password, "password", "p", "", "password for basic auth (prefer prompt/$GMOUNTIE_AUTH_PASSWORD)")
@@ -34,11 +35,20 @@ func init() {
 }
 
 func runLs(cmd *cobra.Command, args []string) error {
+	profilePath, err := resolveProfilePath()
+	if err != nil {
+		return err
+	}
+	cfgPath := configFile
+	if profilePath != "" {
+		cfgPath = profilePath
+	}
+
 	v := viper.New()
-	if configFile != "" {
-		v.SetConfigFile(configFile)
+	if cfgPath != "" {
+		v.SetConfigFile(cfgPath)
 		if err := v.ReadInConfig(); err != nil {
-			return fmt.Errorf("failed to read config file %s: %w", configFile, err)
+			return fmt.Errorf("failed to read config file %s: %w", cfgPath, err)
 		}
 	}
 	if len(args) == 1 {
