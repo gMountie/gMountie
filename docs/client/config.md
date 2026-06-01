@@ -290,13 +290,17 @@ cache:
 
 The `auth` section configures client authentication:
 
-| Option   | Type   | Required | Description                                        |
-|----------|--------|----------|----------------------------------------------------|
-| type     | string | yes      | Authentication type ("basic")                      |
-| username | string | yes      | Username for basic auth                            |
-| password | string | no       | Password for basic auth; if empty, falls back to `$GMOUNTIE_AUTH_PASSWORD` then an interactive prompt |
+| Option           | Type   | Required | Description                                        |
+|------------------|--------|----------|----------------------------------------------------|
+| type             | string | yes      | Authentication type ("basic")                      |
+| username         | string | yes      | Username for basic auth                            |
+| password         | string | no       | Inline plaintext password. Prefer `password_command` or `password_file` to keep secrets out of the config. |
+| password_command | string | no       | Shell command whose stdout (trailing newline stripped) is the password — e.g. `pass show gmountie/work`. Runs via `sh -c`. |
+| password_file    | string | no       | Path to a file containing the password (must be mode 0600). `$GMOUNTIE_AUTH_PASSWORD_FILE` is checked when this field is absent. |
 
 Authentication is required; every client must supply at least `username` and `type`. The password can be omitted from the config file and supplied at runtime.
+
+**Password resolution order** (first non-empty wins): `--password` flag → `auth.password_command` → `auth.password_file` / `$GMOUNTIE_AUTH_PASSWORD_FILE` → `auth.password` (inline) → `$GMOUNTIE_AUTH_PASSWORD` → interactive no-echo prompt.
 
 ### Basic Authentication
 
@@ -307,15 +311,35 @@ auth:
   password: ""   # omit or leave empty to use $GMOUNTIE_AUTH_PASSWORD or an interactive prompt
 ```
 
+To retrieve the password from a password manager:
+
+```yaml
+auth:
+  type: basic
+  username: admin
+  password_command: "pass show gmountie/work"
+```
+
+To load the password from a 0600 file:
+
+```yaml
+auth:
+  type: basic
+  username: admin
+  password_file: /run/secrets/gmountie-password
+```
+
 ## Mount Configuration
 
-The `mount` section defines how a volume is mounted.
+The `mount` section defines the volume and (optionally) a default mountpoint.
 
 | Option | Type   | Required | Description            |
 |--------|--------|----------|------------------------|
 | type   | string | yes      | Must be `"single"`     |
-| volume | string | yes      | Volume name to mount   |
-| path   | string | yes      | Local mount point path |
+| volume | string | no       | Volume name to mount. Overridden by the `--volume` flag or the shorthand `host/volume` argument. |
+| path   | string | no       | Default local mountpoint. When set, the positional mountpoint argument may be omitted on the command line. |
+
+`volume` and `path` are the fields that make a client config useful as a **profile**: store the target volume (and optionally its default mountpoint) alongside the server and auth settings, then select it with `--profile <name>`. Profiles live at `~/.config/gmountie/profiles/<name>.yaml`; any valid client config can be used as a profile.
 
 Example:
 
