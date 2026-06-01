@@ -3,6 +3,7 @@ package config
 import (
 	"testing"
 
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -42,16 +43,36 @@ mount:
 	}
 }
 
-// Test error cases for missing required fields
-func (s *MountConfigTestSuite) TestParse_MissingRequiredFields() {
-	// Missing path
+// TestParse_SingleMount_PathOptional verifies that a single-mount config without
+// a `path` now parses: the mountpoint is supplied on the CLI (or a profile's
+// mount.path) at mount time, so the config layer no longer requires it. The
+// mount command enforces that a mountpoint exists after resolution.
+func (s *MountConfigTestSuite) TestParse_SingleMount_PathOptional() {
 	conf := `
 mount:
   type: single
   volume: testvol
 ` + minimalServerConfig
-	_, err := LoadConfigFromString(conf)
-	s.Require().Error(err)
+	result, err := LoadConfigFromString(conf)
+	s.Require().NoError(err)
+	sm, ok := result.Mount.(*SingleMountConfig)
+	s.Require().True(ok)
+	s.Equal("testvol", sm.Volume)
+	s.Empty(sm.Path)
+}
+
+// TestSingleMountConfig_VolumeOnly verifies that a profile naming only the
+// volume (mountpoint supplied on the CLI) passes NewSingleMountConfig and
+// Validate without error.
+func (s *MountConfigTestSuite) TestSingleMountConfig_VolumeOnly() {
+	v := viper.New()
+	v.Set("type", string(MountTypeSingle))
+	v.Set("volume", "shared")
+	cfg, err := NewSingleMountConfig(v)
+	s.Require().NoError(err)
+	s.Require().NoError(cfg.Validate())
+	s.Equal("shared", cfg.Volume)
+	s.Empty(cfg.Path)
 }
 
 func TestMountConfigTestSuite(t *testing.T) {

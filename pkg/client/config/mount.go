@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/spf13/viper"
 )
 
@@ -23,12 +24,19 @@ type MountConfig interface {
 // SingleMountConfig is a struct that holds the configuration for a single mount
 type SingleMountConfig struct {
 	Type   MountType `validate:"required"`
-	Path   string    `validate:"required"`
-	Volume string    `validate:"required"`
+	Path   string    `validate:"omitempty"`
+	Volume string    `validate:"omitempty"`
 	// RawIDs disables server-to-local UID/GID rewriting. When true the kernel
 	// sees the server-side numeric IDs unchanged; useful for backup tools and
 	// admin inspection that need to preserve the original ownership.
 	RawIDs bool `mapstructure:"raw_ids"`
+}
+
+// Validate validates the mount config shape (fields are optional here; the
+// mount command enforces that a volume and a mountpoint exist after CLI/profile
+// resolution).
+func (s *SingleMountConfig) Validate() error {
+	return validator.New().Struct(s)
 }
 
 // GetType returns the mount type
