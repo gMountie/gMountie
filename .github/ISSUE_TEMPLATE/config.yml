@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Questions & ideas (Discussions)
+    url: https://github.com/gMountie/gMountie/discussions
+    about: Ask a question, share an idea, or get help mounting volumes.
+  - name: 🔒 Report a security vulnerability
+    url: https://github.com/gMountie/gMountie/security/advisories/new
+    about: Report security issues privately — please don't open a public issue.
+  - name: 📚 Documentation
+    url: https://docs.gmountie.dev
+    about: Quick start, configuration, architecture, and the wire protocol.
