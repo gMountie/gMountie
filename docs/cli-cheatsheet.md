@@ -15,8 +15,10 @@ Every command, every flag, one page. The binary is `gmountie` — one binary, bo
 | --------------------- | ------------------------------------------------------------------------- |
 | `gmountie serve`      | Start the server. Exposes the volumes in your config over a gRPC stream.  |
 | `gmountie mount`      | Mount a server's volume locally via FUSE.                                 |
+| `gmountie unmount`    | Unmount a gMountie volume (cleanly stops a `--daemon` mount). Alias: `umount`. |
+| `gmountie status`     | List active gMountie mounts on this machine (mountpoint, server, volume, pid, uptime). |
 | `gmountie ls`         | List the volumes a server exposes (same auth as `mount`).                 |
-| `gmountie config show`| Print the effective config (server or client) with passwords redacted.    |
+| `gmountie config show`| Print a config file (server or client) verbatim, with secrets redacted.   |
 | `gmountie genpass`    | Read a password (no-echo) and print the argon2id PHC hash to paste into the server config. |
 | `gmountie fingerprint`| Print the server's TLS cert fingerprint for TOFU pinning.                |
 | `gmountie version`    | Print the build version and exit.                                         |
@@ -68,6 +70,28 @@ The mountpoint is **required** and must be given as a positional argument — th
 
 See **[Client configuration](./client/config.md)** for every YAML field including RPC tuning, FUSE knobs, and the optional client-side cache.
 
+## `gmountie unmount`
+
+```bash
+gmountie unmount <mountpoint>     # alias: gmountie umount <mountpoint>
+```
+
+Unmounts a gMountie volume. For a mount this machine started — including
+`--daemon` mounts — it signals the mount process to unmount cleanly (the same
+path as Ctrl-C). For a mount started some other way it falls back to
+`fusermount3 -u` / `umount`.
+
+## `gmountie status`
+
+```bash
+gmountie status
+```
+
+Lists the volumes currently mounted by gMountie (foreground and `--daemon`) with
+their mountpoint, server, volume, pid, and uptime. Entries whose process has
+died are pruned automatically. Prints `No active gMountie mounts.` when there
+are none.
+
 ## `gmountie ls`
 
 ```bash
@@ -83,7 +107,9 @@ Lists volumes the server exposes. Uses the same auth resolution as `mount`.
 gmountie config show [--for server|client]
 ```
 
-Prints the effective config file with passwords redacted.
+Prints the chosen config file **verbatim**, with secrets (passwords and inline
+private keys) redacted. It does not merge defaults — omitted fields fall back to
+the documented defaults (see the client/server config docs).
 
 ## Common recipes
 
@@ -121,9 +147,13 @@ gmountie fingerprint
 # Show effective config (passwords redacted)
 gmountie config show --for server
 
-# Unmount
-umount /mnt/shared          # from another shell
-# …or press Ctrl-C in the terminal where gmountie mount is running.
+# See what's mounted
+gmountie status
+
+# Unmount (cleanly stops a --daemon mount; works for any gmountie mount)
+gmountie unmount /mnt/shared
+# …or press Ctrl-C in the terminal where a foreground gmountie mount is running,
+# …or, for a mount started elsewhere: umount /mnt/shared
 ```
 
 ## Environment variables
