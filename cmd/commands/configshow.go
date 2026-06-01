@@ -93,21 +93,38 @@ var configShowCmd = &cobra.Command{
 func init() {
 	configShowCmd.Flags().StringVar(&configShowFor, "for", "", "which config to show when no --config is given: server|client")
 	configShowCmd.Flags().BoolVar(&configShowEffective, "effective", false, "print the resolved config (file + defaults + env), not the verbatim file")
+	addProfileFlag(configShowCmd)
 	configCmd.AddCommand(configShowCmd)
 	rootCmd.AddCommand(configCmd)
 }
 
+// resolveConfigShowPath picks the config file to show: --profile, then
+// --config, then the per-role default for --for.
+func resolveConfigShowPath() (string, error) {
+	profilePath, err := resolveProfilePath()
+	if err != nil {
+		return "", err
+	}
+	if profilePath != "" {
+		return profilePath, nil
+	}
+	if configFile != "" {
+		return configFile, nil
+	}
+	switch configShowFor {
+	case "server":
+		return commonconfig.GetDefaultConfigPath(commonconfig.DefaultServerConfigFileName), nil
+	case "client", "":
+		return commonconfig.GetDefaultConfigPath(commonconfig.DefaultClientConfigFileName), nil
+	default:
+		return "", fmt.Errorf("--for must be server or client, got %q", configShowFor)
+	}
+}
+
 func runConfigShow(cmd *cobra.Command, _ []string) error {
-	path := configFile
-	if path == "" {
-		switch configShowFor {
-		case "server":
-			path = commonconfig.GetDefaultConfigPath(commonconfig.DefaultServerConfigFileName)
-		case "client", "":
-			path = commonconfig.GetDefaultConfigPath(commonconfig.DefaultClientConfigFileName)
-		default:
-			return fmt.Errorf("--for must be server or client, got %q", configShowFor)
-		}
+	path, err := resolveConfigShowPath()
+	if err != nil {
+		return err
 	}
 	if configShowEffective {
 		rendered, err := renderEffectiveConfig(path, configShowFor)
