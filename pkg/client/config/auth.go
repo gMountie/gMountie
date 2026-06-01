@@ -11,9 +11,14 @@ import (
 // BasicAuthConfigUser holds the cleartext credentials the client sends to
 // the server over TLS. This is deliberately separate from the server-side
 // BasicAuthConfigUser (which stores an argon2id hash, not a plaintext password).
+//
+// Password is omitempty because the plaintext secret is resolved at mount time
+// by resolveAuth (password_command / password_file / env / interactive prompt) —
+// not at config-parse time. A config that omits the inline password is valid
+// here; resolveAuth errors if no source produces a password at mount time.
 type BasicAuthConfigUser struct {
 	Username string `validate:"required"`
-	Password string `validate:"required"`
+	Password string `validate:"omitempty"`
 }
 
 // BasicAuthConfig is a struct that holds the configuration for the basic auth user

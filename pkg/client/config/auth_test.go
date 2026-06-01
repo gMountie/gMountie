@@ -60,29 +60,37 @@ auth:
 	s.Assert().Contains(err.Error(), "invalid auth type")
 }
 
-// Test error cases for missing required fields in basic auth
-func (s *AuthConfigTestSuite) TestParse_MissingBasicAuthFields() {
-	// Missing username
-	conf1 := `
+// TestParse_MissingUsername ensures username remains required at parse time.
+func (s *AuthConfigTestSuite) TestParse_MissingUsername() {
+	conf := `
 server:
   address: 127.0.0.1
 auth:
   type: basic
   password: testpass
 `
-	_, err := LoadConfigFromString(conf1)
+	_, err := LoadConfigFromString(conf)
 	s.Require().Error(err)
+}
 
-	// Missing password
-	conf2 := `
+// TestParse_MissingPassword ensures a password-less basic-auth config is valid
+// at parse time. The password is resolved at mount time by resolveAuth
+// (password_command / password_file / env / interactive prompt), so the inline
+// password field is optional in the config file.
+func (s *AuthConfigTestSuite) TestParse_MissingPassword() {
+	conf := `
 server:
   address: 127.0.0.1
 auth:
   type: basic
   username: testuser
 `
-	_, err = LoadConfigFromString(conf2)
-	s.Require().Error(err)
+	cfg, err := LoadConfigFromString(conf)
+	s.Require().NoError(err)
+	basic, ok := cfg.Auth.(*BasicAuthConfig)
+	s.Require().True(ok)
+	s.Equal("testuser", basic.Username)
+	s.Empty(basic.Password) // resolved at mount time by resolveAuth
 }
 
 // Test validation of username/password requirements

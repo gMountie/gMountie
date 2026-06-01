@@ -114,6 +114,30 @@ func (s *ConfigShowSuite) TestRedactsInlineKeyPEM() {
 	s.Contains(out, "1.2.3.4")
 }
 
+func (s *ConfigShowSuite) TestConfigShow_EffectiveProfileWithoutInlinePassword() {
+	profileName = "work"
+	defer func() { profileName = "" }()
+	configFile = ""
+	configShowEffective = true
+	defer func() { configShowEffective = false }()
+
+	cfgHome := s.T().TempDir()
+	s.T().Setenv("XDG_CONFIG_HOME", cfgHome)
+	pdir := filepath.Join(cfgHome, "gmountie", "profiles")
+	s.Require().NoError(os.MkdirAll(pdir, 0o755))
+	// No inline password — auth.password_command supplies it at mount time.
+	profile := "server:\n  address: work.example.com\n  port: 9449\nauth:\n  type: basic\n  username: admin\n  password_command: \"printf hunter2\"\nmount:\n  type: single\n  volume: shared\n"
+	s.Require().NoError(os.WriteFile(filepath.Join(pdir, "work.yaml"), []byte(profile), 0o600))
+
+	path, err := resolveConfigShowPath()
+	s.Require().NoError(err)
+	out, err := renderEffectiveConfig(path, "client")
+	s.Require().NoError(err) // must NOT fail on "password is required"
+	s.Contains(out, "address: work.example.com")
+	s.Contains(out, "username: admin")
+	s.NotContains(out, "hunter2") // the command is not executed by config show
+}
+
 func (s *ConfigShowSuite) TestConfigShow_ProfileResolvesPath() {
 	profileName = "work"
 	defer func() { profileName = "" }()
