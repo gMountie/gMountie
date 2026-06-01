@@ -8,6 +8,7 @@ import (
 
 	"go.gmountie.dev/gmountie/pkg/proto"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -26,4 +27,21 @@ func (s *LsSuite) TestRenderEmpty() {
 	var out bytes.Buffer
 	renderVolumes(&out, nil)
 	s.Contains(out.String(), "no volumes")
+}
+
+func (s *LsSuite) TestLsCmd_ProfileAndConfigConflict() {
+	profileName, configFile = "", ""
+	defer func() { profileName, configFile = "", "" }()
+
+	root := &cobra.Command{Use: "root"}
+	root.PersistentFlags().StringVarP(&configFile, "config", "c", "", "config file path")
+	root.AddCommand(lsCmd)
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"ls", "--profile", "work", "--config", "/tmp/x.yaml"})
+
+	err := root.Execute()
+	s.Require().Error(err)
+	s.Assert().Contains(err.Error(), "one of --profile or --config")
 }
