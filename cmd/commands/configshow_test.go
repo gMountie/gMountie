@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -110,4 +112,21 @@ func (s *ConfigShowSuite) TestRedactsInlineKeyPEM() {
 	s.NotContains(out, "secretinline")
 	s.Contains(out, "REDACTED")
 	s.Contains(out, "1.2.3.4")
+}
+
+func (s *ConfigShowSuite) TestConfigShow_ProfileResolvesPath() {
+	profileName = "work"
+	defer func() { profileName = "" }()
+	configFile = ""
+
+	cfgHome := s.T().TempDir()
+	s.T().Setenv("XDG_CONFIG_HOME", cfgHome)
+	pdir := filepath.Join(cfgHome, "gmountie", "profiles")
+	s.Require().NoError(os.MkdirAll(pdir, 0o755))
+	profile := "server:\n  address: work.example.com\n  port: 9449\nauth:\n  type: basic\n  username: admin\n  password: supersecret\n"
+	s.Require().NoError(os.WriteFile(filepath.Join(pdir, "work.yaml"), []byte(profile), 0o600))
+
+	path, err := resolveConfigShowPath()
+	s.Require().NoError(err)
+	s.Equal(filepath.Join(pdir, "work.yaml"), path)
 }
