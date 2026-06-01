@@ -8,7 +8,7 @@ description: gMountie network filesystem server (FUSE-over-gRPC).
 type: application
 
 # Chart version — bump on chart template edits.
-version: 0.2.1
+version: 0.2.2
 
 # appVersion is the gMountie release tag the chart's defaults target.
 # Override with `--set image.tag=<sha>` for dev / per-commit testing.

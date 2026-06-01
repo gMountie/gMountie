@@ -85,6 +85,10 @@ service:
   metricsPort: 9090
   # externalTrafficPolicy: Local
   annotations: {}
+  # appProtocol on the grpc port. Empty (default) suits a TLS gRPC backend
+  # behind a GRPCRoute + BackendTLSPolicy (Envoy negotiates h2 over TLS via
+  # ALPN). Set "kubernetes.io/h2c" only for a cleartext-h2 backend.
+  appProtocol: ""
 
 # Probes hit /healthz on the metrics endpoint (the ops HTTP server
 # from Phase 2). Disable by clearing the block.
