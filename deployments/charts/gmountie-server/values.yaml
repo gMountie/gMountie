@@ -90,18 +90,22 @@ service:
   # ALPN). Set "kubernetes.io/h2c" only for a cleartext-h2 backend.
   appProtocol: ""
 
-# Probes hit /healthz on the metrics endpoint (the ops HTTP server
-# from Phase 2). Disable by clearing the block.
+# Probes default to a TCP dial of the grpc port. The richer HTTP health
+# endpoints (/healthz, /readyz) live on the ops server, which binds a
+# loopback address by default (and requires auth on a non-loopback bind),
+# so the kubelet can't reach them out of the box — an httpGet probe there
+# would fail and crashloop the pod. A TCP dial of the always-listening grpc
+# port needs no auth and works regardless of the ops/TLS config. Override
+# with an httpGet block if you expose the ops endpoint with auth. Disable
+# by clearing the block.
 livenessProbe:
-  httpGet:
-    path: /healthz
-    port: metrics
+  tcpSocket:
+    port: grpc
   initialDelaySeconds: 5
   periodSeconds: 10
 readinessProbe:
-  httpGet:
-    path: /readyz
-    port: metrics
+  tcpSocket:
+    port: grpc
   initialDelaySeconds: 2
   periodSeconds: 5
 
