@@ -19,6 +19,7 @@ Every command, every flag, one page. The binary is `gmountie` — one binary, bo
 | `gmountie status`     | List active gMountie mounts on this machine (mountpoint, server, volume, pid, uptime). |
 | `gmountie ls`         | List the volumes a server exposes (same auth as `mount`).                 |
 | `gmountie config show`| Print a config file (server or client) verbatim, with secrets redacted.   |
+| `gmountie profile`    | Manage client config profiles (`profile list`).                            |
 | `gmountie genpass`    | Read a password (no-echo) and print the argon2id PHC hash to paste into the server config. |
 | `gmountie fingerprint`| Print the server's TLS cert fingerprint for TOFU pinning.                |
 | `gmountie completion` | Print a shell completion script (`bash`, `zsh`, `fish`, `powershell`).    |
@@ -64,10 +65,11 @@ CLI flags override the corresponding fields in the client config. With `-c`, any
 | `--password`        | `-p`  | _(optional)_     | Password for basic auth (visible in shell history; prefer the prompt or `$GMOUNTIE_AUTH_PASSWORD`). |
 | `--daemon`          |       | `false`          | Detach after mount is ready. Logs go to `$XDG_STATE_HOME/gmountie/mount-daemon.log`. |
 | `--raw-ids`         |       | `false`          | Expose the server's raw uid/gid on file metadata, instead of mapping to the local user. Useful for backups and admin tooling. |
+| `--profile`         | `-P`  | _(none)_         | Mount a saved profile from `~/.config/gmountie/profiles/`. Mutually exclusive with `--config`. |
 
-**Password resolution order** (first non-empty wins): `--password` flag → config file (`auth.password`) → `$GMOUNTIE_AUTH_PASSWORD` → interactive no-echo prompt.
+**Password resolution order** (first non-empty wins): `--password` flag → `auth.password_command` → `auth.password_file` / `$GMOUNTIE_AUTH_PASSWORD_FILE` → `auth.password` (inline) → `$GMOUNTIE_AUTH_PASSWORD` → interactive no-echo prompt.
 
-The mountpoint is **required** and must be given as a positional argument — there's no config fallback for it.
+The mountpoint is **required** unless `mount.path` is set in the config or profile — in that case it can be omitted.
 
 See **[Client configuration](./client/config.md)** for every YAML field including RPC tuning, FUSE knobs, and the optional client-side cache.
 
@@ -118,6 +120,29 @@ merged with the built-in defaults and `GMOUNTIE_*` environment overrides — so
 you can see every value gMountie will actually use. Secrets are still redacted.
 With `--effective`, pass `--for server` to render a server config (it defaults
 to client).
+
+## Profiles
+
+Save reusable targets as client config files under
+`~/.config/gmountie/profiles/<name>.yaml` and select one with `--profile`:
+
+```bash
+gmountie mount --profile work /mnt/work     # connection + tuning from the profile
+gmountie mount --profile work /mnt/work -v  # CLI flags still override the profile
+gmountie ls --profile work                  # list a profile's server
+gmountie config show --profile work --effective
+gmountie profile list                       # names + address/volume
+```
+
+A profile is a normal client config, so it carries server, auth, cache, FUSE,
+RPC and TLS settings plus `mount.volume` (and an optional `mount.path` default
+mountpoint). `--profile` and `--config` are mutually exclusive.
+
+Keep secrets out of the profile with `auth.password_command` (run a command,
+e.g. a password manager) or `auth.password_file` (a 0600 file); inline
+`auth.password` and the interactive prompt still work. Resolution order:
+`--password` > `auth.password_command` > `auth.password_file` >
+`auth.password` > `$GMOUNTIE_AUTH_PASSWORD` > prompt.
 
 ## `gmountie completion`
 
@@ -184,10 +209,11 @@ gmountie unmount /mnt/shared
 
 ## Environment variables
 
-| Variable                  | Effect                                                                                  |
-| ------------------------- | --------------------------------------------------------------------------------------- |
-| `GMOUNTIE_AUTH_PASSWORD`  | Password for basic auth — checked after `--password` and config file, before prompt.   |
-| `GMOUNTIE_PPROF_ADDR`     | If set (e.g. `127.0.0.1:6060`), the client serves `/debug/pprof/` on that address.    |
+| Variable                       | Effect                                                                                       |
+| ------------------------------ | -------------------------------------------------------------------------------------------- |
+| `GMOUNTIE_AUTH_PASSWORD`       | Password for basic auth — checked after `--password`, `password_command`, and `password_file`, before prompt. |
+| `GMOUNTIE_AUTH_PASSWORD_FILE`  | Path to a 0600 password file — fallback when `auth.password_file` is not set in config.     |
+| `GMOUNTIE_PPROF_ADDR`          | If set (e.g. `127.0.0.1:6060`), the client serves `/debug/pprof/` on that address.         |
 
 Most settings are configured via YAML, not the environment. `GMOUNTIE_AUTH_PASSWORD` is useful in scripts where an interactive prompt is not available.
 
