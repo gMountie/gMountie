@@ -95,15 +95,22 @@ func resolveAuth(cmd *cobra.Command, v *viper.Viper) error {
 		return fmt.Errorf("username is required for basic auth (use user@host or -u)")
 	}
 
-	pw := v.GetString("auth.password")
+	var pw string
 	if cmd.Flags().Changed("password") {
 		pw = password
-	} else if pw == "" {
-		resolved, err := resolvePassword("", cmd.InOrStdin(), cmd.ErrOrStderr())
+	} else {
+		configured, err := resolveConfiguredPassword(cmd.Context(), v)
 		if err != nil {
 			return err
 		}
-		pw = resolved
+		pw = configured
+		if pw == "" {
+			resolved, err := resolvePassword("", cmd.InOrStdin(), cmd.ErrOrStderr())
+			if err != nil {
+				return err
+			}
+			pw = resolved
+		}
 	}
 
 	v.Set("auth.type", "basic")
@@ -121,7 +128,7 @@ var mountCmd = &cobra.Command{
 		"The password is taken from --password, then the config file, then\n" +
 		"$GMOUNTIE_AUTH_PASSWORD, then an interactive prompt. Use --daemon to\n" +
 		"mount in the background.",
-	Args: cobra.RangeArgs(1, 2),
+	Args: cobra.MaximumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Build a viper instance, optionally seeded from a config file, then
 		// layer the shorthand spec and explicit CLI flags on top.
@@ -130,21 +137,32 @@ var mountCmd = &cobra.Command{
 		// file > flag default. The shorthand is typed explicitly on the command
 		// line, so it wins over a config file; a config file's values must not
 		// be silently shadowed by flag defaults the user never set.
+		profilePath, err := resolveProfilePath()
+		if err != nil {
+			return err
+		}
+		cfgPath := configFile
+		if profilePath != "" {
+			cfgPath = profilePath
+		}
+
 		v := viper.New()
-		hasConfig := configFile != ""
+		hasConfig := cfgPath != ""
 		if hasConfig {
-			v.SetConfigFile(configFile)
+			v.SetConfigFile(cfgPath)
 			if err := v.ReadInConfig(); err != nil {
-				return fmt.Errorf("failed to read config file %s: %w", configFile, err)
+				return fmt.Errorf("failed to read config file %s: %w", cfgPath, err)
 			}
 		}
 
 		// Positional forms:
 		//   2 args: "<spec> <mountpoint>" — spec seeds server/user/volume
 		//   1 arg : "<mountpoint>"        — flags/config supply the rest
+		//   0 args: profile supplies mountpoint via mount.path
 		var mountpoint string
 		usedSpec := len(args) == 2
-		if usedSpec {
+		switch len(args) {
+		case 2:
 			spec, err := parseMountSpec(args[0])
 			if err != nil {
 				return err
@@ -154,7 +172,7 @@ var mountCmd = &cobra.Command{
 				volumeName = vol
 			}
 			mountpoint = args[1]
-		} else {
+		case 1:
 			mountpoint = args[0]
 		}
 
@@ -170,24 +188,34 @@ var mountCmd = &cobra.Command{
 			v.Set("server.port", port)
 		}
 
-		if volumeName == "" {
-			return fmt.Errorf("volume name is required (use the shorthand host/volume or -n)")
-		}
-
 		if err := resolveAuth(cmd, v); err != nil {
 			return err
 		}
 
-		var err error
 		cfg, err = config.ParseConfig(v)
 		if err != nil {
 			return fmt.Errorf("failed to parse config: %w", err)
 		}
 
-		// raw IDs are enabled by either the --raw-ids flag or `mount.raw_ids`
-		// in the config file (it's opt-in; either source turns it on).
-		if sm, ok := cfg.Mount.(*config.SingleMountConfig); ok && sm.RawIDs {
-			rawIDs = true
+		// Fall back to the profile/config mount block for anything the CLI omitted.
+		if sm, ok := cfg.Mount.(*config.SingleMountConfig); ok {
+			if volumeName == "" {
+				volumeName = sm.Volume
+			}
+			if mountpoint == "" {
+				mountpoint = sm.Path
+			}
+			// raw IDs are enabled by either the --raw-ids flag or `mount.raw_ids`
+			// in the config file (it's opt-in; either source turns it on).
+			if sm.RawIDs {
+				rawIDs = true
+			}
+		}
+		if volumeName == "" {
+			return fmt.Errorf("volume name is required (use the shorthand host/volume, -n, or a profile's mount.volume)")
+		}
+		if mountpoint == "" {
+			return fmt.Errorf("mountpoint is required (pass it as an argument or set mount.path in the profile)")
 		}
 
 		// Verify that the mountpoint directory exists
@@ -290,6 +318,7 @@ func waitForUnmount(sig <-chan os.Signal, served <-chan struct{}) (external bool
 }
 
 func init() {
+	addProfileFlag(mountCmd)
 	mountCmd.PersistentFlags().StringVarP(&serverAddr, "server", "s", "127.0.0.1:9449", "server address")
 	mountCmd.PersistentFlags().StringVarP(&volumeName, "volume", "n", "", "volume name")
 	mountCmd.PersistentFlags().StringVarP(&authType, "auth-type", "t", "basic", "authentication type (basic)")

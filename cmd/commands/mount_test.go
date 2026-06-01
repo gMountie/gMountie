@@ -53,10 +53,12 @@ func (s *MountCmdTestSuite) TearDownTest() {
 	username = ""
 	password = ""
 	configFile = ""
+	profileName = ""
 	daemonFlag = false
 	rawIDs = false
 	// Reset cobra flag Changed state so each test starts with a clean slate.
 	mountCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
+	mountCmd.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
 	if s.tempDir != "" {
 		err := os.RemoveAll(s.tempDir)
 		s.Require().NoError(err)
@@ -64,8 +66,10 @@ func (s *MountCmdTestSuite) TearDownTest() {
 }
 
 func (s *MountCmdTestSuite) TestMountCmd_NoVolumeName() {
-	// Test
-	s.cmd.SetArgs([]string{"mount", s.mountPath})
+	// Supply auth so resolveAuth passes; the volume guard is now checked after
+	// config parsing (profile/config fallback happens there), so we must get
+	// past auth before we can test the volume-required message.
+	s.cmd.SetArgs([]string{"mount", s.mountPath, "--username", "admin", "--password", "admin"})
 	err := s.cmd.Execute()
 
 	// Verify
@@ -261,6 +265,45 @@ func (s *MountCmdTestSuite) TestWaitForUnmount_ReturnsOnSignal() {
 	served := make(chan struct{})
 	sig <- os.Interrupt
 	s.False(waitForUnmount(sig, served))
+}
+
+// TestMountCmd_ProfileSuppliesVolume proves a profile can supply server + volume
+// so only the mountpoint is needed on the CLI. We stop at the non-existent
+// mountpoint guard, which proves the profile resolved the volume (no "volume
+// name is required") and the password (no prompt/EOF error).
+func (s *MountCmdTestSuite) TestMountCmd_ProfileSuppliesVolume() {
+	cfgHome := filepath.Join(s.tempDir, "xdgcfg")
+	s.T().Setenv("XDG_CONFIG_HOME", cfgHome)
+	pdir := filepath.Join(cfgHome, "gmountie", "profiles")
+	s.Require().NoError(os.MkdirAll(pdir, 0o755))
+	profile := `server:
+  address: 192.168.11.11
+  port: 9449
+auth:
+  type: basic
+  username: demo
+  password: demo
+mount:
+  type: single
+  volume: shared
+`
+	s.Require().NoError(os.WriteFile(filepath.Join(pdir, "work.yaml"), []byte(profile), 0o600))
+
+	missing := filepath.Join(s.tempDir, "no-such-mount")
+	s.cmd.SetArgs([]string{"mount", missing, "--profile", "work"})
+	err := s.cmd.Execute()
+	s.Require().Error(err)
+	s.Assert().Contains(err.Error(), fmt.Sprintf("mountpoint %s does not exist", missing))
+	s.Assert().NotContains(err.Error(), "volume name is required")
+}
+
+// TestMountCmd_ProfileAndConfigConflict proves that --profile and --config
+// together produce a clear error.
+func (s *MountCmdTestSuite) TestMountCmd_ProfileAndConfigConflict() {
+	s.cmd.SetArgs([]string{"mount", s.mountPath, "--profile", "work", "--config", "/tmp/x.yaml"})
+	err := s.cmd.Execute()
+	s.Require().Error(err)
+	s.Assert().Contains(err.Error(), "one of --profile or --config")
 }
 
 func TestMountCmdSuite(t *testing.T) {
