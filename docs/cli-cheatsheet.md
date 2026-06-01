@@ -21,6 +21,7 @@ Every command, every flag, one page. The binary is `gmountie` — one binary, bo
 | `gmountie config show`| Print a config file (server or client) verbatim, with secrets redacted.   |
 | `gmountie genpass`    | Read a password (no-echo) and print the argon2id PHC hash to paste into the server config. |
 | `gmountie fingerprint`| Print the server's TLS cert fingerprint for TOFU pinning.                |
+| `gmountie completion` | Print a shell completion script (`bash`, `zsh`, `fish`, `powershell`).    |
 | `gmountie version`    | Print the build version and exit.                                         |
 
 ## Global flags
@@ -110,6 +111,24 @@ gmountie config show [--for server|client]
 Prints the chosen config file **verbatim**, with secrets (passwords and inline
 private keys) redacted. It does not merge defaults — omitted fields fall back to
 the documented defaults (see the client/server config docs).
+
+## `gmountie completion`
+
+```bash
+gmountie completion bash | zsh | fish | powershell
+```
+
+Generates a shell completion script for the given shell. Load it once to get
+tab-completion for commands and flags, e.g.:
+
+```bash
+# bash (current shell)
+source <(gmountie completion bash)
+# zsh (persist)
+gmountie completion zsh > "${fpath[1]}/_gmountie"
+```
+
+Run `gmountie completion --help` for per-shell install instructions.
 
 ## Common recipes
 
