@@ -6,7 +6,7 @@ description: How gMountie survives flaky links — keepalive, idempotent RPCs, a
 
 # Sessions & reconnect
 
-**The internet drops packets, NATs rebind, and ISPs reassign IPs. gMountie is built to ride that out: a brief disconnect stalls reads rather than returning `EIO`, and most operations are safe to retry.** Three mechanisms cooperate to make that work.
+**The internet drops packets, NATs rebind, and ISPs reassign IPs. gMountie is built to ride that out: data-path operations retry transient gRPC failures on a bounded budget, the keepalive/session stream reconnects in the background, and open file handles survive a short outage.** Three mechanisms cooperate to make that work.
 
 ## 1 · Keepalive — detecting a dead path quickly
 
@@ -35,26 +35,25 @@ server:
 
 `min_time` on the server is a defence against pathologically chatty clients — it's the floor on how fast a client may ping. Match it to your `time` on the client.
 
-## 2 · Idempotent RPCs — safe to retry
+## 2 · Bounded retries — safe to retry
 
-Where possible, RPCs are written so retrying is a no-op on success:
+The client's retry layer (`avast/retry-go`) wraps data-path RPCs with bounded exponential backoff: up to **3 attempts** with a delay capped at **1 s** (roughly a 2 s total budget). On a transient `Unavailable` / `DeadlineExceeded` it retries quietly; on a logical error (`NotFound`, `PermissionDenied`, `InvalidArgument`) it surfaces immediately. If the retry budget is exhausted before the path recovers, the in-flight syscall returns `fuse.EIO` to the caller.
 
-- **`Read(volume, fd, offset, length)`** — pure function of inputs.
-- **`Write(volume, fd, offset, bytes)`** — offset is explicit, no hidden cursor.
-- **`Lookup`, `Getattr`, `Readdir`** — observation-only.
+Two classes of RPC get retried:
 
-The client's retry layer (`avast/retry-go`) wraps these with bounded exponential backoff. On a transient `Unavailable` / `DeadlineExceeded` it retries quietly; on a logical error (`NotFound`, `PermissionDenied`, `InvalidArgument`) it surfaces immediately.
+- **`Read(volume, fd, offset, length)`** — a pure function of its inputs, so a retry is a direct no-op on success.
+- **`Lookup`, `Getattr`, `Readdir`** — observation-only; retried directly.
 
-Operations with side effects that *aren't* safely retryable (e.g. `Mkdir` after the directory already exists, `Unlink` after the file was concurrently deleted) aren't blindly retried — the client returns the underlying error and lets the caller decide.
+**`Write` and other mutations** are not pure functions of their inputs, so they aren't retried blindly. Each carries a `request_id`, and the server keeps a per-session idempotency cache (`DoOnce`) keyed by that id: a retried write that already landed is deduplicated server-side rather than applied twice. Operations whose retry semantics can't be made safe this way (e.g. `Mkdir` after the directory already exists, `Unlink` after the file was concurrently deleted) surface the underlying error and let the caller decide.
 
-## 3 · Stable file handles — opens survive a blip
+## 3 · Stable file handles — opens survive a short outage
 
-When the client opens a file, the server allocates an fd in a per-connection session. If the underlying TCP/HTTP-2 connection drops and the client reconnects:
+When the client opens a file, the server allocates an fd in a per-session store. The keepalive/session stream reconnects in the background, and the server holds onto a disconnected session's fds for a **grace period** (`GracePeriod`, default **30 s**) before reaping them:
 
-- The client reattaches its existing fds; reads/writes resume from where they were.
-- The application above FUSE doesn't see the blip — the kernel was holding pending syscalls.
+- If the client reconnects **within** the grace period, it resumes the existing session and its fds stay valid; reads/writes continue from where they were.
+- If the outage **exceeds** the grace period, the server releases the fds. The client then starts a fresh session with a new `Create` and logs that any previously open fds are now invalid.
 
-This is what lets a `tail -f` over a flaky link **stall** during the drop and resume on its own, instead of failing the file handle.
+So an open file handle survives a brief drop, but only up to the 30 s grace window — not indefinitely, and not necessarily for the full keepalive detection window. A data-path op in flight during the drop is still bounded by the ~2 s retry budget from §2: if the path doesn't recover in time, that syscall returns `EIO` even though the session may later resume.
 
 ## The connection state machine
 
@@ -73,22 +72,23 @@ stateDiagram-v2
   Failed --> [*]
 
   note right of Connected
-    pending syscalls
-    are held by the
-    kernel during
+    in-flight ops retry
+    a bounded budget
+    (~2 s) during
     Reconnecting
   end note
 ```
 
-While **Reconnecting**, the kernel keeps pending FUSE syscalls suspended — your application sees a stall, not an error. The mount only surfaces `EIO` if the state machine lands in **Failed**.
+While **Reconnecting**, the session stream re-establishes in the background and fds stay valid for up to the grace period. In-flight data-path ops retry on a ~2 s budget; if they don't recover in time they return `EIO` even before the state machine lands in **Failed**.
 
 ## What the user sees
 
 | Situation                                       | Outward symptom                                                                      |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------ |
-| ~5 s blip (NAT rebind, brief Wi-Fi drop)        | Pending syscalls stall. Connection re-establishes silently. No error visible.        |
-| Server reboot, ~30 s outage                     | Same as above if it comes back within keepalive window. Otherwise…                   |
-| Outage longer than keepalive (~40 s default)    | Next syscall returns `EIO`. Mount remains; new attempts retry. Server back → recovery. |
+| Sub-second blip within the retry budget         | In-flight op retries and succeeds. No error visible.                                  |
+| ~5 s blip (NAT rebind, brief Wi-Fi drop)        | In-flight ops exceed the ~2 s retry budget and return `EIO`; the session reconnects in the background and fresh ops succeed. Open fds stay valid (within the 30 s grace period). |
+| Server reboot, recovery within 30 s grace       | Ops in flight during the drop may return `EIO`; the session resumes with fds intact once the server is back. |
+| Outage longer than the 30 s grace period        | Server releases the fds. Client starts a fresh session — previously open fds are invalid. New attempts retry; server back → recovery. |
 | Server permanently gone (intentional shutdown)  | `EIO` until you `umount` and re-mount somewhere else.                                |
 
 :::tip[Tuning for your network]

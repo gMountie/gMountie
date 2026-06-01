@@ -100,7 +100,7 @@ The client supports the following authentication method:
 
 5. Mount from a config file (password from config or prompt):
    ```bash
-   gmountie mount -c ~/.config/gmountie/client.yaml
+   gmountie mount -c ~/.config/gmountie/client.yaml ~/mnt/shared
    ```
 
 ## Security Considerations

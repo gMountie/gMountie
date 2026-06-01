@@ -6,39 +6,47 @@ description: How the client-side cache works, what it stores, and why writes are
 
 # Cache & consistency
 
-**The client decorates the gRPC backend with an in-memory cache.** On a hit, the FUSE op returns without crossing the wire. On a miss, the wire call runs and seeds the cache. The server pushes invalidations so multiple clients converge without polling.
+**The client decorates the gRPC backend with a two-tier cache.** On a hit, the FUSE op returns without crossing the wire. On a miss, the wire call runs and seeds the cache. The server pushes invalidations so multiple clients converge without polling.
+
+The cache is **two-tier**: a fast in-memory tier and a disk-persistent tier (under `cache.path`, default `~/.cache/gmountie`) that survives a remount. The two tiers have independent byte budgets — `cache.memory_max_bytes` (default 256 MiB) and `cache.disk_max_bytes` (default 10 GiB).
 
 ## What's cached
 
-Three independent sub-caches share one byte budget (`cache.max_size_bytes`, default 1 GiB):
+The attr, dir, and data sub-caches share the byte budgets above:
 
 | Sub-cache | Holds                                | TTL key                  | Default |
 | --------- | ------------------------------------ | ------------------------ | ------- |
-| **attr**  | `getattr` results — inode metadata.  | `cache.attr_ttl`         | 5 s     |
-| **dir**   | `readdir` listings.                  | `cache.dir_ttl`          | 5 s     |
+| **attr**  | `getattr` results — inode metadata.  | `cache.attr_ttl`         | 5 m     |
+| **dir**   | `readdir` listings.                  | `cache.dir_ttl`          | 5 m     |
 | **data**  | File content, chunked.               | (no TTL — invalidation-driven) | — |
-| **neg**   | "this path doesn't exist" cache.    | `cache.negative_ttl`     | 2 s     |
+| **neg**   | "this path doesn't exist" cache.    | `cache.negative_ttl`     | 30 s    |
+
+The negative cache is **memory-only** and is not counted against the byte budgets.
 
 Data lives in fixed-size **chunks** (`cache.chunk_size_bytes`, default 1 MiB). A read at a non-aligned offset spans two chunks; the chunk size matches the streaming frame size so a chunk fetch maps 1:1 to one `Read` RPC.
 
-The cache is **off by default**. Turn it on in `client.yaml`:
+The cache is **enabled by default**. Turn it off in `client.yaml`:
 
 ```yaml
 cache:
-  enabled: true
+  enabled: false
 ```
 
 See [Client configuration](../client/config.md) for every knob.
 
 ## Push invalidation
 
-The cache isn't pure-TTL — it also subscribes to a server-side stream of change events.
+The cache isn't pure-TTL — it also subscribes to a server-side stream of change events. This is on by default (`cache.subscribe_enabled`, default `true`); set it to `false` to fall back to pure TTL.
 
-- The client opens a long-lived `Subscribe` RPC on the **volume** service.
+- The client opens a long-lived `Subscribe` RPC on the **fs** service (`RpcFs`).
 - When the server applies a write that affects a path (locally on the server, or via another mounted client), it broadcasts a small invalidation event.
 - Subscribers evict the matching attr / dir / data chunk on receipt.
 
 This is what makes the cache **safe across multiple clients**. Two clients mounted on the same volume see each other's writes promptly without either polling.
+
+### Freshness model
+
+The cache starts **unverified** and revalidates every read against the server until the first Subscribe `HEARTBEAT` marks it globally verified. Once verified, TTL is the sole freshness signal — reads are served from cache until the entry ages out or an invalidation arrives. If `cache.subscribe_enabled` is `false`, the cache is marked globally verified at construction, so it runs TTL-only from the start.
 
 ## Close-to-open consistency
 
@@ -71,7 +79,7 @@ The defaults (1 MiB chunks, window of 4) target ~50 ms RTT. Tune in `rpc.readahe
 
 ## Turning the cache off
 
-Set `cache.enabled: false` (the default until further notice). Every operation crosses the wire — useful for debugging consistency questions or measuring cold-path performance.
+Set `cache.enabled: false` (the cache is enabled by default). Every operation crosses the wire — useful for debugging consistency questions or measuring cold-path performance.
 
 ## Go deeper
 

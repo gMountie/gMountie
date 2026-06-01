@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 gMountie is a network filesystem built on FUSE (via `github.com/hanwen/go-fuse/v2`) and gRPC. A server (`gmountie serve`) exposes configured local directories as named "volumes"; a client (`gmountie mount`) mounts a volume locally via FUSE and proxies syscalls to the server over gRPC. There is also a Wails 3 desktop app (`ui/`) that wraps the client.
 
-Linux is the only supported target today (the desktop UI requires CGO + `libwebkit2gtk-4.1-dev`/`gtk+-3.0`).
+The server (`gmountie serve`) and the Wails desktop app are Linux-only; the CLI client (`gmountie mount`/`ls`) also builds and runs on macOS (via macFUSE / FUSE-T) — see the `//go:build linux || darwin` tags in `cmd/commands/`. The desktop UI requires CGO + `libwebkit2gtk-4.1-dev`/`gtk+-3.0`.
 
 ## Commands
 

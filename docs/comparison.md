@@ -18,10 +18,10 @@ If you're evaluating gMountie against another tool, this page is the property ma
 | **WAN read throughput**        | designed for it — streaming reads, readahead window, write coalescing | poor — chatty metadata is RTT-amplified inside the VPN | poor on high-RTT                       | limited by WebDAV; DERP-relay path is slow | metadata-heavy; per-object HTTP   |
 | **Client cache**               | optional, push-invalidated, on-disk persistence  | none in protocol                            | none                                   | none                                  | varies (rclone has one; s3fs minimal) |
 | **Reconnect / blip survival**  | fds + idempotency tokens — `~40 s` keepalive    | depends on VPN; mount stalls / hard-locks   | breaks the SSH connection              | breaks the WebDAV session             | per-request; no session          |
-| **Auth**                       | basic today, mTLS planned                        | inherits VPN + system uids                  | SSH keys / agent                       | tailnet ACLs                          | AWS-style keys / IAM             |
+| **Auth**                       | basic or mTLS, over native TLS                   | inherits VPN + system uids                  | SSH keys / agent                       | tailnet ACLs                          | AWS-style keys / IAM             |
 | **Multi-writer**               | last-`Release`-wins                              | NFSv4 byte-range locks                      | none                                   | none                                  | none                             |
 | **Setup**                      | one binary, two commands                         | install VPN + NFS server + auth             | sshd + sshfs                           | install Tailscale on every endpoint   | bucket + creds + mount tool      |
-| **Linux client**               | yes (only)                                       | yes                                         | yes                                    | yes                                   | yes                              |
+| **Client OS**                  | Linux + macOS (macFUSE / FUSE-T)                 | yes                                         | yes                                    | yes                                   | yes                              |
 
 <small>*fcntl locks tracked in [design/architecture.md](./design/architecture.md); the full POSIX-coverage table lives there.</small>
 

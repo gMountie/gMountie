@@ -16,7 +16,7 @@ Concrete walkthroughs. Each one starts with what you'll end up with, lists what 
 
 ## Networking
 
-- **[TLS via Caddy reverse proxy](./caddy-reverse-proxy.md)** — gMountie speaks plain gRPC today; until native TLS lands ([roadmap](../roadmap.md)) you can put Caddy in front to terminate TLS with an automatic Let's Encrypt cert.
+- **[TLS via Caddy reverse proxy](./caddy-reverse-proxy.md)** — gMountie serves native TLS by default (auto-generated self-signed cert + client-side TOFU pinning). Put Caddy in front when you'd rather present an automatic Let's Encrypt cert that clients trust without pinning.
 
 ## Need one that's not here?
 

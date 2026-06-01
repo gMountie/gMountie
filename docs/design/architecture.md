@@ -94,14 +94,15 @@ The client also runs a small gRPC client wrapper that:
 
 ### 3.3 The wire protocol
 
-All cross-process state lives in protobuf messages. Four services
+All cross-process state lives in protobuf messages. Five services
 partition the surface:
 
 | Service | Purpose | Examples |
 |---|---|---|
-| `SessionService` | Connection-level session lifecycle. | `Create`, `Resume`, `Keepalive` |
-| `VolumeService` | Discovery — what volumes does this server expose? | `List` |
-| `RpcFs` | Path-keyed filesystem operations. | `GetAttr`, `OpenDir`, `Mkdir`, `Rename`, `Unlink`, `Truncate`, `Chmod`, `Chown`, `StatFs`, `GetXAttr`, `Access` |
+| `SessionService` | Connection-level session lifecycle. | `Create`, `Resume`, `Keepalive`, `WhoAmI` |
+| `VolumeService` | Discovery — what volumes does this server expose? | `List`, `Resolve` |
+| `VersionService` | Protocol version negotiation. | `Get` (negotiates parameters like `frame_size_bytes`) |
+| `RpcFs` | Path-keyed filesystem operations, plus the server-push invalidation stream. | `GetAttr`, `OpenDir`, `Mkdir`, `Rename`, `Unlink`, `Truncate`, `Chmod`, `Chown`, `StatFs`, `GetXAttr`, `Access`, `Subscribe` |
 | `RpcFile` | Fd-keyed file operations. | `Open`, `Create`, `Read`, `Write`, `Release`, `Flush`, `Fsync`, `GetLk`/`SetLk`/`SetLkw`, `Allocate` |
 
 The split between `RpcFs` and `RpcFile` is meaningful: `RpcFs` operates
@@ -109,10 +110,12 @@ on paths and is stateless on the server beyond the volume's filesystem;
 `RpcFile` operates on file descriptors that the server allocates and
 tracks per session.
 
-No service holds streaming RPCs that carry payload — all file I/O is
-unary today. The only stream on the wire is `SessionService.Keepalive`,
-which is a server-stream the client holds open as a liveness signal and
-carries no payload.
+Several RPCs stream on the wire. `RpcFile.Read` is server-streaming and
+`RpcFile.Write` is client-streaming, so a single RPC frames many
+in-flight chunks without per-chunk round-trips. `RpcFs.Subscribe` is a
+server-stream the client holds open to receive push invalidations.
+`SessionService.Keepalive` is a server-stream the client holds open as a
+liveness signal and carries no payload.
 
 ## 4. Sessions
 
@@ -255,16 +258,19 @@ The client distinguishes the two: a gRPC error is the wire failing
 
 ## 7. Authentication
 
-All requests are authenticated. The supported mode today, at the gRPC interceptor layer:
+All requests are authenticated. Two modes ship, selected by `auth.type`,
+at the gRPC interceptor layer:
 
 - `basic` — username/password against a configured user list. The
   authenticated principal is the basic-auth user; today it isn't yet
   used for permission decisions (those still come from the wire UID/GID
   field — see the identity design doc for the planned shape).
+- `mtls` — the client's TLS certificate carries its identity, verified
+  during the handshake.
 
-TLS at the transport layer is deliberately disabled today and is a
-roadmap item, not an architectural decision. The protocol does not
-constrain it.
+TLS at the transport layer ships as well: the server auto-generates a
+certificate, and the client chooses a verification mode (`verify`,
+`tofu`, or `insecure`).
 
 ## 8. Compression
 
