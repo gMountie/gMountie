@@ -11,7 +11,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var configShowFor string
+var (
+	configShowFor       string
+	configShowEffective bool
+)
 
 // secretKeyLine matches a YAML assignment for a sensitive key, capturing its
 // indent, key name, and whatever follows the colon. `key_pem` is the inline
@@ -74,14 +77,19 @@ var configShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Print a gMountie config file with secrets redacted",
 	Long: "Reads the config file (--config, or the default for --for) and prints it\n" +
-		"verbatim with passwords redacted — so you can confirm which file gMountie\n" +
+		"verbatim with secrets redacted — so you can confirm which file gMountie\n" +
 		"will load and what it contains. Fields you omit are not shown here; they\n" +
-		"fall back to the documented defaults (see the client/server config docs).",
+		"fall back to the documented defaults (see the client/server config docs).\n\n" +
+		"Use --effective to instead print the resolved configuration (your file\n" +
+		"merged with the built-in defaults and GMOUNTIE_* environment overrides),\n" +
+		"so you can see every value gMountie will actually use. With --effective,\n" +
+		"pass --for server to render a server config (it defaults to client).",
 	RunE: runConfigShow,
 }
 
 func init() {
 	configShowCmd.Flags().StringVar(&configShowFor, "for", "", "which config to show when no --config is given: server|client")
+	configShowCmd.Flags().BoolVar(&configShowEffective, "effective", false, "print the resolved config (file + defaults + env), not the verbatim file")
 	configCmd.AddCommand(configShowCmd)
 	rootCmd.AddCommand(configCmd)
 }
@@ -98,6 +106,15 @@ func runConfigShow(cmd *cobra.Command, _ []string) error {
 			return fmt.Errorf("--for must be server or client, got %q", configShowFor)
 		}
 	}
+	if configShowEffective {
+		rendered, err := renderEffectiveConfig(path, configShowFor)
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "# %s (effective: file + defaults + env)\n%s\n", path, rendered)
+		return nil
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read config %s: %w", path, err)

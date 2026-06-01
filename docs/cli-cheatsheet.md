@@ -106,11 +106,18 @@ Lists volumes the server exposes. Uses the same auth resolution as `mount`.
 
 ```bash
 gmountie config show [--for server|client]
+gmountie config show --effective [--for server|client]
 ```
 
-Prints the chosen config file **verbatim**, with secrets (passwords and inline
-private keys) redacted. It does not merge defaults — omitted fields fall back to
-the documented defaults (see the client/server config docs).
+By default, prints the chosen config file **verbatim**, with secrets (passwords
+and inline private keys) redacted. It does not merge defaults — omitted fields
+fall back to the documented defaults (see the client/server config docs).
+
+Add `--effective` to instead print the **resolved** configuration — your file
+merged with the built-in defaults and `GMOUNTIE_*` environment overrides — so
+you can see every value gMountie will actually use. Secrets are still redacted.
+With `--effective`, pass `--for server` to render a server config (it defaults
+to client).
 
 ## `gmountie completion`
 
