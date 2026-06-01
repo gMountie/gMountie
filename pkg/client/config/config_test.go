@@ -212,6 +212,28 @@ fuse:
 }
 
 // TestParse_FUSEValidation rejects out-of-range values.
+// TestParse_FriendlyValidationMessage verifies client-side validation failures
+// surface as a human-readable "config error" with the snake_case key path, not
+// raw validator.ValidationErrors noise.
+func (s *ConfigTestSuite) TestParse_FriendlyValidationMessage() {
+	conf := `
+server:
+  address: 127.0.0.1
+  port: 9449
+auth:
+  type: basic
+  username: admin
+  password: admin
+fuse:
+  max_write_bytes: 1024
+`
+	_, err := LoadConfigFromString(conf)
+	s.Require().Error(err)
+	s.Contains(err.Error(), "config error")
+	s.Contains(err.Error(), "fuse.max_write_bytes")
+	s.NotContains(err.Error(), "Field validation for")
+}
+
 func (s *ConfigTestSuite) TestParse_FUSEValidation() {
 	conf := `
 server:
