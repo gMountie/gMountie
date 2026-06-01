@@ -24,6 +24,14 @@ serviceAccount:
 podAnnotations: {}
 podLabels: {}
 
+# Kubernetes injects Docker-link Service env vars (FOO_SERVICE_PORT,
+# FOO_PORT=tcp://...) for every Service in the namespace. Those collide
+# with gMountie's GMOUNTIE_ config env prefix and break config parsing
+# (e.g. a `gmountie-server` Service sets GMOUNTIE_SERVER_PORT, clobbering
+# server.port). The server resolves peers via DNS, not link vars, so we
+# disable them by default. Only set true if you specifically need them.
+enableServiceLinks: false
+
 # fsGroup makes the ReadWriteOnce PVC group-writable by the non-root
 # container (runAsUser 1000). Without it the volume is root-owned and the
 # server cannot write its data dir.
@@ -52,11 +60,16 @@ config:
     metrics_addr: "0.0.0.0:9090"
   # gMountie's config schema requires `auth`. Pick `none` for an open
   # demo or `basic` with at least one user for anything real.
+  #
+  # basic-auth users need an argon2id PHC hash in `password_hash` (NOT a
+  # plaintext password — the server rejects that at startup). Generate one
+  # with `gmountie genpass` and paste it here. The default below is the
+  # hash of the password "demo" — change it before exposing the server.
   auth:
     type: basic
     users:
       - username: demo
-        password: demo
+        password_hash: '$argon2id$v=19$m=65536,t=3,p=4$Zu3uhLZjJNWQzIBQNevo3w$iqBrNtSWBuE6I7dCzQNRHZtPd/zUA8tTG3KnpyQAnew'
   # One or more volumes. `path` is the in-container path; if
   # persistence.enabled=true (below) the PVC is mounted at the FIRST
   # volume's path automatically.

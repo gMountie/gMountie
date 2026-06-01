@@ -34,6 +34,12 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "gmountie-server.serviceAccountName" . }}
+      # Disable Kubernetes Docker-link Service env vars. They collide with
+      # gMountie's GMOUNTIE_ config env prefix: a Service named e.g.
+      # gmountie-server injects GMOUNTIE_SERVER_PORT=tcp://<ip>:9449, which
+      # viper binds onto server.port and fails to parse ("Port required").
+      # The server uses DNS, not link vars, so this is pure upside.
+      enableServiceLinks: {{ .Values.enableServiceLinks }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
