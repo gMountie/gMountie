@@ -1,24 +1,26 @@
 ---
 title: The wire protocol
 sidebar_label: Wire protocol
-description: How gMountie talks. Three gRPC services over HTTP/2, snappy-compressed, with every request scoped to a named volume.
+description: How gMountie talks. Five gRPC services over HTTP/2, snappy-compressed, with every request scoped to a named volume.
 ---
 
 # The wire protocol
 
-**Each FUSE syscall on the client becomes one (or a small number of) gRPC calls to the server, framed in HTTP/2, snappy-compressed by default.** Three services split the work; every request carries the volume name so the server picks the right backing directory.
+**Each FUSE syscall on the client becomes one (or a small number of) gRPC calls to the server, framed in HTTP/2, snappy-compressed by default.** Five services split the work; every request carries the volume name so the server picks the right backing directory.
 
-## The three services
+## The five services
 
-The protocol lives under `api/proto/`. Three application-level gRPC services share one TCP connection (HTTP/2 multiplexes them):
+The protocol lives under `api/proto/`. Five application-level gRPC services share one TCP connection (HTTP/2 multiplexes them):
 
 | Service     | What it carries                                              | Examples                                         |
 | ----------- | ------------------------------------------------------------ | ------------------------------------------------ |
-| **fs**      | Metadata — directory and inode-level ops.                    | `Lookup`, `Getattr`, `Readdir`, `Mkdir`, `Rename`, `Unlink` |
+| **fs**      | Metadata — directory and inode-level ops, plus push invalidations. | `GetAttr`, `OpenDir`, `Mkdir`, `Rename`, `Unlink`, `Subscribe` (push invalidations) |
 | **file**    | File data — streaming reads and writes.                      | `Open`, `Read`, `Write`, `Release`, `Flush`      |
-| **volume**  | Connection control and out-of-band notifications.            | `Version`, `Heartbeat`, `Subscribe` (push invalidations) |
+| **volume**  | Discovery — what volumes does this server expose?            | `List`, `Resolve`                                |
+| **session** | Connection-level session lifecycle and liveness.            | `Create`, `Resume`, `Keepalive`                  |
+| **version** | Protocol version negotiation.                                | `Get` (negotiates `frame_size_bytes`)            |
 
-Splitting them lets each be tuned and routed independently — for example, a deep readahead `Read` stream on `file` doesn't head-of-line block a `Getattr` on `fs`.
+Splitting them lets each be tuned and routed independently — for example, a deep readahead `Read` stream on `file` doesn't head-of-line block a `GetAttr` on `fs`.
 
 ## Volume-scoped requests
 
@@ -35,9 +37,9 @@ A request that names an unknown volume gets `NotFound` from the server; an unaut
 
 ## Authentication
 
-Today: **basic** auth on every connection. Credentials are sent on connection setup and validated by an interceptor on the server. There is no anonymous mode.
+Two modes ship, selected by `auth.type`: **basic** (username/password validated by a server-side interceptor) and **mtls** (client-certificate identity). There is no anonymous mode.
 
-Planned: TLS (server cert, optional client cert), then mTLS. See the [roadmap](../roadmap.md) for the security phase.
+TLS at the transport layer ships too: the server auto-generates a certificate, and the client picks a verification mode — `verify` (full chain check, the default), `tofu` (trust-on-first-use), or `insecure` (skip verification).
 
 ## Idempotency and retries
 
@@ -47,7 +49,7 @@ Operations with side effects whose retry is *not* obviously safe (`Mkdir` on an 
 
 ## What a `cat` looks like on the wire
 
-A `cat /mnt/shared/big.bin` from a cold cache. With the [cache](./cache.mdx) on, repeat reads of the same chunks skip everything between Lookup and Release.
+A `cat /mnt/shared/big.bin` from a cold cache. With the [cache](./cache.mdx) on, repeat reads of the same chunks skip everything between GetAttr/Open and Release.
 
 ```mermaid
 sequenceDiagram
@@ -60,7 +62,7 @@ sequenceDiagram
 
   App->>K: open("big.bin")
   K->>C: lookup("big.bin")
-  C->>S: fs.Lookup(volume, "big.bin")
+  C->>S: fs.GetAttr(volume, "big.bin")
   S->>FS: stat
   FS-->>S: inode + attrs
   S-->>C: ok, inode

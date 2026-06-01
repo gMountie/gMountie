@@ -125,7 +125,7 @@ Scrape `:9090/metrics` from your Prometheus / VictoriaMetrics / equivalent.
 - **Server-only.** The image runs `gmountie serve`. There's no `gmountie mount` inside the container — FUSE mounting is a client-side concern that needs the host's `/dev/fuse`, and you almost never want to mount *into* a server container.
 - **Pinned base.** The Alpine base is pinned by digest; bumps are manual until dependabot is wired.
 - **Non-root.** uid 1000. If you bind-mount a host directory, `chown 1000:1000` it (or set `--user`).
-- **No TLS.** The image speaks plain gRPC. For TLS, terminate in front with [Caddy](./caddy-reverse-proxy.md) or a similar reverse proxy until native TLS lands ([roadmap](../roadmap.md)).
+- **TLS.** The server serves native TLS by default (auto-generated self-signed cert; pin it client-side via TOFU). To present a CA-trusted cert instead, terminate TLS in front with [Caddy](./caddy-reverse-proxy.md) or a similar reverse proxy.
 
 ## Kubernetes
 

@@ -1,12 +1,12 @@
 ---
 title: Client configuration
 sidebar_label: Configuration
-description: Every client.yaml field — server, RPC tuning, FUSE knobs, optional cache, auth, mount type — with types, defaults, and valid ranges.
+description: Every client.yaml field — server, RPC tuning, FUSE knobs, cache, auth, mount type — with types, defaults, and valid ranges.
 ---
 
 # Client configuration
 
-The client reads a YAML file with up to six sections: **`server`** (where to connect), **`rpc`** (per-RPC timeouts, message size, [readahead](#readahead), [write coalescing](#write-coalescing), keepalive), **`fuse`** (kernel-side mount knobs), **`cache`** (optional client-side cache), **`auth`** (credentials), and **`mount`** (volume and path). CLI flags override the corresponding fields — see **[Client CLI](./cli.md)** for the override list.
+The client reads a YAML file with up to six sections: **`server`** (where to connect), **`rpc`** (per-RPC timeouts, message size, [readahead](#readahead), [write coalescing](#write-coalescing), keepalive), **`fuse`** (kernel-side mount knobs), **`cache`** (client-side cache), **`auth`** (credentials), and **`mount`** (volume and path). CLI flags override the corresponding fields — see **[Client CLI](./cli.md)** for the override list.
 
 ## Configuration File Structure
 
@@ -40,7 +40,7 @@ The `server` section configures the connection to the gMountie server:
 
 | Option           | Type    | Default   | Description                                              |
 |------------------|---------|-----------|----------------------------------------------------------|
-| address          | string  | 127.0.0.1 | Server IP address or hostname                            |
+| address          | string  | _(required)_ | Server IP address or hostname                         |
 | port             | integer | 9449      | Server port number                                       |
 | tls.verify       | string  | `"verify"` | Verification mode: `verify` \| `tofu` \| `insecure`    |
 | tls.ca_file      | string  | _(system roots)_ | Path to a CA cert to validate the server against  |
@@ -231,48 +231,59 @@ fuse:
 
 ## Cache Options
 
-The `cache` section configures the optional client-side in-memory cache
-layer that decorates the gRPC backend. When enabled, the cache holds
-recent attribute lookups, directory listings, and file-data chunks in
-process memory; on a hit the FUSE op short-circuits without crossing
-the wire.
+The `cache` section configures the client-side two-tier cache layer that
+decorates the gRPC backend. When enabled, the cache holds recent
+attribute lookups, directory listings, and file-data chunks across an
+in-memory tier and a disk-persistent tier (under `path`, which survives
+a remount); on a hit the FUSE op short-circuits without crossing the
+wire.
 
-Disabled by default. Sub-spec B is the in-memory layer only; Sub-spec C
-will add persistence and flip the default once the disk side is proven.
+Enabled by default. The disk tier persists chunks and metadata under
+`path`, so a warm cache survives across mounts.
 
 | Key                     | Type     | Default  | Description                                                            |
 |-------------------------|----------|----------|------------------------------------------------------------------------|
-| enabled                 | boolean  | false    | Enable the client-side in-memory cache decorator                       |
-| max\_size\_bytes        | integer  | 1073741824 (1 GiB) | Total byte budget across the attr+dir+data sub-caches        |
+| enabled                 | boolean  | true     | Enable the client-side cache decorator                                 |
+| subscribe\_enabled      | boolean  | true     | Open a Subscribe stream for server-pushed invalidation (else pure TTL) |
+| path                    | string   | `$XDG_CACHE_HOME/gmountie` | Root directory for the disk-persistent tier          |
+| memory\_max\_bytes      | integer  | 268435456 (256 MiB) | Byte budget for the in-memory tier across the attr+dir+data sub-caches |
+| disk\_max\_bytes        | integer  | 10737418240 (10 GiB) | Byte budget for the disk-persistent tier                    |
 | chunk\_size\_bytes      | integer  | 1048576 (1 MiB)    | Granularity of the data cache; reads chunk-align against this |
-| attr\_ttl               | duration | 5s       | TTL for positive attribute cache entries                               |
-| dir\_ttl                | duration | 5s       | TTL for directory listing cache entries                                |
-| negative\_ttl           | duration | 2s       | TTL for negative attribute cache entries (ENOENT lookups)              |
+| attr\_ttl               | duration | 5m       | TTL for positive attribute cache entries                               |
+| dir\_ttl                | duration | 5m       | TTL for directory listing cache entries                                |
+| negative\_ttl           | duration | 30s      | TTL for negative attribute cache entries (ENOENT lookups)              |
 
-`max_size_bytes` is validated to the range [0, 68719476736] (0 to
-64 GiB). 0 disables the byte budget — entries still age out on TTL but
-nothing is force-evicted on size pressure.
+`memory_max_bytes` is validated to the range [0, 68719476736] (0 to
+64 GiB) and `disk_max_bytes` to [0, ∞). 0 disables that tier's byte
+budget — entries still age out on TTL but nothing is force-evicted on
+size pressure. The negative cache is memory-only and is not counted
+against either byte budget.
 
 `chunk_size_bytes` is validated to the range [4096, 16777216] (4 KiB
 to 16 MiB). The data cache stores fixed-size chunks; a 1 MiB read at a
 non-aligned offset spans two chunks. The default mirrors the streaming
 frame size so chunk fetches map 1:1 to a single Read RPC.
 
-The three TTLs control coherence vs. RPC traffic. Short TTLs (the
-defaults) make file-system changes made by other clients visible
-quickly, at the cost of more frequent revalidation. Longer TTLs are
-safe only when this client is the sole writer.
+The TTLs control coherence vs. RPC traffic. With `subscribe_enabled`
+on (the default), server-pushed invalidation is the primary freshness
+signal and the TTLs act as a backstop; with it off the cache is pure
+TTL. Shorter TTLs make file-system changes made by other clients
+visible sooner at the cost of more frequent revalidation; longer TTLs
+are safe only when this client is the sole writer.
 
 Example:
 
 ```yaml
 cache:
   enabled: true
-  max_size_bytes: 268435456  # 256 MiB
-  chunk_size_bytes: 1048576  # 1 MiB
-  attr_ttl: 5s
-  dir_ttl: 5s
-  negative_ttl: 2s
+  subscribe_enabled: true
+  path: ~/.cache/gmountie
+  memory_max_bytes: 268435456   # 256 MiB
+  disk_max_bytes: 10737418240   # 10 GiB
+  chunk_size_bytes: 1048576     # 1 MiB
+  attr_ttl: 5m
+  dir_ttl: 5m
+  negative_ttl: 30s
 ```
 
 ## Authentication Options

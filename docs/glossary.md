@@ -13,15 +13,15 @@ One-line definitions. Cross-linked into the rest of the docs — when you hit an
 
 **Anonymous user (`anon_uid`)** — In `passthrough` mapping mode, the uid the server uses when `root_squash` is on and the client is root. Default `65534` (typically `nobody`). See [Identity & ownership](./concepts/identity.mdx).
 
-**`auth`** — Top-level config section on both server and client. Today only `type: basic` is supported. See [Server configuration](./server/config.md) and [Client configuration](./client/config.md).
+**`auth`** — Top-level config section on both server and client. Two schemes are shipped: `type: basic` and `type: mtls`. See [Server configuration](./server/config.md) and [Client configuration](./client/config.md).
 
 ## B
 
-**Basic auth** — The only authentication scheme today. Username + password sent on every connection, validated by a server-side interceptor.
+**Basic auth** — One of the two shipped authentication schemes. Username + password sent on every connection, validated by a server-side interceptor. Passwords are argon2id-hashed server-side.
 
 ## C
 
-**Cache (client-side)** — Optional decorator over the gRPC backend. On a hit, the FUSE op returns without crossing the wire. Off by default; enable with `cache.enabled: true`. See [Cache & consistency](./concepts/cache.mdx).
+**Cache (client-side)** — Decorator over the gRPC backend. On a hit, the FUSE op returns without crossing the wire. Two-tier (in-memory + on-disk) and **enabled by default**; disable with `cache.enabled: false`. See [Cache & consistency](./concepts/cache.mdx).
 
 **Chunk** — Fixed-size unit (`cache.chunk_size_bytes`, default 1 MiB) the data cache stores file content in. A read spanning two chunks consumes two cache entries.
 
@@ -47,13 +47,13 @@ One-line definitions. Cross-linked into the rest of the docs — when you hit an
 
 **Frame size (`frame_size_bytes`)** — Server-side cap on the size of one streaming Read/Write frame. The client's FUSE `max_write_bytes` is capped at this on mount.
 
-**FUSE** — Filesystem in Userspace. Kernel module that lets `gmountie mount` implement a real filesystem in a regular process. Linux-only today. See [Wire protocol](./concepts/wire-protocol.mdx).
+**FUSE** — Filesystem in Userspace. Kernel module that lets `gmountie mount` implement a real filesystem in a regular process. The client runs on Linux and macOS (via macFUSE / FUSE-T); the server is Linux-only. See [Wire protocol](./concepts/wire-protocol.mdx).
 
 ## G
 
 **`gMountie` vs `gmountie`** — Brand convention. **`gMountie`** in prose (the project name); **`gmountie`** for the CLI, binary, code identifiers, and URLs. The `g` is for gRPC.
 
-**gRPC** — The wire protocol. HTTP/2 with protobuf payloads, Snappy-compressed. Three services share one connection: `fs`, `file`, `volume`.
+**gRPC** — The wire protocol. HTTP/2 with protobuf payloads, Snappy-compressed. Five services share one connection: `fs`, `file`, `session`, `volume`, `version`.
 
 ## I
 
@@ -67,7 +67,7 @@ One-line definitions. Cross-linked into the rest of the docs — when you hit an
 
 ## L
 
-**`Lookup`** — RPC on the `fs` service. Resolves a name relative to a parent directory into an inode + attrs.
+**`Lookup`** — The FUSE operation that resolves a name in a parent directory to an inode + attrs. There is no dedicated `Lookup` RPC; the client serves it with a `GetAttr` call on the `fs` service.
 
 ## M
 
@@ -76,6 +76,8 @@ One-line definitions. Cross-linked into the rest of the docs — when you hit an
 **`max_message_bytes`** — Cap on inbound/outbound gRPC message size (default 16 MiB). Should match between server and client.
 
 **Mount** — In FUSE terms, attaching a filesystem at a path. In gMountie terms, attaching a server's named volume to a local path via `gmountie mount`.
+
+**mTLS** — Mutual TLS (`auth.type: mtls`). The client presents a certificate; the server derives the principal from the cert CN (or first DNS SAN). Supports per-user volume ACLs, a `revoked_serials` list, and a `/ops/acl/reload` endpoint. See [Server configuration](./server/config.md).
 
 **Mountpoint** — The local directory where `gmountie mount` attaches a volume. Must be an empty directory.
 
@@ -91,7 +93,7 @@ One-line definitions. Cross-linked into the rest of the docs — when you hit an
 
 **POSIX** — Portable Operating System Interface. gMountie aims for POSIX-correct semantics where applicable (atomic rename, mtime preservation, fcntl locks where supported, `mmap` support).
 
-**Principal** — The authenticated user (today, a basic-auth `username`). Maps to a server-side identity via the volume's `mapping`.
+**Principal** — The authenticated user (a basic-auth `username`, or the CN / first DNS SAN of a client cert under mTLS). Maps to a server-side identity via the volume's `mapping`.
 
 ## R
 
@@ -127,7 +129,7 @@ One-line definitions. Cross-linked into the rest of the docs — when you hit an
 
 ## T
 
-**TLS** — Transport Layer Security. **Not shipped yet** (see [roadmap](./roadmap.md)). Use a reverse proxy ([Caddy recipe](./recipes/caddy-reverse-proxy.md)) until native TLS lands.
+**TLS** — Transport Layer Security. Shipped natively. The server auto-generates a self-signed ECDSA P-256 certificate on first run (10-year validity; inspect its SHA-256 fingerprint with `gmountie fingerprint`). The client verifies the server with one of three modes: `verify` (system roots), `tofu` (trust-on-first-use, pinned to a `known_hosts` file), or `insecure`.
 
 **TTL** — Time-to-live for cache entries (`cache.attr_ttl`, `cache.dir_ttl`, `cache.negative_ttl`).
 

@@ -301,7 +301,7 @@ the first file op, and rejected at the handshake once its serial is blocked.
 
 ## 11. North-star acceptance
 
-A server bound to `0.0.0.0:9244`, TLS-terminated, `default_allow: false`,
+A server bound to `0.0.0.0:9449`, TLS-terminated, `default_allow: false`,
 operated under steady authenticated traffic plus `nmap`/`testssl.sh` and
 an attacker who knows the proto surface but holds no credentials, leaks
 **zero unauthenticated bytes** off the loopback, **zero plaintext

@@ -64,7 +64,7 @@ CLI flags override the corresponding fields in the client config. With `-c`, any
 
 **Password resolution order** (first non-empty wins): `--password` flag → config file (`auth.password`) → `$GMOUNTIE_AUTH_PASSWORD` → interactive no-echo prompt.
 
-Mountpoint can also come from `mount.path` in the client config; either works.
+The mountpoint is **required** and must be given as a positional argument — there's no config fallback for it.
 
 See **[Client configuration](./client/config.md)** for every YAML field including RPC tuning, FUSE knobs, and the optional client-side cache.
 
@@ -101,13 +101,13 @@ gmountie mount admin@example.com:9449/shared /mnt/shared
 gmountie mount admin@example.com:9449/shared /mnt/shared --daemon
 
 # Mount from a config file (password from config or prompt — not in shell history)
-gmountie mount -c ~/.config/gmountie/client.yaml
+gmountie mount -c ~/.config/gmountie/client.yaml /mnt/shared
 
 # Mount with password from environment (for scripts)
 GMOUNTIE_AUTH_PASSWORD=secret gmountie mount admin@example.com:9449/shared /mnt/shared
 
 # Verbose logging for troubleshooting
-gmountie mount -v -c client.yaml
+gmountie mount -v -c client.yaml /mnt/shared
 
 # Server with a custom config
 gmountie serve -c /etc/gmountie/server.yaml

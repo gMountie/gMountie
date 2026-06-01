@@ -148,9 +148,9 @@ See [Caching & Consistency](design/caching-and-consistency.md) for the design, c
 - **FUSE layer migration:** client migrated from `pathfs` to `go-fuse/v2/fs` (inode-based, stable inode numbers, inode-based file handles; fixes the "ignoring `Ino`" workaround in the old `fs.go`).
 - **Unified `FileSystemBackend` interface:** cache and retry middleware sit once and intercept all FUSE ops.
 - **Three-tier cache:** attribute cache, directory cache, and chunked data cache (1 MiB default chunks; content-addressable layout).
-- **Eviction:** LRU under a configurable `max_size_bytes` cap; negative caching for `ENOENT` with short TTL.
+- **Eviction:** LRU under configurable memory and disk caps (`memory_max_bytes`, `disk_max_bytes`); negative caching for `ENOENT` with short TTL.
 - **Persistence:** bbolt (`index.db`) for the LRU index and quota accounting; content-addressable `chunks/` directory; format-versioned for future upgrades; lock file prevents concurrent processes on the same cache dir.
-- **Configuration:** `cache.enabled`, `cache.path`, `cache.max_size_bytes`, `cache.chunk_size_bytes`, `cache.attr_ttl_seconds`, `cache.negative_ttl_seconds`.
+- **Configuration:** `cache.enabled`, `cache.path`, `cache.memory_max_bytes`, `cache.disk_max_bytes`, `cache.chunk_size_bytes`, `cache.attr_ttl`, `cache.dir_ttl`, `cache.negative_ttl`, `cache.subscribe_enabled`.
 
 **Follow-on perf work (shipped after the spec was written):**
 - **Cache-fsync reduction** — batch fsync strategy to reduce the per-write fsync overhead on the persistent cache.

@@ -19,9 +19,11 @@ surprises.
   need a dedicated `gMountie healthcheck` subcommand) or scratch (no in-image
   healthcheck at all).
   - *Known coupling:* the port (`9090`) is hardcoded in the healthcheck. A deploy
-    that overrides `server.metrics_addr` makes the Docker healthcheck stale;
-    Kubernetes probes are unaffected because they read the port from the chart's
-    values.
+    that overrides the ops listener address (`server.ops.addr`, default
+    `127.0.0.1:9090`) makes the Docker healthcheck stale; Kubernetes probes are
+    unaffected because they read the port from the chart's values. (The legacy
+    `server.metrics_addr` key is deprecated and no longer drives the ops
+    listener — see the server config reference.)
 - **No build stage.** goreleaser supplies the prebuilt static binary
   (`CGO_ENABLED=0`), so the image just copies it in — there is no compile stage.
   OCI labels are set by goreleaser (`dockers_v2.labels`), not the Dockerfile.
