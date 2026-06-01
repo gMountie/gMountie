@@ -123,3 +123,36 @@ func (s *EffectiveConfigSuite) TestRenderEffectiveConfig_MergesDefaultsAndRedact
 	s.Contains(out, "REDACTED")
 	s.Contains(out, "address: example.com")
 }
+
+// TestRenderEffectiveConfig_ServerRedactsUserPasswordHash exercises the server
+// branch (a different validator and a richer shape than the client): the secret
+// password_hash lives inside auth.users[], where re-marshalling renders it as
+// the first key of a list item (`- password_hash: ...`). It must be redacted,
+// the server defaults must merge, and ParseConfig must accept the config.
+func (s *EffectiveConfigSuite) TestRenderEffectiveConfig_ServerRedactsUserPasswordHash() {
+	dir := s.T().TempDir()
+	path := filepath.Join(dir, "server.yaml")
+	cfg := "server:\n" +
+		"  address: 0.0.0.0\n" +
+		"  port: 9449\n" +
+		"auth:\n" +
+		"  type: basic\n" +
+		"  users:\n" +
+		"    - username: admin\n" +
+		"      password_hash: $argon2id$v=19$SECRETHASHSALT$SECRETHASHDIGEST\n" +
+		"volumes:\n" +
+		"  - name: shared\n" +
+		"    path: " + dir + "\n"
+	s.Require().NoError(os.WriteFile(path, []byte(cfg), 0o600))
+
+	out, err := renderEffectiveConfig(path, "server")
+	s.Require().NoError(err)
+
+	// The hash (salt and digest) must be gone, including in its list-item form.
+	s.NotContains(out, "SECRETHASHDIGEST")
+	s.NotContains(out, "SECRETHASHSALT")
+	s.Contains(out, "password_hash: REDACTED")
+	// Server defaults merged in; the operator's value survives.
+	s.Contains(out, "frame_size_bytes:")
+	s.Contains(out, "username: admin")
+}

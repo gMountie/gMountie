@@ -26,6 +26,21 @@ func (s *ConfigShowSuite) TestRedactsPasswordHash() {
 	s.Contains(out, "REDACTED")
 }
 
+// TestRedactsSecretAsFirstListItemKey guards a leak surfaced by --effective:
+// when a secret is the first key of a YAML sequence item it renders with a
+// "- " marker (`- password_hash: ...`), which a whitespace-anchored redactor
+// misses. Both server users[] and any re-marshalled list can produce this.
+func (s *ConfigShowSuite) TestRedactsSecretAsFirstListItemKey() {
+	in := "auth:\n" +
+		"  users:\n" +
+		"    - password_hash: $argon2id$SECRETDIGEST\n" +
+		"      username: admin\n"
+	out := redactConfigYAML(in)
+	s.NotContains(out, "SECRETDIGEST")
+	s.Contains(out, "REDACTED")
+	s.Contains(out, "username: admin") // the list item's other fields survive
+}
+
 // TestRedactsBlockScalarKeyPEM is the real hole: an inline mTLS private key is
 // written as a YAML block scalar, so its secret bytes live on indented lines
 // after `key_pem: |`, which the single-line redactor never touched.
