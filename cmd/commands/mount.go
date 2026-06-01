@@ -238,6 +238,19 @@ var mountCmd = &cobra.Command{
 
 		log.Log.Sugar().Infof("Mounted volume %s at %s", volumeName, mountpoint)
 
+		// Record this mount so `gmountie status` can list it and `gmountie
+		// unmount` can stop it; clear the record on exit. Best-effort — a
+		// state-file failure must not bring down a working mount.
+		if err := writeMountState(mountState{
+			Mountpoint: mountpoint,
+			Server:     addr,
+			Volume:     volumeName,
+			PID:        os.Getpid(),
+		}); err != nil {
+			log.Log.Warn("could not record mount state", zap.Error(err))
+		}
+		defer func() { _ = removeMountState(mountpoint) }()
+
 		// Release a waiting --daemon parent now that the mount is up (no-op
 		// unless this process is the detached child).
 		signalDaemonReady()
