@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -73,15 +74,41 @@ func (s *LoggingE2ETestSuite) TestRequestIDOnBothSides() {
 	_, err := s.testAppCtx.GetClient().Volume().List(context.Background(), &proto.VolumeListRequest{})
 	s.Require().NoError(err)
 
-	re := regexp.MustCompile(`"request_id":"([0-9a-f-]+)"`)
-	var matches [][]string
-	s.Require().Eventually(func() bool {
-		matches = re.FindAllStringSubmatch(s.logBuf.String(), -1)
-		return len(matches) >= 2
-	}, time.Second, 20*time.Millisecond,
-		"both client and server must emit a finish-call line with request_id, got log:\n%s", s.logBuf.String())
+	// The buffer is the shared global logger, so it can also pick up
+	// unrelated request_id lines from background session keepalive
+	// recovery (Resume/Create are unary and carry a request_id too). Scope
+	// the assertion to *this* call by keying on the VolumeService/List
+	// finish-call lines, one per side, rather than blindly comparing the
+	// first two request_id matches in the buffer.
+	reqIDRe := regexp.MustCompile(`"request_id":"([0-9a-f-]+)"`)
+	componentRe := regexp.MustCompile(`"grpc\.component":"(client|server)"`)
 
-	s.Assert().Equal(matches[0][1], matches[1][1],
+	var clientID, serverID string
+	s.Require().Eventually(func() bool {
+		clientID, serverID = "", ""
+		for _, line := range strings.Split(s.logBuf.String(), "\n") {
+			if !strings.Contains(line, `"grpc.method":"List"`) {
+				continue
+			}
+			id := reqIDRe.FindStringSubmatch(line)
+			comp := componentRe.FindStringSubmatch(line)
+			if id == nil || comp == nil {
+				continue
+			}
+			switch comp[1] {
+			case "client":
+				clientID = id[1]
+			case "server":
+				serverID = id[1]
+			}
+		}
+		// Require both sides — ordering between the client and server
+		// finish-call lines is not guaranteed, so a count check would race.
+		return clientID != "" && serverID != ""
+	}, time.Second, 20*time.Millisecond,
+		"both client and server must emit a List finish-call line with request_id, got log:\n%s", s.logBuf.String())
+
+	s.Assert().Equal(clientID, serverID,
 		"both sides must use the same request_id")
 }
 
