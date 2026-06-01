@@ -198,7 +198,7 @@ Full docs live at **[docs.gmountie.dev](https://docs.gmountie.dev)**. Highlights
 
 ## <a id="contributing"></a>Contributing 🤝
 
-Contributions of every kind are welcome — 🐛 bug reports, 💡 feature ideas, 📝 docs, and 🔧 code. Open an [issue](https://github.com/gMountie/gMountie/issues) or a pull request to get started. (A dedicated contributing guide is on the way.)
+Contributions of every kind are welcome — 🐛 bug reports, 💡 feature ideas, 📝 docs, and 🔧 code. See **[CONTRIBUTING.md](CONTRIBUTING.md)** to get set up, and **[SECURITY.md](SECURITY.md)** to report a vulnerability privately.
 
 <details>
 <summary>Naming &amp; branding 📛</summary>

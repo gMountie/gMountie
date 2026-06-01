@@ -1,0 +1,38 @@
+name: 💡 Feature request
+description: Suggest an idea or improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a rougher idea or a question? Consider starting a
+        [Discussion](https://github.com/gMountie/gMountie/discussions) instead.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: The motivation / use case. Focus on the need, not a specific solution.
+      placeholder: When mounting over a high-latency link, I want …
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What you'd like to happen. A config knob, a new RPC, a CLI flag, …
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you've thought about, and why they fall short.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else — links, prior art in other tools, rough sketches.
