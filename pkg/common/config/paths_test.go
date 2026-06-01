@@ -136,3 +136,38 @@ func (s *PathsTestSuite) TestWriteDefaultConfig_OverwriteExisting() {
 func TestPathsTestSuite(t *testing.T) {
 	suite.Run(t, new(PathsTestSuite))
 }
+
+type ProfilePathsSuite struct{ suite.Suite }
+
+func TestProfilePathsSuite(t *testing.T) { suite.Run(t, new(ProfilePathsSuite)) }
+
+func (s *ProfilePathsSuite) TestValidateProfileName() {
+	for _, ok := range []string{"work", "home-nas", "a.b_c", "Srv1"} {
+		s.Require().NoErrorf(ValidateProfileName(ok), "expected %q valid", ok)
+	}
+	for _, bad := range []string{"", "../x", "a/b", "a b", "a\tb", ".", ".."} {
+		s.Require().Errorf(ValidateProfileName(bad), "expected %q invalid", bad)
+	}
+}
+
+func (s *ProfilePathsSuite) TestGetProfilePathAndList() {
+	dir := s.T().TempDir()
+	s.T().Setenv("XDG_CONFIG_HOME", dir)
+
+	names, err := ListProfileNames()
+	s.Require().NoError(err)
+	s.Empty(names)
+
+	pdir := GetProfilesDir()
+	s.Equal(filepath.Join(dir, DefaultConfigDirName, "profiles"), pdir)
+	s.Require().NoError(os.MkdirAll(pdir, 0o755))
+	s.Require().NoError(os.WriteFile(filepath.Join(pdir, "work.yaml"), []byte("server:\n"), 0o600))
+	s.Require().NoError(os.WriteFile(filepath.Join(pdir, "home.yaml"), []byte("server:\n"), 0o600))
+	s.Require().NoError(os.WriteFile(filepath.Join(pdir, "notes.txt"), []byte("ignore"), 0o600))
+
+	s.Equal(filepath.Join(pdir, "work.yaml"), GetProfilePath("work"))
+
+	names, err = ListProfileNames()
+	s.Require().NoError(err)
+	s.Equal([]string{"home", "work"}, names)
+}
