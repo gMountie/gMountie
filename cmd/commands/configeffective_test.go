@@ -124,6 +124,62 @@ func (s *EffectiveConfigSuite) TestRenderEffectiveConfig_MergesDefaultsAndRedact
 	s.Contains(out, "address: example.com")
 }
 
+// TestRenderEffectiveConfig_PasswordCommandRendersVerbatim proves that
+// auth.password_command and auth.password_file are struct fields (added so
+// --effective reflects them) and render verbatim in the effective output —
+// they are NOT secrets (they are a command/path, not a credential), so the
+// redactor must leave them intact. An inline password, if present, is still
+// redacted.
+func (s *EffectiveConfigSuite) TestRenderEffectiveConfig_PasswordCommandRendersVerbatim() {
+	dir := s.T().TempDir()
+	path := filepath.Join(dir, "client.yaml")
+	cfg := "server:\n" +
+		"  address: work.example.com\n" +
+		"  port: 9449\n" +
+		"auth:\n" +
+		"  type: basic\n" +
+		"  username: admin\n" +
+		"  password_command: \"pass show gmountie/work\"\n"
+	s.Require().NoError(os.WriteFile(path, []byte(cfg), 0o600))
+
+	out, err := renderEffectiveConfig(path, "client")
+	s.Require().NoError(err)
+
+	// password_command must appear verbatim — it is not a secret.
+	s.Contains(out, "password_command:")
+	s.Contains(out, "pass show gmountie/work")
+	// Sanity: the redactor must NOT have touched password_command.
+	s.NotContains(out, "password_command: REDACTED")
+}
+
+// TestRenderEffectiveConfig_PasswordCommandNotRedacted_WhileInlinePasswordIs
+// proves that when both an inline password and a password_command are present,
+// the inline password is redacted while password_command renders verbatim.
+func (s *EffectiveConfigSuite) TestRenderEffectiveConfig_PasswordCommandNotRedacted_WhileInlinePasswordIs() {
+	dir := s.T().TempDir()
+	path := filepath.Join(dir, "client.yaml")
+	cfg := "server:\n" +
+		"  address: example.com\n" +
+		"  port: 9449\n" +
+		"auth:\n" +
+		"  type: basic\n" +
+		"  username: admin\n" +
+		"  password: supersecret\n" +
+		"  password_command: \"op read op://vault/item/password\"\n"
+	s.Require().NoError(os.WriteFile(path, []byte(cfg), 0o600))
+
+	out, err := renderEffectiveConfig(path, "client")
+	s.Require().NoError(err)
+
+	// Inline password must be redacted.
+	s.NotContains(out, "supersecret")
+	s.Contains(out, "password: REDACTED")
+	// password_command must render verbatim.
+	s.Contains(out, "password_command:")
+	s.Contains(out, "op read op://vault/item/password")
+	s.NotContains(out, "password_command: REDACTED")
+}
+
 // TestRenderEffectiveConfig_ServerRedactsUserPasswordHash exercises the server
 // branch (a different validator and a richer shape than the client): the secret
 // password_hash lives inside auth.users[], where re-marshalling renders it as
