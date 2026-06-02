@@ -2,6 +2,7 @@ package service
 
 import (
 	"math/big"
+	"sort"
 	"strings"
 	"sync/atomic"
 
@@ -81,4 +82,22 @@ func (r *RevocationStore) IsBlocked(key string) bool {
 	}
 	_, ok := (*m)[key]
 	return ok
+}
+
+// Serials returns the current blocklist as canonical lowercase-hex SerialKeys,
+// sorted. The ops reload handler echoes these in its response so a caller (the
+// cloud operator) can confirm a specific serial actually loaded — the reaped
+// count alone is ambiguous (a not-currently-mounted revoked device reaps zero).
+// Nil for a zero-value store built without the constructor.
+func (r *RevocationStore) Serials() []string {
+	m := r.blocked.Load()
+	if m == nil {
+		return nil
+	}
+	out := make([]string, 0, len(*m))
+	for k := range *m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
