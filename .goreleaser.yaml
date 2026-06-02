@@ -20,7 +20,7 @@ builds:
       - -trimpath
       - -buildvcs=true
     ldflags:
-      - -s -w -X gmountie/pkg.version={{.Version}} -X gmountie/pkg.commit={{.Commit}} -X gmountie/pkg.date={{.Date}}
+      - -s -w -X go.gmountie.dev/gmountie/pkg.version={{.Version}} -X go.gmountie.dev/gmountie/pkg.commit={{.Commit}} -X go.gmountie.dev/gmountie/pkg.date={{.Date}}
     goarch:
       - amd64
       - arm64
