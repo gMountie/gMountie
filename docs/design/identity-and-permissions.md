@@ -4,10 +4,9 @@
 **Last updated:** 2026-05-28
 
 This is the durable record of gMountie's identity model. The brainstorm
-spec that drove the design has been pruned now that the feature has
-shipped; the per-phase implementation plans in
-`docs/superpowers/plans/2026-05-27..29-identity-*.md` preserve the
-historical task-by-task record.
+spec and per-phase implementation plans that drove the design have been
+pruned now that the feature has shipped; this document is the durable
+record, and the task-by-task history lives in the git log.
 
 ## 1. The one principle
 

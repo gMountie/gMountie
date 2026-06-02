@@ -131,6 +131,54 @@ sudo systemctl restart gmountie
 
 In-flight RPCs run to completion thanks to graceful shutdown (`SIGTERM` is wired); the restart should be invisible to mounted clients past the keepalive window.
 
+## Mount a volume as a systemd unit
+
+For a client host that should keep a volume mounted across reboots, a template
+unit ships in `packaging/systemd/gmountie-mount@.service`. It is the robust
+production alternative to `gmountie mount --daemon` (which the foreground process
+manages itself); systemd handles restart-on-failure and ordering after the
+network. The unit is parameterised by volume name (`%i`):
+
+```ini
+# /etc/systemd/system/gmountie-mount@.service
+[Unit]
+Description=gMountie mount of volume %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/gmountie/%i.env
+# %i is the volume name; SERVER and MOUNTPOINT come from the env file.
+ExecStart=/usr/local/bin/gmountie mount ${SERVER}/%i ${MOUNTPOINT}
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Each instance reads `/etc/gmountie/<volume>.env` (template in
+`packaging/systemd/gmountie.env.example`):
+
+```bash
+# /etc/gmountie/shared.env
+SERVER=admin@host.example:9449
+MOUNTPOINT=/mnt/shared
+GMOUNTIE_AUTH_PASSWORD=replace-me
+```
+
+Then enable the instance for the `shared` volume:
+
+```bash
+sudo systemctl enable --now gmountie-mount@shared.service
+```
+
+The mount runs non-interactively, so the password must come from a non-prompt
+source — `GMOUNTIE_AUTH_PASSWORD` (above), or, to keep the secret out of the env
+file, an `auth.password_command` / `auth.password_file` in a client config or
+profile (see **[Client configuration](../client/config.md)**). Lock the env file
+down (`chmod 600`) if it carries a plaintext password.
+
 ## See also
 
 - [Server CLI](../server/cli.md) · [Server configuration](../server/config.md)

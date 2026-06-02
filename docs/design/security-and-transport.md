@@ -5,10 +5,9 @@
 
 The durable record of gMountie's transport security, credential storage,
 and access-control model — what makes it deployable on a non-trusted
-network. The brainstorm spec that drove the design has been pruned now
-that the work has shipped; the per-PR implementation plans in
-`docs/superpowers/plans/2026-05-29-phase7-*.md` preserve the historical
-task-by-task record.
+network. The brainstorm spec and per-PR implementation plans that drove
+the design have been pruned now that the work has shipped; this document is
+the durable record, and the task-by-task history lives in the git log.
 
 ## 1. The one principle
 
@@ -254,12 +253,19 @@ revocation reaps only the revoked ones).
   it, atomically swaps the ACL (`VolumeService.ReloadAuth`) and the serial
   blocklist (`RevocationStore.Set`), then reaps. A bad/invalid config →
   **`400`, nothing swapped or reaped** (fail-safe — the prior good state
-  stands). Only auth state is hot-reloaded; volumes/FS are untouched.
+  stands). Only auth state is hot-reloaded; volumes/FS are untouched. Reload
+  needs a config **file**: a server started with no `-c` and no on-disk config
+  (state from defaults/env only) has nothing to re-read and returns `400`.
 - **Reap predicate (`SessionManager.ReapIf`):** reap a session **iff** its cert
   serial is now blocked **OR** its principal can access no configured volume.
   An additive reload (grant a user, enrol a device) blocks no serial and removes
   no access → **reaps nothing**. Reaping `ReleaseAll`s the session's fds; an
-  in-flight Read/Write then fails `EBADF` (~sub-second).
+  in-flight Read/Write then fails `EBADF` (~sub-second). The predicate is
+  whole-session: a principal who loses **one** of several volumes (still has
+  others) is **not** reaped — new ops on the now-denied volume are blocked by the
+  per-RPC `PrincipalCanAccess` gate, but fds already open on it at revocation
+  time keep working until closed. (In a one-volume-per-principal deployment,
+  losing the volume = losing all → exact reap.)
 - **Three enforcement layers for a blocked serial:** the TLS handshake
   (`VerifyPeerCertificate`) rejects new connections; the gRPC auth interceptor
   rejects per-RPC (catching connections that handshook before revocation, before
