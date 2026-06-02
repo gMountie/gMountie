@@ -144,6 +144,11 @@ e.g. a password manager) or `auth.password_file` (a 0600 file); inline
 `--password` > `auth.password_command` > `auth.password_file` >
 `auth.password` > `$GMOUNTIE_AUTH_PASSWORD` > prompt.
 
+> **`--daemon` note:** when running in the background the mount process has no
+> terminal, so `auth.password_command` must be non-interactive (e.g. `pass`,
+> `op run`, or `cat` against a key-agent socket); a command that opens a TTY or
+> an interactive prompt will fail once the process detaches.
+
 ## `gmountie completion`
 
 ```bash

@@ -1,10 +1,12 @@
 package commands
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -126,7 +128,9 @@ func (s *ConfigShowSuite) TestConfigShow_EffectiveProfileWithoutInlinePassword()
 	pdir := filepath.Join(cfgHome, "gmountie", "profiles")
 	s.Require().NoError(os.MkdirAll(pdir, 0o755))
 	// No inline password — auth.password_command supplies it at mount time.
-	profile := "server:\n  address: work.example.com\n  port: 9449\nauth:\n  type: basic\n  username: admin\n  password_command: \"printf hunter2\"\nmount:\n  type: single\n  volume: shared\n"
+	// Use "pass show work" so the command text is distinct from any possible
+	// command output; the command is never executed by config show.
+	profile := "server:\n  address: work.example.com\n  port: 9449\nauth:\n  type: basic\n  username: admin\n  password_command: \"pass show gmountie/work\"\nmount:\n  type: single\n  volume: shared\n"
 	s.Require().NoError(os.WriteFile(filepath.Join(pdir, "work.yaml"), []byte(profile), 0o600))
 
 	path, err := resolveConfigShowPath()
@@ -135,7 +139,27 @@ func (s *ConfigShowSuite) TestConfigShow_EffectiveProfileWithoutInlinePassword()
 	s.Require().NoError(err) // must NOT fail on "password is required"
 	s.Contains(out, "address: work.example.com")
 	s.Contains(out, "username: admin")
-	s.NotContains(out, "hunter2") // the command is not executed by config show
+	// password_command is a path/command, not a secret — it renders verbatim.
+	s.Contains(out, "password_command:")
+	s.Contains(out, "pass show gmountie/work")
+	s.NotContains(out, "password_command: REDACTED")
+}
+
+// TestConfigShow_ProfileAndConfigConflict proves that --profile and --config
+// together produce a clear error, matching the guard on mount and ls.
+func (s *ConfigShowSuite) TestConfigShow_ProfileAndConfigConflict() {
+	profileName, configFile = "", ""
+	defer func() { profileName, configFile = "", "" }()
+	root := &cobra.Command{Use: "root"}
+	root.PersistentFlags().StringVarP(&configFile, "config", "c", "", "config file path")
+	root.AddCommand(configCmd)
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"config", "show", "--profile", "work", "--config", "/tmp/x.yaml"})
+	err := root.Execute()
+	s.Require().Error(err)
+	s.Assert().Contains(err.Error(), "one of --profile or --config")
 }
 
 func (s *ConfigShowSuite) TestConfigShow_ProfileResolvesPath() {

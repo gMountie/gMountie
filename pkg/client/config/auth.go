@@ -16,9 +16,15 @@ import (
 // by resolveAuth (password_command / password_file / env / interactive prompt) —
 // not at config-parse time. A config that omits the inline password is valid
 // here; resolveAuth errors if no source produces a password at mount time.
+//
+// PasswordCommand and PasswordFile are alternative password sources resolved at
+// mount time by resolveConfiguredPassword; they are not secrets (a shell command
+// or a file path) and render verbatim in config show --effective.
 type BasicAuthConfigUser struct {
-	Username string `validate:"required"`
-	Password string `validate:"omitempty"`
+	Username        string `mapstructure:"username" validate:"required"`
+	Password        string `mapstructure:"password" validate:"omitempty"`
+	PasswordCommand string `mapstructure:"password_command" validate:"omitempty"`
+	PasswordFile    string `mapstructure:"password_file" validate:"omitempty"`
 }
 
 // BasicAuthConfig is a struct that holds the configuration for the basic auth user
