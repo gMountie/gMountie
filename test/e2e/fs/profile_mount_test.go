@@ -23,10 +23,10 @@ import (
 // mount.NewSingleVolumeMounter to produce a real FUSE mount, asserts directory
 // I/O, then unmounts cleanly.
 //
-// Skip guard: the test uses MountVolumeErr-style error handling in the test
-// method so that a FUSE-unavailable environment (CI sandbox, machine without
-// /dev/fuse) skips cleanly instead of failing. Runs on the kubevirt VM where
-// fusermount3 is present.
+// Like the rest of the test/e2e/fs suite it performs a real FUSE mount, so it
+// runs on the CI runners and the kubevirt VM (which have /dev/fuse) and is not
+// run in FUSE-less sandboxes. It deliberately does not skip on mount failure —
+// a skip would mask a real regression in CI.
 type ProfileMountSuite struct {
 	suite.Suite
 	appCtx *utils.AppTestingContext
@@ -127,12 +127,11 @@ mount:
 		}
 	}()
 
-	// --- 6. Mount — skip cleanly if FUSE is unavailable ---
+	// --- 6. Mount for real (CI runners have /dev/fuse; this suite is not run
+	// in FUSE-less sandboxes). Do NOT skip on mount failure — a skip would mask
+	// a real regression in CI. ---
 	mountPath := s.volume.GetMountPath()
-	if err := mounter.Mount(s.volume.Name, mountPath); err != nil {
-		s.T().Skipf("FUSE mount unavailable (not on VM?): %v", err)
-		return
-	}
+	s.Require().NoError(mounter.Mount(s.volume.Name, mountPath))
 
 	// --- 7. Assert basic I/O through the mount ---
 	testFS := os.DirFS(mountPath)
