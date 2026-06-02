@@ -339,7 +339,7 @@ The `mount` section defines the volume and (optionally) a default mountpoint.
 | volume | string | no       | Volume name to mount. Overridden by the `--volume` flag or the shorthand `host/volume` argument. |
 | path   | string | no       | Default local mountpoint. When set, the positional mountpoint argument may be omitted on the command line. |
 
-`volume` and `path` are the fields that make a client config useful as a **profile**: store the target volume (and optionally its default mountpoint) alongside the server and auth settings, then select it with `--profile <name>`. Profiles live at `~/.config/gmountie/profiles/<name>.yaml`; any valid client config can be used as a profile.
+`volume` and `path` are the fields that make a client config useful as a **profile**: store the target volume (and optionally its default mountpoint) alongside the server and auth settings, then select it with `--profile <name>`. Profiles live at `~/.config/gmountie/profiles/<name>.yaml`; any valid client config can be used as a profile. `--profile` and `--config` are mutually exclusive. Profile names are restricted to `[A-Za-z0-9._-]` (no path separators, no `..`), so `--profile` can only ever resolve to a file inside the profiles directory.
 
 Example:
 

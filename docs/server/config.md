@@ -275,6 +275,8 @@ volumes:
     path: /srv/backup
 ```
 
+The server validates every `path` at startup: if a volume's `path` does not exist or is not a directory, `gmountie serve` fails immediately with an error naming the offending volume, instead of surfacing a cryptic failure at the first file access.
+
 ### Identity mapping
 
 Each volume picks **one** of four modes for `mapping.mode`. The mode decides which uid/gid the server uses when handling RPCs for that volume — i.e. the server-side identity that file-permission checks run against. See **[Concepts → Identity & ownership](../concepts/identity.mdx)** for the model.
