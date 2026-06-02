@@ -83,9 +83,26 @@ volumes:
 `
 
 func reapedCount(s *ReloadSuite, rec *httptest.ResponseRecorder) int {
-	var body map[string]int
+	var body ReloadResponse
 	s.Require().NoError(json.Unmarshal(rec.Body.Bytes(), &body))
-	return body["reaped"]
+	return body.Reaped
+}
+
+// The reload response must echo the blocklist that actually loaded so a caller
+// can confirm a specific serial is live (reaped is ambiguous on its own).
+func (s *ReloadSuite) TestReloadEchoesLoadedSerials() {
+	dir := s.T().TempDir()
+	path := s.writeConfig(dir, reloadCfgRevoked) // blocks serial "dead"
+	vs, sm, rs, cfg := s.deps(path)
+
+	h := ReloadHandler(cfg, vs, sm, rs)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/ops/acl/reload", nil))
+
+	s.Equal(http.StatusOK, rec.Code)
+	var body ReloadResponse
+	s.Require().NoError(json.Unmarshal(rec.Body.Bytes(), &body))
+	s.Contains(body.RevokedSerials, "dead") // canonical lowercase hex, echoed
 }
 
 func (s *ReloadSuite) deps(path string) (service.VolumeService, service.SessionManager, *service.RevocationStore, *config.Config) {
