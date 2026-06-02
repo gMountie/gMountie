@@ -13,6 +13,15 @@ import (
 	"go.uber.org/zap"
 )
 
+// ReloadResponse is the JSON body of POST /ops/acl/reload. RevokedSerials echoes
+// the blocklist that actually loaded (canonical lowercase hex, sorted), letting
+// a caller confirm a specific serial is live — reaped alone is ambiguous (a
+// not-currently-mounted revoked device reaps zero).
+type ReloadResponse struct {
+	Reaped         int      `json:"reaped"`
+	RevokedSerials []string `json:"revoked_serials"`
+}
+
 // ReloadHandler handles POST /ops/acl/reload. It re-reads the config file,
 // validates it, atomically swaps the ACL + cert-serial blocklist, then reaps
 // sessions that the new state revokes. A bad config returns 400 and changes
@@ -52,7 +61,7 @@ func ReloadHandler(cfg *config.Config, vs service.VolumeService, sm service.Sess
 		log.Log.Info("acl reloaded", zap.Int("reaped", reaped))
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]int{"reaped": reaped})
+		_ = json.NewEncoder(w).Encode(ReloadResponse{Reaped: reaped, RevokedSerials: rs.Serials()})
 	})
 }
 
