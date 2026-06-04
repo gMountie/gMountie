@@ -3,14 +3,12 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net"
 
 	"go.gmountie.dev/gmountie/pkg/client/config"
 	"go.gmountie.dev/gmountie/pkg/client/grpc"
-	"go.gmountie.dev/gmountie/pkg/proto"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -31,6 +29,7 @@ func init() {
 	lsCmd.PersistentFlags().StringVarP(&authType, "auth-type", "t", "basic", "authentication type (basic)")
 	lsCmd.PersistentFlags().StringVarP(&username, "username", "u", "", "username for basic auth")
 	lsCmd.PersistentFlags().StringVarP(&password, "password", "p", "", "password for basic auth (prefer prompt/$GMOUNTIE_AUTH_PASSWORD)")
+	addCredentialsFlag(lsCmd)
 	rootCmd.AddCommand(lsCmd)
 }
 
@@ -60,6 +59,15 @@ func runLs(cmd *cobra.Command, args []string) error {
 		}
 		applyMountSpec(v, spec)
 	}
+
+	// Apply a single-blob credential (--credentials / $GMOUNTIE_CREDENTIALS)
+	// over the config file but under explicit flags, exactly as mount does. It
+	// supplies the resolver endpoint + mTLS material + auth.type=mtls, so
+	// `GMOUNTIE_CREDENTIALS=... gmountie ls` lists with no host arg and no -u
+	// (mtls auth means resolveAuth skips the basic-auth username requirement).
+	if _, err := applyCredentialToViper(v); err != nil {
+		return err
+	}
 	if err := resolveAuth(cmd, v); err != nil {
 		return err
 	}
@@ -70,27 +78,24 @@ func runLs(cmd *cobra.Command, args []string) error {
 	}
 	addr := net.JoinHostPort(cfg.Server.Address, fmt.Sprintf("%d", cfg.Server.Port))
 
-	c, err := grpc.NewClientFromConfig(cfg)
+	// List over a PRE-SESSION VolumeService.List call (no session handshake) so
+	// ls works against the cloud resolver, which implements only VolumeService.
+	// The mTLS cert / basic-auth creds authenticate the per-RPC List call.
+	names, err := grpc.ListVolumes(cfg)
 	if err != nil {
 		return remediate(err, addr, "")
 	}
-	defer func() { _ = c.Close() }()
-
-	reply, err := c.Volume().List(context.Background(), &proto.VolumeListRequest{})
-	if err != nil {
-		return remediate(err, addr, "")
-	}
-	renderVolumes(cmd.OutOrStdout(), reply.GetVolumes())
+	renderVolumes(cmd.OutOrStdout(), names)
 	return nil
 }
 
 // renderVolumes prints one volume name per line, or a friendly note if empty.
-func renderVolumes(out io.Writer, vols []*proto.Volume) {
-	if len(vols) == 0 {
+func renderVolumes(out io.Writer, names []string) {
+	if len(names) == 0 {
 		_, _ = fmt.Fprintln(out, "no volumes available")
 		return
 	}
-	for _, vol := range vols {
-		_, _ = fmt.Fprintln(out, vol.GetName())
+	for _, name := range names {
+		_, _ = fmt.Fprintln(out, name)
 	}
 }
