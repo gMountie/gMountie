@@ -126,9 +126,10 @@ func (s *ReferralSuite) TestNewClientForVolume_LocalConnectsConfigured() {
 		dialed = append(dialed, endpoint)
 		return local, nil
 	}, func() {
-		got, err := NewClientForVolume(cfg, "photos")
+		got, vol, err := NewClientForVolume(cfg, "photos")
 		s.Require().NoError(err)
 		s.Equal(local, got)
+		s.Equal("photos", vol)
 		s.True(local.connected)
 		s.False(local.closed)
 	})
@@ -157,9 +158,10 @@ func (s *ReferralSuite) TestNewClientForVolume_FollowsReferral() {
 		s.Equal("origin.example.com", buildCfg.Server.TLS.ServerName)
 		return resolver, nil
 	}, func() {
-		got, err := NewClientForVolume(cfg, "photos")
+		got, vol, err := NewClientForVolume(cfg, "photos")
 		s.Require().NoError(err)
 		s.Equal(data, got) // the referred client is returned
+		s.Equal("photos", vol)
 		s.True(resolver.closed)
 		s.True(data.connected)
 	})
@@ -176,8 +178,77 @@ func (s *ReferralSuite) TestNewClientForVolume_ResolveErrorIsFatal() {
 	s.withStubbedBuilder(func(_ *config.Config, _ string) (Client, error) {
 		return resolver, nil
 	}, func() {
-		_, err := NewClientForVolume(cfg, "photos")
+		_, _, err := NewClientForVolume(cfg, "photos")
 		s.Require().Error(err) // no fallback; resolve failure fails the mount
+		s.True(resolver.closed)
+		s.False(resolver.connected)
+	})
+}
+
+// newListResolveClient builds a VolumeServiceClient mock that returns the given
+// volume names from List and, for an expected resolved name, an empty Resolve
+// location ("served here"). Resolve is wired only when resolveName is non-empty
+// so the zero/multi tests can assert Resolve is never reached.
+func (s *ReferralSuite) newListResolveClient(names []string, resolveName string) proto.VolumeServiceClient {
+	vc := protomocks.NewMockVolumeServiceClient(s.T())
+	volumes := make([]*proto.Volume, 0, len(names))
+	for _, n := range names {
+		volumes = append(volumes, &proto.Volume{Name: n})
+	}
+	vc.On("List", mock.Anything, mock.Anything).
+		Return(&proto.VolumeListReply{Volumes: volumes}, nil)
+	if resolveName != "" {
+		vc.On("Resolve", mock.Anything, mock.MatchedBy(func(r *proto.VolumeResolveRequest) bool {
+			return r.GetName() == resolveName
+		})).Return(&proto.VolumeResolveReply{Location: ""}, nil)
+	}
+	return vc
+}
+
+func (s *ReferralSuite) TestNewClientForVolume_EmptyVolumeAutoResolvesSingle() {
+	cfg := baseConfig()
+	// List returns exactly one volume; Resolve must be called with that name.
+	local := &fakeClient{vc: s.newListResolveClient([]string{"photos"}, "photos")}
+
+	s.withStubbedBuilder(func(_ *config.Config, _ string) (Client, error) {
+		return local, nil
+	}, func() {
+		got, vol, err := NewClientForVolume(cfg, "")
+		s.Require().NoError(err)
+		s.Equal(local, got)
+		s.Equal("photos", vol) // discovered name is surfaced to the caller
+		s.True(local.connected)
+		s.False(local.closed)
+	})
+}
+
+func (s *ReferralSuite) TestNewClientForVolume_EmptyVolumeNoVolumesIsError() {
+	cfg := baseConfig()
+	resolver := &fakeClient{vc: s.newListResolveClient([]string{}, "")}
+
+	s.withStubbedBuilder(func(_ *config.Config, _ string) (Client, error) {
+		return resolver, nil
+	}, func() {
+		_, _, err := NewClientForVolume(cfg, "")
+		s.Require().Error(err)
+		s.Contains(err.Error(), "no volumes available")
+		s.True(resolver.closed)
+		s.False(resolver.connected)
+	})
+}
+
+func (s *ReferralSuite) TestNewClientForVolume_EmptyVolumeMultipleIsError() {
+	cfg := baseConfig()
+	resolver := &fakeClient{vc: s.newListResolveClient([]string{"photos", "music"}, "")}
+
+	s.withStubbedBuilder(func(_ *config.Config, _ string) (Client, error) {
+		return resolver, nil
+	}, func() {
+		_, _, err := NewClientForVolume(cfg, "")
+		s.Require().Error(err)
+		// Both names are listed so the user knows what to pass to --volume.
+		s.Contains(err.Error(), "photos")
+		s.Contains(err.Error(), "music")
 		s.True(resolver.closed)
 		s.False(resolver.connected)
 	})

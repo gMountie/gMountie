@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"go.gmountie.dev/gmountie/pkg/client/config"
@@ -148,46 +149,75 @@ var newUnconnectedClientFn = newUnconnectedClient
 // location is empty ("served here") or on a freshly-dialed connection to the
 // referred location otherwise. A Resolve failure is fatal — there is no silent
 // fallback (the configured endpoint may be a resolve-only control plane).
-func NewClientForVolume(cfg *config.Config, volume string) (Client, error) {
+//
+// When volume is empty the caller's volumes are listed first (pre-session, over
+// the same resolver connection): exactly one volume is auto-selected, zero or
+// many is an error. It returns the connected client and the resolved volume
+// name — callers that passed an empty volume need the discovered name for the
+// mount call, state file, and logs.
+func NewClientForVolume(cfg *config.Config, volume string) (Client, string, error) {
 	if cfg == nil || cfg.Server == nil {
-		return nil, errors.New("config is empty")
+		return nil, "", errors.New("config is empty")
 	}
 	resolver, err := newUnconnectedClientFn(cfg, createEndpoint(cfg.Server))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), resolveMetaTimeout(cfg))
 	defer cancel()
+
+	// Auto-resolve the volume when the user omitted --volume: list the caller's
+	// volumes over the resolver connection we already hold and mount the sole
+	// one. Reuses the same connection and meta-timeout budget as the Resolve
+	// below — no second dial.
+	if volume == "" {
+		names, err := listVolumes(ctx, resolver)
+		if err != nil {
+			_ = resolver.Close()
+			return nil, "", errors.Wrap(err, "list volumes for this credential")
+		}
+		switch len(names) {
+		case 1:
+			volume = names[0]
+		case 0:
+			_ = resolver.Close()
+			return nil, "", errors.New("no volumes available for this credential")
+		default:
+			_ = resolver.Close()
+			return nil, "", errors.Errorf("multiple volumes available, pass --volume: %s", strings.Join(names, ", "))
+		}
+	}
+
 	location, err := resolveLocation(ctx, resolver, volume)
 	if err != nil {
 		_ = resolver.Close()
-		return nil, errors.Wrap(err, "resolve volume location")
+		return nil, "", errors.Wrap(err, "resolve volume location")
 	}
 
 	if location == "" {
 		if err := resolver.Connect(); err != nil {
 			_ = resolver.Close()
-			return nil, errors.Wrap(err, "session handshake failed; client unusable")
+			return nil, "", errors.Wrap(err, "session handshake failed; client unusable")
 		}
-		return resolver, nil
+		return resolver, volume, nil
 	}
 
 	// Referral: drop the resolver connection and dial the data plane.
 	_ = resolver.Close()
 	dataCfg, err := tlsConfigForReferral(cfg, location)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	data, err := newUnconnectedClientFn(dataCfg, location)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if err := data.Connect(); err != nil {
 		_ = data.Close()
-		return nil, errors.Wrap(err, "session handshake failed; client unusable")
+		return nil, "", errors.Wrap(err, "session handshake failed; client unusable")
 	}
-	return data, nil
+	return data, volume, nil
 }
 
 // resolveMetaTimeout picks the per-RPC timeout for the Resolve lookup: the

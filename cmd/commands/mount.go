@@ -258,9 +258,9 @@ var mountCmd = &cobra.Command{
 				rawIDs = true
 			}
 		}
-		if volumeName == "" {
-			return fmt.Errorf("volume name is required (use the shorthand host/volume, -n, or a profile's mount.volume)")
-		}
+		// An empty volume name is allowed here: NewClientForVolume below lists
+		// the caller's volumes and auto-selects the sole one (erroring on zero
+		// or many). An explicit -n / shorthand / profile volume still wins.
 		if mountpoint == "" {
 			return fmt.Errorf("mountpoint is required (pass it as an argument or set mount.path in the profile)")
 		}
@@ -284,11 +284,14 @@ var mountCmd = &cobra.Command{
 		startPprofIfEnabled()
 
 		// Create client (follows a VolumeService.Resolve referral if the
-		// server points this volume at a different data-plane location).
-		c, err := grpc.NewClientForVolume(cfg, volumeName)
+		// server points this volume at a different data-plane location). When
+		// volumeName is empty it auto-resolves the sole volume and returns its
+		// name, which the mounter/state/logs below then use.
+		c, resolvedVolume, err := grpc.NewClientForVolume(cfg, volumeName)
 		if err != nil {
 			return remediate(err, addr, volumeName)
 		}
+		volumeName = resolvedVolume
 
 		defer func(c grpc.Client) {
 			err := c.Close()

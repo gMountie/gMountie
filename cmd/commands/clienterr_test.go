@@ -33,3 +33,12 @@ func (s *ClientErrSuite) TestVolumeNotFound() {
 func (s *ClientErrSuite) TestNilPassesThrough() {
 	s.NoError(remediate(nil, "host:9449", "shared"))
 }
+
+// TestPlainErrorPassesThrough verifies the auto-resolve guidance errors (a plain
+// non-gRPC, non-unreachable error) reach the user verbatim — remediate must not
+// bury "pass --volume: photos, music" under an "unreachable" prefix. The empty
+// volume passed here mirrors the multi-volume call site where volumeName is "".
+func (s *ClientErrSuite) TestPlainErrorPassesThrough() {
+	err := remediate(errors.New("multiple volumes available, pass --volume: photos, music"), "host:9449", "")
+	s.Equal("multiple volumes available, pass --volume: photos, music", err.Error())
+}
