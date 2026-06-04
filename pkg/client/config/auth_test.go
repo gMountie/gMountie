@@ -47,6 +47,25 @@ auth:
 	s.Assert().Contains(test, "testuser")
 }
 
+// TestParse_MTLSAuth ensures type:mtls parses with no username/password — the
+// client certificate is the identity — and yields the mtls auth type.
+func (s *AuthConfigTestSuite) TestParse_MTLSAuth() {
+	conf := `
+server:
+  address: 127.0.0.1
+auth:
+  type: mtls
+`
+	result, err := LoadConfigFromString(conf)
+	s.Require().NoError(err)
+	s.Require().NotNil(result.Auth)
+	s.Assert().Equal(serverConfig.AuthConfigTypeMTLS, result.Auth.GetType())
+	// mtls auth must NOT be a BasicAuthConfig, so the grpc factory skips
+	// attaching per-RPC basic-auth credentials.
+	_, ok := result.Auth.(*BasicAuthConfig)
+	s.Assert().False(ok)
+}
+
 // Test error cases for invalid auth type
 func (s *AuthConfigTestSuite) TestParse_InvalidAuthType() {
 	conf := `

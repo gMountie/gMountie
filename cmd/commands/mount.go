@@ -12,8 +12,10 @@ import (
 	"syscall"
 
 	"go.gmountie.dev/gmountie/pkg/client/config"
+	"go.gmountie.dev/gmountie/pkg/client/credentials"
 	"go.gmountie.dev/gmountie/pkg/client/grpc"
 	"go.gmountie.dev/gmountie/pkg/client/mount"
+	serverconfig "go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/spf13/cobra"
@@ -45,15 +47,44 @@ func startPprofIfEnabled() {
 }
 
 var (
-	serverAddr string
-	volumeName string
-	authType   string
-	username   string
-	password   string
-	rawIDs     bool
-	daemonFlag bool
-	cfg        *config.Config
+	serverAddr      string
+	volumeName      string
+	authType        string
+	username        string
+	password        string
+	rawIDs          bool
+	daemonFlag      bool
+	credentialsFile string
+	cfg             *config.Config
 )
+
+// applyCredential maps a decoded credential blob onto the viper instance:
+// the data-plane endpoint, the inline TLS material (data CA + this device's
+// client cert/key), the verification name, and auth.type=mtls.
+//
+// It sits ABOVE the config file but BELOW explicit CLI flags: it runs after the
+// config-file read, and the few flags that map to the same keys (-s, -u, -t,
+// --verify-style options) are layered afterwards and still win. verify defaults
+// to "verify" (full chain validation) only when the config file did not set it.
+func applyCredential(v *viper.Viper, cred *credentials.Credentials) error {
+	host, port, err := net.SplitHostPort(cred.Endpoint)
+	if err != nil {
+		return fmt.Errorf("invalid credential endpoint %q: %w", cred.Endpoint, err)
+	}
+	v.Set("server.address", host)
+	v.Set("server.port", port)
+	if cred.ServerName != "" {
+		v.Set("server.tls.server_name", cred.ServerName)
+	}
+	v.Set("server.tls.ca_pem", cred.CAPEM)
+	v.Set("server.tls.cert_pem", cred.CertPEM)
+	v.Set("server.tls.key_pem", cred.KeyPEM)
+	if !v.IsSet("server.tls.verify") {
+		v.Set("server.tls.verify", "verify")
+	}
+	v.Set("auth.type", string(serverconfig.AuthConfigTypeMTLS))
+	return nil
+}
 
 // applyMountSpec maps a parsed shorthand spec onto the viper instance and
 // returns the volume name it carried. Explicit flags (checked by the caller)
@@ -176,10 +207,26 @@ var mountCmd = &cobra.Command{
 			mountpoint = args[0]
 		}
 
+		// Decode a single-blob credential (file flag or $GMOUNTIE_CREDENTIALS)
+		// and apply it over the config file but under explicit CLI flags. This
+		// supplies the endpoint + mTLS material + auth.type=mtls so the client
+		// can mount with cert-only auth and no config file.
+		cred, err := credentials.Load(os.Getenv(credentialsEnvVar), credentialsFile)
+		if err != nil {
+			return fmt.Errorf("failed to load credentials: %w", err)
+		}
+		if cred != nil {
+			if err := applyCredential(v, cred); err != nil {
+				return err
+			}
+		}
+
 		// -s "host:port" overrides the spec/file only when explicitly set (or
-		// when there's neither a config file nor a shorthand spec to supply it).
+		// when there's neither a config file, a shorthand spec, nor a credential
+		// to supply it). Without the `cred == nil` guard the -s default
+		// (127.0.0.1:9449) would clobber the credential's endpoint.
 		// net.SplitHostPort handles IPv6 bracket notation ([::1]:9449) correctly.
-		if cmd.Flags().Changed("server") || (!hasConfig && !usedSpec) {
+		if cmd.Flags().Changed("server") || (!hasConfig && !usedSpec && cred == nil) {
 			host, port, err := net.SplitHostPort(serverAddr)
 			if err != nil {
 				return fmt.Errorf("invalid server address %q: %w", serverAddr, err)
@@ -324,6 +371,7 @@ func init() {
 	mountCmd.PersistentFlags().StringVarP(&authType, "auth-type", "t", "basic", "authentication type (basic)")
 	mountCmd.PersistentFlags().StringVarP(&username, "username", "u", "", "username for basic auth")
 	mountCmd.PersistentFlags().StringVarP(&password, "password", "p", "", "password for basic auth (visible in ps/history; prefer the prompt or $GMOUNTIE_AUTH_PASSWORD)")
+	mountCmd.PersistentFlags().StringVar(&credentialsFile, "credentials", "", "path to a single-blob mount credential (cert/key/CA/endpoint); $GMOUNTIE_CREDENTIALS is used when unset")
 	mountCmd.PersistentFlags().BoolVar(&rawIDs, "raw-ids", false, "expose server-side uids/gids unchanged (for backups/admin tooling)")
 	mountCmd.PersistentFlags().BoolVar(&daemonFlag, "daemon", false, "mount in the background (detach after the mount is ready)")
 	rootCmd.AddCommand(mountCmd)
