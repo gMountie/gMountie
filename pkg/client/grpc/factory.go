@@ -9,6 +9,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/config"
 	"go.gmountie.dev/gmountie/pkg/client/metrics"
 	clienttls "go.gmountie.dev/gmountie/pkg/client/tls"
+	serverconfig "go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/server/grpc/snappy"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 
@@ -103,7 +104,11 @@ func newUnconnectedClient(cfg *config.Config, endpoint string) (Client, error) {
 	metrics.RegisterInstance(m)
 	opts = append(opts, WithMetrics(m))
 
-	if c, ok := authConfig.(*config.BasicAuthConfig); ok {
+	// Attach per-RPC basic-auth only for type:basic. For type:mtls the
+	// transport client certificate (built into tlsCfg above from
+	// cfg.Server.TLS.Cert/Key) is the identity — the server's mtls auth reads
+	// the cert CN — so no basic-auth credential metadata is sent.
+	if c, ok := authConfig.(*config.BasicAuthConfig); ok && authConfig.GetType() == serverconfig.AuthConfigTypeBasic {
 		opts = append(opts, WithBasicAuth(c.Username, c.Password))
 	}
 

@@ -55,10 +55,16 @@ func NewAuthFromConfig(v *viper.Viper) (serverConfig.AuthConfig, error) {
 	var auth serverConfig.AuthConfig
 	var err error
 	switch v.GetString("type") {
-	case "basic":
+	case string(serverConfig.AuthConfigTypeBasic):
 		auth, err = NewBasicAuthConfig(v)
+	case string(serverConfig.AuthConfigTypeMTLS):
+		// mTLS needs no username/password: the verified client certificate is
+		// the identity. AuthConfigBase satisfies the AuthConfig interface and
+		// carries no required fields, so the validator passes. The grpc factory
+		// skips per-RPC basic-auth for any non-BasicAuthConfig auth.
+		auth = &serverConfig.AuthConfigBase{Type: serverConfig.AuthConfigTypeMTLS}
 	default:
-		return nil, fmt.Errorf("invalid auth type: %q (only 'basic' is supported)", v.GetString("type"))
+		return nil, fmt.Errorf("invalid auth type: %q (only 'basic' and 'mtls' are supported)", v.GetString("type"))
 	}
 
 	if err != nil {

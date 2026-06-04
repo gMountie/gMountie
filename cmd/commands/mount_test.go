@@ -4,10 +4,13 @@ package commands
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"go.gmountie.dev/gmountie/pkg/client/credentials"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -56,6 +59,7 @@ func (s *MountCmdTestSuite) TearDownTest() {
 	profileName = ""
 	daemonFlag = false
 	rawIDs = false
+	credentialsFile = ""
 	// Reset cobra flag Changed state so each test starts with a clean slate.
 	mountCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
 	mountCmd.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
@@ -154,6 +158,82 @@ func (s *MountCmdTestSuite) TestApplyMountSpecPopulatesFlags() {
 	s.Equal("9449", v.GetString("server.port"))
 	s.Equal("admin", v.GetString("auth.username"))
 	s.Equal("shared", gotVol)
+}
+
+// credBlob builds a base64-STD-encoded credential blob for the mount-wiring
+// tests. The PEM material is opaque here: the command stops at the
+// mountpoint-existence guard (before any TLS handshake), so reaching that guard
+// proves the credential populated server/TLS/auth and that cert-only auth
+// skipped the username requirement.
+func credBlob(host, port string) string {
+	json := fmt.Sprintf(
+		`{"cert_pem":"CERT","key_pem":"KEY","ca_pem":"CA","endpoint":"%s:%s","server_name":"%s"}`,
+		host, port, host)
+	return base64.StdEncoding.EncodeToString([]byte(json))
+}
+
+// TestApplyCredentialPopulatesViper proves the credential maps onto the viper
+// keys ParseConfig reads: endpoint → server.address/port, inline TLS material,
+// server_name, verify defaulted to "verify", and auth.type=mtls.
+func (s *MountCmdTestSuite) TestApplyCredentialPopulatesViper() {
+	v := viper.New()
+	cred, err := credentials.Decode(credBlob("data.example.com", "443"))
+	s.Require().NoError(err)
+	s.Require().NoError(applyCredential(v, cred))
+	s.Equal("data.example.com", v.GetString("server.address"))
+	s.Equal("443", v.GetString("server.port"))
+	s.Equal("data.example.com", v.GetString("server.tls.server_name"))
+	s.Equal("CA", v.GetString("server.tls.ca_pem"))
+	s.Equal("CERT", v.GetString("server.tls.cert_pem"))
+	s.Equal("KEY", v.GetString("server.tls.key_pem"))
+	s.Equal("verify", v.GetString("server.tls.verify"))
+	s.Equal("mtls", v.GetString("auth.type"))
+}
+
+// TestMountCmd_CredentialEnv_CertOnlyAuth proves the target invocation:
+// GMOUNTIE_CREDENTIALS=<blob> gmountie mount <mp> -n <vol>, with no -u/-p and no
+// config file, authenticates by cert alone (auth.type=mtls, no username
+// required) and the credential's endpoint is NOT clobbered by the -s default.
+// We stop at the non-existent mountpoint guard.
+func (s *MountCmdTestSuite) TestMountCmd_CredentialEnv_CertOnlyAuth() {
+	s.T().Setenv(credentialsEnvVar, credBlob("192.168.11.11", "9449"))
+	missing := filepath.Join(s.tempDir, "no-such-mount")
+	s.cmd.SetArgs([]string{"mount", missing, "--volume", "test-volume"})
+	err := s.cmd.Execute()
+	s.Require().Error(err)
+	s.Assert().Contains(err.Error(), fmt.Sprintf("mountpoint %s does not exist", missing))
+	// No basic-auth requirement (cert is the identity) and no auth-type error.
+	s.Assert().NotContains(err.Error(), "username is required")
+	s.Assert().NotContains(err.Error(), "invalid auth type")
+}
+
+// TestMountCmd_CredentialFromFile proves the --credentials file flag works the
+// same way and wins over $GMOUNTIE_CREDENTIALS (file source takes precedence).
+func (s *MountCmdTestSuite) TestMountCmd_CredentialFromFile() {
+	s.T().Setenv(credentialsEnvVar, credBlob("10.0.0.1", "1234"))
+	credPath := filepath.Join(s.tempDir, "cred.b64")
+	s.Require().NoError(os.WriteFile(credPath, []byte(credBlob("192.168.11.11", "9449")), 0o600))
+	missing := filepath.Join(s.tempDir, "no-such-mount")
+	s.cmd.SetArgs([]string{"mount", missing, "--volume", "test-volume", "--credentials", credPath})
+	err := s.cmd.Execute()
+	s.Require().Error(err)
+	s.Assert().Contains(err.Error(), fmt.Sprintf("mountpoint %s does not exist", missing))
+	s.Assert().NotContains(err.Error(), "username is required")
+}
+
+// TestMountCmd_ExplicitServerOverridesCredential proves an explicit -s still
+// wins over the credential's endpoint (precedence: flag > credential).
+func (s *MountCmdTestSuite) TestMountCmd_ExplicitServerOverridesCredential() {
+	s.T().Setenv(credentialsEnvVar, credBlob("192.168.11.11", "9449"))
+	s.cmd.SetArgs([]string{
+		"mount",
+		s.mountPath,
+		"--volume", "test-volume",
+		"--server", "not-a-valid-endpoint", // no colon → split fails, proving -s ran
+	})
+	err := s.cmd.Execute()
+	s.Require().Error(err)
+	s.Assert().Contains(err.Error(), "invalid server address")
 }
 
 func (s *MountCmdTestSuite) TestMountCmd_NonExistentMountPoint() {
