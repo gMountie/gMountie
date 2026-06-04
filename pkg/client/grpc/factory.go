@@ -118,8 +118,9 @@ func newUnconnectedClient(cfg *config.Config, endpoint string) (Client, error) {
 
 // NewClientFromConfig builds a client to the configured endpoint and completes
 // the session handshake. Returns an error if the handshake fails — without it,
-// every fd-carrying RPC would be rejected by the server. Used by paths that do
-// not follow referrals (ls, the multi-volume mounter).
+// every fd-carrying RPC would be rejected by the server. For a session-bearing
+// client to a known endpoint that does not follow referrals; the pre-session
+// paths (ls → ListVolumes, mount's referral resolver) skip the handshake.
 func NewClientFromConfig(cfg *config.Config) (Client, error) {
 	if cfg == nil || cfg.Server == nil {
 		return nil, errors.New("config is empty or auth config is empty")
@@ -133,6 +134,28 @@ func NewClientFromConfig(cfg *config.Config) (Client, error) {
 		return nil, errors.Wrap(err, "session handshake failed; client unusable")
 	}
 	return client, nil
+}
+
+// ListVolumes lists the volumes the caller may mount, over a PRE-SESSION
+// VolumeService.List call (no session handshake). This works against both a full
+// data server and the cloud resolver (mount.<domain>), which implements only
+// VolumeService — there is no SessionService to handshake against there. The
+// caller is authenticated per-RPC by the mTLS client cert or basic-auth creds
+// the unconnected client wires onto the dial, so no session_id is needed to list.
+func ListVolumes(cfg *config.Config) ([]string, error) {
+	if cfg == nil || cfg.Server == nil {
+		return nil, errors.New("config is empty")
+	}
+	client, err := newUnconnectedClientFn(cfg, createEndpoint(cfg.Server))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = client.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), resolveMetaTimeout(cfg))
+	defer cancel()
+
+	return listVolumes(ctx, client)
 }
 
 // resolveTimeout bounds the pre-session Resolve RPC when the config carries no

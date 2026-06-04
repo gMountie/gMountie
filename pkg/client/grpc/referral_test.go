@@ -237,6 +237,53 @@ func (s *ReferralSuite) TestNewClientForVolume_EmptyVolumeNoVolumesIsError() {
 	})
 }
 
+// TestListVolumes_ReturnsNamesPreSession proves the ls path: ListVolumes dials
+// an unconnected client, lists over the pre-session VolumeService.List call, and
+// returns the names WITHOUT ever running the session handshake (Connect).
+func (s *ReferralSuite) TestListVolumes_ReturnsNamesPreSession() {
+	cfg := baseConfig()
+	client := &fakeClient{vc: s.newListResolveClient([]string{"photos", "music"}, "")}
+
+	var dialed []string
+	s.withStubbedBuilder(func(_ *config.Config, endpoint string) (Client, error) {
+		dialed = append(dialed, endpoint)
+		return client, nil
+	}, func() {
+		names, err := ListVolumes(cfg)
+		s.Require().NoError(err)
+		s.Equal([]string{"photos", "music"}, names)
+		s.False(client.connected, "ListVolumes must not run the session handshake")
+		s.True(client.closed, "ListVolumes must close the client")
+	})
+	s.Equal([]string{createEndpoint(cfg.Server)}, dialed)
+}
+
+// TestListVolumes_SurfacesListError proves a List failure propagates to the
+// caller (and the client is still closed).
+func (s *ReferralSuite) TestListVolumes_SurfacesListError() {
+	cfg := baseConfig()
+	vc := protomocks.NewMockVolumeServiceClient(s.T())
+	vc.On("List", mock.Anything, mock.Anything).
+		Return((*proto.VolumeListReply)(nil), errors.New("denied"))
+	client := &fakeClient{vc: vc}
+
+	s.withStubbedBuilder(func(_ *config.Config, _ string) (Client, error) {
+		return client, nil
+	}, func() {
+		_, err := ListVolumes(cfg)
+		s.Require().Error(err)
+		s.False(client.connected)
+		s.True(client.closed)
+	})
+}
+
+func (s *ReferralSuite) TestListVolumes_NilConfigIsError() {
+	_, err := ListVolumes(nil)
+	s.Require().Error(err)
+	_, err = ListVolumes(&config.Config{})
+	s.Require().Error(err)
+}
+
 func (s *ReferralSuite) TestNewClientForVolume_EmptyVolumeMultipleIsError() {
 	cfg := baseConfig()
 	resolver := &fakeClient{vc: s.newListResolveClient([]string{"photos", "music"}, "")}
