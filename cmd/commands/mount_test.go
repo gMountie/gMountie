@@ -70,15 +70,17 @@ func (s *MountCmdTestSuite) TearDownTest() {
 }
 
 func (s *MountCmdTestSuite) TestMountCmd_NoVolumeName() {
-	// Supply auth so resolveAuth passes; the volume guard is now checked after
-	// config parsing (profile/config fallback happens there), so we must get
-	// past auth before we can test the volume-required message.
+	// An omitted --volume is no longer a hard error: the empty volume now flows
+	// into NewClientForVolume, which lists the caller's volumes to auto-select
+	// the sole one. With no server reachable, that List call fails — proving the
+	// empty volume reached the resolver path instead of the old "required" guard.
 	s.cmd.SetArgs([]string{"mount", s.mountPath, "--username", "admin", "--password", "admin"})
 	err := s.cmd.Execute()
 
 	// Verify
 	s.Require().Error(err)
-	s.Assert().Contains(err.Error(), "volume name is required")
+	s.Assert().NotContains(err.Error(), "volume name is required")
+	s.Assert().Contains(err.Error(), "list volumes for this credential")
 }
 
 func (s *MountCmdTestSuite) TestMountCmd_InvalidServerAddress() {

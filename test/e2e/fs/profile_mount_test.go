@@ -112,7 +112,7 @@ mount:
 
 	// --- 5. Build client + mounter exactly as mount command does ---
 	// Defers are registered before Mount so cleanup runs even on mount failure.
-	c, err := grpcclient.NewClientForVolume(cfg, s.volume.Name)
+	c, _, err := grpcclient.NewClientForVolume(cfg, s.volume.Name)
 	s.Require().NoError(err, "NewClientForVolume from profile config")
 	defer func() {
 		if closeErr := c.Close(); closeErr != nil {

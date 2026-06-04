@@ -10,6 +10,22 @@ import (
 	"github.com/pkg/errors"
 )
 
+// listVolumes asks the server which volumes the caller may mount. Pre-session,
+// like resolveLocation: the server authenticates the caller from its mTLS cert
+// or basic-auth creds, no session_id required. Used to auto-resolve the volume
+// when the user omits --volume — a single-volume credential then needs no name.
+func listVolumes(ctx context.Context, client Client) ([]string, error) {
+	reply, err := client.Volume().List(ctx, &proto.VolumeListRequest{})
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(reply.GetVolumes()))
+	for _, v := range reply.GetVolumes() {
+		names = append(names, v.GetName())
+	}
+	return names, nil
+}
+
 // resolveLocation asks the server where the volume lives. An empty location
 // means "served here"; a non-empty location is a referral the client should
 // reconnect to. Pre-session: the server authenticates the caller from its mTLS
