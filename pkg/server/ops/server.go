@@ -11,6 +11,7 @@ import (
 
 	pkgerrors "github.com/pkg/errors"
 	"go.gmountie.dev/gmountie/pkg/server/config"
+	servertls "go.gmountie.dev/gmountie/pkg/server/tls"
 	"go.gmountie.dev/gmountie/pkg/server/service"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 
@@ -76,13 +77,16 @@ func (s *Server) ApplyTLS(cfg config.OpsTLSConfig) error {
 	if cfg.CertFile == "" && cfg.KeyFile == "" {
 		return nil
 	}
-	cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+	// Serve through the reloader so a rotated cert (cert-manager-style
+	// file replacement) reaches new handshakes without a restart — the
+	// operator's revocation reloads handshake against this listener.
+	reloader, err := servertls.NewReloader(cfg.CertFile, cfg.KeyFile)
 	if err != nil {
 		return pkgerrors.Wrap(err, "load ops TLS keypair")
 	}
 	tc := &tls.Config{
-		MinVersion:   tls.VersionTLS12,
-		Certificates: []tls.Certificate{cert},
+		MinVersion:     tls.VersionTLS12,
+		GetCertificate: reloader.GetCertificate,
 	}
 	if cfg.ClientCAFile != "" {
 		caPEM, err := os.ReadFile(cfg.ClientCAFile)

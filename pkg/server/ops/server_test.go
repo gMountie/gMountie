@@ -106,4 +106,32 @@ func (s *ServerTestSuite) TestOpsTLSEmptyIsPlainHTTP() {
 	s.Nil(srv.tlsConfig()) // no cert/key ⇒ plain HTTP
 }
 
+func (s *ServerTestSuite) TestApplyTLSServesRotatedCert() {
+	dir := s.T().TempDir()
+	certFile, keyFile, _ := writeOpsCertKeyCA(s.T(), dir)
+
+	srv, err := NewServerWithTLS("127.0.0.1:0", serverconfig.OpsTLSConfig{
+		CertFile: certFile, KeyFile: keyFile,
+	})
+	s.Require().NoError(err)
+
+	tc := srv.tlsConfig()
+	s.Require().NotNil(tc)
+	s.NotNil(tc.GetCertificate, "ops TLS must serve through the reloader")
+	s.Empty(tc.Certificates, "no static cert — rotation would never reach it")
+
+	// The callback picks up an on-disk rotation.
+	before, err := tc.GetCertificate(nil)
+	s.Require().NoError(err)
+	certPEM, keyPEM, err := servertls.Generate("ops-rotated.example.com")
+	s.Require().NoError(err)
+	s.Require().NoError(os.WriteFile(certFile+".tmp", certPEM, 0o600))
+	s.Require().NoError(os.Rename(certFile+".tmp", certFile))
+	s.Require().NoError(os.WriteFile(keyFile+".tmp", keyPEM, 0o600))
+	s.Require().NoError(os.Rename(keyFile+".tmp", keyFile))
+	after, err := tc.GetCertificate(nil)
+	s.Require().NoError(err)
+	s.NotEqual(before, after)
+}
+
 func TestServerTestSuite(t *testing.T) { suite.Run(t, new(ServerTestSuite)) }
