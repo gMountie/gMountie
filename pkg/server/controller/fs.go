@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"go.gmountie.dev/gmountie/pkg/proto"
@@ -311,6 +312,18 @@ func (r *RpcServerImpl) Utimens(ctx context.Context, request *proto.UtimensReque
 
 // ----- Extended attributes -----
 
+// xattrWriteAllowed reports whether attr may be WRITTEN through the wire
+// protocol. The server process may run privileged and setfsuid does not
+// drop capabilities, so a client must not be able to plant trusted.* or
+// security.* (e.g. security.capability — file capabilities) xattrs on
+// server-side files. Only namespaces a regular user could safely own are
+// writable: user.* and the POSIX ACL pair. Reads stay unfiltered.
+func xattrWriteAllowed(attr string) bool {
+	return strings.HasPrefix(attr, "user.") ||
+		attr == "system.posix_acl_access" ||
+		attr == "system.posix_acl_default"
+}
+
 func (r *RpcServerImpl) GetXAttr(ctx context.Context, request *proto.GetXAttrRequest) (*proto.GetXAttrReply, error) {
 	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
@@ -318,6 +331,59 @@ func (r *RpcServerImpl) GetXAttr(ctx context.Context, request *proto.GetXAttrReq
 	}
 	data, status := fs.GetXAttr(request.Path, request.Attribute, createContext(ctx, request.Caller))
 	return &proto.GetXAttrReply{Data: data, Status: int32(status)}, nil
+}
+
+func (r *RpcServerImpl) SetXAttr(ctx context.Context, request *proto.SetXAttrRequest) (*proto.SetXAttrReply, error) {
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	if !xattrWriteAllowed(request.Attribute) {
+		return &proto.SetXAttrReply{Status: int32(fuse.EPERM)}, nil
+	}
+	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	if err != nil {
+		return nil, err
+	}
+	return withIdempotency(sess, request.RequestId, func() (*proto.SetXAttrReply, error) {
+		s := fs.SetXAttr(request.Path, request.Attribute, request.Data, int(request.Flags), createContext(ctx, request.Caller))
+		if s == fuse.OK {
+			r.bus.Emit(request.Volume, request.Path, versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
+		}
+		return &proto.SetXAttrReply{Status: int32(s)}, nil
+	})
+}
+
+func (r *RpcServerImpl) RemoveXAttr(ctx context.Context, request *proto.RemoveXAttrRequest) (*proto.RemoveXAttrReply, error) {
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	if !xattrWriteAllowed(request.Attribute) {
+		return &proto.RemoveXAttrReply{Status: int32(fuse.EPERM)}, nil
+	}
+	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	if err != nil {
+		return nil, err
+	}
+	return withIdempotency(sess, request.RequestId, func() (*proto.RemoveXAttrReply, error) {
+		s := fs.RemoveXAttr(request.Path, request.Attribute, createContext(ctx, request.Caller))
+		if s == fuse.OK {
+			r.bus.Emit(request.Volume, request.Path, versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
+		}
+		return &proto.RemoveXAttrReply{Status: int32(s)}, nil
+	})
+}
+
+// ListXAttr is read-only and identity-bound like GetXAttr — no session or
+// idempotency machinery.
+func (r *RpcServerImpl) ListXAttr(ctx context.Context, request *proto.ListXAttrRequest) (*proto.ListXAttrReply, error) {
+	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	if err != nil {
+		return nil, err
+	}
+	attrs, st := fs.ListXAttr(request.Path, createContext(ctx, request.Caller))
+	return &proto.ListXAttrReply{Attributes: attrs, Status: int32(st)}, nil
 }
 
 // Compound runs a batched read-only metadata request via the
