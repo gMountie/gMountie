@@ -34,6 +34,9 @@ const (
 	RpcFs_Readlink_FullMethodName         = "/gmountie.RpcFs/Readlink"
 	RpcFs_Symlink_FullMethodName          = "/gmountie.RpcFs/Symlink"
 	RpcFs_GetXAttr_FullMethodName         = "/gmountie.RpcFs/GetXAttr"
+	RpcFs_SetXAttr_FullMethodName         = "/gmountie.RpcFs/SetXAttr"
+	RpcFs_RemoveXAttr_FullMethodName      = "/gmountie.RpcFs/RemoveXAttr"
+	RpcFs_ListXAttr_FullMethodName        = "/gmountie.RpcFs/ListXAttr"
 	RpcFs_Compound_FullMethodName         = "/gmountie.RpcFs/Compound"
 	RpcFs_GetAttrIfChanged_FullMethodName = "/gmountie.RpcFs/GetAttrIfChanged"
 	RpcFs_Subscribe_FullMethodName        = "/gmountie.RpcFs/Subscribe"
@@ -58,6 +61,9 @@ type RpcFsClient interface {
 	Readlink(ctx context.Context, in *ReadlinkRequest, opts ...grpc.CallOption) (*ReadlinkReply, error)
 	Symlink(ctx context.Context, in *SymlinkRequest, opts ...grpc.CallOption) (*SymlinkReply, error)
 	GetXAttr(ctx context.Context, in *GetXAttrRequest, opts ...grpc.CallOption) (*GetXAttrReply, error)
+	SetXAttr(ctx context.Context, in *SetXAttrRequest, opts ...grpc.CallOption) (*SetXAttrReply, error)
+	RemoveXAttr(ctx context.Context, in *RemoveXAttrRequest, opts ...grpc.CallOption) (*RemoveXAttrReply, error)
+	ListXAttr(ctx context.Context, in *ListXAttrRequest, opts ...grpc.CallOption) (*ListXAttrReply, error)
 	Compound(ctx context.Context, in *CompoundRequest, opts ...grpc.CallOption) (*CompoundBatch, error)
 	GetAttrIfChanged(ctx context.Context, in *GetAttrIfChangedRequest, opts ...grpc.CallOption) (*GetAttrIfChangedReply, error)
 	Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SubscribeEvent], error)
@@ -221,6 +227,36 @@ func (c *rpcFsClient) GetXAttr(ctx context.Context, in *GetXAttrRequest, opts ..
 	return out, nil
 }
 
+func (c *rpcFsClient) SetXAttr(ctx context.Context, in *SetXAttrRequest, opts ...grpc.CallOption) (*SetXAttrReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetXAttrReply)
+	err := c.cc.Invoke(ctx, RpcFs_SetXAttr_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *rpcFsClient) RemoveXAttr(ctx context.Context, in *RemoveXAttrRequest, opts ...grpc.CallOption) (*RemoveXAttrReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RemoveXAttrReply)
+	err := c.cc.Invoke(ctx, RpcFs_RemoveXAttr_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *rpcFsClient) ListXAttr(ctx context.Context, in *ListXAttrRequest, opts ...grpc.CallOption) (*ListXAttrReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListXAttrReply)
+	err := c.cc.Invoke(ctx, RpcFs_ListXAttr_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *rpcFsClient) Compound(ctx context.Context, in *CompoundRequest, opts ...grpc.CallOption) (*CompoundBatch, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CompoundBatch)
@@ -279,6 +315,9 @@ type RpcFsServer interface {
 	Readlink(context.Context, *ReadlinkRequest) (*ReadlinkReply, error)
 	Symlink(context.Context, *SymlinkRequest) (*SymlinkReply, error)
 	GetXAttr(context.Context, *GetXAttrRequest) (*GetXAttrReply, error)
+	SetXAttr(context.Context, *SetXAttrRequest) (*SetXAttrReply, error)
+	RemoveXAttr(context.Context, *RemoveXAttrRequest) (*RemoveXAttrReply, error)
+	ListXAttr(context.Context, *ListXAttrRequest) (*ListXAttrReply, error)
 	Compound(context.Context, *CompoundRequest) (*CompoundBatch, error)
 	GetAttrIfChanged(context.Context, *GetAttrIfChangedRequest) (*GetAttrIfChangedReply, error)
 	Subscribe(*SubscribeRequest, grpc.ServerStreamingServer[SubscribeEvent]) error
@@ -336,6 +375,15 @@ func (UnimplementedRpcFsServer) Symlink(context.Context, *SymlinkRequest) (*Syml
 }
 func (UnimplementedRpcFsServer) GetXAttr(context.Context, *GetXAttrRequest) (*GetXAttrReply, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetXAttr not implemented")
+}
+func (UnimplementedRpcFsServer) SetXAttr(context.Context, *SetXAttrRequest) (*SetXAttrReply, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetXAttr not implemented")
+}
+func (UnimplementedRpcFsServer) RemoveXAttr(context.Context, *RemoveXAttrRequest) (*RemoveXAttrReply, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveXAttr not implemented")
+}
+func (UnimplementedRpcFsServer) ListXAttr(context.Context, *ListXAttrRequest) (*ListXAttrReply, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListXAttr not implemented")
 }
 func (UnimplementedRpcFsServer) Compound(context.Context, *CompoundRequest) (*CompoundBatch, error) {
 	return nil, status.Error(codes.Unimplemented, "method Compound not implemented")
@@ -637,6 +685,60 @@ func _RpcFs_GetXAttr_Handler(srv interface{}, ctx context.Context, dec func(inte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RpcFs_SetXAttr_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetXAttrRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RpcFsServer).SetXAttr(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RpcFs_SetXAttr_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RpcFsServer).SetXAttr(ctx, req.(*SetXAttrRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RpcFs_RemoveXAttr_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveXAttrRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RpcFsServer).RemoveXAttr(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RpcFs_RemoveXAttr_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RpcFsServer).RemoveXAttr(ctx, req.(*RemoveXAttrRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RpcFs_ListXAttr_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListXAttrRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RpcFsServer).ListXAttr(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RpcFs_ListXAttr_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RpcFsServer).ListXAttr(ctx, req.(*ListXAttrRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _RpcFs_Compound_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CompoundRequest)
 	if err := dec(in); err != nil {
@@ -750,6 +852,18 @@ var RpcFs_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetXAttr",
 			Handler:    _RpcFs_GetXAttr_Handler,
+		},
+		{
+			MethodName: "SetXAttr",
+			Handler:    _RpcFs_SetXAttr_Handler,
+		},
+		{
+			MethodName: "RemoveXAttr",
+			Handler:    _RpcFs_RemoveXAttr_Handler,
+		},
+		{
+			MethodName: "ListXAttr",
+			Handler:    _RpcFs_ListXAttr_Handler,
 		},
 		{
 			MethodName: "Compound",

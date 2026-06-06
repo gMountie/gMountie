@@ -31,6 +31,8 @@ const (
 	RpcFile_SetLk_FullMethodName         = "/gmountie.RpcFile/SetLk"
 	RpcFile_SetLkw_FullMethodName        = "/gmountie.RpcFile/SetLkw"
 	RpcFile_Allocate_FullMethodName      = "/gmountie.RpcFile/Allocate"
+	RpcFile_CopyFileRange_FullMethodName = "/gmountie.RpcFile/CopyFileRange"
+	RpcFile_Lseek_FullMethodName         = "/gmountie.RpcFile/Lseek"
 )
 
 // RpcFileClient is the client API for RpcFile service.
@@ -49,6 +51,8 @@ type RpcFileClient interface {
 	SetLk(ctx context.Context, in *SetLkRequest, opts ...grpc.CallOption) (*SetLkReply, error)
 	SetLkw(ctx context.Context, in *SetLkwRequest, opts ...grpc.CallOption) (*SetLkwReply, error)
 	Allocate(ctx context.Context, in *AllocateRequest, opts ...grpc.CallOption) (*AllocateReply, error)
+	CopyFileRange(ctx context.Context, in *CopyFileRangeRequest, opts ...grpc.CallOption) (*CopyFileRangeReply, error)
+	Lseek(ctx context.Context, in *LseekRequest, opts ...grpc.CallOption) (*LseekReply, error)
 }
 
 type rpcFileClient struct {
@@ -191,6 +195,26 @@ func (c *rpcFileClient) Allocate(ctx context.Context, in *AllocateRequest, opts 
 	return out, nil
 }
 
+func (c *rpcFileClient) CopyFileRange(ctx context.Context, in *CopyFileRangeRequest, opts ...grpc.CallOption) (*CopyFileRangeReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CopyFileRangeReply)
+	err := c.cc.Invoke(ctx, RpcFile_CopyFileRange_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *rpcFileClient) Lseek(ctx context.Context, in *LseekRequest, opts ...grpc.CallOption) (*LseekReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LseekReply)
+	err := c.cc.Invoke(ctx, RpcFile_Lseek_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RpcFileServer is the server API for RpcFile service.
 // All implementations must embed UnimplementedRpcFileServer
 // for forward compatibility.
@@ -207,6 +231,8 @@ type RpcFileServer interface {
 	SetLk(context.Context, *SetLkRequest) (*SetLkReply, error)
 	SetLkw(context.Context, *SetLkwRequest) (*SetLkwReply, error)
 	Allocate(context.Context, *AllocateRequest) (*AllocateReply, error)
+	CopyFileRange(context.Context, *CopyFileRangeRequest) (*CopyFileRangeReply, error)
+	Lseek(context.Context, *LseekRequest) (*LseekReply, error)
 	mustEmbedUnimplementedRpcFileServer()
 }
 
@@ -252,6 +278,12 @@ func (UnimplementedRpcFileServer) SetLkw(context.Context, *SetLkwRequest) (*SetL
 }
 func (UnimplementedRpcFileServer) Allocate(context.Context, *AllocateRequest) (*AllocateReply, error) {
 	return nil, status.Error(codes.Unimplemented, "method Allocate not implemented")
+}
+func (UnimplementedRpcFileServer) CopyFileRange(context.Context, *CopyFileRangeRequest) (*CopyFileRangeReply, error) {
+	return nil, status.Error(codes.Unimplemented, "method CopyFileRange not implemented")
+}
+func (UnimplementedRpcFileServer) Lseek(context.Context, *LseekRequest) (*LseekReply, error) {
+	return nil, status.Error(codes.Unimplemented, "method Lseek not implemented")
 }
 func (UnimplementedRpcFileServer) mustEmbedUnimplementedRpcFileServer() {}
 func (UnimplementedRpcFileServer) testEmbeddedByValue()                 {}
@@ -472,6 +504,42 @@ func _RpcFile_Allocate_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RpcFile_CopyFileRange_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CopyFileRangeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RpcFileServer).CopyFileRange(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RpcFile_CopyFileRange_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RpcFileServer).CopyFileRange(ctx, req.(*CopyFileRangeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RpcFile_Lseek_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LseekRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RpcFileServer).Lseek(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RpcFile_Lseek_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RpcFileServer).Lseek(ctx, req.(*LseekRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RpcFile_ServiceDesc is the grpc.ServiceDesc for RpcFile service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -518,6 +586,14 @@ var RpcFile_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Allocate",
 			Handler:    _RpcFile_Allocate_Handler,
+		},
+		{
+			MethodName: "CopyFileRange",
+			Handler:    _RpcFile_CopyFileRange_Handler,
+		},
+		{
+			MethodName: "Lseek",
+			Handler:    _RpcFile_Lseek_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
