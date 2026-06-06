@@ -347,6 +347,59 @@ func (b *BackendClient) GetXAttr(ctx context.Context, path, attr string) ([]byte
 	return res.Data, fuse.Status(res.Status)
 }
 
+// SetXAttr stores an extended attribute. Mutating — request_id stamped
+// outside retry for idempotency, like Chmod.
+func (b *BackendClient) SetXAttr(ctx context.Context, path, attr string, data []byte, flags uint32) fuse.Status {
+	return mutatePath(ctx, "SetXAttr", b.metaCtx,
+		func(ctx context.Context, requestID string) (*proto.SetXAttrReply, error) {
+			return b.client.Fs().SetXAttr(ctx, &proto.SetXAttrRequest{
+				Volume:    b.volume,
+				Caller:    callerFromCtx(ctx),
+				Path:      path,
+				Attribute: attr,
+				Data:      data,
+				Flags:     flags,
+				SessionId: b.client.SessionID(),
+				RequestId: requestID,
+			})
+		},
+		func(r *proto.SetXAttrReply) int32 { return r.Status },
+	)
+}
+
+// RemoveXAttr deletes an extended attribute. Mutating — see SetXAttr.
+func (b *BackendClient) RemoveXAttr(ctx context.Context, path, attr string) fuse.Status {
+	return mutatePath(ctx, "RemoveXAttr", b.metaCtx,
+		func(ctx context.Context, requestID string) (*proto.RemoveXAttrReply, error) {
+			return b.client.Fs().RemoveXAttr(ctx, &proto.RemoveXAttrRequest{
+				Volume:    b.volume,
+				Caller:    callerFromCtx(ctx),
+				Path:      path,
+				Attribute: attr,
+				SessionId: b.client.SessionID(),
+				RequestId: requestID,
+			})
+		},
+		func(r *proto.RemoveXAttrReply) int32 { return r.Status },
+	)
+}
+
+// ListXAttr returns extended-attribute names. Idempotent.
+func (b *BackendClient) ListXAttr(ctx context.Context, path string) ([]string, fuse.Status) {
+	ctx2, cancel := b.metaCtx(ctx)
+	defer cancel()
+	res, err := retryableCall(ctx2, "ListXAttr", func(ctx context.Context) (*proto.ListXAttrReply, error) {
+		return b.client.Fs().ListXAttr(ctx, &proto.ListXAttrRequest{
+			Volume: b.volume, Caller: callerFromCtx(ctx), Path: path,
+		})
+	})
+	if err != nil || res == nil {
+		log.Log.Error("error in call: ListXAttr", zap.String("path", path), zap.Error(err))
+		return nil, fuse.EIO
+	}
+	return res.Attributes, fuse.Status(res.Status)
+}
+
 // Mkdir creates a directory. Mutating — request_id stamped outside retry.
 func (b *BackendClient) Mkdir(ctx context.Context, path string, mode uint32) fuse.Status {
 	return mutatePath(ctx, "Mkdir", b.metaCtx,
@@ -935,6 +988,79 @@ func (b *BackendClient) Allocate(ctx context.Context, fh FileHandle, off, size u
 		return fuse.EIO
 	}
 	return fuse.Status(res.Status)
+}
+
+// CopyFileRange asks the server to copy length bytes from fhIn@offIn to
+// fhOut@offOut entirely server-side. Pending coalesced writes on BOTH
+// handles are drained first (same reason Fsync drains: the server must
+// see current bytes). No retry, mirroring Allocate — replay semantics of
+// a partially-applied copy are murky and the kernel reissues anyway.
+func (b *BackendClient) CopyFileRange(ctx context.Context, fhIn FileHandle, offIn uint64, fhOut FileHandle, offOut uint64, length, flags uint64) (uint64, fuse.Status) {
+	src := resolveHandle(fhIn)
+	dst := resolveHandle(fhOut)
+	if src == nil || dst == nil {
+		return 0, fuse.EBADF
+	}
+	if st := b.drainCoalescer(src); !st.Ok() {
+		return 0, st
+	}
+	if st := b.drainCoalescer(dst); !st.Ok() {
+		return 0, st
+	}
+	ctx2, cancel := ioCtx(ctx, dst.ioTimeout)
+	defer cancel()
+	res, err := dst.fileClient.CopyFileRange(ctx2, &proto.CopyFileRangeRequest{
+		Volume:    dst.volume,
+		Caller:    callerFromCtx(ctx),
+		FdIn:      src.fd,
+		PathIn:    src.path,
+		OffIn:     offIn,
+		FdOut:     dst.fd,
+		PathOut:   dst.path,
+		OffOut:    offOut,
+		Length:    length,
+		Flags:     flags,
+		SessionId: dst.sessionID,
+	})
+	if err != nil {
+		log.Log.Error("error in call: CopyFileRange", zap.String("path", dst.path), zap.Error(err))
+		return 0, fuse.EIO
+	}
+	st := fuse.Status(res.Status)
+	if st.Ok() && res.BytesCopied > 0 {
+		dst.dirty.Store(true) // close() should still Flush the destination
+	}
+	return res.BytesCopied, st
+}
+
+// Lseek probes hole geometry on the server fd. Idempotent — retried.
+// The coalescer is drained first so pending writes shape the answer.
+func (b *BackendClient) Lseek(ctx context.Context, fh FileHandle, offset uint64, whence uint32) (uint64, fuse.Status) {
+	h := resolveHandle(fh)
+	if h == nil {
+		return 0, fuse.EBADF
+	}
+	if st := b.drainCoalescer(h); !st.Ok() {
+		return 0, st
+	}
+	ctx2, cancel := ioCtx(ctx, h.ioTimeout)
+	defer cancel()
+	res, err := retryableCall(ctx2, "Lseek", func(ctx context.Context) (*proto.LseekReply, error) {
+		return h.fileClient.Lseek(ctx, &proto.LseekRequest{
+			Volume:    h.volume,
+			Caller:    callerFromCtx(ctx),
+			Fd:        h.fd,
+			Path:      h.path,
+			Offset:    offset,
+			Whence:    whence,
+			SessionId: h.sessionID,
+		})
+	})
+	if err != nil {
+		log.Log.Error("error in call: Lseek", zap.String("path", h.path), zap.Error(err))
+		return 0, fuse.EIO
+	}
+	return res.Offset, fuse.Status(res.Status)
 }
 
 // GetLk queries the lock state for a region of the file. No retry —

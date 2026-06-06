@@ -1137,6 +1137,213 @@ func (s *BackendClientTestSuite) TestUtimens_CancelledParentDoesNotAbortRPC() {
 	s.Require().Equal(fuse.OK, st)
 }
 
+// newHandleAt is like newHandle but lets the caller choose path and fd so
+// CopyFileRange tests can construct distinct source and destination handles.
+func (s *BackendClientTestSuite) newHandleAt(path string, fd uint64, cfg grpcclient.PerFileConfig) *grpcFileHandle {
+	return newGrpcFileHandle(s.fileClient, "testVolume", path, fd, 30*time.Second, "test-session", cfg)
+}
+
+// --- CopyFileRange ---
+
+// TestCopyFileRange_HappyPath verifies all wire fields in the request and
+// the correct (BytesCopied, fuse.OK) return value.
+func (s *BackendClientTestSuite) TestCopyFileRange_HappyPath() {
+	src := s.newHandleAt("/src/file", 1, grpcclient.PerFileConfig{})
+	dst := s.newHandleAt("/dst/file", 2, grpcclient.PerFileConfig{})
+
+	s.fileClient.EXPECT().CopyFileRange(mock.Anything, mock.MatchedBy(func(req *proto.CopyFileRangeRequest) bool {
+		return req.Volume == "testVolume" &&
+			req.FdIn == 1 && req.PathIn == "/src/file" && req.OffIn == 100 &&
+			req.FdOut == 2 && req.PathOut == "/dst/file" && req.OffOut == 200 &&
+			req.Length == 4096 && req.Flags == 0 &&
+			req.SessionId == "test-session"
+	}), mock.Anything).Return(&proto.CopyFileRangeReply{BytesCopied: 4096, Status: 0}, nil).Once()
+
+	n, st := s.backend.CopyFileRange(context.Background(), src, 100, dst, 200, 4096, 0)
+	s.Require().Equal(fuse.OK, st)
+	s.Assert().Equal(uint64(4096), n)
+}
+
+// TestCopyFileRange_TransportError verifies that a non-retryable transport
+// error returns EIO and the mock is called exactly ONCE (no retry) —
+// pinning the no-retry contract.
+func (s *BackendClientTestSuite) TestCopyFileRange_TransportError() {
+	src := s.newHandleAt("/src/file", 1, grpcclient.PerFileConfig{})
+	dst := s.newHandleAt("/dst/file", 2, grpcclient.PerFileConfig{})
+
+	s.fileClient.EXPECT().CopyFileRange(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, status.Error(codes.Unavailable, "down")).Once()
+
+	n, st := s.backend.CopyFileRange(context.Background(), src, 0, dst, 0, 512, 0)
+	s.Assert().Equal(fuse.EIO, st)
+	s.Assert().Equal(uint64(0), n)
+	s.fileClient.AssertNumberOfCalls(s.T(), "CopyFileRange", 1)
+}
+
+// TestCopyFileRange_BadHandleEBADF verifies that passing a foreign handle
+// (one that resolveHandle can't resolve to a *grpcFileHandle) returns
+// EBADF without calling the mock at all.
+func (s *BackendClientTestSuite) TestCopyFileRange_BadHandleEBADF() {
+	good := s.newHandleAt("/dst/file", 2, grpcclient.PerFileConfig{})
+	// badHandle as src — resolveHandle returns nil on the first handle.
+	n, st := s.backend.CopyFileRange(context.Background(), badHandle{}, 0, good, 0, 512, 0)
+	s.Assert().Equal(fuse.EBADF, st)
+	s.Assert().Equal(uint64(0), n)
+	// badHandle as dst — src resolves fine, dst does not.
+	good2 := s.newHandleAt("/src/file", 1, grpcclient.PerFileConfig{})
+	n, st = s.backend.CopyFileRange(context.Background(), good2, 0, badHandle{}, 0, 512, 0)
+	s.Assert().Equal(fuse.EBADF, st)
+	s.Assert().Equal(uint64(0), n)
+}
+
+// TestCopyFileRange_DrainOrdering verifies that CopyFileRange drains
+// pending coalesced writes on the destination BEFORE issuing the copy RPC.
+// A Write "pending" is buffered on dst (no wire RPC yet); inside the copy
+// mock's RunAndReturn we assert that the drain Write already landed (the
+// stub frame list is non-empty). This proves drain-before-copy ordering.
+func (s *BackendClientTestSuite) TestCopyFileRange_DrainOrdering() {
+	src := s.newHandleAt("/src/file", 1, grpcclient.PerFileConfig{})
+	dst := s.newHandleAt("/dst/file", 2, grpcclient.PerFileConfig{WriteCoalesceBytes: 4096})
+
+	// Buffer a write on dst (small — stays in coalescer, no wire RPC yet).
+	_, wst := s.backend.Write(context.Background(), dst, 0, []byte("pending"))
+	s.Require().Equal(fuse.OK, wst)
+
+	// Drain RPC: the coalescer's pending bytes will flow through streamingWrite.
+	writeStub := newBackendWriteStreamStub(s.T(), &proto.WriteReply{Written: 7, Status: int32(fuse.OK)}, nil)
+	s.fileClient.EXPECT().Write(mock.Anything, mock.Anything).Return(writeStub, nil).Once()
+
+	// Copy RPC: inside RunAndReturn assert the write already fired.
+	s.fileClient.EXPECT().CopyFileRange(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ *proto.CopyFileRangeRequest, _ ...grpc.CallOption) (*proto.CopyFileRangeReply, error) {
+			s.Assert().NotEmpty(writeStub.frames, "drain Write must land before CopyFileRange is called")
+			return &proto.CopyFileRangeReply{BytesCopied: 1024, Status: 0}, nil
+		}).Once()
+
+	n, st := s.backend.CopyFileRange(context.Background(), src, 0, dst, 0, 1024, 0)
+	s.Require().Equal(fuse.OK, st)
+	s.Assert().Equal(uint64(1024), n)
+}
+
+// TestCopyFileRange_ZeroCopied_DirtyFlagNotSet verifies that a successful
+// CopyFileRange returning BytesCopied=0 does NOT set the dirty flag, so a
+// subsequent Flush is a no-op (strict mock: no WriteAndFlush expected).
+// Also pairs a BytesCopied>0 variant to confirm the flag IS set in that case.
+func (s *BackendClientTestSuite) TestCopyFileRange_ZeroCopied_DirtyFlagNotSet() {
+	src := s.newHandleAt("/src/file", 1, grpcclient.PerFileConfig{})
+	dst := s.newHandleAt("/dst/file", 2, grpcclient.PerFileConfig{WriteCoalesceBytes: 4096})
+
+	s.fileClient.EXPECT().CopyFileRange(mock.Anything, mock.Anything, mock.Anything).
+		Return(&proto.CopyFileRangeReply{BytesCopied: 0, Status: 0}, nil).Once()
+
+	_, st := s.backend.CopyFileRange(context.Background(), src, 0, dst, 0, 0, 0)
+	s.Require().Equal(fuse.OK, st)
+	// dst is still clean: Flush must be a no-op (strict mock — no WriteAndFlush call).
+	s.Require().Equal(fuse.OK, s.backend.Flush(context.Background(), dst))
+}
+
+// TestCopyFileRange_NonZeroCopied_DirtyFlagSet verifies the converse: when
+// BytesCopied>0 the dst handle is marked dirty, so the close-path Flush
+// emits WriteAndFlush.
+func (s *BackendClientTestSuite) TestCopyFileRange_NonZeroCopied_DirtyFlagSet() {
+	src := s.newHandleAt("/src/file", 1, grpcclient.PerFileConfig{})
+	dst := s.newHandleAt("/dst/file", 2, grpcclient.PerFileConfig{WriteCoalesceBytes: 4096})
+
+	s.fileClient.EXPECT().CopyFileRange(mock.Anything, mock.Anything, mock.Anything).
+		Return(&proto.CopyFileRangeReply{BytesCopied: 512, Status: 0}, nil).Once()
+	_, st := s.backend.CopyFileRange(context.Background(), src, 0, dst, 0, 512, 0)
+	s.Require().Equal(fuse.OK, st)
+
+	// dst is now dirty: Flush must issue WriteAndFlush.
+	s.fileClient.EXPECT().WriteAndFlush(mock.Anything, mock.Anything, mock.Anything).
+		Return(&proto.WriteAndFlushReply{Status: int32(fuse.OK), Written: 0}, nil).Once()
+	s.Require().Equal(fuse.OK, s.backend.Flush(context.Background(), dst))
+}
+
+// --- Lseek ---
+
+// TestLseek_HappyPath verifies all wire fields in the request and the
+// returned offset on success.
+func (s *BackendClientTestSuite) TestLseek_HappyPath() {
+	s.fileClient.EXPECT().Lseek(mock.Anything, mock.MatchedBy(func(req *proto.LseekRequest) bool {
+		return req.Volume == "testVolume" && req.Fd == 1 && req.Path == "/test/path" &&
+			req.Offset == 4096 && req.Whence == 4 && req.SessionId == "test-session"
+	}), mock.Anything).Return(&proto.LseekReply{Offset: 8192, Status: 0}, nil)
+
+	h := s.newHandle(grpcclient.PerFileConfig{})
+	off, st := s.backend.Lseek(context.Background(), h, 4096, 4)
+	s.Require().Equal(fuse.OK, st)
+	s.Assert().Equal(uint64(8192), off)
+}
+
+// TestLseek_RetryReusesResult mirrors TestFsync_RetriesOnUnavailable:
+// first call returns Unavailable, second succeeds. The retried result must
+// come through cleanly — pinning the idempotent-retry contract for Lseek.
+func (s *BackendClientTestSuite) TestLseek_RetryReusesResult() {
+	s.fileClient.EXPECT().Lseek(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, status.Error(codes.Unavailable, "down")).Once()
+	s.fileClient.EXPECT().Lseek(mock.Anything, mock.Anything, mock.Anything).
+		Return(&proto.LseekReply{Offset: 1024, Status: 0}, nil).Once()
+
+	h := s.newHandle(grpcclient.PerFileConfig{})
+	off, st := s.backend.Lseek(context.Background(), h, 0, 4)
+	s.Require().Equal(fuse.OK, st)
+	s.Assert().Equal(uint64(1024), off)
+	s.fileClient.AssertNumberOfCalls(s.T(), "Lseek", 2)
+}
+
+// TestLseek_BadHandleEBADF verifies the EBADF fast-path for a foreign handle.
+func (s *BackendClientTestSuite) TestLseek_BadHandleEBADF() {
+	off, st := s.backend.Lseek(context.Background(), badHandle{}, 0, 4)
+	s.Assert().Equal(fuse.EBADF, st)
+	s.Assert().Equal(uint64(0), off)
+}
+
+// --- SetXAttr / RemoveXAttr / ListXAttr ---
+
+// TestSetXAttr_HappyPath verifies the mutating path stamps a non-empty
+// RequestId and the correct SessionId in the wire request.
+func (s *BackendClientTestSuite) TestSetXAttr_HappyPath() {
+	data := []byte("xvalue")
+	s.fsClient.EXPECT().SetXAttr(mock.Anything, mock.MatchedBy(func(req *proto.SetXAttrRequest) bool {
+		return req.Volume == "testVolume" && req.Path == "/test" &&
+			req.Attribute == "user.foo" && string(req.Data) == "xvalue" &&
+			req.Flags == 0 &&
+			req.SessionId == "test-session" && req.RequestId != ""
+	})).Return(&proto.SetXAttrReply{Status: int32(fuse.OK)}, nil)
+
+	st := s.backend.SetXAttr(context.Background(), "/test", "user.foo", data, 0)
+	s.Assert().Equal(fuse.OK, st)
+}
+
+// TestRemoveXAttr_HappyPath verifies RemoveXAttr stamps RequestId and SessionId.
+func (s *BackendClientTestSuite) TestRemoveXAttr_HappyPath() {
+	s.fsClient.EXPECT().RemoveXAttr(mock.Anything, mock.MatchedBy(func(req *proto.RemoveXAttrRequest) bool {
+		return req.Volume == "testVolume" && req.Path == "/test" &&
+			req.Attribute == "user.foo" &&
+			req.SessionId == "test-session" && req.RequestId != ""
+	})).Return(&proto.RemoveXAttrReply{Status: int32(fuse.OK)}, nil)
+
+	st := s.backend.RemoveXAttr(context.Background(), "/test", "user.foo")
+	s.Assert().Equal(fuse.OK, st)
+}
+
+// TestListXAttr_HappyPath verifies ListXAttr returns the attribute name list.
+func (s *BackendClientTestSuite) TestListXAttr_HappyPath() {
+	s.fsClient.EXPECT().ListXAttr(mock.Anything, mock.MatchedBy(func(req *proto.ListXAttrRequest) bool {
+		return req.Volume == "testVolume" && req.Path == "/test"
+	})).Return(&proto.ListXAttrReply{
+		Attributes: []string{"user.foo", "user.bar"},
+		Status:     int32(fuse.OK),
+	}, nil)
+
+	names, st := s.backend.ListXAttr(context.Background(), "/test")
+	s.Require().Equal(fuse.OK, st)
+	s.Require().Len(names, 2)
+	s.Assert().Equal("user.foo", names[0])
+	s.Assert().Equal("user.bar", names[1])
+}
+
 // badHandle is a FileHandle implementation that is not a *grpcFileHandle,
 // used to exercise the type-assertion guard on fd-level ops. Unwrap
 // returns the receiver (leaf marker) so resolveHandle's walk terminates

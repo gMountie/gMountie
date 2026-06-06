@@ -99,6 +99,12 @@ type FileSystemBackend interface {
 	StatFs(ctx context.Context, path string) (*StatFs, fuse.Status)
 	// GetXAttr returns the extended-attribute bytes for path/attr.
 	GetXAttr(ctx context.Context, path, attr string) ([]byte, fuse.Status)
+	// SetXAttr stores an extended attribute (flags: XATTR_CREATE/REPLACE).
+	SetXAttr(ctx context.Context, path, attr string, data []byte, flags uint32) fuse.Status
+	// RemoveXAttr deletes an extended attribute.
+	RemoveXAttr(ctx context.Context, path, attr string) fuse.Status
+	// ListXAttr returns the extended-attribute names of path.
+	ListXAttr(ctx context.Context, path string) ([]string, fuse.Status)
 
 	// Open opens an existing file. flags follow the FUSE open flags.
 	Open(ctx context.Context, path string, flags uint32) (FileHandle, fuse.Status)
@@ -126,6 +132,12 @@ type FileSystemBackend interface {
 	// SetLkw attempts to acquire a lock, blocking until it can be
 	// granted (fcntl(F_SETLKW)).
 	SetLkw(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status
+	// CopyFileRange copies length bytes server-side from fhIn@offIn to
+	// fhOut@offOut without the data crossing the wire. flags must be 0.
+	// Short counts are legal (source EOF); callers reissue.
+	CopyFileRange(ctx context.Context, fhIn FileHandle, offIn uint64, fhOut FileHandle, offOut uint64, length, flags uint64) (uint64, fuse.Status)
+	// Lseek probes hole geometry (SEEK_DATA/SEEK_HOLE) on an open handle.
+	Lseek(ctx context.Context, fh FileHandle, offset uint64, whence uint32) (uint64, fuse.Status)
 
 	// Mkdir creates a directory.
 	Mkdir(ctx context.Context, path string, mode uint32) fuse.Status
