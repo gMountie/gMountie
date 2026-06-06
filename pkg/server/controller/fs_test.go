@@ -591,6 +591,120 @@ func (s *RpcServerTestSuite) TestSymlink() {
 	s.Equal(int32(fuse.OK), reply.Status)
 }
 
+func (s *RpcServerTestSuite) TestSetXAttr_Happy() {
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
+	mockFs.EXPECT().SetXAttr("/f", "user.k", []byte("v"), 0, mock.Anything).Return(fuse.OK)
+	mockFs.EXPECT().GetAttr("/f", mock.Anything).Return(&fuse.Attr{Ino: 1}, fuse.OK).Maybe()
+
+	// Subscribe to assert a mutation event is emitted on success.
+	events, cancel := s.bus.Subscribe("testVolume")
+	defer cancel()
+
+	reply, err := s.server.SetXAttr(testAuthedCtx("test-user"), &proto.SetXAttrRequest{
+		Volume: "testVolume", Path: "/f", Attribute: "user.k", Data: []byte("v"),
+		SessionId: s.sessionID, RequestId: "req-setx-1",
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.OK), reply.Status)
+
+	select {
+	case ev := <-events:
+		s.Assert().Equal(serverio.KindMutated, ev.Kind)
+		s.Assert().Equal("/f", ev.Path)
+	case <-time.After(time.Second):
+		s.FailNow("SetXAttr did not emit a KindMutated event within 1s")
+	}
+}
+
+func (s *RpcServerTestSuite) TestSetXAttr_DisallowedNamespace_EPERM() {
+	// No BindIdentity expectation: policy must reject BEFORE touching the FS.
+	reply, err := s.server.SetXAttr(testAuthedCtx("test-user"), &proto.SetXAttrRequest{
+		Volume: "testVolume", Path: "/f", Attribute: "trusted.evil", Data: []byte("v"),
+		SessionId: s.sessionID, RequestId: "req-setx-2",
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.EPERM), reply.Status)
+}
+
+func (s *RpcServerTestSuite) TestSetXAttr_IdempotentReplay() {
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
+	mockFs.EXPECT().SetXAttr("/f", "user.k", []byte("v"), 0, mock.Anything).Return(fuse.OK).Once()
+	mockFs.EXPECT().GetAttr("/f", mock.Anything).Return(&fuse.Attr{Ino: 1}, fuse.OK).Maybe()
+
+	req := &proto.SetXAttrRequest{
+		Volume: "testVolume", Path: "/f", Attribute: "user.k", Data: []byte("v"),
+		SessionId: s.sessionID, RequestId: "req-setx-replay",
+	}
+	for i := 0; i < 2; i++ {
+		reply, err := s.server.SetXAttr(testAuthedCtx("test-user"), req)
+		s.Require().NoError(err)
+		s.Equal(int32(fuse.OK), reply.Status)
+	}
+	mockFs.AssertExpectations(s.T()) // .Once() proves the replay was deduped
+}
+
+func (s *RpcServerTestSuite) TestRemoveXAttr_Happy() {
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
+	mockFs.EXPECT().RemoveXAttr("/f", "user.k", mock.Anything).Return(fuse.OK)
+	mockFs.EXPECT().GetAttr("/f", mock.Anything).Return(&fuse.Attr{Ino: 1}, fuse.OK).Maybe()
+
+	reply, err := s.server.RemoveXAttr(testAuthedCtx("test-user"), &proto.RemoveXAttrRequest{
+		Volume: "testVolume", Path: "/f", Attribute: "user.k",
+		SessionId: s.sessionID, RequestId: "req-rmx-1",
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.OK), reply.Status)
+}
+
+func (s *RpcServerTestSuite) TestRemoveXAttr_DisallowedNamespace_EPERM() {
+	// No BindIdentity expectation: policy must reject BEFORE touching the FS.
+	reply, err := s.server.RemoveXAttr(testAuthedCtx("test-user"), &proto.RemoveXAttrRequest{
+		Volume: "testVolume", Path: "/f", Attribute: "security.capability",
+		SessionId: s.sessionID, RequestId: "req-rmx-2",
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.EPERM), reply.Status)
+}
+
+func (s *RpcServerTestSuite) TestListXAttr_Happy() {
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
+	mockFs.EXPECT().ListXAttr("/f", mock.Anything).Return([]string{"user.a", "user.b"}, fuse.OK)
+
+	reply, err := s.server.ListXAttr(testAuthedCtx("test-user"), &proto.ListXAttrRequest{
+		Volume: "testVolume", Path: "/f",
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.OK), reply.Status)
+	s.Equal([]string{"user.a", "user.b"}, reply.Attributes)
+}
+
+func TestXattrWriteAllowed(t *testing.T) {
+	cases := map[string]bool{
+		"user.foo":                 true,
+		"user.":                    true,
+		"system.posix_acl_access":  true,
+		"system.posix_acl_default": true,
+		"trusted.foo":              false,
+		"security.capability":      false,
+		"security.selinux":         false,
+		"system.other":             false,
+		"":                         false,
+		"USER.foo":                   false, // case-sensitive
+		"user":                       false, // no dot
+		"system.posix_acl_accessX":   false, // near-miss on exact match
+		"system.posix_acl_default ":  false, // trailing whitespace
+	}
+	for attr, want := range cases {
+		if got := xattrWriteAllowed(attr); got != want {
+			t.Errorf("xattrWriteAllowed(%q) = %v, want %v", attr, got, want)
+		}
+	}
+}
+
 func TestRpcServerTestSuite(t *testing.T) {
 	suite.Run(t, new(RpcServerTestSuite))
 }
