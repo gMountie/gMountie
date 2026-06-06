@@ -30,6 +30,12 @@ Operators who explicitly set any of these in `~/.config/gmountie/client.yaml` ne
 
 ### Added
 
+#### Server-side copy, lseek, and xattr writes
+
+- **Server-side `copy_file_range`**. Intra-volume file copies now execute entirely on the server — one RPC instead of streaming all bytes through the client. On filesystems that support `copy_file_range(2)` (Btrfs, XFS, NFS 4.2), the server falls through to a reflink, making large copies near-instant.
+- **`lseek` SEEK_DATA / SEEK_HOLE support**. Server exposes a `Lseek` RPC backed by the real syscall, so sparse-aware tools (`cp --sparse`, `rsync --sparse`, `tar -S`) can skip holes efficiently.
+- **xattr write support** (`setxattr` / `removexattr`; `listxattr` already existed). A server-side allowlist restricts writes to `user.*` keys and the four POSIX-ACL names (`system.posix_acl_access`, `system.posix_acl_default`, `trusted.posix_acl_access`, `trusted.posix_acl_default`); all other namespaces are rejected with `EPERM`.
+
 #### Phase 1c — Session + idempotency
 
 - `SessionService` gRPC (`Create`, `Resume`, `Keepalive`) with per-session fd tables and grace-period reap on disconnect.
