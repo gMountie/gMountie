@@ -11,6 +11,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pkg/errors"
+	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -443,4 +444,64 @@ func (r *RpcFileServerImpl) Allocate(ctx context.Context, request *proto.Allocat
 		r.bus.Emit(request.Volume, path, ver, serverio.KindMutated)
 	}
 	return &proto.AllocateReply{Status: int32(s)}, nil
+}
+
+// CopyFileRange copies length bytes between two open handles entirely on
+// the server — the whole point of the RPC is that no file data crosses
+// the wire. Errnos travel in-reply (WriteAndFlush convention): EBADF for a
+// handle the session doesn't own, EINVAL for nonzero flags (per
+// copy_file_range(2), flags must be 0). No identity re-bind: permission
+// was checked at Open and the fds carry their access rights, same trust
+// model as Read/Write/Allocate.
+// Like every GetFile-then-use handler, this holds no reference on the
+// entry: a concurrent session reap can Release the files mid-copy. The
+// window here is wider than Read/Write (one RPC can loop over many
+// chunks), accepted for now alongside the rest of the session layer.
+func (r *RpcFileServerImpl) CopyFileRange(ctx context.Context, request *proto.CopyFileRangeRequest) (*proto.CopyFileRangeReply, error) {
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	if request.Flags != 0 {
+		return &proto.CopyFileRangeReply{Status: int32(fuse.EINVAL)}, nil
+	}
+	srcEntry, ok := sess.GetFile(request.FdIn)
+	if !ok {
+		return &proto.CopyFileRangeReply{Status: int32(fuse.EBADF)}, nil
+	}
+	dstEntry, ok := sess.GetFile(request.FdOut)
+	if !ok {
+		return &proto.CopyFileRangeReply{Status: int32(fuse.EBADF)}, nil
+	}
+	copied, st := serverio.CopyFileRange(srcEntry.File, dstEntry.File, request.OffIn, request.OffOut, request.Length)
+	if st == fuse.OK && copied > 0 {
+		path := dstEntry.Path
+		if path == "" {
+			path = request.PathOut
+		}
+		ver := r.versionAfterPath(ctx, request.Volume, path, request.Caller)
+		r.bus.Emit(request.Volume, path, ver, serverio.KindMutated)
+	}
+	return &proto.CopyFileRangeReply{BytesCopied: copied, Status: int32(st)}, nil
+}
+
+// Lseek probes hole geometry on an open handle. Only SEEK_DATA/SEEK_HOLE
+// are valid on the wire — the kernel resolves SET/CUR/END itself and
+// never sends them through FUSE. Safe on the shared server fd: Read and
+// Write are pread/pwrite-based (offset-less), and each lseek(2) call
+// atomically returns its result.
+func (r *RpcFileServerImpl) Lseek(ctx context.Context, request *proto.LseekRequest) (*proto.LseekReply, error) {
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	if request.Whence != uint32(unix.SEEK_DATA) && request.Whence != uint32(unix.SEEK_HOLE) {
+		return &proto.LseekReply{Status: int32(fuse.EINVAL)}, nil
+	}
+	entry, ok := sess.GetFile(request.Fd)
+	if !ok {
+		return &proto.LseekReply{Status: int32(fuse.EBADF)}, nil
+	}
+	off, st := serverio.Lseek(entry.File, request.Offset, request.Whence)
+	return &proto.LseekReply{Offset: off, Status: int32(st)}, nil
 }
