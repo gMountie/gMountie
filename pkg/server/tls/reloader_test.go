@@ -3,6 +3,7 @@ package tls
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -234,4 +235,45 @@ func (s *ReloaderSuite) TestWarnOnceRearmsAfterTransientStatBlip() {
 	s.Require().NoError(err)
 	s.False(r.failing.Load(),
 		"stamp-unchanged fast path must clear a stale failing flag")
+}
+
+func (s *ReloaderSuite) TestListenerServesRotatedCert() {
+	dir := s.T().TempDir()
+	certPath, keyPath := s.writePair(dir, "127.0.0.1")
+	r, err := NewReloader(certPath, keyPath)
+	s.Require().NoError(err)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	defer ln.Close()
+	tlsLn := tls.NewListener(ln, &tls.Config{
+		MinVersion:     tls.VersionTLS12,
+		GetCertificate: r.GetCertificate,
+	})
+	go func() {
+		for {
+			conn, err := tlsLn.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				_ = conn.(*tls.Conn).Handshake()
+				_ = conn.Close()
+			}()
+		}
+	}()
+
+	dialSerial := func() string {
+		conn, err := tls.Dial("tcp", ln.Addr().String(),
+			&tls.Config{InsecureSkipVerify: true}) //nolint:gosec // test dials a self-signed cert
+		s.Require().NoError(err)
+		defer conn.Close()
+		return conn.ConnectionState().PeerCertificates[0].SerialNumber.String()
+	}
+
+	first := dialSerial()
+	s.writePair(dir, "127.0.0.1") // rotate on disk; no restart
+	second := dialSerial()
+	s.NotEqual(first, second, "post-rotation handshake must present the new leaf")
+	_ = keyPath
 }
