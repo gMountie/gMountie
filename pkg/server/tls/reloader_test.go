@@ -80,6 +80,28 @@ func (s *ReloaderSuite) TestNewReloaderFailsFastOnBadPaths() {
 	s.Error(err)
 }
 
+func (s *ReloaderSuite) TestReloadsOnRotation() {
+	dir := s.T().TempDir()
+	certPath, keyPath := s.writePair(dir, "rotate.example.com")
+	r, err := NewReloader(certPath, keyPath)
+	s.Require().NoError(err)
+
+	before, err := r.GetCertificate(nil)
+	s.Require().NoError(err)
+
+	s.writePair(dir, "rotate.example.com") // rotate: fresh pair, same paths
+
+	after, err := r.GetCertificate(nil)
+	s.Require().NoError(err)
+	s.NotEqual(s.serialOf(before), s.serialOf(after),
+		"handshake after rotation must serve the new leaf")
+
+	// And the new pair is now the stable cached one.
+	again, err := r.GetCertificate(nil)
+	s.Require().NoError(err)
+	s.Same(after, again)
+}
+
 func (s *ReloaderSuite) TestStampChangesOnAtomicRotation() {
 	dir := s.T().TempDir()
 	certPath, _ := s.writePair(dir, "stamp.example.com")
