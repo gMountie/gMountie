@@ -14,6 +14,7 @@ package io
 
 import (
 	"context"
+	"math"
 	"path"
 	"syscall"
 	"time"
@@ -81,21 +82,28 @@ var (
 	_ fs.NodeUnlinker   = (*gMountieRoot)(nil)
 	_ fs.NodeRenamer    = (*gMountieRoot)(nil)
 	_ fs.NodeAccesser   = (*gMountieRoot)(nil)
-	_ fs.NodeGetxattrer = (*gMountieRoot)(nil)
+	_ fs.NodeGetxattrer    = (*gMountieRoot)(nil)
+	_ fs.NodeSetxattrer    = (*gMountieRoot)(nil)
+	_ fs.NodeRemovexattrer = (*gMountieRoot)(nil)
+	_ fs.NodeListxattrer   = (*gMountieRoot)(nil)
 
-	_ fs.NodeLookuper   = (*gMountieNode)(nil)
-	_ fs.NodeReaddirer  = (*gMountieNode)(nil)
-	_ fs.NodeStatfser   = (*gMountieNode)(nil)
-	_ fs.NodeGetattrer  = (*gMountieNode)(nil)
-	_ fs.NodeSetattrer  = (*gMountieNode)(nil)
-	_ fs.NodeOpener     = (*gMountieNode)(nil)
-	_ fs.NodeCreater    = (*gMountieNode)(nil)
-	_ fs.NodeMkdirer    = (*gMountieNode)(nil)
-	_ fs.NodeRmdirer    = (*gMountieNode)(nil)
-	_ fs.NodeUnlinker   = (*gMountieNode)(nil)
-	_ fs.NodeRenamer    = (*gMountieNode)(nil)
-	_ fs.NodeAccesser   = (*gMountieNode)(nil)
-	_ fs.NodeGetxattrer = (*gMountieNode)(nil)
+	_ fs.NodeLookuper      = (*gMountieNode)(nil)
+	_ fs.NodeReaddirer     = (*gMountieNode)(nil)
+	_ fs.NodeStatfser      = (*gMountieNode)(nil)
+	_ fs.NodeGetattrer     = (*gMountieNode)(nil)
+	_ fs.NodeSetattrer     = (*gMountieNode)(nil)
+	_ fs.NodeOpener        = (*gMountieNode)(nil)
+	_ fs.NodeCreater       = (*gMountieNode)(nil)
+	_ fs.NodeMkdirer       = (*gMountieNode)(nil)
+	_ fs.NodeRmdirer       = (*gMountieNode)(nil)
+	_ fs.NodeUnlinker      = (*gMountieNode)(nil)
+	_ fs.NodeRenamer       = (*gMountieNode)(nil)
+	_ fs.NodeAccesser      = (*gMountieNode)(nil)
+	_ fs.NodeGetxattrer    = (*gMountieNode)(nil)
+	_ fs.NodeSetxattrer    = (*gMountieNode)(nil)
+	_ fs.NodeRemovexattrer = (*gMountieNode)(nil)
+	_ fs.NodeListxattrer   = (*gMountieNode)(nil)
+	_ fs.NodeCopyFileRanger = (*gMountieNode)(nil)
 
 	_ fs.FileReader    = (*gMountieFile)(nil)
 	_ fs.FileWriter    = (*gMountieFile)(nil)
@@ -106,6 +114,7 @@ var (
 	_ fs.FileGetlker   = (*gMountieFile)(nil)
 	_ fs.FileSetlker   = (*gMountieFile)(nil)
 	_ fs.FileSetlkwer  = (*gMountieFile)(nil)
+	_ fs.FileLseeker   = (*gMountieFile)(nil)
 )
 
 // setAttrFromBackend populates a fuse.Attr from a backend Attr and applies
@@ -479,6 +488,32 @@ func renameAt(ctx context.Context, backend FileSystemBackend, parent, name strin
 	return syscall.Errno(backend.Rename(ctx, oldP, newP))
 }
 
+// --- CopyFileRange ---
+
+// CopyFileRange forwards the kernel's copy request to the server so the
+// bytes never transit the client. Both handles are ours by construction
+// (same bridge ⇒ same mount); a failed assert is EBADF, not EXDEV. The
+// reply is capped at the 32-bit width of the FUSE_COPY_FILE_RANGE reply
+// (the kernel caps the request below 4 GiB anyway).
+func (n *gMountieNode) CopyFileRange(ctx context.Context, fhIn fs.FileHandle, offIn uint64, _ *fs.Inode, fhOut fs.FileHandle, offOut uint64, length uint64, flags uint64) (uint32, syscall.Errno) {
+	src, ok := fhIn.(*gMountieFile)
+	if !ok {
+		return 0, syscall.EBADF
+	}
+	dst, ok := fhOut.(*gMountieFile)
+	if !ok {
+		return 0, syscall.EBADF
+	}
+	copied, st := n.backend.CopyFileRange(ctx, src.fh, offIn, dst.fh, offOut, length, flags)
+	if !st.Ok() {
+		return 0, syscall.Errno(st)
+	}
+	if copied > math.MaxUint32 {
+		copied = math.MaxUint32
+	}
+	return uint32(copied), 0
+}
+
 // --- Statfs ---
 
 func (r *gMountieRoot) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
@@ -536,6 +571,56 @@ func getxattrAt(ctx context.Context, backend FileSystemBackend, p, attr string, 
 	return uint32(copy(dest, data)), 0
 }
 
+// --- Setxattr / Removexattr / Listxattr ---
+
+func (r *gMountieRoot) Setxattr(ctx context.Context, attr string, data []byte, flags uint32) syscall.Errno {
+	return syscall.Errno(r.backend.SetXAttr(ctx, "", attr, data, flags))
+}
+
+func (n *gMountieNode) Setxattr(ctx context.Context, attr string, data []byte, flags uint32) syscall.Errno {
+	return syscall.Errno(n.backend.SetXAttr(ctx, n.path(), attr, data, flags))
+}
+
+func (r *gMountieRoot) Removexattr(ctx context.Context, attr string) syscall.Errno {
+	return syscall.Errno(r.backend.RemoveXAttr(ctx, "", attr))
+}
+
+func (n *gMountieNode) Removexattr(ctx context.Context, attr string) syscall.Errno {
+	return syscall.Errno(n.backend.RemoveXAttr(ctx, n.path(), attr))
+}
+
+func (r *gMountieRoot) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
+	return listxattrAt(ctx, r.backend, "", dest)
+}
+
+func (n *gMountieNode) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
+	return listxattrAt(ctx, n.backend, n.path(), dest)
+}
+
+// listxattrAt marshals names into the kernel's NUL-joined buffer format.
+// go-fuse contract: if dest is too small, return ERANGE AND the needed
+// size so the caller can re-issue with a bigger buffer.
+func listxattrAt(ctx context.Context, backend FileSystemBackend, p string, dest []byte) (uint32, syscall.Errno) {
+	names, st := backend.ListXAttr(ctx, p)
+	if !st.Ok() {
+		return 0, syscall.Errno(st)
+	}
+	sz := 0
+	for _, name := range names {
+		sz += len(name) + 1
+	}
+	if sz > len(dest) {
+		return uint32(sz), syscall.ERANGE
+	}
+	off := 0
+	for _, name := range names {
+		off += copy(dest[off:], name)
+		dest[off] = 0
+		off++
+	}
+	return uint32(sz), 0
+}
+
 // --- File handle ops ---
 
 func (f *gMountieFile) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
@@ -580,4 +665,12 @@ func (f *gMountieFile) Setlk(ctx context.Context, owner uint64, lk *fuse.FileLoc
 
 func (f *gMountieFile) Setlkw(ctx context.Context, owner uint64, lk *fuse.FileLock, flags uint32) syscall.Errno {
 	return syscall.Errno(f.backend.SetLkw(ctx, f.fh, owner, lk, flags))
+}
+
+func (f *gMountieFile) Lseek(ctx context.Context, off uint64, whence uint32) (uint64, syscall.Errno) {
+	o, st := f.backend.Lseek(ctx, f.fh, off, whence)
+	if !st.Ok() {
+		return 0, syscall.Errno(st)
+	}
+	return o, 0
 }

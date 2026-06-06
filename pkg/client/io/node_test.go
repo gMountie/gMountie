@@ -480,6 +480,112 @@ func (s *NodeAdapterTestSuite) TestFileSetlkw() {
 	s.Assert().Equal(syscall.Errno(0), errno)
 }
 
+// openFileOn opens a file node with a distinct mock handle and returns
+// the fs.FileHandle (a *gMountieFile) plus the mock leaf.
+func (s *NodeAdapterTestSuite) openFileOn(node fs.InodeEmbedder, path string) (fs.FileHandle, *iomocks.MockFileHandle) {
+	mfh := iomocks.NewMockFileHandle(s.T())
+	s.backend.EXPECT().Open(mock.Anything, path, uint32(0)).Return(mfh, fuse.OK).Once()
+	fh, _, errno := node.(fs.NodeOpener).Open(context.Background(), 0)
+	s.Require().Equal(syscall.Errno(0), errno)
+	return fh, mfh
+}
+
+func (s *NodeAdapterTestSuite) TestNodeCopyFileRange() {
+	n1 := s.childNode("f1", 21)
+	n2 := s.childNode("f2", 22)
+	fh1, m1 := s.openFileOn(n1, "f1")
+	fh2, m2 := s.openFileOn(n2, "f2")
+
+	s.backend.EXPECT().CopyFileRange(mock.Anything, m1, uint64(0), m2, uint64(100), uint64(4096), uint64(0)).
+		Return(uint64(4096), fuse.OK).Once()
+	n, errno := n1.(fs.NodeCopyFileRanger).CopyFileRange(context.Background(), fh1, 0, nil, fh2, 100, 4096, 0)
+	s.Require().Equal(syscall.Errno(0), errno)
+	s.Equal(uint32(4096), n)
+}
+
+func (s *NodeAdapterTestSuite) TestNodeCopyFileRange_ForeignHandle_EBADF() {
+	n1 := s.childNode("f3", 23)
+	fh1, _ := s.openFileOn(n1, "f3")
+	_, errno := n1.(fs.NodeCopyFileRanger).CopyFileRange(context.Background(), fh1, 0, nil, nil, 0, 1, 0)
+	s.Equal(syscall.EBADF, errno)
+
+	// Also cover the foreign fhIn branch: valid fhOut, nil fhIn → EBADF.
+	fh3, _ := s.openFileOn(n1, "f3")
+	_, errno = n1.(fs.NodeCopyFileRanger).CopyFileRange(context.Background(), nil, 0, nil, fh3, 0, 1, 0)
+	s.Equal(syscall.EBADF, errno)
+}
+
+func (s *NodeAdapterTestSuite) TestFileLseek() {
+	n1 := s.childNode("f4", 24)
+	fh1, m1 := s.openFileOn(n1, "f4")
+	s.backend.EXPECT().Lseek(mock.Anything, m1, uint64(7), uint32(3) /* SEEK_DATA */).
+		Return(uint64(42), fuse.OK).Once()
+	off, errno := fh1.(fs.FileLseeker).Lseek(context.Background(), 7, 3)
+	s.Require().Equal(syscall.Errno(0), errno)
+	s.Equal(uint64(42), off)
+}
+
+func (s *NodeAdapterTestSuite) TestSetxattr_RootAndNode() {
+	s.backend.EXPECT().SetXAttr(mock.Anything, "", "user.k", []byte("v"), uint32(0)).Return(fuse.OK).Once()
+	errno := rootAs[fs.NodeSetxattrer](s).Setxattr(context.Background(), "user.k", []byte("v"), 0)
+	s.Equal(syscall.Errno(0), errno)
+
+	child := s.childNode("d", 31)
+	s.backend.EXPECT().SetXAttr(mock.Anything, "d", "user.k", []byte("v"), uint32(0)).Return(fuse.OK).Once()
+	errno = child.(fs.NodeSetxattrer).Setxattr(context.Background(), "user.k", []byte("v"), 0)
+	s.Equal(syscall.Errno(0), errno)
+}
+
+func (s *NodeAdapterTestSuite) TestRemovexattr() {
+	child := s.childNode("d2", 32)
+	s.backend.EXPECT().RemoveXAttr(mock.Anything, "d2", "user.k").Return(fuse.OK).Once()
+	errno := child.(fs.NodeRemovexattrer).Removexattr(context.Background(), "user.k")
+	s.Equal(syscall.Errno(0), errno)
+}
+
+func (s *NodeAdapterTestSuite) TestListxattr_FitsAndERANGE() {
+	child := s.childNode("d3", 33)
+	s.backend.EXPECT().ListXAttr(mock.Anything, "d3").Return([]string{"user.a", "user.b"}, fuse.OK).Times(3)
+
+	dest := make([]byte, 64)
+	n, errno := child.(fs.NodeListxattrer).Listxattr(context.Background(), dest)
+	s.Require().Equal(syscall.Errno(0), errno)
+	s.Equal(uint32(14), n) // "user.a\0user.b\0"
+	s.Equal([]byte("user.a\x00user.b\x00"), dest[:n])
+
+	small := make([]byte, 4)
+	n, errno = child.(fs.NodeListxattrer).Listxattr(context.Background(), small)
+	s.Equal(syscall.ERANGE, errno)
+	s.Equal(uint32(14), n) // needed size still reported
+
+	// size-probe (listxattr(path, NULL, 0)): zero-length dest → ERANGE + needed size
+	n, errno = child.(fs.NodeListxattrer).Listxattr(context.Background(), nil)
+	s.Equal(syscall.ERANGE, errno)
+	s.Equal(uint32(14), n)
+}
+
+func (s *NodeAdapterTestSuite) TestListxattr_Empty() {
+	child := s.childNode("d4", 34)
+	s.backend.EXPECT().ListXAttr(mock.Anything, "d4").Return([]string{}, fuse.OK).Once()
+	n, errno := child.(fs.NodeListxattrer).Listxattr(context.Background(), nil)
+	s.Equal(syscall.Errno(0), errno)
+	s.Equal(uint32(0), n)
+}
+
+func (s *NodeAdapterTestSuite) TestRemovexattr_Root() {
+	s.backend.EXPECT().RemoveXAttr(mock.Anything, "", "user.k").Return(fuse.OK).Once()
+	s.Equal(syscall.Errno(0), rootAs[fs.NodeRemovexattrer](s).Removexattr(context.Background(), "user.k"))
+}
+
+func (s *NodeAdapterTestSuite) TestListxattr_Root() {
+	s.backend.EXPECT().ListXAttr(mock.Anything, "").Return([]string{"user.r"}, fuse.OK).Once()
+	dest := make([]byte, 16)
+	n, errno := rootAs[fs.NodeListxattrer](s).Listxattr(context.Background(), dest)
+	s.Equal(syscall.Errno(0), errno)
+	s.Equal(uint32(7), n)
+	s.Equal([]byte("user.r\x00"), dest[:n])
+}
+
 func TestNodeAdapterTestSuite(t *testing.T) {
 	suite.Run(t, new(NodeAdapterTestSuite))
 }
