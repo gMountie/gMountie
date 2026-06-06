@@ -134,6 +134,7 @@ func (s *ReloaderSuite) TestKeepsServingOnMismatchedPair() {
 
 	got, err := r.GetCertificate(nil)
 	s.Require().NoError(err, "fail-open: mismatch must not fail the handshake")
+	s.True(r.failing.Load(), "torn swap must arm the warn-once flag")
 	s.Equal(s.serialOf(before), s.serialOf(got), "must keep the last good pair")
 
 	// Completing the rotation (matching key) recovers on the next handshake.
@@ -155,8 +156,8 @@ func (s *ReloaderSuite) TestKeepsServingOnMissingFile() {
 
 	got, err := r.GetCertificate(nil)
 	s.Require().NoError(err, "fail-open: missing file must not fail the handshake")
+	s.True(r.failing.Load(), "missing cert must arm the warn-once flag")
 	s.Equal(s.serialOf(before), s.serialOf(got))
-	_ = keyPath
 }
 
 func (s *ReloaderSuite) TestConcurrentHandshakesDuringRotation() {
@@ -169,8 +170,6 @@ func (s *ReloaderSuite) TestConcurrentHandshakesDuringRotation() {
 	const goroutines = 8
 	const iterations = 200
 	var wg sync.WaitGroup
-	var rotWg sync.WaitGroup
-	rotate := make(chan struct{})
 
 	for range goroutines {
 		wg.Add(1)
@@ -185,18 +184,8 @@ func (s *ReloaderSuite) TestConcurrentHandshakesDuringRotation() {
 			}
 		}()
 	}
-	rotWg.Add(1)
-	go func() {
-		defer rotWg.Done()
-		<-rotate
-		s.writePair(dir, "race.example.com")
-	}()
-	close(rotate)
+	s.writePair(dir, "race.example.com")
 	wg.Wait()
-	// Join the rotate goroutine before the final assertion so the rotation
-	// happens-before the final GetCertificate — avoids a torn-window race
-	// on the final Load call.
-	rotWg.Wait()
 
 	// After the dust settles, the new pair is served.
 	want, _, err := Load(certPath, filepath.Join(dir, "tls.key"))
@@ -275,5 +264,4 @@ func (s *ReloaderSuite) TestListenerServesRotatedCert() {
 	s.writePair(dir, "127.0.0.1") // rotate on disk; no restart
 	second := dialSerial()
 	s.NotEqual(first, second, "post-rotation handshake must present the new leaf")
-	_ = keyPath
 }
