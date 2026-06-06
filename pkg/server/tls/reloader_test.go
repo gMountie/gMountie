@@ -48,6 +48,38 @@ func (s *ReloaderSuite) serialOf(c *tls.Certificate) string {
 	return leaf.SerialNumber.String()
 }
 
+func (s *ReloaderSuite) TestServesInitialPair() {
+	dir := s.T().TempDir()
+	certPath, keyPath := s.writePair(dir, "initial.example.com")
+	wantCert, _, err := Load(certPath, keyPath)
+	s.Require().NoError(err)
+
+	r, err := NewReloader(certPath, keyPath)
+	s.Require().NoError(err)
+
+	got, err := r.GetCertificate(nil)
+	s.Require().NoError(err)
+	s.Equal(s.serialOf(&wantCert), s.serialOf(got))
+}
+
+func (s *ReloaderSuite) TestPointerStableWhenUnchanged() {
+	dir := s.T().TempDir()
+	certPath, keyPath := s.writePair(dir, "stable.example.com")
+	r, err := NewReloader(certPath, keyPath)
+	s.Require().NoError(err)
+
+	first, err := r.GetCertificate(nil)
+	s.Require().NoError(err)
+	second, err := r.GetCertificate(nil)
+	s.Require().NoError(err)
+	s.Same(first, second, "unchanged stamp must not re-load the pair")
+}
+
+func (s *ReloaderSuite) TestNewReloaderFailsFastOnBadPaths() {
+	_, err := NewReloader("/nonexistent/tls.crt", "/nonexistent/tls.key")
+	s.Error(err)
+}
+
 func (s *ReloaderSuite) TestStampChangesOnAtomicRotation() {
 	dir := s.T().TempDir()
 	certPath, _ := s.writePair(dir, "stamp.example.com")
