@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -155,6 +156,53 @@ func (s *ReloaderSuite) TestKeepsServingOnMissingFile() {
 	s.Require().NoError(err, "fail-open: missing file must not fail the handshake")
 	s.Equal(s.serialOf(before), s.serialOf(got))
 	_ = keyPath
+}
+
+func (s *ReloaderSuite) TestConcurrentHandshakesDuringRotation() {
+	dir := s.T().TempDir()
+	certPath, keyPath := s.writePair(dir, "race.example.com")
+	r, err := NewReloader(certPath, keyPath)
+	s.Require().NoError(err)
+	_ = keyPath
+
+	const goroutines = 8
+	const iterations = 200
+	var wg sync.WaitGroup
+	var rotWg sync.WaitGroup
+	rotate := make(chan struct{})
+
+	for range goroutines {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range iterations {
+				c, err := r.GetCertificate(nil)
+				// assert.* (not Require) — testify forbids FailNow off
+				// the test goroutine.
+				s.NoError(err)
+				s.NotNil(c)
+			}
+		}()
+	}
+	rotWg.Add(1)
+	go func() {
+		defer rotWg.Done()
+		<-rotate
+		s.writePair(dir, "race.example.com")
+	}()
+	close(rotate)
+	wg.Wait()
+	// Join the rotate goroutine before the final assertion so the rotation
+	// happens-before the final GetCertificate — avoids a torn-window race
+	// on the final Load call.
+	rotWg.Wait()
+
+	// After the dust settles, the new pair is served.
+	want, _, err := Load(certPath, filepath.Join(dir, "tls.key"))
+	s.Require().NoError(err)
+	got, err := r.GetCertificate(nil)
+	s.Require().NoError(err)
+	s.Equal(s.serialOf(&want), s.serialOf(got))
 }
 
 func (s *ReloaderSuite) TestWarnOnceRearmsAfterTransientStatBlip() {
