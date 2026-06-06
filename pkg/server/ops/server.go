@@ -11,8 +11,8 @@ import (
 
 	pkgerrors "github.com/pkg/errors"
 	"go.gmountie.dev/gmountie/pkg/server/config"
-	servertls "go.gmountie.dev/gmountie/pkg/server/tls"
 	"go.gmountie.dev/gmountie/pkg/server/service"
+	servertls "go.gmountie.dev/gmountie/pkg/server/tls"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
