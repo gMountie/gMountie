@@ -107,6 +107,74 @@ func (_c *MockRpcFileServer_Allocate_Call) RunAndReturn(run func(context1 contex
 	return _c
 }
 
+// CopyFileRange provides a mock function for the type MockRpcFileServer
+func (_mock *MockRpcFileServer) CopyFileRange(context1 context.Context, copyFileRangeRequest *proto.CopyFileRangeRequest) (*proto.CopyFileRangeReply, error) {
+	ret := _mock.Called(context1, copyFileRangeRequest)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CopyFileRange")
+	}
+
+	var r0 *proto.CopyFileRangeReply
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.CopyFileRangeRequest) (*proto.CopyFileRangeReply, error)); ok {
+		return returnFunc(context1, copyFileRangeRequest)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.CopyFileRangeRequest) *proto.CopyFileRangeReply); ok {
+		r0 = returnFunc(context1, copyFileRangeRequest)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proto.CopyFileRangeReply)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.CopyFileRangeRequest) error); ok {
+		r1 = returnFunc(context1, copyFileRangeRequest)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockRpcFileServer_CopyFileRange_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CopyFileRange'
+type MockRpcFileServer_CopyFileRange_Call struct {
+	*mock.Call
+}
+
+// CopyFileRange is a helper method to define mock.On call
+//   - context1 context.Context
+//   - copyFileRangeRequest *proto.CopyFileRangeRequest
+func (_e *MockRpcFileServer_Expecter) CopyFileRange(context1 interface{}, copyFileRangeRequest interface{}) *MockRpcFileServer_CopyFileRange_Call {
+	return &MockRpcFileServer_CopyFileRange_Call{Call: _e.mock.On("CopyFileRange", context1, copyFileRangeRequest)}
+}
+
+func (_c *MockRpcFileServer_CopyFileRange_Call) Run(run func(context1 context.Context, copyFileRangeRequest *proto.CopyFileRangeRequest)) *MockRpcFileServer_CopyFileRange_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *proto.CopyFileRangeRequest
+		if args[1] != nil {
+			arg1 = args[1].(*proto.CopyFileRangeRequest)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFileServer_CopyFileRange_Call) Return(copyFileRangeReply *proto.CopyFileRangeReply, err error) *MockRpcFileServer_CopyFileRange_Call {
+	_c.Call.Return(copyFileRangeReply, err)
+	return _c
+}
+
+func (_c *MockRpcFileServer_CopyFileRange_Call) RunAndReturn(run func(context1 context.Context, copyFileRangeRequest *proto.CopyFileRangeRequest) (*proto.CopyFileRangeReply, error)) *MockRpcFileServer_CopyFileRange_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Create provides a mock function for the type MockRpcFileServer
 func (_mock *MockRpcFileServer) Create(context1 context.Context, createRequest *proto.CreateRequest) (*proto.CreateReply, error) {
 	ret := _mock.Called(context1, createRequest)
@@ -375,6 +443,74 @@ func (_c *MockRpcFileServer_GetLk_Call) Return(getLkReply *proto.GetLkReply, err
 }
 
 func (_c *MockRpcFileServer_GetLk_Call) RunAndReturn(run func(context1 context.Context, getLkRequest *proto.GetLkRequest) (*proto.GetLkReply, error)) *MockRpcFileServer_GetLk_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Lseek provides a mock function for the type MockRpcFileServer
+func (_mock *MockRpcFileServer) Lseek(context1 context.Context, lseekRequest *proto.LseekRequest) (*proto.LseekReply, error) {
+	ret := _mock.Called(context1, lseekRequest)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Lseek")
+	}
+
+	var r0 *proto.LseekReply
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.LseekRequest) (*proto.LseekReply, error)); ok {
+		return returnFunc(context1, lseekRequest)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.LseekRequest) *proto.LseekReply); ok {
+		r0 = returnFunc(context1, lseekRequest)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proto.LseekReply)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.LseekRequest) error); ok {
+		r1 = returnFunc(context1, lseekRequest)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockRpcFileServer_Lseek_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Lseek'
+type MockRpcFileServer_Lseek_Call struct {
+	*mock.Call
+}
+
+// Lseek is a helper method to define mock.On call
+//   - context1 context.Context
+//   - lseekRequest *proto.LseekRequest
+func (_e *MockRpcFileServer_Expecter) Lseek(context1 interface{}, lseekRequest interface{}) *MockRpcFileServer_Lseek_Call {
+	return &MockRpcFileServer_Lseek_Call{Call: _e.mock.On("Lseek", context1, lseekRequest)}
+}
+
+func (_c *MockRpcFileServer_Lseek_Call) Run(run func(context1 context.Context, lseekRequest *proto.LseekRequest)) *MockRpcFileServer_Lseek_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *proto.LseekRequest
+		if args[1] != nil {
+			arg1 = args[1].(*proto.LseekRequest)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFileServer_Lseek_Call) Return(lseekReply *proto.LseekReply, err error) *MockRpcFileServer_Lseek_Call {
+	_c.Call.Return(lseekReply, err)
+	return _c
+}
+
+func (_c *MockRpcFileServer_Lseek_Call) RunAndReturn(run func(context1 context.Context, lseekRequest *proto.LseekRequest) (*proto.LseekReply, error)) *MockRpcFileServer_Lseek_Call {
 	_c.Call.Return(run)
 	return _c
 }

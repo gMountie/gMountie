@@ -126,6 +126,93 @@ func (_c *MockRpcFileClient_Allocate_Call) RunAndReturn(run func(ctx context.Con
 	return _c
 }
 
+// CopyFileRange provides a mock function for the type MockRpcFileClient
+func (_mock *MockRpcFileClient) CopyFileRange(ctx context.Context, in *proto.CopyFileRangeRequest, opts ...grpc.CallOption) (*proto.CopyFileRangeReply, error) {
+	// grpc.CallOption
+	_va := make([]interface{}, len(opts))
+	for _i := range opts {
+		_va[_i] = opts[_i]
+	}
+	var _ca []interface{}
+	_ca = append(_ca, ctx, in)
+	_ca = append(_ca, _va...)
+	ret := _mock.Called(_ca...)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CopyFileRange")
+	}
+
+	var r0 *proto.CopyFileRangeReply
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.CopyFileRangeRequest, ...grpc.CallOption) (*proto.CopyFileRangeReply, error)); ok {
+		return returnFunc(ctx, in, opts...)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.CopyFileRangeRequest, ...grpc.CallOption) *proto.CopyFileRangeReply); ok {
+		r0 = returnFunc(ctx, in, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proto.CopyFileRangeReply)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.CopyFileRangeRequest, ...grpc.CallOption) error); ok {
+		r1 = returnFunc(ctx, in, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockRpcFileClient_CopyFileRange_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CopyFileRange'
+type MockRpcFileClient_CopyFileRange_Call struct {
+	*mock.Call
+}
+
+// CopyFileRange is a helper method to define mock.On call
+//   - ctx context.Context
+//   - in *proto.CopyFileRangeRequest
+//   - opts ...grpc.CallOption
+func (_e *MockRpcFileClient_Expecter) CopyFileRange(ctx interface{}, in interface{}, opts ...interface{}) *MockRpcFileClient_CopyFileRange_Call {
+	return &MockRpcFileClient_CopyFileRange_Call{Call: _e.mock.On("CopyFileRange",
+		append([]interface{}{ctx, in}, opts...)...)}
+}
+
+func (_c *MockRpcFileClient_CopyFileRange_Call) Run(run func(ctx context.Context, in *proto.CopyFileRangeRequest, opts ...grpc.CallOption)) *MockRpcFileClient_CopyFileRange_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *proto.CopyFileRangeRequest
+		if args[1] != nil {
+			arg1 = args[1].(*proto.CopyFileRangeRequest)
+		}
+		var arg2 []grpc.CallOption
+		variadicArgs := make([]grpc.CallOption, len(args)-2)
+		for i, a := range args[2:] {
+			if a != nil {
+				variadicArgs[i] = a.(grpc.CallOption)
+			}
+		}
+		arg2 = variadicArgs
+		run(
+			arg0,
+			arg1,
+			arg2...,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFileClient_CopyFileRange_Call) Return(copyFileRangeReply *proto.CopyFileRangeReply, err error) *MockRpcFileClient_CopyFileRange_Call {
+	_c.Call.Return(copyFileRangeReply, err)
+	return _c
+}
+
+func (_c *MockRpcFileClient_CopyFileRange_Call) RunAndReturn(run func(ctx context.Context, in *proto.CopyFileRangeRequest, opts ...grpc.CallOption) (*proto.CopyFileRangeReply, error)) *MockRpcFileClient_CopyFileRange_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Create provides a mock function for the type MockRpcFileClient
 func (_mock *MockRpcFileClient) Create(ctx context.Context, in *proto.CreateRequest, opts ...grpc.CallOption) (*proto.CreateReply, error) {
 	// grpc.CallOption
@@ -470,6 +557,93 @@ func (_c *MockRpcFileClient_GetLk_Call) Return(getLkReply *proto.GetLkReply, err
 }
 
 func (_c *MockRpcFileClient_GetLk_Call) RunAndReturn(run func(ctx context.Context, in *proto.GetLkRequest, opts ...grpc.CallOption) (*proto.GetLkReply, error)) *MockRpcFileClient_GetLk_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Lseek provides a mock function for the type MockRpcFileClient
+func (_mock *MockRpcFileClient) Lseek(ctx context.Context, in *proto.LseekRequest, opts ...grpc.CallOption) (*proto.LseekReply, error) {
+	// grpc.CallOption
+	_va := make([]interface{}, len(opts))
+	for _i := range opts {
+		_va[_i] = opts[_i]
+	}
+	var _ca []interface{}
+	_ca = append(_ca, ctx, in)
+	_ca = append(_ca, _va...)
+	ret := _mock.Called(_ca...)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Lseek")
+	}
+
+	var r0 *proto.LseekReply
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.LseekRequest, ...grpc.CallOption) (*proto.LseekReply, error)); ok {
+		return returnFunc(ctx, in, opts...)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.LseekRequest, ...grpc.CallOption) *proto.LseekReply); ok {
+		r0 = returnFunc(ctx, in, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proto.LseekReply)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.LseekRequest, ...grpc.CallOption) error); ok {
+		r1 = returnFunc(ctx, in, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockRpcFileClient_Lseek_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Lseek'
+type MockRpcFileClient_Lseek_Call struct {
+	*mock.Call
+}
+
+// Lseek is a helper method to define mock.On call
+//   - ctx context.Context
+//   - in *proto.LseekRequest
+//   - opts ...grpc.CallOption
+func (_e *MockRpcFileClient_Expecter) Lseek(ctx interface{}, in interface{}, opts ...interface{}) *MockRpcFileClient_Lseek_Call {
+	return &MockRpcFileClient_Lseek_Call{Call: _e.mock.On("Lseek",
+		append([]interface{}{ctx, in}, opts...)...)}
+}
+
+func (_c *MockRpcFileClient_Lseek_Call) Run(run func(ctx context.Context, in *proto.LseekRequest, opts ...grpc.CallOption)) *MockRpcFileClient_Lseek_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *proto.LseekRequest
+		if args[1] != nil {
+			arg1 = args[1].(*proto.LseekRequest)
+		}
+		var arg2 []grpc.CallOption
+		variadicArgs := make([]grpc.CallOption, len(args)-2)
+		for i, a := range args[2:] {
+			if a != nil {
+				variadicArgs[i] = a.(grpc.CallOption)
+			}
+		}
+		arg2 = variadicArgs
+		run(
+			arg0,
+			arg1,
+			arg2...,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFileClient_Lseek_Call) Return(lseekReply *proto.LseekReply, err error) *MockRpcFileClient_Lseek_Call {
+	_c.Call.Return(lseekReply, err)
+	return _c
+}
+
+func (_c *MockRpcFileClient_Lseek_Call) RunAndReturn(run func(ctx context.Context, in *proto.LseekRequest, opts ...grpc.CallOption) (*proto.LseekReply, error)) *MockRpcFileClient_Lseek_Call {
 	_c.Call.Return(run)
 	return _c
 }

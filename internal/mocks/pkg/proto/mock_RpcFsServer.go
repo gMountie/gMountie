@@ -515,6 +515,74 @@ func (_c *MockRpcFsServer_GetXAttr_Call) RunAndReturn(run func(context1 context.
 	return _c
 }
 
+// ListXAttr provides a mock function for the type MockRpcFsServer
+func (_mock *MockRpcFsServer) ListXAttr(context1 context.Context, listXAttrRequest *proto.ListXAttrRequest) (*proto.ListXAttrReply, error) {
+	ret := _mock.Called(context1, listXAttrRequest)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListXAttr")
+	}
+
+	var r0 *proto.ListXAttrReply
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.ListXAttrRequest) (*proto.ListXAttrReply, error)); ok {
+		return returnFunc(context1, listXAttrRequest)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.ListXAttrRequest) *proto.ListXAttrReply); ok {
+		r0 = returnFunc(context1, listXAttrRequest)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proto.ListXAttrReply)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.ListXAttrRequest) error); ok {
+		r1 = returnFunc(context1, listXAttrRequest)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockRpcFsServer_ListXAttr_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListXAttr'
+type MockRpcFsServer_ListXAttr_Call struct {
+	*mock.Call
+}
+
+// ListXAttr is a helper method to define mock.On call
+//   - context1 context.Context
+//   - listXAttrRequest *proto.ListXAttrRequest
+func (_e *MockRpcFsServer_Expecter) ListXAttr(context1 interface{}, listXAttrRequest interface{}) *MockRpcFsServer_ListXAttr_Call {
+	return &MockRpcFsServer_ListXAttr_Call{Call: _e.mock.On("ListXAttr", context1, listXAttrRequest)}
+}
+
+func (_c *MockRpcFsServer_ListXAttr_Call) Run(run func(context1 context.Context, listXAttrRequest *proto.ListXAttrRequest)) *MockRpcFsServer_ListXAttr_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *proto.ListXAttrRequest
+		if args[1] != nil {
+			arg1 = args[1].(*proto.ListXAttrRequest)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFsServer_ListXAttr_Call) Return(listXAttrReply *proto.ListXAttrReply, err error) *MockRpcFsServer_ListXAttr_Call {
+	_c.Call.Return(listXAttrReply, err)
+	return _c
+}
+
+func (_c *MockRpcFsServer_ListXAttr_Call) RunAndReturn(run func(context1 context.Context, listXAttrRequest *proto.ListXAttrRequest) (*proto.ListXAttrReply, error)) *MockRpcFsServer_ListXAttr_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Mkdir provides a mock function for the type MockRpcFsServer
 func (_mock *MockRpcFsServer) Mkdir(context1 context.Context, mkdirRequest *proto.MkdirRequest) (*proto.MkdirReply, error) {
 	ret := _mock.Called(context1, mkdirRequest)
@@ -719,6 +787,74 @@ func (_c *MockRpcFsServer_Readlink_Call) RunAndReturn(run func(context1 context.
 	return _c
 }
 
+// RemoveXAttr provides a mock function for the type MockRpcFsServer
+func (_mock *MockRpcFsServer) RemoveXAttr(context1 context.Context, removeXAttrRequest *proto.RemoveXAttrRequest) (*proto.RemoveXAttrReply, error) {
+	ret := _mock.Called(context1, removeXAttrRequest)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RemoveXAttr")
+	}
+
+	var r0 *proto.RemoveXAttrReply
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.RemoveXAttrRequest) (*proto.RemoveXAttrReply, error)); ok {
+		return returnFunc(context1, removeXAttrRequest)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.RemoveXAttrRequest) *proto.RemoveXAttrReply); ok {
+		r0 = returnFunc(context1, removeXAttrRequest)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proto.RemoveXAttrReply)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.RemoveXAttrRequest) error); ok {
+		r1 = returnFunc(context1, removeXAttrRequest)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockRpcFsServer_RemoveXAttr_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RemoveXAttr'
+type MockRpcFsServer_RemoveXAttr_Call struct {
+	*mock.Call
+}
+
+// RemoveXAttr is a helper method to define mock.On call
+//   - context1 context.Context
+//   - removeXAttrRequest *proto.RemoveXAttrRequest
+func (_e *MockRpcFsServer_Expecter) RemoveXAttr(context1 interface{}, removeXAttrRequest interface{}) *MockRpcFsServer_RemoveXAttr_Call {
+	return &MockRpcFsServer_RemoveXAttr_Call{Call: _e.mock.On("RemoveXAttr", context1, removeXAttrRequest)}
+}
+
+func (_c *MockRpcFsServer_RemoveXAttr_Call) Run(run func(context1 context.Context, removeXAttrRequest *proto.RemoveXAttrRequest)) *MockRpcFsServer_RemoveXAttr_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *proto.RemoveXAttrRequest
+		if args[1] != nil {
+			arg1 = args[1].(*proto.RemoveXAttrRequest)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFsServer_RemoveXAttr_Call) Return(removeXAttrReply *proto.RemoveXAttrReply, err error) *MockRpcFsServer_RemoveXAttr_Call {
+	_c.Call.Return(removeXAttrReply, err)
+	return _c
+}
+
+func (_c *MockRpcFsServer_RemoveXAttr_Call) RunAndReturn(run func(context1 context.Context, removeXAttrRequest *proto.RemoveXAttrRequest) (*proto.RemoveXAttrReply, error)) *MockRpcFsServer_RemoveXAttr_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Rename provides a mock function for the type MockRpcFsServer
 func (_mock *MockRpcFsServer) Rename(context1 context.Context, renameRequest *proto.RenameRequest) (*proto.RenameReply, error) {
 	ret := _mock.Called(context1, renameRequest)
@@ -851,6 +987,74 @@ func (_c *MockRpcFsServer_Rmdir_Call) Return(rmdirReply *proto.RmdirReply, err e
 }
 
 func (_c *MockRpcFsServer_Rmdir_Call) RunAndReturn(run func(context1 context.Context, rmdirRequest *proto.RmdirRequest) (*proto.RmdirReply, error)) *MockRpcFsServer_Rmdir_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SetXAttr provides a mock function for the type MockRpcFsServer
+func (_mock *MockRpcFsServer) SetXAttr(context1 context.Context, setXAttrRequest *proto.SetXAttrRequest) (*proto.SetXAttrReply, error) {
+	ret := _mock.Called(context1, setXAttrRequest)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SetXAttr")
+	}
+
+	var r0 *proto.SetXAttrReply
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.SetXAttrRequest) (*proto.SetXAttrReply, error)); ok {
+		return returnFunc(context1, setXAttrRequest)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.SetXAttrRequest) *proto.SetXAttrReply); ok {
+		r0 = returnFunc(context1, setXAttrRequest)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proto.SetXAttrReply)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.SetXAttrRequest) error); ok {
+		r1 = returnFunc(context1, setXAttrRequest)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockRpcFsServer_SetXAttr_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetXAttr'
+type MockRpcFsServer_SetXAttr_Call struct {
+	*mock.Call
+}
+
+// SetXAttr is a helper method to define mock.On call
+//   - context1 context.Context
+//   - setXAttrRequest *proto.SetXAttrRequest
+func (_e *MockRpcFsServer_Expecter) SetXAttr(context1 interface{}, setXAttrRequest interface{}) *MockRpcFsServer_SetXAttr_Call {
+	return &MockRpcFsServer_SetXAttr_Call{Call: _e.mock.On("SetXAttr", context1, setXAttrRequest)}
+}
+
+func (_c *MockRpcFsServer_SetXAttr_Call) Run(run func(context1 context.Context, setXAttrRequest *proto.SetXAttrRequest)) *MockRpcFsServer_SetXAttr_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *proto.SetXAttrRequest
+		if args[1] != nil {
+			arg1 = args[1].(*proto.SetXAttrRequest)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFsServer_SetXAttr_Call) Return(setXAttrReply *proto.SetXAttrReply, err error) *MockRpcFsServer_SetXAttr_Call {
+	_c.Call.Return(setXAttrReply, err)
+	return _c
+}
+
+func (_c *MockRpcFsServer_SetXAttr_Call) RunAndReturn(run func(context1 context.Context, setXAttrRequest *proto.SetXAttrRequest) (*proto.SetXAttrReply, error)) *MockRpcFsServer_SetXAttr_Call {
 	_c.Call.Return(run)
 	return _c
 }

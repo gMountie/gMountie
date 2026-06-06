@@ -354,6 +354,102 @@ func (_c *MockFileSystemBackend_Close_Call) RunAndReturn(run func() error) *Mock
 	return _c
 }
 
+// CopyFileRange provides a mock function for the type MockFileSystemBackend
+func (_mock *MockFileSystemBackend) CopyFileRange(ctx context.Context, fhIn io.FileHandle, offIn uint64, fhOut io.FileHandle, offOut uint64, length uint64, flags uint64) (uint64, fuse.Status) {
+	ret := _mock.Called(ctx, fhIn, offIn, fhOut, offOut, length, flags)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CopyFileRange")
+	}
+
+	var r0 uint64
+	var r1 fuse.Status
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, io.FileHandle, uint64, uint64, uint64) (uint64, fuse.Status)); ok {
+		return returnFunc(ctx, fhIn, offIn, fhOut, offOut, length, flags)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, io.FileHandle, uint64, uint64, uint64) uint64); ok {
+		r0 = returnFunc(ctx, fhIn, offIn, fhOut, offOut, length, flags)
+	} else {
+		r0 = ret.Get(0).(uint64)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, io.FileHandle, uint64, io.FileHandle, uint64, uint64, uint64) fuse.Status); ok {
+		r1 = returnFunc(ctx, fhIn, offIn, fhOut, offOut, length, flags)
+	} else {
+		r1 = ret.Get(1).(fuse.Status)
+	}
+	return r0, r1
+}
+
+// MockFileSystemBackend_CopyFileRange_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CopyFileRange'
+type MockFileSystemBackend_CopyFileRange_Call struct {
+	*mock.Call
+}
+
+// CopyFileRange is a helper method to define mock.On call
+//   - ctx context.Context
+//   - fhIn io.FileHandle
+//   - offIn uint64
+//   - fhOut io.FileHandle
+//   - offOut uint64
+//   - length uint64
+//   - flags uint64
+func (_e *MockFileSystemBackend_Expecter) CopyFileRange(ctx interface{}, fhIn interface{}, offIn interface{}, fhOut interface{}, offOut interface{}, length interface{}, flags interface{}) *MockFileSystemBackend_CopyFileRange_Call {
+	return &MockFileSystemBackend_CopyFileRange_Call{Call: _e.mock.On("CopyFileRange", ctx, fhIn, offIn, fhOut, offOut, length, flags)}
+}
+
+func (_c *MockFileSystemBackend_CopyFileRange_Call) Run(run func(ctx context.Context, fhIn io.FileHandle, offIn uint64, fhOut io.FileHandle, offOut uint64, length uint64, flags uint64)) *MockFileSystemBackend_CopyFileRange_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 io.FileHandle
+		if args[1] != nil {
+			arg1 = args[1].(io.FileHandle)
+		}
+		var arg2 uint64
+		if args[2] != nil {
+			arg2 = args[2].(uint64)
+		}
+		var arg3 io.FileHandle
+		if args[3] != nil {
+			arg3 = args[3].(io.FileHandle)
+		}
+		var arg4 uint64
+		if args[4] != nil {
+			arg4 = args[4].(uint64)
+		}
+		var arg5 uint64
+		if args[5] != nil {
+			arg5 = args[5].(uint64)
+		}
+		var arg6 uint64
+		if args[6] != nil {
+			arg6 = args[6].(uint64)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+			arg4,
+			arg5,
+			arg6,
+		)
+	})
+	return _c
+}
+
+func (_c *MockFileSystemBackend_CopyFileRange_Call) Return(v uint64, status fuse.Status) *MockFileSystemBackend_CopyFileRange_Call {
+	_c.Call.Return(v, status)
+	return _c
+}
+
+func (_c *MockFileSystemBackend_CopyFileRange_Call) RunAndReturn(run func(ctx context.Context, fhIn io.FileHandle, offIn uint64, fhOut io.FileHandle, offOut uint64, length uint64, flags uint64) (uint64, fuse.Status)) *MockFileSystemBackend_CopyFileRange_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Create provides a mock function for the type MockFileSystemBackend
 func (_mock *MockFileSystemBackend) Create(ctx context.Context, parent string, name string, flags uint32, mode uint32) (io.FileHandle, *io.Attr, fuse.Status) {
 	ret := _mock.Called(ctx, parent, name, flags, mode)
@@ -871,6 +967,74 @@ func (_c *MockFileSystemBackend_ListDir_Call) RunAndReturn(run func(ctx context.
 	return _c
 }
 
+// ListXAttr provides a mock function for the type MockFileSystemBackend
+func (_mock *MockFileSystemBackend) ListXAttr(ctx context.Context, path string) ([]string, fuse.Status) {
+	ret := _mock.Called(ctx, path)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListXAttr")
+	}
+
+	var r0 []string
+	var r1 fuse.Status
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) ([]string, fuse.Status)); ok {
+		return returnFunc(ctx, path)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) []string); ok {
+		r0 = returnFunc(ctx, path)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]string)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) fuse.Status); ok {
+		r1 = returnFunc(ctx, path)
+	} else {
+		r1 = ret.Get(1).(fuse.Status)
+	}
+	return r0, r1
+}
+
+// MockFileSystemBackend_ListXAttr_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListXAttr'
+type MockFileSystemBackend_ListXAttr_Call struct {
+	*mock.Call
+}
+
+// ListXAttr is a helper method to define mock.On call
+//   - ctx context.Context
+//   - path string
+func (_e *MockFileSystemBackend_Expecter) ListXAttr(ctx interface{}, path interface{}) *MockFileSystemBackend_ListXAttr_Call {
+	return &MockFileSystemBackend_ListXAttr_Call{Call: _e.mock.On("ListXAttr", ctx, path)}
+}
+
+func (_c *MockFileSystemBackend_ListXAttr_Call) Run(run func(ctx context.Context, path string)) *MockFileSystemBackend_ListXAttr_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockFileSystemBackend_ListXAttr_Call) Return(strings []string, status fuse.Status) *MockFileSystemBackend_ListXAttr_Call {
+	_c.Call.Return(strings, status)
+	return _c
+}
+
+func (_c *MockFileSystemBackend_ListXAttr_Call) RunAndReturn(run func(ctx context.Context, path string) ([]string, fuse.Status)) *MockFileSystemBackend_ListXAttr_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Lookup provides a mock function for the type MockFileSystemBackend
 func (_mock *MockFileSystemBackend) Lookup(ctx context.Context, parent string, name string) (*io.Attr, fuse.Status) {
 	ret := _mock.Called(ctx, parent, name)
@@ -941,6 +1105,84 @@ func (_c *MockFileSystemBackend_Lookup_Call) Return(attr *io.Attr, status fuse.S
 }
 
 func (_c *MockFileSystemBackend_Lookup_Call) RunAndReturn(run func(ctx context.Context, parent string, name string) (*io.Attr, fuse.Status)) *MockFileSystemBackend_Lookup_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Lseek provides a mock function for the type MockFileSystemBackend
+func (_mock *MockFileSystemBackend) Lseek(ctx context.Context, fh io.FileHandle, offset uint64, whence uint32) (uint64, fuse.Status) {
+	ret := _mock.Called(ctx, fh, offset, whence)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Lseek")
+	}
+
+	var r0 uint64
+	var r1 fuse.Status
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, uint32) (uint64, fuse.Status)); ok {
+		return returnFunc(ctx, fh, offset, whence)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, uint32) uint64); ok {
+		r0 = returnFunc(ctx, fh, offset, whence)
+	} else {
+		r0 = ret.Get(0).(uint64)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, io.FileHandle, uint64, uint32) fuse.Status); ok {
+		r1 = returnFunc(ctx, fh, offset, whence)
+	} else {
+		r1 = ret.Get(1).(fuse.Status)
+	}
+	return r0, r1
+}
+
+// MockFileSystemBackend_Lseek_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Lseek'
+type MockFileSystemBackend_Lseek_Call struct {
+	*mock.Call
+}
+
+// Lseek is a helper method to define mock.On call
+//   - ctx context.Context
+//   - fh io.FileHandle
+//   - offset uint64
+//   - whence uint32
+func (_e *MockFileSystemBackend_Expecter) Lseek(ctx interface{}, fh interface{}, offset interface{}, whence interface{}) *MockFileSystemBackend_Lseek_Call {
+	return &MockFileSystemBackend_Lseek_Call{Call: _e.mock.On("Lseek", ctx, fh, offset, whence)}
+}
+
+func (_c *MockFileSystemBackend_Lseek_Call) Run(run func(ctx context.Context, fh io.FileHandle, offset uint64, whence uint32)) *MockFileSystemBackend_Lseek_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 io.FileHandle
+		if args[1] != nil {
+			arg1 = args[1].(io.FileHandle)
+		}
+		var arg2 uint64
+		if args[2] != nil {
+			arg2 = args[2].(uint64)
+		}
+		var arg3 uint32
+		if args[3] != nil {
+			arg3 = args[3].(uint32)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+		)
+	})
+	return _c
+}
+
+func (_c *MockFileSystemBackend_Lseek_Call) Return(v uint64, status fuse.Status) *MockFileSystemBackend_Lseek_Call {
+	_c.Call.Return(v, status)
+	return _c
+}
+
+func (_c *MockFileSystemBackend_Lseek_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, offset uint64, whence uint32) (uint64, fuse.Status)) *MockFileSystemBackend_Lseek_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -1283,6 +1525,69 @@ func (_c *MockFileSystemBackend_Release_Call) RunAndReturn(run func(ctx context.
 	return _c
 }
 
+// RemoveXAttr provides a mock function for the type MockFileSystemBackend
+func (_mock *MockFileSystemBackend) RemoveXAttr(ctx context.Context, path string, attr string) fuse.Status {
+	ret := _mock.Called(ctx, path, attr)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RemoveXAttr")
+	}
+
+	var r0 fuse.Status
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) fuse.Status); ok {
+		r0 = returnFunc(ctx, path, attr)
+	} else {
+		r0 = ret.Get(0).(fuse.Status)
+	}
+	return r0
+}
+
+// MockFileSystemBackend_RemoveXAttr_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RemoveXAttr'
+type MockFileSystemBackend_RemoveXAttr_Call struct {
+	*mock.Call
+}
+
+// RemoveXAttr is a helper method to define mock.On call
+//   - ctx context.Context
+//   - path string
+//   - attr string
+func (_e *MockFileSystemBackend_Expecter) RemoveXAttr(ctx interface{}, path interface{}, attr interface{}) *MockFileSystemBackend_RemoveXAttr_Call {
+	return &MockFileSystemBackend_RemoveXAttr_Call{Call: _e.mock.On("RemoveXAttr", ctx, path, attr)}
+}
+
+func (_c *MockFileSystemBackend_RemoveXAttr_Call) Run(run func(ctx context.Context, path string, attr string)) *MockFileSystemBackend_RemoveXAttr_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockFileSystemBackend_RemoveXAttr_Call) Return(status fuse.Status) *MockFileSystemBackend_RemoveXAttr_Call {
+	_c.Call.Return(status)
+	return _c
+}
+
+func (_c *MockFileSystemBackend_RemoveXAttr_Call) RunAndReturn(run func(ctx context.Context, path string, attr string) fuse.Status) *MockFileSystemBackend_RemoveXAttr_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Rename provides a mock function for the type MockFileSystemBackend
 func (_mock *MockFileSystemBackend) Rename(ctx context.Context, oldPath string, newPath string) fuse.Status {
 	ret := _mock.Called(ctx, oldPath, newPath)
@@ -1549,6 +1854,81 @@ func (_c *MockFileSystemBackend_SetLkw_Call) Return(status fuse.Status) *MockFil
 }
 
 func (_c *MockFileSystemBackend_SetLkw_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status) *MockFileSystemBackend_SetLkw_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SetXAttr provides a mock function for the type MockFileSystemBackend
+func (_mock *MockFileSystemBackend) SetXAttr(ctx context.Context, path string, attr string, data []byte, flags uint32) fuse.Status {
+	ret := _mock.Called(ctx, path, attr, data, flags)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SetXAttr")
+	}
+
+	var r0 fuse.Status
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, []byte, uint32) fuse.Status); ok {
+		r0 = returnFunc(ctx, path, attr, data, flags)
+	} else {
+		r0 = ret.Get(0).(fuse.Status)
+	}
+	return r0
+}
+
+// MockFileSystemBackend_SetXAttr_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetXAttr'
+type MockFileSystemBackend_SetXAttr_Call struct {
+	*mock.Call
+}
+
+// SetXAttr is a helper method to define mock.On call
+//   - ctx context.Context
+//   - path string
+//   - attr string
+//   - data []byte
+//   - flags uint32
+func (_e *MockFileSystemBackend_Expecter) SetXAttr(ctx interface{}, path interface{}, attr interface{}, data interface{}, flags interface{}) *MockFileSystemBackend_SetXAttr_Call {
+	return &MockFileSystemBackend_SetXAttr_Call{Call: _e.mock.On("SetXAttr", ctx, path, attr, data, flags)}
+}
+
+func (_c *MockFileSystemBackend_SetXAttr_Call) Run(run func(ctx context.Context, path string, attr string, data []byte, flags uint32)) *MockFileSystemBackend_SetXAttr_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		var arg3 []byte
+		if args[3] != nil {
+			arg3 = args[3].([]byte)
+		}
+		var arg4 uint32
+		if args[4] != nil {
+			arg4 = args[4].(uint32)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+			arg4,
+		)
+	})
+	return _c
+}
+
+func (_c *MockFileSystemBackend_SetXAttr_Call) Return(status fuse.Status) *MockFileSystemBackend_SetXAttr_Call {
+	_c.Call.Return(status)
+	return _c
+}
+
+func (_c *MockFileSystemBackend_SetXAttr_Call) RunAndReturn(run func(ctx context.Context, path string, attr string, data []byte, flags uint32) fuse.Status) *MockFileSystemBackend_SetXAttr_Call {
 	_c.Call.Return(run)
 	return _c
 }

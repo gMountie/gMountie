@@ -418,6 +418,22 @@ func (b *cachedBackend) GetXAttr(ctx context.Context, p, attr string) ([]byte, f
 	return b.inner.GetXAttr(ctx, p, attr)
 }
 
+// SetXAttr stores an extended attribute. Xattrs are not cached and
+// don't affect the stat-shaped attr cache.
+func (b *cachedBackend) SetXAttr(ctx context.Context, p, attr string, data []byte, flags uint32) fuse.Status {
+	return b.inner.SetXAttr(ctx, p, attr, data, flags)
+}
+
+// RemoveXAttr deletes an extended attribute. Pass-through like GetXAttr.
+func (b *cachedBackend) RemoveXAttr(ctx context.Context, p, attr string) fuse.Status {
+	return b.inner.RemoveXAttr(ctx, p, attr)
+}
+
+// ListXAttr returns extended-attribute names. Pass-through like GetXAttr.
+func (b *cachedBackend) ListXAttr(ctx context.Context, p string) ([]string, fuse.Status) {
+	return b.inner.ListXAttr(ctx, p)
+}
+
 func (b *cachedBackend) GetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) fuse.Status {
 	return b.inner.GetLk(ctx, unwrapHandle(fh), owner, lk, flags, out)
 }
@@ -489,6 +505,26 @@ func (b *cachedBackend) SetLk(ctx context.Context, fh io.FileHandle, owner uint6
 
 func (b *cachedBackend) SetLkw(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status {
 	return b.inner.SetLkw(ctx, unwrapHandle(fh), owner, lk, flags)
+}
+
+// CopyFileRange passes through, then invalidates the DESTINATION like a
+// Write of the copied range: the data cache for [offOut, offOut+n) and
+// the attr entry (size/mtime moved). Source is untouched (atime only).
+func (b *cachedBackend) CopyFileRange(ctx context.Context, fhIn io.FileHandle, offIn uint64, fhOut io.FileHandle, offOut uint64, length, flags uint64) (uint64, fuse.Status) {
+	n, st := b.inner.CopyFileRange(ctx, unwrapHandle(fhIn), offIn, unwrapHandle(fhOut), offOut, length, flags)
+	if st != fuse.OK {
+		return n, st
+	}
+	if ch, ok := fhOut.(*cachedHandle); ok && n > 0 {
+		b.data.invalidateRange(ch.path, int64(offOut), int64(n))
+		b.attr.invalidate(ch.path)
+	}
+	return n, fuse.OK
+}
+
+// Lseek is a pure pass-through — hole geometry isn't cached.
+func (b *cachedBackend) Lseek(ctx context.Context, fh io.FileHandle, offset uint64, whence uint32) (uint64, fuse.Status) {
+	return b.inner.Lseek(ctx, unwrapHandle(fh), offset, whence)
 }
 
 // --- Path-level mutating ops ---

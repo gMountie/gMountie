@@ -613,6 +613,80 @@ func (s *CachedBackendTestSuite) TestUnverifiedRevalidationENOENTReturnsNotFound
 	s.Require().Equal(fuse.ENOENT, st)
 }
 
+// --- CopyFileRange ---
+
+// CopyFileRange must invalidate the destination's cached data range and
+// attr entry exactly like a Write of [offOut, offOut+n). A chunk outside
+// the copied range stays cached; the source is untouched.
+func (s *CachedBackendTestSuite) TestCopyFileRangeInvalidatesDestination() {
+	srcH, innerSrc := s.openCachedHandle("/src")
+	dstH, innerDst := s.openCachedHandle("/dst")
+
+	// Seed dst attr cache.
+	s.inner.EXPECT().Stat(mock.Anything, "/dst").Return(&io.Attr{Ino: 2, Size: 4096}, fuse.OK).Once()
+	_, st := s.b.Stat(context.Background(), "/dst")
+	s.Require().Equal(fuse.OK, st)
+
+	// Seed dst data cache: chunk 0 ([0,1024)) and chunk 2 ([2048,3072)).
+	buf := make([]byte, 1024)
+	s.inner.EXPECT().Read(mock.Anything, innerDst, int64(0), mock.Anything).
+		RunAndReturn(func(_ context.Context, _ io.FileHandle, _ int64, b []byte) (int, fuse.Status) {
+			return 1024, fuse.OK
+		}).Once()
+	_, st = s.b.Read(context.Background(), dstH, 0, buf)
+	s.Require().Equal(fuse.OK, st)
+	s.inner.EXPECT().Read(mock.Anything, innerDst, int64(2048), mock.Anything).
+		RunAndReturn(func(_ context.Context, _ io.FileHandle, _ int64, b []byte) (int, fuse.Status) {
+			return 1024, fuse.OK
+		}).Once()
+	_, st = s.b.Read(context.Background(), dstH, 2048, buf)
+	s.Require().Equal(fuse.OK, st)
+
+	// Copy 100 bytes into dst@0 — overlaps chunk 0 only.
+	s.inner.EXPECT().CopyFileRange(mock.Anything, innerSrc, uint64(0), innerDst, uint64(0), uint64(100), uint64(0)).
+		Return(uint64(100), fuse.OK).Once()
+	n, cst := s.b.CopyFileRange(context.Background(), srcH, 0, dstH, 0, 100, 0)
+	s.Require().Equal(fuse.OK, cst)
+	s.Require().Equal(uint64(100), n)
+
+	// Chunk 0 must MISS (re-fetch from inner)...
+	s.inner.EXPECT().Read(mock.Anything, innerDst, int64(0), mock.Anything).
+		RunAndReturn(func(_ context.Context, _ io.FileHandle, _ int64, b []byte) (int, fuse.Status) {
+			return 1024, fuse.OK
+		}).Once()
+	_, st = s.b.Read(context.Background(), dstH, 0, buf)
+	s.Require().Equal(fuse.OK, st)
+	// ...chunk 2 must still HIT (no new EXPECT: served from cache).
+	_, st = s.b.Read(context.Background(), dstH, 2048, buf)
+	s.Require().Equal(fuse.OK, st)
+
+	// Attr must MISS after the copy (size/mtime moved).
+	s.inner.EXPECT().Stat(mock.Anything, "/dst").Return(&io.Attr{Ino: 2, Size: 4096}, fuse.OK).Once()
+	_, st = s.b.Stat(context.Background(), "/dst")
+	s.Require().Equal(fuse.OK, st)
+}
+
+// Lseek and the xattr trio are pure pass-throughs — one delegation test
+// each keeps the interface honest without over-testing.
+func (s *CachedBackendTestSuite) TestLseekAndXattrPassThrough() {
+	h, innerH := s.openCachedHandle("/f")
+	s.inner.EXPECT().Lseek(mock.Anything, innerH, uint64(5), uint32(3)).Return(uint64(9), fuse.OK).Once()
+	off, st := s.b.Lseek(context.Background(), h, 5, 3)
+	s.Require().Equal(fuse.OK, st)
+	s.Equal(uint64(9), off)
+
+	s.inner.EXPECT().SetXAttr(mock.Anything, "/f", "user.k", []byte("v"), uint32(0)).Return(fuse.OK).Once()
+	s.Equal(fuse.OK, s.b.SetXAttr(context.Background(), "/f", "user.k", []byte("v"), 0))
+
+	s.inner.EXPECT().RemoveXAttr(mock.Anything, "/f", "user.k").Return(fuse.OK).Once()
+	s.Equal(fuse.OK, s.b.RemoveXAttr(context.Background(), "/f", "user.k"))
+
+	s.inner.EXPECT().ListXAttr(mock.Anything, "/f").Return([]string{"user.k"}, fuse.OK).Once()
+	names, st := s.b.ListXAttr(context.Background(), "/f")
+	s.Require().Equal(fuse.OK, st)
+	s.Equal([]string{"user.k"}, names)
+}
+
 func TestCachedBackendTestSuite(t *testing.T) {
 	suite.Run(t, new(CachedBackendTestSuite))
 }
