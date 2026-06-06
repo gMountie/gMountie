@@ -88,6 +88,12 @@ func (r *Reloader) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error
 		return r.current.Load(), nil
 	}
 	if st.equal(*r.loaded.Load()) {
+		// A transient stat blip with no rotation pending never reaches the
+		// reload path below — clear the warn-once flag here so the next
+		// real failure streak still logs.
+		if r.failing.CompareAndSwap(true, false) {
+			log.Log.Info("server cert checks recovered", zap.String("cert_path", r.certPath))
+		}
 		return r.current.Load(), nil
 	}
 
@@ -122,7 +128,7 @@ func (r *Reloader) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error
 	r.fingerprint = fp
 	r.current.Store(&cert)
 	r.loaded.Store(&st)
-	return r.current.Load(), nil
+	return &cert, nil
 }
 
 // warnOnce logs the first failure of a streak; subsequent failures are

@@ -116,3 +116,34 @@ func (s *ReloaderSuite) TestStampChangesOnAtomicRotation() {
 	s.False(before.equal(after), "atomic rotation must produce a new stamp")
 	s.True(after.equal(after), "a stamp must equal itself")
 }
+
+func (s *ReloaderSuite) TestWarnOnceRearmsAfterTransientStatBlip() {
+	dir := s.T().TempDir()
+	certPath, keyPath := s.writePair(dir, "blip.example.com")
+	r, err := NewReloader(certPath, keyPath)
+	s.Require().NoError(err)
+	_ = keyPath
+
+	// Transient blip: cert briefly missing, then restored unchanged.
+	original, err := os.ReadFile(certPath)
+	s.Require().NoError(err)
+	s.Require().NoError(os.Remove(certPath))
+	_, err = r.GetCertificate(nil) // stat fails -> warns once, arms failing
+	s.Require().NoError(err)
+	s.True(r.failing.Load(), "stat failure must arm the warn-once flag")
+
+	s.writeAtomic(certPath, original) // blip over; stamp differs (new inode)
+	// The restored file has a NEW stamp (rename = new inode), so this passes
+	// through the reload path and must clear the flag there...
+	_, err = r.GetCertificate(nil)
+	s.Require().NoError(err)
+	s.False(r.failing.Load(), "recovered serve must re-arm warn-once")
+
+	// ...and the pure fast path must also clear a stale flag: arm it
+	// artificially and take the stamp-unchanged path.
+	r.failing.Store(true)
+	_, err = r.GetCertificate(nil)
+	s.Require().NoError(err)
+	s.False(r.failing.Load(),
+		"stamp-unchanged fast path must clear a stale failing flag")
+}
