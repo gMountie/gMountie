@@ -163,9 +163,9 @@ func (s *CopyRangeSuite) TestLseekSparseHole() {
 }
 
 func (s *CopyRangeSuite) TestRangesOverlapSaturates() {
-	s.True(rangesOverlap(math.MaxUint64-1, 0, 4))   // would wrap without the guard
+	s.True(rangesOverlap(math.MaxUint64-1, 0, 4)) // would wrap without the guard
 	s.True(rangesOverlap(0, math.MaxUint64-1, 4))
-	s.False(rangesOverlap(0, 8192, 4096))           // disjoint stays false
+	s.False(rangesOverlap(0, 8192, 4096)) // disjoint stays false
 }
 
 // A non-RawFdFile on either side must route CopyFileRange through the

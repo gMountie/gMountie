@@ -76,7 +76,7 @@ func (s *CopyRangeE2ESuite) TestCopyFileRangeSyscall() {
 	for total < len(content) {
 		n, err := unix.CopyFileRange(int(src.Fd()), nil, int(dst.Fd()), nil, len(content)-total, 0)
 		s.Require().NoError(err, "copy_file_range through the mount")
-		s.Require().Greater(n, 0)
+		s.Require().Positive(n)
 		total += n
 	}
 

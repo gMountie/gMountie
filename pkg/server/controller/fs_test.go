@@ -684,19 +684,19 @@ func (s *RpcServerTestSuite) TestListXAttr_Happy() {
 
 func TestXattrWriteAllowed(t *testing.T) {
 	cases := map[string]bool{
-		"user.foo":                 true,
-		"user.":                    true,
-		"system.posix_acl_access":  true,
-		"system.posix_acl_default": true,
-		"trusted.foo":              false,
-		"security.capability":      false,
-		"security.selinux":         false,
-		"system.other":             false,
-		"":                         false,
-		"USER.foo":                   false, // case-sensitive
-		"user":                       false, // no dot
-		"system.posix_acl_accessX":   false, // near-miss on exact match
-		"system.posix_acl_default ":  false, // trailing whitespace
+		"user.foo":                  true,
+		"user.":                     true,
+		"system.posix_acl_access":   true,
+		"system.posix_acl_default":  true,
+		"trusted.foo":               false,
+		"security.capability":       false,
+		"security.selinux":          false,
+		"system.other":              false,
+		"":                          false,
+		"USER.foo":                  false, // case-sensitive
+		"user":                      false, // no dot
+		"system.posix_acl_accessX":  false, // near-miss on exact match
+		"system.posix_acl_default ": false, // trailing whitespace
 	}
 	for attr, want := range cases {
 		if got := xattrWriteAllowed(attr); got != want {
