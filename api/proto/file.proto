@@ -180,10 +180,10 @@ message CopyFileRangeRequest {
   string volume = 1;
   Caller caller = 2;
   uint64 fd_in = 3;       // open server handle, source
-  string path_in = 4;
+  string path_in = 4;     // advisory (logs/diagnostics); server resolves by fd
   uint64 off_in = 5;
   uint64 fd_out = 6;      // open server handle, destination
-  string path_out = 7;
+  string path_out = 7;    // advisory (logs/diagnostics); server resolves by fd
   uint64 off_out = 8;
   uint64 length = 9;
   uint64 flags = 10;      // must be 0 (copy_file_range(2) contract)
@@ -199,7 +199,7 @@ message LseekRequest {
   string volume = 1;
   Caller caller = 2;
   uint64 fd = 3;
-  string path = 4;
+  string path = 4;        // advisory (logs/diagnostics); server resolves by fd
   uint64 offset = 5;
   uint32 whence = 6;      // SEEK_DATA | SEEK_HOLE only
   string session_id = 7;

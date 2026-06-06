@@ -1,6 +1,7 @@
 package io
 
 import (
+	"math"
 	"os"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -87,8 +88,13 @@ func copyRangeFd(src, dst *RawFdFile, offIn, offOut, length uint64) (copied uint
 }
 
 // rangesOverlap reports whether [offIn, offIn+length) and
-// [offOut, offOut+length) intersect.
+// [offOut, offOut+length) intersect. Saturating: offsets near the
+// uint64 ceiling are treated as overlapping rather than letting the
+// addition wrap to a small value and skip the EINVAL check.
 func rangesOverlap(offIn, offOut, length uint64) bool {
+	if offIn > math.MaxUint64-length || offOut > math.MaxUint64-length {
+		return true
+	}
 	return offIn < offOut+length && offOut < offIn+length
 }
 

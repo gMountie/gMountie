@@ -1637,11 +1637,11 @@ type CopyFileRangeRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Volume        string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
 	Caller        *Caller                `protobuf:"bytes,2,opt,name=caller,proto3" json:"caller,omitempty"`
-	FdIn          uint64                 `protobuf:"varint,3,opt,name=fd_in,json=fdIn,proto3" json:"fd_in,omitempty"` // open server handle, source
-	PathIn        string                 `protobuf:"bytes,4,opt,name=path_in,json=pathIn,proto3" json:"path_in,omitempty"`
+	FdIn          uint64                 `protobuf:"varint,3,opt,name=fd_in,json=fdIn,proto3" json:"fd_in,omitempty"`      // open server handle, source
+	PathIn        string                 `protobuf:"bytes,4,opt,name=path_in,json=pathIn,proto3" json:"path_in,omitempty"` // advisory (logs/diagnostics); server resolves by fd
 	OffIn         uint64                 `protobuf:"varint,5,opt,name=off_in,json=offIn,proto3" json:"off_in,omitempty"`
-	FdOut         uint64                 `protobuf:"varint,6,opt,name=fd_out,json=fdOut,proto3" json:"fd_out,omitempty"` // open server handle, destination
-	PathOut       string                 `protobuf:"bytes,7,opt,name=path_out,json=pathOut,proto3" json:"path_out,omitempty"`
+	FdOut         uint64                 `protobuf:"varint,6,opt,name=fd_out,json=fdOut,proto3" json:"fd_out,omitempty"`      // open server handle, destination
+	PathOut       string                 `protobuf:"bytes,7,opt,name=path_out,json=pathOut,proto3" json:"path_out,omitempty"` // advisory (logs/diagnostics); server resolves by fd
 	OffOut        uint64                 `protobuf:"varint,8,opt,name=off_out,json=offOut,proto3" json:"off_out,omitempty"`
 	Length        uint64                 `protobuf:"varint,9,opt,name=length,proto3" json:"length,omitempty"`
 	Flags         uint64                 `protobuf:"varint,10,opt,name=flags,proto3" json:"flags,omitempty"` // must be 0 (copy_file_range(2) contract)
@@ -1814,7 +1814,7 @@ type LseekRequest struct {
 	Volume        string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
 	Caller        *Caller                `protobuf:"bytes,2,opt,name=caller,proto3" json:"caller,omitempty"`
 	Fd            uint64                 `protobuf:"varint,3,opt,name=fd,proto3" json:"fd,omitempty"`
-	Path          string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
+	Path          string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"` // advisory (logs/diagnostics); server resolves by fd
 	Offset        uint64                 `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
 	Whence        uint32                 `protobuf:"varint,6,opt,name=whence,proto3" json:"whence,omitempty"` // SEEK_DATA | SEEK_HOLE only
 	SessionId     string                 `protobuf:"bytes,7,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
