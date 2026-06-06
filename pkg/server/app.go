@@ -177,14 +177,21 @@ func Start(ctx context.Context, cfg *config.Config) error {
 			return errors.Wrap(err, "ensure cert dir")
 		}
 		host := hostFromBind(bind)
-		cert, _, fp, err := servertls.LoadOrGenerate(certPath, keyPath, host)
+		// LoadOrGenerate keeps the generate-on-first-boot + fail-fast
+		// behavior; the Reloader then owns the pair so a rotated cert is
+		// picked up at the next handshake without a restart.
+		_, _, fp, err := servertls.LoadOrGenerate(certPath, keyPath, host)
 		if err != nil {
 			return errors.Wrap(err, "load/generate server cert")
 		}
+		reloader, err := servertls.NewReloader(certPath, keyPath)
+		if err != nil {
+			return errors.Wrap(err, "init server cert reloader")
+		}
 		tlsCfg := &tls.Config{
-			MinVersion:   minTLSVersion(cfg.Server.TLS.MinVersion),
-			NextProtos:   []string{"h2"},
-			Certificates: []tls.Certificate{cert},
+			MinVersion:     minTLSVersion(cfg.Server.TLS.MinVersion),
+			NextProtos:     []string{"h2"},
+			GetCertificate: reloader.GetCertificate,
 		}
 		// mTLS: require + verify client certificates against the configured CA.
 		if cfg.Auth.GetType() == config.AuthConfigTypeMTLS {
