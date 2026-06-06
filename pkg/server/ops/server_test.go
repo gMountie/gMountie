@@ -2,6 +2,7 @@ package ops
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -131,7 +132,12 @@ func (s *ServerTestSuite) TestApplyTLSServesRotatedCert() {
 	s.Require().NoError(os.Rename(keyFile+".tmp", keyFile))
 	after, err := tc.GetCertificate(nil)
 	s.Require().NoError(err)
-	s.NotEqual(before, after)
+	beforeLeaf, err := x509.ParseCertificate(before.Certificate[0])
+	s.Require().NoError(err)
+	afterLeaf, err := x509.ParseCertificate(after.Certificate[0])
+	s.Require().NoError(err)
+	s.NotEqual(beforeLeaf.SerialNumber.String(), afterLeaf.SerialNumber.String(),
+		"rotation must change the leaf serial")
 }
 
 func TestServerTestSuite(t *testing.T) { suite.Run(t, new(ServerTestSuite)) }
