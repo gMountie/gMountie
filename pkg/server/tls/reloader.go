@@ -6,6 +6,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"go.gmountie.dev/gmountie/pkg/utils/log"
+	"go.uber.org/zap"
 )
 
 // stamp identifies a cert file's on-disk version. The inode catches the
@@ -72,7 +75,60 @@ func NewReloader(certPath, keyPath string) (*Reloader, error) {
 }
 
 // GetCertificate is a tls.Config.GetCertificate callback: it serves the
-// cached pair. (Rotation handling lands in the next slice.)
+// cached pair, reloading it first when the cert file's stamp has changed.
+//
+// Fail-open contract: any stat or reload failure (file briefly missing
+// mid-rotation, cert/key mismatch from a non-atomic swap, unparsable PEM)
+// keeps the last good pair — a handshake the old cert could serve is never
+// failed by the reloader. Failures warn once per streak, not per handshake.
 func (r *Reloader) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	st, err := statStamp(r.certPath)
+	if err != nil {
+		r.warnOnce("server cert stat failed; serving previous cert", err)
+		return r.current.Load(), nil
+	}
+	if st.equal(*r.loaded.Load()) {
+		return r.current.Load(), nil
+	}
+
+	// Stamp changed: one handshake reloads, concurrent ones keep serving
+	// the cached pair without blocking on disk I/O.
+	if !r.mu.TryLock() {
+		return r.current.Load(), nil
+	}
+	defer r.mu.Unlock()
+	if st.equal(*r.loaded.Load()) { // raced with a completed reload
+		return r.current.Load(), nil
+	}
+
+	cert, certPEM, err := Load(r.certPath, r.keyPath)
+	if err != nil {
+		r.warnOnce("server cert changed on disk but reload failed; serving previous cert", err)
+		return r.current.Load(), nil
+	}
+	fp, err := Fingerprint(certPEM)
+	if err != nil {
+		r.warnOnce("server cert changed on disk but reload failed; serving previous cert", err)
+		return r.current.Load(), nil
+	}
+
+	if r.failing.Swap(false) {
+		log.Log.Info("server cert reload recovered", zap.String("cert_path", r.certPath))
+	}
+	log.Log.Info("server cert reloaded",
+		zap.String("cert_path", r.certPath),
+		zap.String("old_fingerprint", r.fingerprint),
+		zap.String("fingerprint", fp))
+	r.fingerprint = fp
+	r.current.Store(&cert)
+	r.loaded.Store(&st)
 	return r.current.Load(), nil
+}
+
+// warnOnce logs the first failure of a streak; subsequent failures are
+// silent until a reload succeeds (no per-handshake log spam).
+func (r *Reloader) warnOnce(msg string, err error) {
+	if r.failing.CompareAndSwap(false, true) {
+		log.Log.Warn(msg, zap.String("cert_path", r.certPath), zap.Error(err))
+	}
 }
