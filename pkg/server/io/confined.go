@@ -396,8 +396,9 @@ func (c *ConfinedLoopbackFileSystem) Open(name string, flags uint32, _ *fuse.Con
 	if err != nil {
 		return nil, errnoToStatus(err)
 	}
-	// os.NewFile takes ownership of fd; LoopbackFile closes it via Release.
-	return nodefs.NewLoopbackFile(os.NewFile(uintptr(fd), leaf)), fuse.OK
+	// os.NewFile takes ownership of fd; the embedded LoopbackFile closes it
+	// via Release. RawFdFile keeps the raw fd reachable for copy/lseek.
+	return NewRawFdFile(os.NewFile(uintptr(fd), leaf)), fuse.OK
 }
 
 // Create creates (or opens with O_CREAT) a file confined to the volume root.
@@ -421,7 +422,7 @@ func (c *ConfinedLoopbackFileSystem) Create(name string, flags, mode uint32, _ *
 	if err != nil {
 		return nil, errnoToStatus(err)
 	}
-	return nodefs.NewLoopbackFile(os.NewFile(uintptr(fd), leaf)), fuse.OK
+	return NewRawFdFile(os.NewFile(uintptr(fd), leaf)), fuse.OK
 }
 
 // OpenDir reads directory entries beneath the volume root. Mode and Ino are
