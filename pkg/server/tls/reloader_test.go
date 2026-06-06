@@ -3,6 +3,7 @@ package tls
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -246,22 +247,43 @@ func (s *ReloaderSuite) TestListenerServesRotatedCert() {
 				return
 			}
 			go func() {
-				_ = conn.(*tls.Conn).Handshake()
+				tconn := conn.(*tls.Conn)
+				if err := tconn.Handshake(); err != nil {
+					_ = conn.Close()
+					return
+				}
+				_, _ = io.Copy(conn, conn) // echo until the client closes
 				_ = conn.Close()
 			}()
 		}
 	}()
 
-	dialSerial := func() string {
+	dial := func() *tls.Conn {
 		conn, err := tls.Dial("tcp", ln.Addr().String(),
 			&tls.Config{InsecureSkipVerify: true}) //nolint:gosec // test dials a self-signed cert
 		s.Require().NoError(err)
-		defer conn.Close()
-		return conn.ConnectionState().PeerCertificates[0].SerialNumber.String()
+		return conn
+	}
+	serialOfConn := func(c *tls.Conn) string {
+		return c.ConnectionState().PeerCertificates[0].SerialNumber.String()
 	}
 
-	first := dialSerial()
+	first := dial()
+	defer first.Close()
+	firstSerial := serialOfConn(first)
+
 	s.writePair(dir, "127.0.0.1") // rotate on disk; no restart
-	second := dialSerial()
-	s.NotEqual(first, second, "post-rotation handshake must present the new leaf")
+
+	second := dial()
+	defer second.Close()
+	s.NotEqual(firstSerial, serialOfConn(second),
+		"post-rotation handshake must present the new leaf")
+
+	// The pre-rotation session is never disturbed: it still round-trips.
+	_, err = first.Write([]byte("ping"))
+	s.Require().NoError(err)
+	buf := make([]byte, 4)
+	_, err = io.ReadFull(first, buf)
+	s.Require().NoError(err)
+	s.Equal("ping", string(buf))
 }
