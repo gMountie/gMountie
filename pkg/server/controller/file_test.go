@@ -2,6 +2,9 @@ package controller
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -19,6 +22,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse/nodefs"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"golang.org/x/sys/unix"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -392,6 +396,101 @@ func CreateCaller(uid, gid, pid uint32) *proto.Caller {
 		},
 		Pid: pid,
 	}
+}
+
+// registerRawFile creates a real temp file with content and registers it
+// in the test session, returning the wire fd. Exercises the same
+// RawFdFile type the confined FS hands out in production.
+func (s *RpcFileServerTestSuite) registerRawFile(name string, content []byte) uint64 {
+	p := filepath.Join(s.T().TempDir(), name)
+	s.Require().NoError(os.WriteFile(p, content, 0o644))
+	f, err := os.OpenFile(p, os.O_RDWR, 0)
+	s.Require().NoError(err)
+	rf := serverio.NewRawFdFile(f)
+	s.T().Cleanup(func() { rf.Release() })
+	sess, err := s.sessionMgr.Get(s.sessionID)
+	s.Require().NoError(err)
+	return sess.RegisterFile(name, rf)
+}
+
+func (s *RpcFileServerTestSuite) TestCopyFileRange_Happy() {
+	// versionAfterPath consults GetVolumeFileSystem; failing it just
+	// yields version 0 on the event, which is fine here.
+	s.fsService.On("GetVolumeFileSystem", mock.Anything).Return(nil, status.Error(codes.NotFound, "no fs")).Maybe()
+	events, cancel := s.bus.Subscribe("testVolume")
+	defer cancel()
+
+	srcFd := s.registerRawFile("src", []byte("0123456789"))
+	dstFd := s.registerRawFile("dst", []byte("XXXXXXXXXX"))
+
+	reply, err := s.server.CopyFileRange(testAuthedCtx("test-user"), &proto.CopyFileRangeRequest{
+		Volume: "testVolume", FdIn: srcFd, OffIn: 2, FdOut: dstFd, OffOut: 5,
+		Length: 3, SessionId: s.sessionID,
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.OK), reply.Status)
+	s.Equal(uint64(3), reply.BytesCopied)
+
+	select {
+	case ev := <-events:
+		s.Equal("dst", ev.Path)
+	case <-time.After(time.Second):
+		s.Fail("expected a mutation event for the copy destination")
+	}
+}
+
+func (s *RpcFileServerTestSuite) TestCopyFileRange_BadFd() {
+	srcFd := s.registerRawFile("src2", []byte("data"))
+	reply, err := s.server.CopyFileRange(testAuthedCtx("test-user"), &proto.CopyFileRangeRequest{
+		Volume: "testVolume", FdIn: srcFd, FdOut: 9999, Length: 4, SessionId: s.sessionID,
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.EBADF), reply.Status)
+}
+
+func (s *RpcFileServerTestSuite) TestCopyFileRange_NonzeroFlags_EINVAL() {
+	srcFd := s.registerRawFile("src3", []byte("data"))
+	dstFd := s.registerRawFile("dst3", []byte("XXXX")) // distinct fd: without the gate this copy would SUCCEED
+	reply, err := s.server.CopyFileRange(testAuthedCtx("test-user"), &proto.CopyFileRangeRequest{
+		Volume: "testVolume", FdIn: srcFd, FdOut: dstFd, Length: 1, Flags: 1, SessionId: s.sessionID,
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.EINVAL), reply.Status)
+	s.Equal(uint64(0), reply.BytesCopied) // gate fires before any copy
+}
+
+func (s *RpcFileServerTestSuite) TestLseek_DataAndPastEOF() {
+	fd := s.registerRawFile("lf", []byte("0123456789"))
+
+	reply, err := s.server.Lseek(testAuthedCtx("test-user"), &proto.LseekRequest{
+		Volume: "testVolume", Fd: fd, Offset: 0, Whence: uint32(unix.SEEK_DATA), SessionId: s.sessionID,
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.OK), reply.Status)
+	s.Equal(uint64(0), reply.Offset)
+
+	reply, err = s.server.Lseek(testAuthedCtx("test-user"), &proto.LseekRequest{
+		Volume: "testVolume", Fd: fd, Offset: 100, Whence: uint32(unix.SEEK_DATA), SessionId: s.sessionID,
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.Status(syscall.ENXIO)), reply.Status)
+}
+
+func (s *RpcFileServerTestSuite) TestLseek_BadWhence_EINVAL() {
+	fd := s.registerRawFile("lf2", []byte("x"))
+	reply, err := s.server.Lseek(testAuthedCtx("test-user"), &proto.LseekRequest{
+		Volume: "testVolume", Fd: fd, Whence: 0 /* SEEK_SET — kernel never sends it */, SessionId: s.sessionID,
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.EINVAL), reply.Status)
+}
+
+func (s *RpcFileServerTestSuite) TestLseek_BadFd() {
+	reply, err := s.server.Lseek(testAuthedCtx("test-user"), &proto.LseekRequest{
+		Volume: "testVolume", Fd: 9999, Whence: uint32(unix.SEEK_DATA), SessionId: s.sessionID,
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.EBADF), reply.Status)
 }
 
 func TestRpcFileServerTestSuite(t *testing.T) {
