@@ -134,6 +134,10 @@ func (s *CopyRangeE2ESuite) TestXattrRoundTrip() {
 	s.Require().NoError(err)
 	s.Equal([]byte("v1"), buf[:n])
 
+	// XATTR_CREATE on an existing attr must round-trip EEXIST.
+	err = unix.Setxattr(p, "user.e2e", []byte("v2"), unix.XATTR_CREATE)
+	s.Require().ErrorIs(err, unix.EEXIST)
+
 	n, err = unix.Listxattr(p, buf)
 	s.Require().NoError(err)
 	s.Contains(string(buf[:n]), "user.e2e")

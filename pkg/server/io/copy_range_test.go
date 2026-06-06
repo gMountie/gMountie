@@ -1,6 +1,7 @@
 package io
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -159,6 +160,12 @@ func (s *CopyRangeSuite) TestLseekSparseHole() {
 	off, st = Lseek(f, 4096, unix.SEEK_DATA)
 	s.Equal(fuse.OK, st)
 	s.Equal(uint64(8192), off)
+}
+
+func (s *CopyRangeSuite) TestRangesOverlapSaturates() {
+	s.True(rangesOverlap(math.MaxUint64-1, 0, 4))   // would wrap without the guard
+	s.True(rangesOverlap(0, math.MaxUint64-1, 4))
+	s.False(rangesOverlap(0, 8192, 4096))           // disjoint stays false
 }
 
 // A non-RawFdFile on either side must route CopyFileRange through the

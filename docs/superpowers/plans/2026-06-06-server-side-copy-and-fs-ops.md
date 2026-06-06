@@ -84,8 +84,8 @@ message SetXAttrRequest {
   string attribute = 4;
   bytes data = 5;
   uint32 flags = 6;       // XATTR_CREATE / XATTR_REPLACE
-  string session_id = 7;
-  string request_id = 8;
+  string request_id = 7;
+  string session_id = 8;
 }
 
 message SetXAttrReply {
@@ -97,8 +97,8 @@ message RemoveXAttrRequest {
   Caller caller = 2;
   string path = 3;
   string attribute = 4;
-  string session_id = 5;
-  string request_id = 6;
+  string request_id = 5;
+  string session_id = 6;
 }
 
 message RemoveXAttrReply {
