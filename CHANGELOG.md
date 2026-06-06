@@ -14,6 +14,7 @@ The work that will ship in the next `v0.3.0-alpha.x` cut. Tracks `develop`.
 - **Streaming Read/Write + Compound metadata batching (Phase 3).** `Read` and `Write` are now streaming RPCs (no unary frame cap); `Compound` batches 100 `GetAttr` into one RTT.
 - **Observability foundations (Phase 2).** Prometheus metrics on server and client, request-id-propagating log fields, gRPC health protocol, `/healthz` / `/readyz` / `/version` HTTP endpoints.
 - **Sequential readahead + small-write coalescing (Phase 3).** Detected per-fd, contiguous-only — no speculation, no write-back semantics.
+- **Server TLS leaf live-reload.** Both the gRPC and ops listeners pick up a renewed cert+key from disk at the next handshake (stat-stamped `GetCertificate`, fail-open to the last good pair) — cert-manager-style rotation no longer needs a restart, and existing sessions are never disturbed. Note for fingerprint-pinning setups: replacing the cert files changes the fingerprint clients must pin; nothing changes unless you replace the files.
 
 ### ⚠ Breaking changes
 
