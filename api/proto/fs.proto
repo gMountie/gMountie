@@ -274,6 +274,45 @@ message GetXAttrReply {
   int32 status = 2;
 }
 
+message SetXAttrRequest {
+  string volume = 1;
+  Caller caller = 2;
+  string path = 3;
+  string attribute = 4;
+  bytes data = 5;
+  uint32 flags = 6;       // XATTR_CREATE / XATTR_REPLACE
+  string request_id = 7;
+  string session_id = 8;
+}
+
+message SetXAttrReply {
+  int32 status = 1;
+}
+
+message RemoveXAttrRequest {
+  string volume = 1;
+  Caller caller = 2;
+  string path = 3;
+  string attribute = 4;
+  string request_id = 5;
+  string session_id = 6;
+}
+
+message RemoveXAttrReply {
+  int32 status = 1;
+}
+
+message ListXAttrRequest {
+  string volume = 1;
+  Caller caller = 2;
+  string path = 3;
+}
+
+message ListXAttrReply {
+  repeated string attributes = 1;
+  int32 status = 2;
+}
+
 // CompoundOp carries a single read-only metadata op inside a Compound batch.
 // The set is intentionally limited to ops with no idempotency / session
 // requirements (no request_id / session_id fields). Per NFSv4 Compound
@@ -328,6 +367,9 @@ service RpcFs {
   rpc Readlink (ReadlinkRequest) returns (ReadlinkReply);
   rpc Symlink (SymlinkRequest) returns (SymlinkReply);
   rpc GetXAttr (GetXAttrRequest) returns (GetXAttrReply);
+  rpc SetXAttr (SetXAttrRequest) returns (SetXAttrReply);
+  rpc RemoveXAttr (RemoveXAttrRequest) returns (RemoveXAttrReply);
+  rpc ListXAttr (ListXAttrRequest) returns (ListXAttrReply);
   rpc Compound (CompoundRequest) returns (CompoundBatch);
   rpc GetAttrIfChanged (GetAttrIfChangedRequest) returns (GetAttrIfChangedReply);
   rpc Subscribe (SubscribeRequest) returns (stream SubscribeEvent);

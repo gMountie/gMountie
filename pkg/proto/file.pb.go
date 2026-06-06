@@ -1633,6 +1633,326 @@ func (x *AllocateReply) GetStatus() int32 {
 	return 0
 }
 
+type CopyFileRangeRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Volume        string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
+	Caller        *Caller                `protobuf:"bytes,2,opt,name=caller,proto3" json:"caller,omitempty"`
+	FdIn          uint64                 `protobuf:"varint,3,opt,name=fd_in,json=fdIn,proto3" json:"fd_in,omitempty"` // open server handle, source
+	PathIn        string                 `protobuf:"bytes,4,opt,name=path_in,json=pathIn,proto3" json:"path_in,omitempty"`
+	OffIn         uint64                 `protobuf:"varint,5,opt,name=off_in,json=offIn,proto3" json:"off_in,omitempty"`
+	FdOut         uint64                 `protobuf:"varint,6,opt,name=fd_out,json=fdOut,proto3" json:"fd_out,omitempty"` // open server handle, destination
+	PathOut       string                 `protobuf:"bytes,7,opt,name=path_out,json=pathOut,proto3" json:"path_out,omitempty"`
+	OffOut        uint64                 `protobuf:"varint,8,opt,name=off_out,json=offOut,proto3" json:"off_out,omitempty"`
+	Length        uint64                 `protobuf:"varint,9,opt,name=length,proto3" json:"length,omitempty"`
+	Flags         uint64                 `protobuf:"varint,10,opt,name=flags,proto3" json:"flags,omitempty"` // must be 0 (copy_file_range(2) contract)
+	SessionId     string                 `protobuf:"bytes,11,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CopyFileRangeRequest) Reset() {
+	*x = CopyFileRangeRequest{}
+	mi := &file_api_proto_file_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CopyFileRangeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CopyFileRangeRequest) ProtoMessage() {}
+
+func (x *CopyFileRangeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_file_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CopyFileRangeRequest.ProtoReflect.Descriptor instead.
+func (*CopyFileRangeRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_file_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *CopyFileRangeRequest) GetVolume() string {
+	if x != nil {
+		return x.Volume
+	}
+	return ""
+}
+
+func (x *CopyFileRangeRequest) GetCaller() *Caller {
+	if x != nil {
+		return x.Caller
+	}
+	return nil
+}
+
+func (x *CopyFileRangeRequest) GetFdIn() uint64 {
+	if x != nil {
+		return x.FdIn
+	}
+	return 0
+}
+
+func (x *CopyFileRangeRequest) GetPathIn() string {
+	if x != nil {
+		return x.PathIn
+	}
+	return ""
+}
+
+func (x *CopyFileRangeRequest) GetOffIn() uint64 {
+	if x != nil {
+		return x.OffIn
+	}
+	return 0
+}
+
+func (x *CopyFileRangeRequest) GetFdOut() uint64 {
+	if x != nil {
+		return x.FdOut
+	}
+	return 0
+}
+
+func (x *CopyFileRangeRequest) GetPathOut() string {
+	if x != nil {
+		return x.PathOut
+	}
+	return ""
+}
+
+func (x *CopyFileRangeRequest) GetOffOut() uint64 {
+	if x != nil {
+		return x.OffOut
+	}
+	return 0
+}
+
+func (x *CopyFileRangeRequest) GetLength() uint64 {
+	if x != nil {
+		return x.Length
+	}
+	return 0
+}
+
+func (x *CopyFileRangeRequest) GetFlags() uint64 {
+	if x != nil {
+		return x.Flags
+	}
+	return 0
+}
+
+func (x *CopyFileRangeRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+type CopyFileRangeReply struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BytesCopied   uint64                 `protobuf:"varint,1,opt,name=bytes_copied,json=bytesCopied,proto3" json:"bytes_copied,omitempty"`
+	Status        int32                  `protobuf:"varint,2,opt,name=status,proto3" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CopyFileRangeReply) Reset() {
+	*x = CopyFileRangeReply{}
+	mi := &file_api_proto_file_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CopyFileRangeReply) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CopyFileRangeReply) ProtoMessage() {}
+
+func (x *CopyFileRangeReply) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_file_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CopyFileRangeReply.ProtoReflect.Descriptor instead.
+func (*CopyFileRangeReply) Descriptor() ([]byte, []int) {
+	return file_api_proto_file_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *CopyFileRangeReply) GetBytesCopied() uint64 {
+	if x != nil {
+		return x.BytesCopied
+	}
+	return 0
+}
+
+func (x *CopyFileRangeReply) GetStatus() int32 {
+	if x != nil {
+		return x.Status
+	}
+	return 0
+}
+
+type LseekRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Volume        string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
+	Caller        *Caller                `protobuf:"bytes,2,opt,name=caller,proto3" json:"caller,omitempty"`
+	Fd            uint64                 `protobuf:"varint,3,opt,name=fd,proto3" json:"fd,omitempty"`
+	Path          string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
+	Offset        uint64                 `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
+	Whence        uint32                 `protobuf:"varint,6,opt,name=whence,proto3" json:"whence,omitempty"` // SEEK_DATA | SEEK_HOLE only
+	SessionId     string                 `protobuf:"bytes,7,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LseekRequest) Reset() {
+	*x = LseekRequest{}
+	mi := &file_api_proto_file_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LseekRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LseekRequest) ProtoMessage() {}
+
+func (x *LseekRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_file_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LseekRequest.ProtoReflect.Descriptor instead.
+func (*LseekRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_file_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *LseekRequest) GetVolume() string {
+	if x != nil {
+		return x.Volume
+	}
+	return ""
+}
+
+func (x *LseekRequest) GetCaller() *Caller {
+	if x != nil {
+		return x.Caller
+	}
+	return nil
+}
+
+func (x *LseekRequest) GetFd() uint64 {
+	if x != nil {
+		return x.Fd
+	}
+	return 0
+}
+
+func (x *LseekRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *LseekRequest) GetOffset() uint64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *LseekRequest) GetWhence() uint32 {
+	if x != nil {
+		return x.Whence
+	}
+	return 0
+}
+
+func (x *LseekRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+type LseekReply struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Offset        uint64                 `protobuf:"varint,1,opt,name=offset,proto3" json:"offset,omitempty"`
+	Status        int32                  `protobuf:"varint,2,opt,name=status,proto3" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LseekReply) Reset() {
+	*x = LseekReply{}
+	mi := &file_api_proto_file_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LseekReply) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LseekReply) ProtoMessage() {}
+
+func (x *LseekReply) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_file_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LseekReply.ProtoReflect.Descriptor instead.
+func (*LseekReply) Descriptor() ([]byte, []int) {
+	return file_api_proto_file_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *LseekReply) GetOffset() uint64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *LseekReply) GetStatus() int32 {
+	if x != nil {
+		return x.Status
+	}
+	return 0
+}
+
 var File_api_proto_file_proto protoreflect.FileDescriptor
 
 const file_api_proto_file_proto_rawDesc = "" +
@@ -1774,7 +2094,37 @@ const file_api_proto_file_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\b \x01(\tR\tsessionId\"'\n" +
 	"\rAllocateReply\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\x05R\x06status2\xc6\x05\n" +
+	"\x06status\x18\x01 \x01(\x05R\x06status\"\xb5\x02\n" +
+	"\x14CopyFileRangeRequest\x12\x16\n" +
+	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
+	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x13\n" +
+	"\x05fd_in\x18\x03 \x01(\x04R\x04fdIn\x12\x17\n" +
+	"\apath_in\x18\x04 \x01(\tR\x06pathIn\x12\x15\n" +
+	"\x06off_in\x18\x05 \x01(\x04R\x05offIn\x12\x15\n" +
+	"\x06fd_out\x18\x06 \x01(\x04R\x05fdOut\x12\x19\n" +
+	"\bpath_out\x18\a \x01(\tR\apathOut\x12\x17\n" +
+	"\aoff_out\x18\b \x01(\x04R\x06offOut\x12\x16\n" +
+	"\x06length\x18\t \x01(\x04R\x06length\x12\x14\n" +
+	"\x05flags\x18\n" +
+	" \x01(\x04R\x05flags\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\v \x01(\tR\tsessionId\"O\n" +
+	"\x12CopyFileRangeReply\x12!\n" +
+	"\fbytes_copied\x18\x01 \x01(\x04R\vbytesCopied\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\x05R\x06status\"\xc3\x01\n" +
+	"\fLseekRequest\x12\x16\n" +
+	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
+	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x0e\n" +
+	"\x02fd\x18\x03 \x01(\x04R\x02fd\x12\x12\n" +
+	"\x04path\x18\x04 \x01(\tR\x04path\x12\x16\n" +
+	"\x06offset\x18\x05 \x01(\x04R\x06offset\x12\x16\n" +
+	"\x06whence\x18\x06 \x01(\rR\x06whence\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\a \x01(\tR\tsessionId\"<\n" +
+	"\n" +
+	"LseekReply\x12\x16\n" +
+	"\x06offset\x18\x01 \x01(\x04R\x06offset\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\x05R\x06status2\xcc\x06\n" +
 	"\aRpcFile\x122\n" +
 	"\x04Open\x12\x15.gmountie.OpenRequest\x1a\x13.gmountie.OpenReply\x128\n" +
 	"\x06Create\x12\x17.gmountie.CreateRequest\x1a\x15.gmountie.CreateReply\x124\n" +
@@ -1787,7 +2137,9 @@ const file_api_proto_file_proto_rawDesc = "" +
 	"\x05GetLk\x12\x16.gmountie.GetLkRequest\x1a\x14.gmountie.GetLkReply\x125\n" +
 	"\x05SetLk\x12\x16.gmountie.SetLkRequest\x1a\x14.gmountie.SetLkReply\x128\n" +
 	"\x06SetLkw\x12\x17.gmountie.SetLkwRequest\x1a\x15.gmountie.SetLkwReply\x12>\n" +
-	"\bAllocate\x12\x19.gmountie.AllocateRequest\x1a\x17.gmountie.AllocateReplyB\vZ\tpkg/protob\x06proto3"
+	"\bAllocate\x12\x19.gmountie.AllocateRequest\x1a\x17.gmountie.AllocateReply\x12M\n" +
+	"\rCopyFileRange\x12\x1e.gmountie.CopyFileRangeRequest\x1a\x1c.gmountie.CopyFileRangeReply\x125\n" +
+	"\x05Lseek\x12\x16.gmountie.LseekRequest\x1a\x14.gmountie.LseekReplyB\vZ\tpkg/protob\x06proto3"
 
 var (
 	file_api_proto_file_proto_rawDescOnce sync.Once
@@ -1801,7 +2153,7 @@ func file_api_proto_file_proto_rawDescGZIP() []byte {
 	return file_api_proto_file_proto_rawDescData
 }
 
-var file_api_proto_file_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
+var file_api_proto_file_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_api_proto_file_proto_goTypes = []any{
 	(*FileLock)(nil),             // 0: gmountie.FileLock
 	(*OpenRequest)(nil),          // 1: gmountie.OpenRequest
@@ -1828,48 +2180,58 @@ var file_api_proto_file_proto_goTypes = []any{
 	(*SetLkwReply)(nil),          // 22: gmountie.SetLkwReply
 	(*AllocateRequest)(nil),      // 23: gmountie.AllocateRequest
 	(*AllocateReply)(nil),        // 24: gmountie.AllocateReply
-	(*Caller)(nil),               // 25: gmountie.Caller
-	(*Attr)(nil),                 // 26: gmountie.Attr
+	(*CopyFileRangeRequest)(nil), // 25: gmountie.CopyFileRangeRequest
+	(*CopyFileRangeReply)(nil),   // 26: gmountie.CopyFileRangeReply
+	(*LseekRequest)(nil),         // 27: gmountie.LseekRequest
+	(*LseekReply)(nil),           // 28: gmountie.LseekReply
+	(*Caller)(nil),               // 29: gmountie.Caller
+	(*Attr)(nil),                 // 30: gmountie.Attr
 }
 var file_api_proto_file_proto_depIdxs = []int32{
-	25, // 0: gmountie.OpenRequest.caller:type_name -> gmountie.Caller
-	25, // 1: gmountie.CreateRequest.caller:type_name -> gmountie.Caller
-	26, // 2: gmountie.CreateReply.attributes:type_name -> gmountie.Attr
-	26, // 3: gmountie.WriteAndFlushReply.final_attr:type_name -> gmountie.Attr
+	29, // 0: gmountie.OpenRequest.caller:type_name -> gmountie.Caller
+	29, // 1: gmountie.CreateRequest.caller:type_name -> gmountie.Caller
+	30, // 2: gmountie.CreateReply.attributes:type_name -> gmountie.Attr
+	30, // 3: gmountie.WriteAndFlushReply.final_attr:type_name -> gmountie.Attr
 	0,  // 4: gmountie.GetLkRequest.lk:type_name -> gmountie.FileLock
 	0,  // 5: gmountie.GetLkReply.lk:type_name -> gmountie.FileLock
 	0,  // 6: gmountie.SetLkRequest.lk:type_name -> gmountie.FileLock
 	0,  // 7: gmountie.SetLkwRequest.lk:type_name -> gmountie.FileLock
-	25, // 8: gmountie.AllocateRequest.caller:type_name -> gmountie.Caller
-	1,  // 9: gmountie.RpcFile.Open:input_type -> gmountie.OpenRequest
-	3,  // 10: gmountie.RpcFile.Create:input_type -> gmountie.CreateRequest
-	5,  // 11: gmountie.RpcFile.Read:input_type -> gmountie.ReadRequest
-	7,  // 12: gmountie.RpcFile.Write:input_type -> gmountie.WriteFrame
-	11, // 13: gmountie.RpcFile.Release:input_type -> gmountie.ReleaseRequest
-	9,  // 14: gmountie.RpcFile.Fsync:input_type -> gmountie.FsyncRequest
-	13, // 15: gmountie.RpcFile.Flush:input_type -> gmountie.FlushRequest
-	15, // 16: gmountie.RpcFile.WriteAndFlush:input_type -> gmountie.WriteAndFlushRequest
-	17, // 17: gmountie.RpcFile.GetLk:input_type -> gmountie.GetLkRequest
-	19, // 18: gmountie.RpcFile.SetLk:input_type -> gmountie.SetLkRequest
-	21, // 19: gmountie.RpcFile.SetLkw:input_type -> gmountie.SetLkwRequest
-	23, // 20: gmountie.RpcFile.Allocate:input_type -> gmountie.AllocateRequest
-	2,  // 21: gmountie.RpcFile.Open:output_type -> gmountie.OpenReply
-	4,  // 22: gmountie.RpcFile.Create:output_type -> gmountie.CreateReply
-	6,  // 23: gmountie.RpcFile.Read:output_type -> gmountie.ReadFrame
-	8,  // 24: gmountie.RpcFile.Write:output_type -> gmountie.WriteReply
-	12, // 25: gmountie.RpcFile.Release:output_type -> gmountie.ReleaseReply
-	10, // 26: gmountie.RpcFile.Fsync:output_type -> gmountie.FsyncReply
-	14, // 27: gmountie.RpcFile.Flush:output_type -> gmountie.FlushReply
-	16, // 28: gmountie.RpcFile.WriteAndFlush:output_type -> gmountie.WriteAndFlushReply
-	18, // 29: gmountie.RpcFile.GetLk:output_type -> gmountie.GetLkReply
-	20, // 30: gmountie.RpcFile.SetLk:output_type -> gmountie.SetLkReply
-	22, // 31: gmountie.RpcFile.SetLkw:output_type -> gmountie.SetLkwReply
-	24, // 32: gmountie.RpcFile.Allocate:output_type -> gmountie.AllocateReply
-	21, // [21:33] is the sub-list for method output_type
-	9,  // [9:21] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	29, // 8: gmountie.AllocateRequest.caller:type_name -> gmountie.Caller
+	29, // 9: gmountie.CopyFileRangeRequest.caller:type_name -> gmountie.Caller
+	29, // 10: gmountie.LseekRequest.caller:type_name -> gmountie.Caller
+	1,  // 11: gmountie.RpcFile.Open:input_type -> gmountie.OpenRequest
+	3,  // 12: gmountie.RpcFile.Create:input_type -> gmountie.CreateRequest
+	5,  // 13: gmountie.RpcFile.Read:input_type -> gmountie.ReadRequest
+	7,  // 14: gmountie.RpcFile.Write:input_type -> gmountie.WriteFrame
+	11, // 15: gmountie.RpcFile.Release:input_type -> gmountie.ReleaseRequest
+	9,  // 16: gmountie.RpcFile.Fsync:input_type -> gmountie.FsyncRequest
+	13, // 17: gmountie.RpcFile.Flush:input_type -> gmountie.FlushRequest
+	15, // 18: gmountie.RpcFile.WriteAndFlush:input_type -> gmountie.WriteAndFlushRequest
+	17, // 19: gmountie.RpcFile.GetLk:input_type -> gmountie.GetLkRequest
+	19, // 20: gmountie.RpcFile.SetLk:input_type -> gmountie.SetLkRequest
+	21, // 21: gmountie.RpcFile.SetLkw:input_type -> gmountie.SetLkwRequest
+	23, // 22: gmountie.RpcFile.Allocate:input_type -> gmountie.AllocateRequest
+	25, // 23: gmountie.RpcFile.CopyFileRange:input_type -> gmountie.CopyFileRangeRequest
+	27, // 24: gmountie.RpcFile.Lseek:input_type -> gmountie.LseekRequest
+	2,  // 25: gmountie.RpcFile.Open:output_type -> gmountie.OpenReply
+	4,  // 26: gmountie.RpcFile.Create:output_type -> gmountie.CreateReply
+	6,  // 27: gmountie.RpcFile.Read:output_type -> gmountie.ReadFrame
+	8,  // 28: gmountie.RpcFile.Write:output_type -> gmountie.WriteReply
+	12, // 29: gmountie.RpcFile.Release:output_type -> gmountie.ReleaseReply
+	10, // 30: gmountie.RpcFile.Fsync:output_type -> gmountie.FsyncReply
+	14, // 31: gmountie.RpcFile.Flush:output_type -> gmountie.FlushReply
+	16, // 32: gmountie.RpcFile.WriteAndFlush:output_type -> gmountie.WriteAndFlushReply
+	18, // 33: gmountie.RpcFile.GetLk:output_type -> gmountie.GetLkReply
+	20, // 34: gmountie.RpcFile.SetLk:output_type -> gmountie.SetLkReply
+	22, // 35: gmountie.RpcFile.SetLkw:output_type -> gmountie.SetLkwReply
+	24, // 36: gmountie.RpcFile.Allocate:output_type -> gmountie.AllocateReply
+	26, // 37: gmountie.RpcFile.CopyFileRange:output_type -> gmountie.CopyFileRangeReply
+	28, // 38: gmountie.RpcFile.Lseek:output_type -> gmountie.LseekReply
+	25, // [25:39] is the sub-list for method output_type
+	11, // [11:25] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_file_proto_init() }
@@ -1885,7 +2247,7 @@ func file_api_proto_file_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_file_proto_rawDesc), len(file_api_proto_file_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   25,
+			NumMessages:   29,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
