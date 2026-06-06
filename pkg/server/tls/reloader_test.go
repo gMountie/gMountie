@@ -117,6 +117,46 @@ func (s *ReloaderSuite) TestStampChangesOnAtomicRotation() {
 	s.True(after.equal(after), "a stamp must equal itself")
 }
 
+func (s *ReloaderSuite) TestKeepsServingOnMismatchedPair() {
+	dir := s.T().TempDir()
+	certPath, keyPath := s.writePair(dir, "mismatch.example.com")
+	r, err := NewReloader(certPath, keyPath)
+	s.Require().NoError(err)
+	before, err := r.GetCertificate(nil)
+	s.Require().NoError(err)
+
+	// Rotate ONLY the cert (a torn, non-atomic swap): pair now mismatched.
+	certPEM, _, err := Generate("mismatch.example.com")
+	s.Require().NoError(err)
+	s.writeAtomic(certPath, certPEM)
+
+	got, err := r.GetCertificate(nil)
+	s.Require().NoError(err, "fail-open: mismatch must not fail the handshake")
+	s.Equal(s.serialOf(before), s.serialOf(got), "must keep the last good pair")
+
+	// Completing the rotation (matching key) recovers on the next handshake.
+	s.writePair(dir, "mismatch.example.com")
+	after, err := r.GetCertificate(nil)
+	s.Require().NoError(err)
+	s.NotEqual(s.serialOf(before), s.serialOf(after))
+}
+
+func (s *ReloaderSuite) TestKeepsServingOnMissingFile() {
+	dir := s.T().TempDir()
+	certPath, keyPath := s.writePair(dir, "missing.example.com")
+	r, err := NewReloader(certPath, keyPath)
+	s.Require().NoError(err)
+	before, err := r.GetCertificate(nil)
+	s.Require().NoError(err)
+
+	s.Require().NoError(os.Remove(certPath))
+
+	got, err := r.GetCertificate(nil)
+	s.Require().NoError(err, "fail-open: missing file must not fail the handshake")
+	s.Equal(s.serialOf(before), s.serialOf(got))
+	_ = keyPath
+}
+
 func (s *ReloaderSuite) TestWarnOnceRearmsAfterTransientStatBlip() {
 	dir := s.T().TempDir()
 	certPath, keyPath := s.writePair(dir, "blip.example.com")
