@@ -80,6 +80,12 @@ http_body() { printf '%s' "UNUSED"; }
 assert_eq "resolve_version honors GMOUNTIE_VERSION" "v0.9.9" \
   "$(GMOUNTIE_VERSION=v0.9.9 resolve_version)"
 
+# choose_bindir <BIN_DIR env> <usrlocal_writable:1|0> <have_sudo:1|0>
+assert_eq "choose_bindir honors BIN_DIR" "/opt/bin" "$(choose_bindir /opt/bin 0 0)"
+assert_eq "choose_bindir writable usrlocal" "/usr/local/bin" "$(choose_bindir '' 1 0)"
+assert_eq "choose_bindir sudo path" "sudo:/usr/local/bin" "$(choose_bindir '' 0 1)"
+assert_eq "choose_bindir user fallback" "$HOME/.local/bin" "$(choose_bindir '' 0 0)"
+
 # ---- END TESTS ----
 
 if [ "$fails" -gt 0 ]; then

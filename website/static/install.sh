@@ -125,6 +125,15 @@ resolve_version() {
   die "could not resolve a release version (set GMOUNTIE_VERSION to pin one)"
 }
 
+# choose_bindir <BIN_DIR> <usrlocal_writable:1|0> <have_sudo:1|0> -> target dir.
+# A "sudo:" prefix signals the caller to install via sudo into /usr/local/bin.
+choose_bindir() {
+  if [ -n "$1" ]; then printf '%s' "$1"; return 0; fi
+  if [ "$2" = 1 ]; then printf '/usr/local/bin'; return 0; fi
+  if [ "$3" = 1 ]; then printf 'sudo:/usr/local/bin'; return 0; fi
+  printf '%s/.local/bin' "$HOME"
+}
+
 main() {
   die "main not implemented yet"
 }
