@@ -47,6 +47,16 @@ sha_for() {
   printf '%s' "$_sha"
 }
 
+# tag_from_latest_url <effective url of /releases/latest> -> tag.
+# A real stable release redirects to .../releases/tag/<tag>; with no stable
+# release GitHub serves .../releases (no /tag/), so we report failure.
+tag_from_latest_url() {
+  case "$1" in
+    */releases/tag/*) printf '%s' "${1##*/releases/tag/}" ;;
+    *) return 1 ;;
+  esac
+}
+
 main() {
   die "main not implemented yet"
 }

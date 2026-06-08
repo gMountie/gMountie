@@ -52,6 +52,12 @@ assert_eq "sha_for linux/amd64" \
   "$(sha_for "$checksums" gmountie_0.15.0-alpha.0_linux_amd64.tar.gz)"
 assert_fails "sha_for missing file" sha_for "$checksums" nope.tar.gz
 
+assert_eq "tag_from_latest_url stable tag" "v1.2.0" \
+  "$(tag_from_latest_url https://github.com/gMountie/gMountie/releases/tag/v1.2.0)"
+# When no stable release exists the redirect lands on the list page -> no tag.
+assert_fails "tag_from_latest_url list page" \
+  tag_from_latest_url https://github.com/gMountie/gMountie/releases
+
 # ---- END TESTS ----
 
 if [ "$fails" -gt 0 ]; then
