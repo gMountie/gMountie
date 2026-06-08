@@ -58,6 +58,12 @@ assert_eq "tag_from_latest_url stable tag" "v1.2.0" \
 assert_fails "tag_from_latest_url list page" \
   tag_from_latest_url https://github.com/gMountie/gMountie/releases
 
+# Minimal shape of GET /repos/.../releases (newest first), no jq available.
+releases_json='[{"tag_name":"v0.15.0-alpha.0","name":"x"},{"tag_name":"v0.14.0-alpha.0"}]'
+assert_eq "tag_from_releases_json newest" "v0.15.0-alpha.0" \
+  "$(tag_from_releases_json "$releases_json")"
+assert_fails "tag_from_releases_json empty" tag_from_releases_json '[]'
+
 # ---- END TESTS ----
 
 if [ "$fails" -gt 0 ]; then
