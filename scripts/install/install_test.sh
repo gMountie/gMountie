@@ -31,6 +31,12 @@ assert_eq "normalize_os linux"  "linux"  "$(normalize_os Linux)"
 assert_eq "normalize_os darwin" "darwin" "$(normalize_os Darwin)"
 assert_fails "normalize_os rejects windows" normalize_os MINGW64_NT
 
+assert_eq "normalize_arch amd64 (x86_64)"  "amd64" "$(normalize_arch x86_64)"
+assert_eq "normalize_arch amd64 (amd64)"   "amd64" "$(normalize_arch amd64)"
+assert_eq "normalize_arch arm64 (aarch64)" "arm64" "$(normalize_arch aarch64)"
+assert_eq "normalize_arch arm64 (arm64)"   "arm64" "$(normalize_arch arm64)"
+assert_fails "normalize_arch rejects i386" normalize_arch i386
+
 # ---- END TESTS ----
 
 if [ "$fails" -gt 0 ]; then

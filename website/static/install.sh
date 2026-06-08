@@ -19,6 +19,15 @@ normalize_os() {
   esac
 }
 
+# normalize_arch <uname -m output> -> amd64|arm64 (exit 1 if unsupported)
+normalize_arch() {
+  case "$1" in
+    x86_64 | amd64) printf 'amd64' ;;
+    aarch64 | arm64) printf 'arm64' ;;
+    *) return 1 ;;
+  esac
+}
+
 main() {
   die "main not implemented yet"
 }
