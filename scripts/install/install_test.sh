@@ -47,6 +47,11 @@ assert_eq "pick_archive darwin/arm64" \
   "$(pick_archive "$checksums" darwin arm64)"
 assert_fails "pick_archive unknown platform" pick_archive "$checksums" plan9 mips
 
+assert_eq "sha_for linux/amd64" \
+  "1111111111111111111111111111111111111111111111111111111111111111" \
+  "$(sha_for "$checksums" gmountie_0.15.0-alpha.0_linux_amd64.tar.gz)"
+assert_fails "sha_for missing file" sha_for "$checksums" nope.tar.gz
+
 # ---- END TESTS ----
 
 if [ "$fails" -gt 0 ]; then
