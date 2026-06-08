@@ -135,7 +135,77 @@ choose_bindir() {
 }
 
 main() {
-  die "main not implemented yet"
+  have tar || die "tar is required"
+  { have curl || have wget; } || die "curl or wget is required"
+  { have sha256sum || have shasum; } || die "sha256sum or shasum is required"
+
+  os=$(normalize_os "$(uname -s)") || die "unsupported OS: $(uname -s)"
+  arch=$(normalize_arch "$(uname -m)") || die "unsupported arch: $(uname -m)"
+
+  tag=$(resolve_version)
+  printf 'install: gmountie %s (%s/%s)\n' "$tag" "$os" "$arch" >&2
+
+  base="$GH/$REPO/releases/download/$tag"
+  checksums=$(http_body "$base/checksums.txt") || die "failed to fetch checksums.txt"
+  archive=$(pick_archive "$checksums" "$os" "$arch") \
+    || die "no $os/$arch archive in this release"
+  want=$(sha_for "$checksums" "$archive") || die "no checksum for $archive"
+
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+  http_body "$base/$archive" > "$tmp/$archive" || die "download failed"
+
+  got=$(sha256_of "$tmp/$archive")
+  [ "$got" = "$want" ] || die "checksum mismatch for $archive (got $got, want $want)"
+
+  if have cosign; then
+    if http_body "$base/checksums.txt.pem" > "$tmp/checksums.txt.pem" 2>/dev/null \
+       && http_body "$base/checksums.txt.sig" > "$tmp/checksums.txt.sig" 2>/dev/null; then
+      printf '%s' "$checksums" > "$tmp/checksums.txt"
+      # Pin the issuer to GitHub Actions' OIDC and scope the signer identity to
+      # this repo, so a valid signature from some *other* Fulcio identity is not
+      # accepted. (Permissive on workflow file / ref to avoid brittleness across
+      # release-workflow renames; tighten to release.yml@refs/tags/$tag later.)
+      cosign verify-blob \
+        --certificate "$tmp/checksums.txt.pem" \
+        --signature "$tmp/checksums.txt.sig" \
+        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+        --certificate-identity-regexp "^https://github.com/gMountie/gMountie/" \
+        "$tmp/checksums.txt" >/dev/null 2>&1 \
+        || die "cosign signature verification failed"
+      printf 'install: cosign signature verified\n' >&2
+    fi
+  else
+    printf 'install: cosign not found; skipping signature verification (checksum verified)\n' >&2
+  fi
+
+  tar -xzf "$tmp/$archive" -C "$tmp" "$BIN_NAME" \
+    || die "could not extract $BIN_NAME from archive"
+
+  usrlocal_writable=0; [ -w /usr/local/bin ] && usrlocal_writable=1
+  have_sudo=0; have sudo && have_sudo=1
+  dir=$(choose_bindir "${BIN_DIR:-}" "$usrlocal_writable" "$have_sudo")
+
+  case "$dir" in
+    sudo:*)
+      target=${dir#sudo:}
+      printf 'install: using sudo to write %s/%s\n' "$target" "$BIN_NAME" >&2
+      sudo install -m 0755 "$tmp/$BIN_NAME" "$target/$BIN_NAME" || die "install failed"
+      ;;
+    *)
+      mkdir -p "$dir"
+      install -m 0755 "$tmp/$BIN_NAME" "$dir/$BIN_NAME" || die "install failed"
+      target=$dir
+      ;;
+  esac
+
+  printf 'install: installed %s to %s\n' "$BIN_NAME" "$target/$BIN_NAME" >&2
+  case ":$PATH:" in
+    *":$target:"*) : ;;
+    *) printf 'install: %s is not on PATH — add it: export PATH="%s:$PATH"\n' "$target" "$target" >&2 ;;
+  esac
+  "$target/$BIN_NAME" version >&2 || true
+  printf 'install: done — run `%s --help` to get started\n' "$BIN_NAME" >&2
 }
 
 if [ "${INSTALL_SH_SOURCED:-0}" != "1" ]; then
