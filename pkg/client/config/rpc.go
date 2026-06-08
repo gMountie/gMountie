@@ -56,6 +56,12 @@ const (
 	// Off by default. WAN users on bandwidth-constrained links should
 	// flip rpc.compression: snappy in their client config.
 	DefaultCompression = CompressionNone
+	// DefaultRpcRetryWindow is the total wall-clock budget for retrying a single
+	// FS operation through transient failures. Within it, attempts retry with a
+	// fresh per-attempt deadline; past it the last error reaches userspace. 0
+	// disables retrying (a single attempt — fail fast). Aligned with the server
+	// session grace period so transparent resume holds for the whole window.
+	DefaultRpcRetryWindow = 60 * time.Second
 )
 
 // Valid values for RpcConfig.Compression.
@@ -77,9 +83,11 @@ type ClientKeepaliveConfig struct {
 	PermitWithoutStream bool `mapstructure:"permit_without_stream"`
 }
 
-// RpcConfig holds per-RPC client-side timeouts and (in future plans) retry
-// tuning. Retry parameters are intentionally hardcoded in retry.go for now —
-// add config keys here only when we have evidence we need them.
+// RpcConfig holds per-RPC client-side timeouts and retry tuning for the FUSE
+// client. The per-attempt timeouts bound a single try; RetryWindow bounds how
+// long an op retries transient failures. Further retry knobs (attempt counts,
+// backoff) stay hardcoded in retry.go until there is evidence operators need
+// to tune them.
 type RpcConfig struct {
 	// TimeoutMeta bounds each metadata RPC (Lookup, GetAttr, Readdir, StatFs,
 	// Access, *XAttr, and the mutating metadata ops Mkdir/Rmdir/Rename/...).
@@ -112,6 +120,9 @@ type RpcConfig struct {
 	// snappy codec registered in pkg/server/grpc/snappy. Default "none" —
 	// see DefaultCompression for the why.
 	Compression string `mapstructure:"compression" validate:"oneof=none snappy"`
+	// RetryWindow bounds how long a single FS op retries transient failures
+	// (Unavailable / DeadlineExceeded) before the error surfaces. 0 = fail fast.
+	RetryWindow time.Duration `mapstructure:"retry_window" validate:"gte=0"`
 }
 
 // NewRpcConfig parses an RpcConfig from a viper sub-tree. A nil v yields
@@ -131,6 +142,7 @@ func NewRpcConfig(v *viper.Viper) (*RpcConfig, error) {
 			PermitWithoutStream: DefaultKeepalivePermitWithoutStream,
 		},
 		Compression: DefaultCompression,
+		RetryWindow: DefaultRpcRetryWindow,
 	}
 	if v == nil {
 		return cfg, nil
@@ -146,6 +158,7 @@ func NewRpcConfig(v *viper.Viper) (*RpcConfig, error) {
 	v.SetDefault("keepalive.timeout", DefaultKeepaliveTimeout)
 	v.SetDefault("keepalive.permit_without_stream", DefaultKeepalivePermitWithoutStream)
 	v.SetDefault("compression", DefaultCompression)
+	v.SetDefault("retry_window", DefaultRpcRetryWindow)
 	if err := v.UnmarshalExact(cfg, viper.DecodeHook(mapstructure.StringToTimeDurationHookFunc())); err != nil {
 		return nil, err
 	}
