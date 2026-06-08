@@ -7,6 +7,8 @@ set -u
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 INSTALL_SH_SOURCED=1 . "$here/../../website/static/install.sh"
 
+checksums=$(cat "$here/testdata/checksums.txt")
+
 fails=0
 assert_eq() { # desc expected actual
   if [ "$2" = "$3" ]; then
@@ -36,6 +38,14 @@ assert_eq "normalize_arch amd64 (amd64)"   "amd64" "$(normalize_arch amd64)"
 assert_eq "normalize_arch arm64 (aarch64)" "arm64" "$(normalize_arch aarch64)"
 assert_eq "normalize_arch arm64 (arm64)"   "arm64" "$(normalize_arch arm64)"
 assert_fails "normalize_arch rejects i386" normalize_arch i386
+
+assert_eq "pick_archive linux/amd64" \
+  "gmountie_0.15.0-alpha.0_linux_amd64.tar.gz" \
+  "$(pick_archive "$checksums" linux amd64)"
+assert_eq "pick_archive darwin/arm64" \
+  "gmountie_0.15.0-alpha.0_darwin_arm64.tar.gz" \
+  "$(pick_archive "$checksums" darwin arm64)"
+assert_fails "pick_archive unknown platform" pick_archive "$checksums" plan9 mips
 
 # ---- END TESTS ----
 

@@ -28,6 +28,18 @@ normalize_arch() {
   esac
 }
 
+# pick_archive <checksums.txt contents> <os> <arch> -> archive filename.
+# Reads the real artifact name from checksums.txt rather than reconstructing
+# it from the goreleaser name template. exit 1 if no matching line.
+pick_archive() {
+  _name=$(printf '%s\n' "$1" \
+    | grep -E "_$2_$3\.tar\.gz\$" \
+    | awk '{print $NF}' \
+    | head -n1)
+  [ -n "$_name" ] || return 1
+  printf '%s' "$_name"
+}
+
 main() {
   die "main not implemented yet"
 }
