@@ -53,6 +53,7 @@ func newUnconnectedClient(cfg *config.Config, endpoint string) (Client, error) {
 
 	if cfg.Rpc != nil {
 		opts = append(opts, WithTimeouts(cfg.Rpc.TimeoutMeta, cfg.Rpc.TimeoutIO))
+		opts = append(opts, WithRetryWindow(cfg.Rpc.RetryWindow))
 		opts = append(opts, WithReadahead(cfg.Rpc.ReadaheadChunkBytes, cfg.Rpc.ReadaheadThreshold, cfg.Rpc.ReadaheadWindow))
 		opts = append(opts, WithWriteCoalesce(cfg.Rpc.WriteCoalesceBytes))
 		// Wire keepalive + message-size caps from RpcConfig. Matching the
