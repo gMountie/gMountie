@@ -57,6 +57,18 @@ tag_from_latest_url() {
   esac
 }
 
+# tag_from_releases_json <body of GET /repos/<repo>/releases> -> first tag_name.
+# The API returns releases newest-first (including prereleases); we take the
+# first "tag_name". Avoids a jq dependency. exit 1 if none present.
+tag_from_releases_json() {
+  _tag=$(printf '%s' "$1" \
+    | tr ',' '\n' \
+    | grep -m1 '"tag_name"' \
+    | sed -e 's/.*"tag_name"[[:space:]]*:[[:space:]]*"//' -e 's/".*//')
+  [ -n "$_tag" ] || return 1
+  printf '%s' "$_tag"
+}
+
 main() {
   die "main not implemented yet"
 }
