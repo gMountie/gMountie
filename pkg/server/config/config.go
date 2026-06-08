@@ -66,6 +66,7 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		"server.keepalive.permit_without_stream",
 		"server.subscribe_buffer_size",
 		"server.subscribe_heartbeat_interval",
+		"server.session.grace_period",
 		"server.tls.cert_file",
 		"server.tls.key_file",
 		"server.tls.client_ca_file",
@@ -98,6 +99,7 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	v.SetDefault("server.keepalive.permit_without_stream", DefaultKeepalivePermitWithoutStream)
 	v.SetDefault("server.subscribe_buffer_size", DefaultServerSubscribeBufferSize)
 	v.SetDefault("server.subscribe_heartbeat_interval", DefaultServerSubscribeHeartbeatInterval)
+	v.SetDefault("server.session.grace_period", DefaultSessionGracePeriod)
 	v.SetDefault("server.tls.min_version", "1.3")
 	v.SetDefault("server.ops.addr", "127.0.0.1:9090")
 	v.SetDefault("server.ops.auth.type", "none")
@@ -120,6 +122,9 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 			Timeout:             v.GetDuration("server.keepalive.timeout"),
 			MinTime:             v.GetDuration("server.keepalive.min_time"),
 			PermitWithoutStream: v.GetBool("server.keepalive.permit_without_stream"),
+		},
+		Session: SessionConfig{
+			GracePeriod: v.GetDuration("server.session.grace_period"),
 		},
 		SubscribeBufferSize:        v.GetInt("server.subscribe_buffer_size"),
 		SubscribeHeartbeatInterval: v.GetDuration("server.subscribe_heartbeat_interval"),

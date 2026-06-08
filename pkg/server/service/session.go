@@ -88,7 +88,11 @@ type SessionManagerOptions struct {
 	Metrics SessionMetrics
 }
 
-const DefaultGracePeriod = 30 * time.Second
+// DefaultGracePeriod is how long the server retains a disconnected client's
+// session (fds + idempotency cache) before reaping it, so a brief network drop
+// can Resume the same session. Aligned with the client rpc.retry_window default.
+// Cost: a dropped client's fds and POSIX locks are held for this long.
+const DefaultGracePeriod = 60 * time.Second
 
 // DefaultIdempotencyCacheSize is the per-session LRU size for dedup. 256 covers
 // a comfortable churn window for typical FUSE traffic without bloating memory.

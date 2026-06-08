@@ -62,7 +62,10 @@ func NewServerAppContext(cfg *config.Config) (*AppContext, error) {
 		return nil, errors.Wrap(err, "build volume service")
 	}
 	authService := service.NewAuthServiceFromConfig(cfg.Auth)
-	sessionMgr := service.NewSessionManager(service.SessionManagerOptions{Metrics: m})
+	sessionMgr := service.NewSessionManager(service.SessionManagerOptions{
+		Metrics:     m,
+		GracePeriod: cfg.Server.Session.GracePeriod,
+	})
 	bus := io.NewLocalEventBus(io.EventBusOptions{
 		BufferSize:        cfg.Server.SubscribeBufferSize,
 		HeartbeatInterval: cfg.Server.SubscribeHeartbeatInterval,
