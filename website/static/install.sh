@@ -40,6 +40,13 @@ pick_archive() {
   printf '%s' "$_name"
 }
 
+# sha_for <checksums.txt contents> <filename> -> expected sha256 hex. exit 1 if absent.
+sha_for() {
+  _sha=$(printf '%s\n' "$1" | awk -v f="$2" '$NF == f {print $1}' | head -n1)
+  [ -n "$_sha" ] || return 1
+  printf '%s' "$_sha"
+}
+
 main() {
   die "main not implemented yet"
 }
