@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"go.gmountie.dev/gmountie/pkg/client/config"
 	"go.gmountie.dev/gmountie/pkg/client/metrics"
 	"go.gmountie.dev/gmountie/pkg/common"
 	commongrpc "go.gmountie.dev/gmountie/pkg/common/grpc"
@@ -40,6 +41,12 @@ type Client interface {
 	MetaTimeout() time.Duration
 	// IOTimeout returns the per-RPC timeout for data operations.
 	IOTimeout() time.Duration
+	// RetryWindow returns the wall-clock budget for retrying a single FS op
+	// through transient failures. 0 means fail-fast (single attempt).
+	RetryWindow() time.Duration
+	// Lifetime returns a context cancelled when the client is closed/unmounted.
+	// Long retries derive from it so they abort promptly on teardown.
+	Lifetime() context.Context
 	// SessionID returns the server-assigned session id obtained during Connect.
 	SessionID() string
 	// PerFileConfig returns the runtime knobs each newly-opened GrpcFile
@@ -85,6 +92,9 @@ type ClientImpl struct {
 	handshake         *SessionHandshake
 	metaTimeout       time.Duration
 	ioTimeout         time.Duration
+	retryWindow       time.Duration
+	lifeCtx           context.Context
+	lifeCancel        context.CancelFunc
 	perFile           PerFileConfig
 	// metrics is the per-client collector set. Set via WithMetrics; nil
 	// means no in-flight interceptor is wired (the factory always provides one).
@@ -135,6 +145,11 @@ func WithTimeouts(meta, io time.Duration) ClientOption {
 	}
 }
 
+// WithRetryWindow sets the per-op transient-retry window on the gRPC Client.
+func WithRetryWindow(window time.Duration) ClientOption {
+	return func(c *ClientImpl) { c.retryWindow = window }
+}
+
 // WithReadahead sets the per-fd readahead parameters used when opening
 // GrpcFile instances. chunkBytes of 0 disables readahead. window
 // controls how many chunks are kept in flight or ready ahead of the
@@ -174,6 +189,7 @@ func NewClient(endpoint string, options ...ClientOption) (Client, error) {
 		endpoint:    endpoint,
 		metaTimeout: 5 * time.Second,
 		ioTimeout:   30 * time.Second,
+		retryWindow: config.DefaultRpcRetryWindow,
 		perFile: PerFileConfig{
 			ReadaheadChunkBytes: 64 << 10,
 			ReadaheadThreshold:  3,
@@ -181,6 +197,7 @@ func NewClient(endpoint string, options ...ClientOption) (Client, error) {
 			WriteCoalesceBytes:  1 << 20,
 		},
 	}
+	c.lifeCtx, c.lifeCancel = context.WithCancel(context.Background())
 	for _, opt := range options {
 		opt(&c)
 	}
@@ -189,6 +206,7 @@ func NewClient(endpoint string, options ...ClientOption) (Client, error) {
 		c.getDialOptions()...,
 	)
 	if err != nil {
+		c.lifeCancel()
 		return nil, err
 	}
 	c.conn = conn
@@ -242,6 +260,9 @@ func (c *ClientImpl) Connect() error {
 
 // Close closes the gRPC ClientImpl connection
 func (c *ClientImpl) Close() error {
+	if c.lifeCancel != nil {
+		c.lifeCancel()
+	}
 	if c.handshake != nil {
 		_ = c.handshake.Close()
 	}
@@ -278,6 +299,14 @@ func (c *ClientImpl) MetaTimeout() time.Duration {
 func (c *ClientImpl) IOTimeout() time.Duration {
 	return c.ioTimeout
 }
+
+// RetryWindow returns the wall-clock budget for retrying a single FS op
+// through transient failures. 0 means fail-fast (single attempt).
+func (c *ClientImpl) RetryWindow() time.Duration { return c.retryWindow }
+
+// Lifetime returns a context cancelled when the client is closed/unmounted.
+// Long retries derive from it so they abort promptly on teardown.
+func (c *ClientImpl) Lifetime() context.Context { return c.lifeCtx }
 
 // PerFileConfig returns the bundled per-file knobs newly-opened GrpcFile
 // instances inherit from this Client.
