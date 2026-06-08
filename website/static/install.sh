@@ -69,6 +69,41 @@ tag_from_releases_json() {
   printf '%s' "$_tag"
 }
 
+# have <cmd> -> 0 if on PATH.
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# http_body <url> -> response body on stdout (follows redirects). exit 1 on error.
+http_body() {
+  if have curl; then
+    curl -fsSL "$1"
+  elif have wget; then
+    wget -qO- "$1"
+  else
+    die "need curl or wget"
+  fi
+}
+
+# http_effective_url <url> -> final URL after redirects (HEAD). Requires curl;
+# falls back to the input URL when only wget is present (callers tolerate this).
+http_effective_url() {
+  if have curl; then
+    curl -fsSLI -o /dev/null -w '%{url_effective}' "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
+# sha256_of <file> -> sha256 hex (Linux sha256sum or macOS shasum -a 256).
+sha256_of() {
+  if have sha256sum; then
+    sha256sum "$1" | awk '{print $1}'
+  elif have shasum; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    die "need sha256sum or shasum"
+  fi
+}
+
 main() {
   die "main not implemented yet"
 }
