@@ -409,6 +409,63 @@ volumes:
 	s.Assert().Equal(20*time.Second, cfg.Server.SubscribeHeartbeatInterval)
 }
 
+func (s *ConfigTestSuite) TestSessionGracePeriodDefault() {
+	cfg, err := LoadConfigFromString(`
+server:
+  address: "0.0.0.0"
+  port: 9449
+auth:
+  type: basic
+  users:
+  - username: admin
+    password_hash: ` + testAdminPHC + `
+volumes:
+  - name: test
+    path: /tmp
+`)
+	s.Require().NoError(err)
+	s.Assert().Equal(DefaultSessionGracePeriod, cfg.Server.Session.GracePeriod)
+}
+
+func (s *ConfigTestSuite) TestSessionGracePeriodExplicitYAML() {
+	cfg, err := LoadConfigFromString(`
+server:
+  address: "0.0.0.0"
+  port: 9449
+  session:
+    grace_period: 2m
+auth:
+  type: basic
+  users:
+  - username: admin
+    password_hash: ` + testAdminPHC + `
+volumes:
+  - name: test
+    path: /tmp
+`)
+	s.Require().NoError(err)
+	s.Assert().Equal(2*time.Minute, cfg.Server.Session.GracePeriod)
+}
+
+func (s *ConfigTestSuite) TestSessionGracePeriodEnvOverride() {
+	s.T().Setenv("GMOUNTIE_SERVER_SESSION_GRACE_PERIOD", "90s")
+	cfg, err := LoadConfigFromString(`
+server:
+  address: "0.0.0.0"
+  port: 9449
+auth:
+  type: basic
+  users:
+  - username: admin
+    password_hash: ` + testAdminPHC + `
+volumes:
+  - name: test
+    path: /tmp
+`)
+	s.Require().NoError(err)
+	s.Assert().Equal(90*time.Second, cfg.Server.Session.GracePeriod)
+}
+
 func TestConfigTestSuite(t *testing.T) {
 	suite.Run(t, new(ConfigTestSuite))
 }

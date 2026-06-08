@@ -48,7 +48,22 @@ const (
 	// emits a HEARTBEAT frame to each subscriber so the client can
 	// distinguish an idle stream from a dead one.
 	DefaultServerSubscribeHeartbeatInterval = 10 * time.Second
+	// DefaultSessionGracePeriod is how long the server retains a disconnected
+	// client's session — its fd table and idempotency cache — before reaping
+	// it, so a brief network drop can Resume the same session. Aligned with the
+	// client rpc.retry_window default. Cost: a dropped client's fds and POSIX
+	// locks are held for this long before release.
+	DefaultSessionGracePeriod = 60 * time.Second
 )
+
+// SessionConfig controls per-client session retention.
+type SessionConfig struct {
+	// GracePeriod is how long a disconnected session (fds + idempotency cache)
+	// is retained before reaping. Must be >= 1s. Should be >= the client
+	// rpc.retry_window (default 60s) so transparent resume holds for the whole
+	// window.
+	GracePeriod time.Duration `mapstructure:"grace_period" validate:"gte=1s"`
+}
 
 // ServerKeepaliveConfig holds the gRPC server-side keepalive parameters
 // and matching enforcement policy. Defaults are tuned to detect dead
@@ -169,6 +184,8 @@ type ServerConfig struct {
 	MaxMessageBytes int `validate:"min=65536,max=67108864" mapstructure:"max_message_bytes"`
 	// Keepalive controls gRPC HTTP/2 keepalive pings and enforcement.
 	Keepalive ServerKeepaliveConfig `mapstructure:"keepalive"`
+	// Session controls per-client session retention (grace period).
+	Session SessionConfig `mapstructure:"session"`
 	// SubscribeBufferSize is the per-subscriber channel depth in the
 	// event bus. Larger values tolerate bursty invalidation storms at
 	// the cost of memory; a slow subscriber that fills the buffer is
