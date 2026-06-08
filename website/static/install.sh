@@ -104,6 +104,27 @@ sha256_of() {
   fi
 }
 
+# resolve_version -> tag to install.
+# Order: explicit GMOUNTIE_VERSION; else the stable channel (releases/latest
+# redirect); else the newest release from the API (prereleases included).
+resolve_version() {
+  if [ -n "${GMOUNTIE_VERSION:-}" ]; then
+    printf '%s' "$GMOUNTIE_VERSION"
+    return 0
+  fi
+  _eff=$(http_effective_url "$GH/$REPO/releases/latest")
+  if _tag=$(tag_from_latest_url "$_eff"); then
+    printf '%s' "$_tag"
+    return 0
+  fi
+  _json=$(http_body "$API/repos/$REPO/releases")
+  if _tag=$(tag_from_releases_json "$_json"); then
+    printf '%s' "$_tag"
+    return 0
+  fi
+  die "could not resolve a release version (set GMOUNTIE_VERSION to pin one)"
+}
+
 main() {
   die "main not implemented yet"
 }

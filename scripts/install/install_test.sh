@@ -64,6 +64,22 @@ assert_eq "tag_from_releases_json newest" "v0.15.0-alpha.0" \
   "$(tag_from_releases_json "$releases_json")"
 assert_fails "tag_from_releases_json empty" tag_from_releases_json '[]'
 
+# Case A: a stable release exists -> latest redirect yields a tag, API not used.
+http_effective_url() { printf '%s' "https://github.com/gMountie/gMountie/releases/tag/v1.0.0"; }
+http_body() { printf '%s' "SHOULD_NOT_BE_CALLED"; }
+assert_eq "resolve_version prefers stable" "v1.0.0" "$(resolve_version)"
+
+# Case B: no stable -> latest redirect is the list page -> fall back to API newest.
+http_effective_url() { printf '%s' "https://github.com/gMountie/gMountie/releases"; }
+http_body() { printf '%s' '[{"tag_name":"v0.15.0-alpha.0"}]'; }
+assert_eq "resolve_version falls back to prerelease" "v0.15.0-alpha.0" "$(resolve_version)"
+
+# Case C: explicit pin wins, no network consulted.
+http_effective_url() { printf '%s' "UNUSED"; }
+http_body() { printf '%s' "UNUSED"; }
+assert_eq "resolve_version honors GMOUNTIE_VERSION" "v0.9.9" \
+  "$(GMOUNTIE_VERSION=v0.9.9 resolve_version)"
+
 # ---- END TESTS ----
 
 if [ "$fails" -gt 0 ]; then
