@@ -171,15 +171,15 @@ populates it via `VersionFromAttr` in `pkg/server/io/version.go`:
 version = mtime_ns * p1 + ctime_ns * p2 + size * p3   (mod 2⁶⁴)
 ```
 
-where `p1`, `p2`, `p3` are three distinct large odd primes (FNV-adjacent
-constants). Multiplying by distinct primes rather than XOR-ing prevents
-equal-field cancellation: with XOR, `mtime_ns == ctime_ns` after a write
-collapses the version to `size << 16`, making otherwise-distinguishable attrs
-alias. The prime-multiply mix avoids that class of collision entirely. A result
-of zero is mapped to one so the sentinel `version = 0` (nil attr or older
-server that doesn't set the field) is never aliased by a real attr. Clients
-receiving `version = 0` always trigger a revalidation rather than serving from
-cache.
+where `p1`, `p2`, `p3` are three distinct large odd constants. Odd multipliers
+are invertible mod 2⁶⁴, so each field contributes a full-width mix regardless
+of the others' values. Multiplying by distinct constants rather than XOR-ing
+prevents equal-field cancellation: with XOR, `mtime_ns == ctime_ns` after a
+write collapses the version to `size << 16`, making otherwise-distinguishable
+attrs alias. This mix avoids that class of collision entirely. A result of zero
+is mapped to one so the sentinel `version = 0` (nil attr or older server that
+doesn't set the field) is never aliased by a real attr. Clients receiving
+`version = 0` always trigger a revalidation rather than serving from cache.
 
 The formula captures every observable change: content changes mtime and
 usually size; permission or ownership changes ctime.

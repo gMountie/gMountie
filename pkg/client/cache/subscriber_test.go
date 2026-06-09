@@ -106,4 +106,16 @@ func (s *SubscribeConsumerSuite) TestRenamedInvalidatesBothParentAttrs() {
 	s.Assert().Contains(be.attrInvals, "dst", "new parent attr must be invalidated on RENAMED")
 }
 
+// TestMutatedRootLevelPathInvalidatesRootParent pins the convention that ""
+// is the root key: a MUTATED event on a top-level path (no "/" component)
+// must land "" in both attrInvals and dirInvals so the root directory's
+// cached attr and listing are dropped.
+func (s *SubscribeConsumerSuite) TestMutatedRootLevelPathInvalidatesRootParent() {
+	be := &fakeBackendForSubscriber{}
+	c := &subscribeConsumer{cache: be, validity: newValidityTracker()}
+	c.handle(&proto.SubscribeEvent{Kind: proto.SubscribeEvent_MUTATED, Path: "top.txt"})
+	s.Assert().Contains(be.attrInvals, "", "root attr must be invalidated for root-level path")
+	s.Assert().Contains(be.dirInvals, "", "root dir must be invalidated for root-level path")
+}
+
 func TestSubscribeConsumerSuite(t *testing.T) { suite.Run(t, new(SubscribeConsumerSuite)) }
