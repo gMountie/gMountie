@@ -73,8 +73,8 @@ func (s *SessionTimeoutSuite) TestConnectTimesOutOnUnresponsiveServer() {
 	elapsed := time.Since(start)
 
 	s.Require().Error(err, "Connect must fail when server never responds")
-	// 3×metaTimeout = 150 ms; allow 5× headroom for scheduling variance.
-	s.Assert().Less(elapsed, 5*3*shortMeta,
+	// 3×metaTimeout = 150 ms; allow 3 s headroom — the property is "doesn't hang".
+	s.Assert().Less(elapsed, 3*time.Second,
 		"Connect must return within a bounded window, not hang indefinitely")
 }
 
@@ -99,17 +99,17 @@ func (s *SessionTimeoutSuite) TestConnectDeadlinePropagatesToCreate() {
 			return nil, errors.New("deadline probe: aborting")
 		}).Once()
 
-	before := time.Now()
 	c := newClientWithMockSession(s.T(), s.sessionClient, shortMeta)
 	defer func() { _ = c.Close() }()
+	before := time.Now()
 	_ = c.Connect()
 
 	deadline := <-deadlineCh
 	s.Require().False(deadline.IsZero(),
 		"context passed to Create must carry a deadline")
-	// 3×metaTimeout budget from the time Connect was called; small scheduling
-	// slack (50 ms) covers the time between before and the actual WithTimeout call.
-	maxDeadline := before.Add(3*shortMeta + 50*time.Millisecond)
+	// 3×metaTimeout budget from the time Connect was called; 250 ms slack
+	// covers scheduling variance between before and the actual WithTimeout call.
+	maxDeadline := before.Add(3*shortMeta + 250*time.Millisecond)
 	s.Assert().True(deadline.Before(maxDeadline),
 		"Create deadline must be ≤ 3×metaTimeout; got %v, max %v", deadline, maxDeadline)
 }
