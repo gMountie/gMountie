@@ -53,7 +53,7 @@ func (s *SessionManagerTestSuite) TestSessionFdTableRegisterAndLookup() {
 	sess, err := s.mgr.Get(id)
 	s.Require().NoError(err)
 
-	fd := sess.RegisterFile("/some/path", nodefs.NewDefaultFile())
+	fd := sess.RegisterFile("vol", "/some/path", nodefs.NewDefaultFile())
 	s.Assert().NotZero(fd)
 
 	entry, ok := sess.GetFile(fd)
@@ -65,7 +65,7 @@ func (s *SessionManagerTestSuite) TestSessionReleaseFile() {
 	id, err := s.mgr.Create("test-user", "")
 	s.Require().NoError(err)
 	sess, _ := s.mgr.Get(id)
-	fd := sess.RegisterFile("/p", nodefs.NewDefaultFile())
+	fd := sess.RegisterFile("vol", "/p", nodefs.NewDefaultFile())
 
 	sess.ReleaseFile(fd)
 	_, ok := sess.GetFile(fd)
@@ -76,7 +76,7 @@ func (s *SessionManagerTestSuite) TestDisconnectThenGraceExpiryReapsFds() {
 	id, err := s.mgr.Create("test-user", "")
 	s.Require().NoError(err)
 	sess, _ := s.mgr.Get(id)
-	fd := sess.RegisterFile("/p", nodefs.NewDefaultFile())
+	fd := sess.RegisterFile("vol", "/p", nodefs.NewDefaultFile())
 
 	s.mgr.MarkDisconnected(id)
 
@@ -93,7 +93,7 @@ func (s *SessionManagerTestSuite) TestResumeBeforeGraceCancelsReap() {
 	id, err := s.mgr.Create("test-user", "")
 	s.Require().NoError(err)
 	sess, _ := s.mgr.Get(id)
-	fd := sess.RegisterFile("/p", nodefs.NewDefaultFile())
+	fd := sess.RegisterFile("vol", "/p", nodefs.NewDefaultFile())
 
 	s.mgr.MarkDisconnected(id)
 
@@ -122,7 +122,7 @@ func (s *SessionManagerTestSuite) TestStopReleasesAllFds() {
 	id, err := s.mgr.Create("test-user", "")
 	s.Require().NoError(err)
 	sess, _ := s.mgr.Get(id)
-	_ = sess.RegisterFile("/p", nodefs.NewDefaultFile())
+	_ = sess.RegisterFile("vol", "/p", nodefs.NewDefaultFile())
 
 	err = s.mgr.Stop(context.Background())
 	s.Require().NoError(err)

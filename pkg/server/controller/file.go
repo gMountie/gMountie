@@ -52,12 +52,34 @@ func (r *RpcFileServerImpl) Register(server *grpc.Server) {
 // versionAfterPath re-Stats path on the named volume to seed an event with the
 // fresh version token. Returns 0 if the volume or Stat fails — the event still
 // fires; the client falls back to GetAttrIfChanged.
+//
+// Trust level: this uses the RAW GetVolumeFileSystem seam (no ACL check, no
+// identity binding — the stat runs with the server's own credentials). That is
+// only safe because the result feeds the event bus version token, never the
+// caller's reply, and because every caller has already proven it owns an fd on
+// the volume via sessionFile. Do NOT reuse this seam for data that flows back
+// to the client; use VolumeService.BindIdentity for that (see MAINT-4 note on
+// the handler seams below).
 func (r *RpcFileServerImpl) versionAfterPath(ctx context.Context, volume, path string, caller *proto.Caller) uint64 {
 	fs, err := r.fsService.GetVolumeFileSystem(volume)
 	if err != nil {
 		return 0
 	}
 	return versionAfter(ctx, fs, path, caller)
+}
+
+// sessionFile looks up fd in sess and enforces the fd↔volume binding recorded
+// at Open/Create: an fd is only usable with the volume it was opened on. A
+// mismatched volume is treated exactly like an unknown fd, so a caller cannot
+// probe whether an fd exists by guessing volumes — and, transitively, every
+// fd-based handler's versionAfterPath/bus.Emit runs against the fd's true
+// volume only (SEC-1).
+func sessionFile(sess service.Session, fd uint64, volume string) (*service.FileEntry, bool) {
+	entry, ok := sess.GetFile(fd)
+	if !ok || entry.Volume != volume {
+		return nil, false
+	}
+	return entry, true
 }
 
 func (r *RpcFileServerImpl) Open(ctx context.Context, request *proto.OpenRequest) (*proto.OpenReply, error) {
@@ -73,7 +95,7 @@ func (r *RpcFileServerImpl) Open(ctx context.Context, request *proto.OpenRequest
 		file, s := fs.Open(request.Path, request.Flags, createContext(ctx, request.Caller))
 		reply := &proto.OpenReply{Status: int32(s)}
 		if s == fuse.OK {
-			reply.Fd = sess.RegisterFile(request.Path, file)
+			reply.Fd = sess.RegisterFile(request.Volume, request.Path, file)
 			r.metrics.OpenFilesInc(request.Volume, request.SessionId)
 		}
 		return reply, nil
@@ -93,7 +115,7 @@ func (r *RpcFileServerImpl) Create(ctx context.Context, request *proto.CreateReq
 		file, s := fs.Create(request.Path, request.Flags, request.Mode, createContext(ctx, request.Caller))
 		reply := &proto.CreateReply{Status: int32(s)}
 		if s == fuse.OK {
-			reply.Fd = sess.RegisterFile(request.Path, file)
+			reply.Fd = sess.RegisterFile(request.Volume, request.Path, file)
 			r.metrics.OpenFilesInc(request.Volume, request.SessionId)
 			if attr, gst := fs.GetAttr(request.Path, createContext(ctx, request.Caller)); gst.Ok() {
 				reply.Attributes = toProtoAttr(attr, &id)
@@ -116,10 +138,11 @@ func (r *RpcFileServerImpl) Read(request *proto.ReadRequest, stream proto.RpcFil
 	if err != nil {
 		return err
 	}
-	entry, ok := sess.GetFile(request.Fd)
+	entry, ok := sessionFile(sess, request.Fd, request.Volume)
 	if !ok {
-		// Surface bad-fd as a terminal status frame rather than a transport
-		// error so the client gets a clean errno through the FUSE layer.
+		// Surface bad-fd (or an fd↔volume mismatch) as a terminal status frame
+		// rather than a transport error so the client gets a clean errno
+		// through the FUSE layer.
 		return stream.Send(&proto.ReadFrame{Status: int32(fuse.EBADF)})
 	}
 
@@ -186,7 +209,7 @@ func (r *RpcFileServerImpl) Write(stream proto.RpcFile_WriteServer) error {
 	var entryPath string
 	raw, err := sess.DoOnce(first.RequestId, func() (any, error) {
 		applied = true
-		entry, ok := sess.GetFile(first.Fd)
+		entry, ok := sessionFile(sess, first.Fd, first.Volume)
 		if !ok {
 			return nil, status.Errorf(codes.NotFound, "fd %d not found in session", first.Fd)
 		}
@@ -306,7 +329,7 @@ func (r *RpcFileServerImpl) Fsync(ctx context.Context, request *proto.FsyncReque
 	if err != nil {
 		return nil, err
 	}
-	entry, ok := sess.GetFile(request.Fd)
+	entry, ok := sessionFile(sess, request.Fd, request.Volume)
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 	}
@@ -318,8 +341,10 @@ func (r *RpcFileServerImpl) Release(ctx context.Context, request *proto.ReleaseR
 	if err != nil {
 		return nil, err
 	}
-	sess.ReleaseFile(request.Fd)
-	r.metrics.OpenFilesDec(request.Volume, request.SessionId)
+	if _, ok := sessionFile(sess, request.Fd, request.Volume); ok {
+		sess.ReleaseFile(request.Fd)
+		r.metrics.OpenFilesDec(request.Volume, request.SessionId)
+	}
 	return &proto.ReleaseReply{}, nil
 }
 
@@ -328,7 +353,7 @@ func (r *RpcFileServerImpl) Flush(ctx context.Context, request *proto.FlushReque
 	if err != nil {
 		return nil, err
 	}
-	entry, ok := sess.GetFile(request.Fd)
+	entry, ok := sessionFile(sess, request.Fd, request.Volume)
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 	}
@@ -340,7 +365,7 @@ func (r *RpcFileServerImpl) GetLk(ctx context.Context, request *proto.GetLkReque
 	if err != nil {
 		return nil, err
 	}
-	entry, ok := sess.GetFile(request.Fd)
+	entry, ok := sessionFile(sess, request.Fd, request.Volume)
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 	}
@@ -358,7 +383,7 @@ func (r *RpcFileServerImpl) SetLk(ctx context.Context, request *proto.SetLkReque
 	if err != nil {
 		return nil, err
 	}
-	entry, ok := sess.GetFile(request.Fd)
+	entry, ok := sessionFile(sess, request.Fd, request.Volume)
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 	}
@@ -371,7 +396,7 @@ func (r *RpcFileServerImpl) SetLkw(ctx context.Context, request *proto.SetLkwReq
 	if err != nil {
 		return nil, err
 	}
-	entry, ok := sess.GetFile(request.Fd)
+	entry, ok := sessionFile(sess, request.Fd, request.Volume)
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 	}
@@ -387,9 +412,10 @@ func (r *RpcFileServerImpl) WriteAndFlush(ctx context.Context, req *proto.WriteA
 	if err != nil {
 		return nil, err
 	}
-	entry, ok := sess.GetFile(req.Fd)
+	entry, ok := sessionFile(sess, req.Fd, req.Volume)
 	if !ok {
-		// EBADF in-reply (not a transport error) keeps the errno visible at the FUSE layer.
+		// EBADF in-reply (not a transport error) keeps the errno visible at the
+		// FUSE layer. Covers both an unknown fd and an fd↔volume mismatch.
 		return &proto.WriteAndFlushReply{Status: int32(fuse.EBADF)}, nil
 	}
 	fs, err := r.fsService.GetVolumeFileSystem(req.Volume)
@@ -430,7 +456,7 @@ func (r *RpcFileServerImpl) Allocate(ctx context.Context, request *proto.Allocat
 	if err != nil {
 		return nil, err
 	}
-	entry, ok := sess.GetFile(request.Fd)
+	entry, ok := sessionFile(sess, request.Fd, request.Volume)
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 	}
@@ -465,11 +491,11 @@ func (r *RpcFileServerImpl) CopyFileRange(ctx context.Context, request *proto.Co
 	if request.Flags != 0 {
 		return &proto.CopyFileRangeReply{Status: int32(fuse.EINVAL)}, nil
 	}
-	srcEntry, ok := sess.GetFile(request.FdIn)
+	srcEntry, ok := sessionFile(sess, request.FdIn, request.Volume)
 	if !ok {
 		return &proto.CopyFileRangeReply{Status: int32(fuse.EBADF)}, nil
 	}
-	dstEntry, ok := sess.GetFile(request.FdOut)
+	dstEntry, ok := sessionFile(sess, request.FdOut, request.Volume)
 	if !ok {
 		return &proto.CopyFileRangeReply{Status: int32(fuse.EBADF)}, nil
 	}
@@ -498,7 +524,7 @@ func (r *RpcFileServerImpl) Lseek(ctx context.Context, request *proto.LseekReque
 	if request.Whence != uint32(unix.SEEK_DATA) && request.Whence != uint32(unix.SEEK_HOLE) {
 		return &proto.LseekReply{Status: int32(fuse.EINVAL)}, nil
 	}
-	entry, ok := sess.GetFile(request.Fd)
+	entry, ok := sessionFile(sess, request.Fd, request.Volume)
 	if !ok {
 		return &proto.LseekReply{Status: int32(fuse.EBADF)}, nil
 	}
