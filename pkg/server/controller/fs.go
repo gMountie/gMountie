@@ -170,6 +170,67 @@ func (r *RpcServerImpl) OpenDir(ctx context.Context, request *proto.OpenDirReque
 	return reply, nil
 }
 
+// readDirBatchSize bounds a single ReadDirBatch message. 512 entries keeps a
+// worst-case batch (long names + full attrs) comfortably under the default
+// 4 MiB gRPC message limit while large directories still need few messages.
+const readDirBatchSize = 512
+
+// ReadDir streams a directory listing in batches, optionally with per-entry
+// attributes (READDIRPLUS). Read-only — no session/request_id, mirroring
+// OpenDir/GetAttr. The fuse status travels in-band: on a filesystem failure
+// the stream carries ONE terminal batch with the status and the RPC itself
+// succeeds; only bind errors surface as gRPC errors (matching OpenDir).
+func (r *RpcServerImpl) ReadDir(req *proto.ReadDirRequest, stream proto.RpcFs_ReadDirServer) error {
+	fs, id, err := r.fsService.BindIdentity(stream.Context(), req.Volume, req.Caller)
+	if err != nil {
+		return err
+	}
+	fctx := createContext(stream.Context(), req.Caller)
+	var entries []serverio.DirEntryPlus
+	var st fuse.Status
+	// ReadDirPlus is a project-owned extension interface — pathfs.FileSystem
+	// is go-fuse's, so the capability is type-asserted with a graceful
+	// fallback to plain OpenDir + nil attrs.
+	if rdp, ok := fs.(serverio.ReadDirPlusser); ok && req.Plus {
+		entries, st = rdp.ReadDirPlus(req.Path, fctx)
+	} else {
+		var dirs []fuse.DirEntry
+		dirs, st = fs.OpenDir(req.Path, fctx)
+		if st.Ok() {
+			entries = make([]serverio.DirEntryPlus, len(dirs))
+			for i, d := range dirs {
+				entries[i] = serverio.DirEntryPlus{Entry: d}
+			}
+		}
+	}
+	if !st.Ok() {
+		return stream.Send(&proto.ReadDirBatch{Status: int32(st)})
+	}
+	// Stream batches. An EMPTY directory still sends one empty OK batch so
+	// the client can distinguish success-empty from a stream that produced
+	// nothing.
+	for first := true; first || len(entries) > 0; first = false {
+		n := min(len(entries), readDirBatchSize)
+		batch := &proto.ReadDirBatch{Entries: make([]*proto.DirEntryPlus, n)}
+		for i, e := range entries[:n] {
+			batch.Entries[i] = &proto.DirEntryPlus{
+				Entry: &proto.DirEntry{
+					Mode: e.Entry.Mode,
+					Name: e.Entry.Name,
+					Ino:  e.Entry.Ino,
+					Off:  e.Entry.Off,
+				},
+				Attributes: toProtoAttr(e.Attr, &id), // nil Attr -> nil Attributes
+			}
+		}
+		if err := stream.Send(batch); err != nil {
+			return err
+		}
+		entries = entries[n:]
+	}
+	return nil
+}
+
 func (r *RpcServerImpl) StatFs(ctx context.Context, request *proto.StatFsRequest) (*proto.StatFsReply, error) {
 	// StatFsRequest carries no Caller — statvfs is filesystem-wide and
 	// identity-agnostic. Bind under the volume's default identity (nil caller).
