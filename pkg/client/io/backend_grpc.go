@@ -667,8 +667,10 @@ func (b *BackendClient) Read(ctx context.Context, fh FileHandle, off int64, dest
 			return n, fuse.OK
 		}
 	}
-	// classFdOp: server-streaming Read. No WaitForReady (streaming op). On a
-	// session change the fd is dead, so retryOp stops retrying.
+	// classFdOp: server-streaming Read. WaitForReady parks the stream-open on a
+	// CONNECTING channel instead of burning retry attempts on instant
+	// Unavailable; the per-attempt deadline still bounds the wait. On a session
+	// change the fd is dead, so retryOp stops retrying.
 	res, err := retryOp(h.client, ctx, "Read", classFdOp, h.ioTimeout, func(ctx context.Context) (readResult, error) {
 		stream, err := h.fileClient.Read(ctx, &proto.ReadRequest{
 			Volume:    h.volume,
@@ -676,7 +678,7 @@ func (b *BackendClient) Read(ctx context.Context, fh FileHandle, off int64, dest
 			Offset:    off,
 			Size:      uint32(len(dest)),
 			SessionId: h.sessionID,
-		})
+		}, grpc.WaitForReady(true))
 		if err != nil {
 			return readResult{}, err
 		}
@@ -807,10 +809,12 @@ func (b *BackendClient) streamingWrite(h *grpcFileHandle, data []byte, off int64
 	// idempotency LRU short-circuits the duplicate — the load-bearing Phase-1d
 	// guard. This path runs off context.Background() (detached from the FUSE op
 	// ctx), passed to retryOp as the fuseCtx arg; retryOp derives each attempt's
-	// own deadline + lifetime cancellation from it. No WaitForReady (streaming).
+	// own deadline + lifetime cancellation from it. WaitForReady parks the
+	// stream-open on a CONNECTING channel instead of burning retry attempts on
+	// instant Unavailable; the per-attempt deadline still bounds the wait.
 	res, err := retryOp(h.client, context.Background(), "Write", classFdOp, h.ioTimeout,
 		func(ctx context.Context) (*proto.WriteReply, error) {
-			stream, err := h.fileClient.Write(ctx)
+			stream, err := h.fileClient.Write(ctx, grpc.WaitForReady(true))
 			if err != nil {
 				return nil, err
 			}
