@@ -57,8 +57,8 @@ func (s *LoggingE2ETestSuite) SetupSuite() {
 		utils.WithRandomTestVolume(false),
 	)
 	s.Require().NoError(err)
+	// Start performs the client session handshake (Connect) itself.
 	s.Require().NoError(testAppCtx.Start())
-	testAppCtx.GetClient().Connect()
 	s.testAppCtx = testAppCtx
 }
 

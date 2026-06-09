@@ -2,8 +2,9 @@ package api
 
 // ConcurrentClientsSuite exercises the server's concurrency-safety under load
 // from multiple independent gRPC clients hitting the same volume simultaneously.
-// The suite runs in-process via bufconn (no FUSE mount required) and is part of
-// the -race job. Multi-mount FUSE concurrency is deferred to Phase 8 (VFS).
+// The suite runs in-process via bufconn (no FUSE mount required) precisely so
+// it can run under the -race detector — keep it FUSE-free. Multi-mount FUSE
+// concurrency is deferred to Phase 8 (VFS).
 //
 // Writer variant: we use on-disk seed + concurrent gRPC reads rather than driving
 // raw streaming-Write RPCs (Create/WriteFrame/Flush/Release). That variant would
