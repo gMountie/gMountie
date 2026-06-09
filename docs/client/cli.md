@@ -112,7 +112,7 @@ The client supports two authentication methods:
 
 1. **Password:** Never pass passwords on the command line in production — they show up in `ps` output and shell history. Use the interactive prompt, `$GMOUNTIE_AUTH_PASSWORD`, or a config file instead.
 
-2. **TLS:** The connection is TLS-encrypted. For self-signed server certs (the default on first run), use TOFU mode so the client pins the server fingerprint on first connect. See **[Client configuration → TLS](./config.md#tls)** and `gmountie fingerprint`.
+2. **TLS:** The connection is TLS-encrypted. For self-signed server certs (the default on first run), use TOFU mode so the client pins the server fingerprint on first connect. See **[Client configuration → Server Options](./config.md#server-options)** and `gmountie fingerprint`.
 
 ## Unmounting
 
