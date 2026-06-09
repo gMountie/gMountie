@@ -141,11 +141,16 @@ func (c *subscribeConsumer) handle(ev *proto.SubscribeEvent) {
 		c.cache.invalidateAttr(ev.Path)
 		c.cache.invalidateData(ev.Path)
 		c.cache.invalidateDir(subscribePathParent(ev.Path))
+		// A create/mkdir/unlink changes the parent's mtime; over-invalidating on
+		// plain writes is cheap and safe (one extra Stat RTT at most).
+		c.cache.invalidateAttr(subscribePathParent(ev.Path))
 	case proto.SubscribeEvent_DELETED:
 		metrics.SubscribeEventReceived("deleted")
 		c.cache.invalidateAttr(ev.Path)
 		c.cache.invalidateData(ev.Path)
 		c.cache.invalidateDir(subscribePathParent(ev.Path))
+		// Unlink/rmdir changes the parent's mtime; drop the parent's cached attr.
+		c.cache.invalidateAttr(subscribePathParent(ev.Path))
 		c.cache.putNegative(ev.Path)
 	case proto.SubscribeEvent_RENAMED:
 		metrics.SubscribeEventReceived("renamed")
@@ -153,6 +158,8 @@ func (c *subscribeConsumer) handle(ev *proto.SubscribeEvent) {
 			c.cache.invalidateAttr(p)
 			c.cache.invalidateData(p)
 			c.cache.invalidateDir(subscribePathParent(p))
+			// Rename changes the mtime of both the source and destination parents.
+			c.cache.invalidateAttr(subscribePathParent(p))
 		}
 		c.cache.putNegative(ev.Path)
 	case proto.SubscribeEvent_HEARTBEAT:
