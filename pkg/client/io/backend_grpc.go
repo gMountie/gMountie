@@ -261,24 +261,25 @@ func (b *BackendClient) Readlink(ctx context.Context, path string) (string, fuse
 }
 
 // mutatePath is the shared body for all single-path mutating RPCs. It
-// allocates a request_id outside the retry closure (idempotency), applies
-// the meta context, and calls retryableCall. fn receives the per-attempt
-// context and the pre-allocated requestID; it is responsible for stamping
-// both the request_id and the session_id fields. Returns fuse.EIO on gRPC
-// error, otherwise fuse.Status as returned by statusOf.
+// allocates a request_id ONCE outside the retry closure so that all
+// attempts within the same session carry the same ID and hit the server's
+// idempotency cache. Routes through retryOp with classPathMutation so a
+// session-id change (Create-fallback recovery) stops the retry immediately
+// — the new session's idempotency cache is empty and a replay could surface
+// a spurious EEXIST/ENOENT. Returns fuse.EIO on gRPC error, otherwise
+// fuse.Status as returned by statusOf.
 func mutatePath[Rep any](
+	b *BackendClient,
 	ctx context.Context,
 	op string,
-	metaCtxFn func(context.Context) (context.Context, context.CancelFunc),
 	fn func(ctx context.Context, requestID string) (Rep, error),
 	statusOf func(Rep) int32,
 ) fuse.Status {
-	ctx2, cancel := metaCtxFn(ctx)
-	defer cancel()
-	requestID := uuid.NewString()
-	res, err := retryableCall(ctx2, op, func(ctx context.Context) (Rep, error) {
-		return fn(ctx, requestID)
-	})
+	requestID := uuid.NewString() // outside retryOp: stable across attempts for idempotency
+	res, err := retryOp(b.client, ctx, op, classPathMutation, b.client.MetaTimeout(),
+		func(ctx context.Context) (Rep, error) {
+			return fn(ctx, requestID)
+		})
 	if err != nil {
 		log.Log.Error("error in call: "+op, zap.Error(err))
 		return fuse.EIO
@@ -289,7 +290,7 @@ func mutatePath[Rep any](
 // Symlink creates a new symbolic link at linkPath pointing at target.
 // Mutating — request_id stamped outside retry for idempotency.
 func (b *BackendClient) Symlink(ctx context.Context, target, linkPath string) fuse.Status {
-	return mutatePath(ctx, "Symlink", b.metaCtx,
+	return mutatePath(b, ctx, "Symlink",
 		func(ctx context.Context, requestID string) (*proto.SymlinkReply, error) {
 			return b.client.Fs().Symlink(ctx, &proto.SymlinkRequest{
 				Volume:    b.volume,
@@ -298,7 +299,7 @@ func (b *BackendClient) Symlink(ctx context.Context, target, linkPath string) fu
 				LinkPath:  linkPath,
 				SessionId: b.client.SessionID(),
 				RequestId: requestID,
-			})
+			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.SymlinkReply) int32 { return r.Status },
 	)
@@ -345,7 +346,7 @@ func (b *BackendClient) GetXAttr(ctx context.Context, path, attr string) ([]byte
 // SetXAttr stores an extended attribute. Mutating — request_id stamped
 // outside retry for idempotency, like Chmod.
 func (b *BackendClient) SetXAttr(ctx context.Context, path, attr string, data []byte, flags uint32) fuse.Status {
-	return mutatePath(ctx, "SetXAttr", b.metaCtx,
+	return mutatePath(b, ctx, "SetXAttr",
 		func(ctx context.Context, requestID string) (*proto.SetXAttrReply, error) {
 			return b.client.Fs().SetXAttr(ctx, &proto.SetXAttrRequest{
 				Volume:    b.volume,
@@ -356,7 +357,7 @@ func (b *BackendClient) SetXAttr(ctx context.Context, path, attr string, data []
 				Flags:     flags,
 				SessionId: b.client.SessionID(),
 				RequestId: requestID,
-			})
+			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.SetXAttrReply) int32 { return r.Status },
 	)
@@ -364,7 +365,7 @@ func (b *BackendClient) SetXAttr(ctx context.Context, path, attr string, data []
 
 // RemoveXAttr deletes an extended attribute. Mutating — see SetXAttr.
 func (b *BackendClient) RemoveXAttr(ctx context.Context, path, attr string) fuse.Status {
-	return mutatePath(ctx, "RemoveXAttr", b.metaCtx,
+	return mutatePath(b, ctx, "RemoveXAttr",
 		func(ctx context.Context, requestID string) (*proto.RemoveXAttrReply, error) {
 			return b.client.Fs().RemoveXAttr(ctx, &proto.RemoveXAttrRequest{
 				Volume:    b.volume,
@@ -373,7 +374,7 @@ func (b *BackendClient) RemoveXAttr(ctx context.Context, path, attr string) fuse
 				Attribute: attr,
 				SessionId: b.client.SessionID(),
 				RequestId: requestID,
-			})
+			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.RemoveXAttrReply) int32 { return r.Status },
 	)
@@ -396,7 +397,7 @@ func (b *BackendClient) ListXAttr(ctx context.Context, path string) ([]string, f
 
 // Mkdir creates a directory. Mutating — request_id stamped outside retry.
 func (b *BackendClient) Mkdir(ctx context.Context, path string, mode uint32) fuse.Status {
-	return mutatePath(ctx, "Mkdir", b.metaCtx,
+	return mutatePath(b, ctx, "Mkdir",
 		func(ctx context.Context, requestID string) (*proto.MkdirReply, error) {
 			return b.client.Fs().Mkdir(ctx, &proto.MkdirRequest{
 				Volume:    b.volume,
@@ -405,7 +406,7 @@ func (b *BackendClient) Mkdir(ctx context.Context, path string, mode uint32) fus
 				Mode:      mode,
 				SessionId: b.client.SessionID(),
 				RequestId: requestID,
-			})
+			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.MkdirReply) int32 { return r.Status },
 	)
@@ -413,7 +414,7 @@ func (b *BackendClient) Mkdir(ctx context.Context, path string, mode uint32) fus
 
 // Rmdir removes an empty directory.
 func (b *BackendClient) Rmdir(ctx context.Context, path string) fuse.Status {
-	return mutatePath(ctx, "Rmdir", b.metaCtx,
+	return mutatePath(b, ctx, "Rmdir",
 		func(ctx context.Context, requestID string) (*proto.RmdirReply, error) {
 			return b.client.Fs().Rmdir(ctx, &proto.RmdirRequest{
 				Volume:    b.volume,
@@ -421,7 +422,7 @@ func (b *BackendClient) Rmdir(ctx context.Context, path string) fuse.Status {
 				Path:      path,
 				SessionId: b.client.SessionID(),
 				RequestId: requestID,
-			})
+			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.RmdirReply) int32 { return r.Status },
 	)
@@ -429,7 +430,7 @@ func (b *BackendClient) Rmdir(ctx context.Context, path string) fuse.Status {
 
 // Unlink removes a non-directory.
 func (b *BackendClient) Unlink(ctx context.Context, path string) fuse.Status {
-	return mutatePath(ctx, "Unlink", b.metaCtx,
+	return mutatePath(b, ctx, "Unlink",
 		func(ctx context.Context, requestID string) (*proto.UnlinkReply, error) {
 			return b.client.Fs().Unlink(ctx, &proto.UnlinkRequest{
 				Volume:    b.volume,
@@ -437,7 +438,7 @@ func (b *BackendClient) Unlink(ctx context.Context, path string) fuse.Status {
 				Path:      path,
 				SessionId: b.client.SessionID(),
 				RequestId: requestID,
-			})
+			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.UnlinkReply) int32 { return r.Status },
 	)
@@ -445,7 +446,7 @@ func (b *BackendClient) Unlink(ctx context.Context, path string) fuse.Status {
 
 // Rename moves a file/directory.
 func (b *BackendClient) Rename(ctx context.Context, oldPath, newPath string) fuse.Status {
-	return mutatePath(ctx, "Rename", b.metaCtx,
+	return mutatePath(b, ctx, "Rename",
 		func(ctx context.Context, requestID string) (*proto.RenameReply, error) {
 			return b.client.Fs().Rename(ctx, &proto.RenameRequest{
 				Volume:    b.volume,
@@ -454,7 +455,7 @@ func (b *BackendClient) Rename(ctx context.Context, oldPath, newPath string) fus
 				NewName:   newPath,
 				SessionId: b.client.SessionID(),
 				RequestId: requestID,
-			})
+			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.RenameReply) int32 { return r.Status },
 	)
@@ -462,7 +463,7 @@ func (b *BackendClient) Rename(ctx context.Context, oldPath, newPath string) fus
 
 // Truncate changes a file's length.
 func (b *BackendClient) Truncate(ctx context.Context, path string, size uint64) fuse.Status {
-	return mutatePath(ctx, "Truncate", b.metaCtx,
+	return mutatePath(b, ctx, "Truncate",
 		func(ctx context.Context, requestID string) (*proto.TruncateReply, error) {
 			return b.client.Fs().Truncate(ctx, &proto.TruncateRequest{
 				Volume:    b.volume,
@@ -471,7 +472,7 @@ func (b *BackendClient) Truncate(ctx context.Context, path string, size uint64) 
 				Size:      size,
 				SessionId: b.client.SessionID(),
 				RequestId: requestID,
-			})
+			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.TruncateReply) int32 { return r.Status },
 	)
@@ -479,7 +480,7 @@ func (b *BackendClient) Truncate(ctx context.Context, path string, size uint64) 
 
 // Chmod changes file permissions.
 func (b *BackendClient) Chmod(ctx context.Context, path string, mode uint32) fuse.Status {
-	return mutatePath(ctx, "Chmod", b.metaCtx,
+	return mutatePath(b, ctx, "Chmod",
 		func(ctx context.Context, requestID string) (*proto.ChmodReply, error) {
 			return b.client.Fs().Chmod(ctx, &proto.ChmodRequest{
 				Volume:    b.volume,
@@ -488,7 +489,7 @@ func (b *BackendClient) Chmod(ctx context.Context, path string, mode uint32) fus
 				Mode:      mode,
 				SessionId: b.client.SessionID(),
 				RequestId: requestID,
-			})
+			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.ChmodReply) int32 { return r.Status },
 	)
@@ -496,7 +497,7 @@ func (b *BackendClient) Chmod(ctx context.Context, path string, mode uint32) fus
 
 // Chown changes ownership.
 func (b *BackendClient) Chown(ctx context.Context, path string, uid, gid uint32) fuse.Status {
-	return mutatePath(ctx, "Chown", b.metaCtx,
+	return mutatePath(b, ctx, "Chown",
 		func(ctx context.Context, requestID string) (*proto.ChownReply, error) {
 			return b.client.Fs().Chown(ctx, &proto.ChownRequest{
 				Volume:    b.volume,
@@ -506,7 +507,7 @@ func (b *BackendClient) Chown(ctx context.Context, path string, uid, gid uint32)
 				Gid:       gid,
 				SessionId: b.client.SessionID(),
 				RequestId: requestID,
-			})
+			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.ChownReply) int32 { return r.Status },
 	)
@@ -524,7 +525,7 @@ func timeToFileTime(t *time.Time) *proto.FileTime {
 // Utimens sets atime and/or mtime. A nil pointer leaves that timestamp
 // unchanged (UTIME_OMIT).
 func (b *BackendClient) Utimens(ctx context.Context, path string, atime, mtime *time.Time) fuse.Status {
-	return mutatePath(ctx, "Utimens", b.metaCtx,
+	return mutatePath(b, ctx, "Utimens",
 		func(ctx context.Context, requestID string) (*proto.UtimensReply, error) {
 			return b.client.Fs().Utimens(ctx, &proto.UtimensRequest{
 				Volume:    b.volume,
@@ -534,7 +535,7 @@ func (b *BackendClient) Utimens(ctx context.Context, path string, atime, mtime *
 				Mtime:     timeToFileTime(mtime),
 				SessionId: b.client.SessionID(),
 				RequestId: requestID,
-			})
+			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.UtimensReply) int32 { return r.Status },
 	)
