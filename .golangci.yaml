@@ -57,6 +57,7 @@ linters:
     # proto messages don't use optional/oneof fields where nil-on-Get
     # would matter; revisit if that changes.
     - gomodguard_v2    # block deprecated module paths (see settings below)
+    - depguard         # architectural import bans (see settings below)
     - usestdlibvars    # use http.StatusOK rather than 200
     - mirror           # bytes vs strings consistency
     - unconvert        # truly-unnecessary type conversions hint at confusion
@@ -64,6 +65,22 @@ linters:
     - loggercheck      # zap/zerolog/etc key-value mismatch
 
   settings:
+    depguard:
+      rules:
+        # ARCH-2: pkg/client is consumable as a client-only library — it
+        # must never compile pkg/server code. Vocabulary shared by both
+        # sides (auth config types, cert fingerprint, snappy codec,
+        # GMOUNTIE env prefix, default port) lives in pkg/common.
+        # Test files are excluded: pkg/client integration tests
+        # deliberately boot an in-process server.
+        client-no-server:
+          files:
+            - "**/pkg/client/**"
+            - "!$test"
+          deny:
+            - pkg: go.gmountie.dev/gmountie/pkg/server
+              desc: "pkg/client must not import pkg/server; move shared vocabulary to pkg/common"
+
     errcheck:
       # Type assertions like `s, _ := x.(*Foo)` can hide nil-pointer bugs.
       check-type-assertions: true
