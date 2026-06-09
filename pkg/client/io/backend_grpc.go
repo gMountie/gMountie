@@ -19,6 +19,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 )
@@ -146,15 +147,14 @@ func ioCtx(parent context.Context, timeout time.Duration) (context.Context, cont
 
 // Stat returns the attributes of path. Idempotent; no request_id stamping.
 func (b *BackendClient) Stat(ctx context.Context, path string) (*Attr, fuse.Status) {
-	ctx2, cancel := b.metaCtx(ctx)
-	defer cancel()
-	res, err := retryableCall(ctx2, "GetAttr", func(ctx context.Context) (*proto.GetAttrReply, error) {
-		return b.client.Fs().GetAttr(ctx, &proto.GetAttrRequest{
-			Volume: b.volume,
-			Caller: callerFromCtx(ctx),
-			Path:   path,
+	res, err := retryOp(b.client, ctx, "GetAttr", classIdempotentRead, b.client.MetaTimeout(),
+		func(ctx context.Context) (*proto.GetAttrReply, error) {
+			return b.client.Fs().GetAttr(ctx, &proto.GetAttrRequest{
+				Volume: b.volume,
+				Caller: callerFromCtx(ctx),
+				Path:   path,
+			}, grpc.WaitForReady(true))
 		})
-	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: GetAttr", zap.String("path", path), zap.Error(err))
 		return nil, fuse.EIO
@@ -169,16 +169,15 @@ func (b *BackendClient) Stat(ctx context.Context, path string) (*Attr, fuse.Stat
 // (nil, true, OK) on NotModified, (newAttr, false, OK) on version change,
 // (nil, false, ENOENT) if the path is gone, (nil, false, EIO) on error.
 func (b *BackendClient) GetAttrIfChanged(ctx context.Context, path string, knownVersion uint64) (*Attr, bool, fuse.Status) {
-	ctx2, cancel := b.metaCtx(ctx)
-	defer cancel()
-	reply, err := retryableCall(ctx2, "GetAttrIfChanged", func(ctx context.Context) (*proto.GetAttrIfChangedReply, error) {
-		return b.client.Fs().GetAttrIfChanged(ctx, &proto.GetAttrIfChangedRequest{
-			Volume:       b.volume,
-			Caller:       callerFromCtx(ctx),
-			Path:         path,
-			KnownVersion: knownVersion,
+	reply, err := retryOp(b.client, ctx, "GetAttrIfChanged", classIdempotentRead, b.client.MetaTimeout(),
+		func(ctx context.Context) (*proto.GetAttrIfChangedReply, error) {
+			return b.client.Fs().GetAttrIfChanged(ctx, &proto.GetAttrIfChangedRequest{
+				Volume:       b.volume,
+				Caller:       callerFromCtx(ctx),
+				Path:         path,
+				KnownVersion: knownVersion,
+			}, grpc.WaitForReady(true))
 		})
-	})
 	if err != nil {
 		if st, ok := grpcstatus.FromError(err); ok && st.Code() == codes.NotFound {
 			return nil, false, fuse.ENOENT
@@ -205,15 +204,14 @@ func (b *BackendClient) Lookup(ctx context.Context, parent, name string) (*Attr,
 
 // ListDir returns the directory entries at path. Idempotent.
 func (b *BackendClient) ListDir(ctx context.Context, path string) ([]DirEntry, fuse.Status) {
-	ctx2, cancel := b.metaCtx(ctx)
-	defer cancel()
-	res, err := retryableCall(ctx2, "OpenDir", func(ctx context.Context) (*proto.OpenDirReply, error) {
-		return b.client.Fs().OpenDir(ctx, &proto.OpenDirRequest{
-			Volume: b.volume,
-			Caller: callerFromCtx(ctx),
-			Path:   path,
+	res, err := retryOp(b.client, ctx, "OpenDir", classIdempotentRead, b.client.MetaTimeout(),
+		func(ctx context.Context) (*proto.OpenDirReply, error) {
+			return b.client.Fs().OpenDir(ctx, &proto.OpenDirRequest{
+				Volume: b.volume,
+				Caller: callerFromCtx(ctx),
+				Path:   path,
+			}, grpc.WaitForReady(true))
 		})
-	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: OpenDir", zap.String("path", path), zap.Error(err))
 		return nil, fuse.EIO
@@ -231,16 +229,15 @@ func (b *BackendClient) ListDir(ctx context.Context, path string) ([]DirEntry, f
 
 // Access mirrors access(2). Idempotent.
 func (b *BackendClient) Access(ctx context.Context, path string, mode uint32) fuse.Status {
-	ctx2, cancel := b.metaCtx(ctx)
-	defer cancel()
-	res, err := retryableCall(ctx2, "Access", func(ctx context.Context) (*proto.AccessReply, error) {
-		return b.client.Fs().Access(ctx, &proto.AccessRequest{
-			Volume: b.volume,
-			Caller: callerFromCtx(ctx),
-			Path:   path,
-			Mode:   mode,
+	res, err := retryOp(b.client, ctx, "Access", classIdempotentRead, b.client.MetaTimeout(),
+		func(ctx context.Context) (*proto.AccessReply, error) {
+			return b.client.Fs().Access(ctx, &proto.AccessRequest{
+				Volume: b.volume,
+				Caller: callerFromCtx(ctx),
+				Path:   path,
+				Mode:   mode,
+			}, grpc.WaitForReady(true))
 		})
-	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Access", zap.String("path", path), zap.Error(err))
 		return fuse.EIO
@@ -250,13 +247,12 @@ func (b *BackendClient) Access(ctx context.Context, path string, mode uint32) fu
 
 // Readlink returns the target string of a symbolic link. Idempotent.
 func (b *BackendClient) Readlink(ctx context.Context, path string) (string, fuse.Status) {
-	ctx2, cancel := b.metaCtx(ctx)
-	defer cancel()
-	res, err := retryableCall(ctx2, "Readlink", func(ctx context.Context) (*proto.ReadlinkReply, error) {
-		return b.client.Fs().Readlink(ctx, &proto.ReadlinkRequest{
-			Volume: b.volume, Caller: callerFromCtx(ctx), Path: path,
+	res, err := retryOp(b.client, ctx, "Readlink", classIdempotentRead, b.client.MetaTimeout(),
+		func(ctx context.Context) (*proto.ReadlinkReply, error) {
+			return b.client.Fs().Readlink(ctx, &proto.ReadlinkRequest{
+				Volume: b.volume, Caller: callerFromCtx(ctx), Path: path,
+			}, grpc.WaitForReady(true))
 		})
-	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Readlink", zap.String("path", path), zap.Error(err))
 		return "", fuse.EIO
@@ -310,11 +306,11 @@ func (b *BackendClient) Symlink(ctx context.Context, target, linkPath string) fu
 
 // StatFs returns filesystem statistics for the volume containing path.
 func (b *BackendClient) StatFs(ctx context.Context, path string) (*StatFs, fuse.Status) {
-	ctx2, cancel := b.metaCtx(ctx)
-	defer cancel()
-	res, err := retryableCall(ctx2, "StatFs", func(ctx context.Context) (*proto.StatFsReply, error) {
-		return b.client.Fs().StatFs(ctx, &proto.StatFsRequest{Volume: b.volume, Path: path})
-	})
+	res, err := retryOp(b.client, ctx, "StatFs", classIdempotentRead, b.client.MetaTimeout(),
+		func(ctx context.Context) (*proto.StatFsReply, error) {
+			return b.client.Fs().StatFs(ctx, &proto.StatFsRequest{Volume: b.volume, Path: path},
+				grpc.WaitForReady(true))
+		})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: StatFs", zap.String("path", path), zap.Error(err))
 		return nil, fuse.EIO
@@ -333,13 +329,12 @@ func (b *BackendClient) StatFs(ctx context.Context, path string) (*StatFs, fuse.
 
 // GetXAttr returns extended-attribute bytes. Idempotent.
 func (b *BackendClient) GetXAttr(ctx context.Context, path, attr string) ([]byte, fuse.Status) {
-	ctx2, cancel := b.metaCtx(ctx)
-	defer cancel()
-	res, err := retryableCall(ctx2, "GetXAttr", func(ctx context.Context) (*proto.GetXAttrReply, error) {
-		return b.client.Fs().GetXAttr(ctx, &proto.GetXAttrRequest{
-			Volume: b.volume, Caller: callerFromCtx(ctx), Path: path, Attribute: attr,
+	res, err := retryOp(b.client, ctx, "GetXAttr", classIdempotentRead, b.client.MetaTimeout(),
+		func(ctx context.Context) (*proto.GetXAttrReply, error) {
+			return b.client.Fs().GetXAttr(ctx, &proto.GetXAttrRequest{
+				Volume: b.volume, Caller: callerFromCtx(ctx), Path: path, Attribute: attr,
+			}, grpc.WaitForReady(true))
 		})
-	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: GetXAttr", zap.String("path", path), zap.Error(err))
 		return nil, fuse.EIO
@@ -386,13 +381,12 @@ func (b *BackendClient) RemoveXAttr(ctx context.Context, path, attr string) fuse
 
 // ListXAttr returns extended-attribute names. Idempotent.
 func (b *BackendClient) ListXAttr(ctx context.Context, path string) ([]string, fuse.Status) {
-	ctx2, cancel := b.metaCtx(ctx)
-	defer cancel()
-	res, err := retryableCall(ctx2, "ListXAttr", func(ctx context.Context) (*proto.ListXAttrReply, error) {
-		return b.client.Fs().ListXAttr(ctx, &proto.ListXAttrRequest{
-			Volume: b.volume, Caller: callerFromCtx(ctx), Path: path,
+	res, err := retryOp(b.client, ctx, "ListXAttr", classIdempotentRead, b.client.MetaTimeout(),
+		func(ctx context.Context) (*proto.ListXAttrReply, error) {
+			return b.client.Fs().ListXAttr(ctx, &proto.ListXAttrRequest{
+				Volume: b.volume, Caller: callerFromCtx(ctx), Path: path,
+			}, grpc.WaitForReady(true))
 		})
-	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: ListXAttr", zap.String("path", path), zap.Error(err))
 		return nil, fuse.EIO
