@@ -102,13 +102,13 @@ func (s *RpcFileServerTestSuite) TestRead() {
 	mockFile := new(nodefs2.MockFile)
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	sess, _ := s.sessionMgr.Get(s.sessionID)
-	fd := sess.RegisterFile("/test/path", mockFile)
+	fd := sess.RegisterFile("testVolume", "/test/path", mockFile)
 	mockFile.EXPECT().Read(mock.Anything, int64(0)).Return(fuse.ReadResultData([]byte("test data")), fuse.OK).Once()
 	// Second call hits the EOF branch (short read returned len("test data")<1024).
 	mockFile.EXPECT().Release().Return().Maybe()
 
 	// Test.
-	request := &proto.ReadRequest{Fd: fd, Size: 1024, Offset: 0, SessionId: s.sessionID}
+	request := &proto.ReadRequest{Volume: "testVolume", Fd: fd, Size: 1024, Offset: 0, SessionId: s.sessionID}
 	stream := newFakeReadStream(testAuthedCtx("test-user"))
 	err := s.server.Read(request, stream)
 
@@ -126,13 +126,13 @@ func (s *RpcFileServerTestSuite) TestFsync() {
 	mockFile := new(nodefs2.MockFile)
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	sess, _ := s.sessionMgr.Get(s.sessionID)
-	fd := sess.RegisterFile("/test/path", mockFile)
+	fd := sess.RegisterFile("testVolume", "/test/path", mockFile)
 	ctx := testAuthedCtx("test-user")
 	mockFile.EXPECT().Fsync(int(0)).Return(fuse.OK)
 	mockFile.EXPECT().Release().Return().Maybe()
 
 	// Test.
-	request := &proto.FsyncRequest{Fd: fd, Flags: 0, SessionId: s.sessionID}
+	request := &proto.FsyncRequest{Volume: "testVolume", Fd: fd, Flags: 0, SessionId: s.sessionID}
 	reply, err := s.server.Fsync(ctx, request)
 
 	// Verify.
@@ -147,12 +147,12 @@ func (s *RpcFileServerTestSuite) TestRelease() {
 	mockFile := new(nodefs2.MockFile)
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	sess, _ := s.sessionMgr.Get(s.sessionID)
-	fd := sess.RegisterFile("/test/path", mockFile)
+	fd := sess.RegisterFile("testVolume", "/test/path", mockFile)
 	ctx := testAuthedCtx("test-user")
 	mockFile.EXPECT().Release().Return()
 
 	// Test.
-	request := &proto.ReleaseRequest{Fd: fd, SessionId: s.sessionID}
+	request := &proto.ReleaseRequest{Volume: "testVolume", Fd: fd, SessionId: s.sessionID}
 	reply, err := s.server.Release(ctx, request)
 
 	// Verify.
@@ -166,13 +166,13 @@ func (s *RpcFileServerTestSuite) TestFlush() {
 	mockFile := new(nodefs2.MockFile)
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	sess, _ := s.sessionMgr.Get(s.sessionID)
-	fd := sess.RegisterFile("/test/path", mockFile)
+	fd := sess.RegisterFile("testVolume", "/test/path", mockFile)
 	ctx := testAuthedCtx("test-user")
 	mockFile.EXPECT().Flush().Return(fuse.OK)
 	mockFile.EXPECT().Release().Return().Maybe()
 
 	// Test.
-	request := &proto.FlushRequest{Fd: fd, SessionId: s.sessionID}
+	request := &proto.FlushRequest{Volume: "testVolume", Fd: fd, SessionId: s.sessionID}
 	reply, err := s.server.Flush(ctx, request)
 
 	// Verify.
@@ -279,7 +279,7 @@ func (s *RpcFileServerTestSuite) TestWriteAndFlushWritesThenFlushesAndReturnsAtt
 	mockFile := new(nodefs2.MockFile)
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	sess, _ := s.sessionMgr.Get(s.sessionID)
-	fd := sess.RegisterFile("/waf.txt", mockFile)
+	fd := sess.RegisterFile("testVolume", "/waf.txt", mockFile)
 	ctx := testAuthedCtx("test-user")
 
 	mockFile.EXPECT().Write([]byte("hello"), int64(0)).Return(uint32(5), fuse.OK)
@@ -306,7 +306,7 @@ func (s *RpcFileServerTestSuite) TestWriteAndFlushEmptyDataIsPureFlush() {
 	mockFile := new(nodefs2.MockFile)
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	sess, _ := s.sessionMgr.Get(s.sessionID)
-	fd := sess.RegisterFile("/waf2.txt", mockFile)
+	fd := sess.RegisterFile("testVolume", "/waf2.txt", mockFile)
 	ctx := testAuthedCtx("test-user")
 
 	mockFile.EXPECT().Flush().Return(fuse.OK)
@@ -332,7 +332,7 @@ func (s *RpcFileServerTestSuite) TestWriteAndFlushWriteErrorSkipsFlush() {
 	mockFile := new(nodefs2.MockFile)
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	sess, _ := s.sessionMgr.Get(s.sessionID)
-	fd := sess.RegisterFile("/err.txt", mockFile)
+	fd := sess.RegisterFile("testVolume", "/err.txt", mockFile)
 	ctx := testAuthedCtx("test-user")
 
 	mockFile.EXPECT().Write([]byte("data"), int64(0)).Return(uint32(0), fuse.EIO)
@@ -360,7 +360,7 @@ func (s *RpcFileServerTestSuite) TestWriteAndFlushEmitsMutationEventOnSuccess() 
 	mockFile := new(nodefs2.MockFile)
 	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
 	sess, _ := s.sessionMgr.Get(s.sessionID)
-	fd := sess.RegisterFile("/emit.txt", mockFile)
+	fd := sess.RegisterFile("testVolume", "/emit.txt", mockFile)
 	ctx := testAuthedCtx("test-user")
 
 	mockFile.EXPECT().Write([]byte("hi"), int64(0)).Return(uint32(2), fuse.OK)
@@ -410,7 +410,7 @@ func (s *RpcFileServerTestSuite) registerRawFile(name string, content []byte) ui
 	s.T().Cleanup(func() { rf.Release() })
 	sess, err := s.sessionMgr.Get(s.sessionID)
 	s.Require().NoError(err)
-	return sess.RegisterFile(name, rf)
+	return sess.RegisterFile("testVolume", name, rf)
 }
 
 func (s *RpcFileServerTestSuite) TestCopyFileRange_Happy() {
@@ -437,6 +437,58 @@ func (s *RpcFileServerTestSuite) TestCopyFileRange_Happy() {
 	case <-time.After(time.Second):
 		s.Fail("expected a mutation event for the copy destination")
 	}
+}
+
+// TestWriteAndFlushCrossVolumeFdRejected pins the SEC-1 fix: an fd opened on
+// volume A must not be usable with request.Volume = B. The handler must treat
+// the mismatch exactly like an unknown fd (EBADF in-reply) and must NOT stat
+// the path on volume B (no GetVolumeFileSystem/GetAttr against B) nor emit an
+// event on B's bus.
+func (s *RpcFileServerTestSuite) TestWriteAndFlushCrossVolumeFdRejected() {
+	// fd registered on volume A ("testVolume").
+	mockFile := new(nodefs2.MockFile)
+	sess, _ := s.sessionMgr.Get(s.sessionID)
+	fd := sess.RegisterFile("testVolume", "/secret.txt", mockFile)
+	mockFile.EXPECT().Release().Return().Maybe()
+
+	// Watch volume B's bus: no event may be emitted there.
+	events, cancel := s.bus.Subscribe("otherVolume")
+	defer cancel()
+
+	reply, err := s.server.WriteAndFlush(testAuthedCtx("test-user"), &proto.WriteAndFlushRequest{
+		Volume: "otherVolume", Fd: fd, Data: []byte("x"), SessionId: s.sessionID,
+	})
+	s.Require().NoError(err)
+	s.Assert().Equal(int32(fuse.EBADF), reply.Status, "cross-volume fd use must look like an unknown fd")
+	s.Assert().Nil(reply.FinalAttr, "no metadata may leak for the foreign volume")
+
+	// The handler must not have touched volume B at all.
+	s.fsService.AssertNotCalled(s.T(), "GetVolumeFileSystem", "otherVolume")
+	mockFile.AssertNotCalled(s.T(), "Write", mock.Anything, mock.Anything)
+	mockFile.AssertNotCalled(s.T(), "Flush")
+	select {
+	case ev := <-events:
+		s.FailNowf("unexpected event on foreign volume bus", "event: %+v", ev)
+	default:
+	}
+}
+
+// TestReadCrossVolumeFdRejected: same property for the streaming Read path —
+// the terminal frame carries EBADF and the file is never read.
+func (s *RpcFileServerTestSuite) TestReadCrossVolumeFdRejected() {
+	mockFile := new(nodefs2.MockFile)
+	sess, _ := s.sessionMgr.Get(s.sessionID)
+	fd := sess.RegisterFile("testVolume", "/secret.txt", mockFile)
+	mockFile.EXPECT().Release().Return().Maybe()
+
+	stream := newFakeReadStream(testAuthedCtx("test-user"))
+	err := s.server.Read(&proto.ReadRequest{
+		Volume: "otherVolume", Fd: fd, Size: 16, SessionId: s.sessionID,
+	}, stream)
+	s.Require().NoError(err)
+	s.Require().Len(stream.frames, 1)
+	s.Assert().Equal(int32(fuse.EBADF), stream.frames[0].Status)
+	mockFile.AssertNotCalled(s.T(), "Read", mock.Anything, mock.Anything)
 }
 
 func (s *RpcFileServerTestSuite) TestCopyFileRange_BadFd() {

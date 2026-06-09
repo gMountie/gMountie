@@ -14,11 +14,14 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// FileEntry is a per-session record for an open file.
+// FileEntry is a per-session record for an open file. Volume is the volume
+// the fd was opened on — fd-based RPCs must only honour the fd for that
+// volume (the controller enforces the binding).
 type FileEntry struct {
-	File nodefs.File
-	Path string
-	Fd   uint64
+	File   nodefs.File
+	Volume string
+	Path   string
+	Fd     uint64
 }
 
 // Session is the per-client view of server state. Each session owns its own
@@ -31,7 +34,10 @@ type Session interface {
 	// Serial returns the canonical cert SerialKey bound at Create (empty for
 	// basic-auth). Used by the reaper to match a blocked serial out of band.
 	Serial() string
-	RegisterFile(path string, file nodefs.File) uint64
+	// RegisterFile records an open file under a fresh fd, bound to the volume
+	// it was opened on. The binding is what lets fd-based RPCs reject a
+	// client-supplied volume that doesn't match the fd's volume.
+	RegisterFile(volume, path string, file nodefs.File) uint64
 	GetFile(fd uint64) (*FileEntry, bool)
 	ReleaseFile(fd uint64)
 	// ReleaseAll releases every fd in the session. Called by the manager when
@@ -112,9 +118,9 @@ func (s *sessionImpl) ID() string        { return s.id }
 func (s *sessionImpl) Principal() string { return s.principal }
 func (s *sessionImpl) Serial() string    { return s.serial }
 
-func (s *sessionImpl) RegisterFile(path string, file nodefs.File) uint64 {
+func (s *sessionImpl) RegisterFile(volume, path string, file nodefs.File) uint64 {
 	fd := s.fdNum.Add(1)
-	s.files.Store(fd, &FileEntry{File: file, Path: path, Fd: fd})
+	s.files.Store(fd, &FileEntry{File: file, Volume: volume, Path: path, Fd: fd})
 	return fd
 }
 

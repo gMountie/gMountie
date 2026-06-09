@@ -135,7 +135,7 @@ func (s *StreamingWriteSuite) registerWriter() (uint64, *recordingWriter) {
 		RunAndReturn(writer.Write).Maybe()
 	mockFile.EXPECT().Release().Return().Maybe()
 	sess, _ := s.sessionMgr.Get(s.sessionID)
-	return sess.RegisterFile("/test/path", mockFile), writer
+	return sess.RegisterFile("testVolume", "/test/path", mockFile), writer
 }
 
 func (s *StreamingWriteSuite) TestWrite_SingleFrameAppendsAndReturnsByteCount() {

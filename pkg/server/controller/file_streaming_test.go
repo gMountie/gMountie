@@ -135,7 +135,7 @@ func (s *StreamingReadSuite) registerFile(payload []byte) uint64 {
 		RunAndReturn(reader.Read).Maybe()
 	mockFile.EXPECT().Release().Return().Maybe()
 	sess, _ := s.sessionMgr.Get(s.sessionID)
-	return sess.RegisterFile("/test/path", mockFile)
+	return sess.RegisterFile("testVolume", "/test/path", mockFile)
 }
 
 func (s *StreamingReadSuite) TestRead_DeliversFullPayloadInMultipleFrames() {
@@ -221,7 +221,7 @@ func (s *StreamingReadSuite) TestRead_MidStreamErrorEmitsTerminalErrnoFrame() {
 		RunAndReturn(reader.Read).Maybe()
 	mockFile.EXPECT().Release().Return().Maybe()
 	sess, _ := s.sessionMgr.Get(s.sessionID)
-	fd := sess.RegisterFile("/test/path", mockFile)
+	fd := sess.RegisterFile("testVolume", "/test/path", mockFile)
 
 	stream := newFakeReadStream(testAuthedCtx("test-user"))
 	err := s.server.Read(&proto.ReadRequest{

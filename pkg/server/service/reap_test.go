@@ -73,7 +73,7 @@ func (s *ReapSuite) TestReapIf_AfterMarkDisconnected_ReleasesOnceAndCancelsReape
 	sess, err := m.Get(id)
 	s.Require().NoError(err)
 	var releases atomic.Int32
-	sess.RegisterFile("/p", &countingFile{File: nodefs.NewDefaultFile(), releases: &releases})
+	sess.RegisterFile("vol", "/p", &countingFile{File: nodefs.NewDefaultFile(), releases: &releases})
 
 	m.MarkDisconnected(id) // schedules a grace reaper (won't fire for an hour)
 	n := m.ReapIf(func(_, serial string) bool { return serial == "dead" })
