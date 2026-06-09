@@ -236,6 +236,9 @@ func Start(ctx context.Context, cfg *config.Config) error {
 		grpc.WithExtraUnaryInterceptors(
 			grpc.UnaryServerMetricsInterceptor(appCtx.Metrics),
 		),
+		grpc.WithExtraStreamInterceptors(
+			grpc.StreamServerMetricsInterceptor(appCtx.Metrics),
+		),
 		// Wire the same SessionManager the SessionController uses so that
 		// principals bound at Create are visible to the AuthInterceptor.
 		grpc.WithSessionManager(appCtx.SessionManager),
