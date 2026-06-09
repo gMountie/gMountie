@@ -1,7 +1,7 @@
 # Security and Transport
 
-**Status:** Shipped (Phase 7, PRs #53–#55, 2026-05-29)
-**Last updated:** 2026-05-29
+**Status:** Shipped (Phase 7, PRs #53–#55, 2026-05-29; TLS leaf live-reload added in v0.15)
+**Last updated:** 2026-06-09
 
 The durable record of gMountie's transport security, credential storage,
 and access-control model — what makes it deployable on a non-trusted
@@ -35,7 +35,20 @@ server:
 `pkg/server/grpc.NewServer` takes the credentials via a `WithCredentials`
 option; the bootstrap in `pkg/server/app.go` builds the `tls.Config`
 (`MinVersion: TLS1.3`, `NextProtos: ["h2"]`) before the listener binds.
-Cert rotation is by restart (SIGHUP reload deferred).
+
+**Cert rotation is live (leaf live-reload, v0.15).** Both the gRPC and
+ops listeners serve their certificate through `pkg/server/tls.Reloader`,
+a `tls.Config.GetCertificate` callback backed by a stat-checked cached
+pair: when the cert file's identity stamp — `(mtime, size, inode)`, so
+kubelet's atomic `..data` symlink swap is caught — changes, the next
+handshake reloads the pair. Always-on, no config knob. Failure semantics
+are **fail-open to the last good pair**: a torn swap, briefly missing
+file, or unparsable PEM keeps serving the cached cert (one
+state-transition warning, recovery logged); a successful swap logs the
+old → new fingerprint. Existing connections are never re-handshaken, so
+rotation disturbs no live session. Out of scope: client-CA pool reload
+and client-side cert reload (client certs are long-lived by design);
+there is no manual trigger surface (no SIGHUP, no ops endpoint).
 
 ### 2.1 Auto-generated cert — the SSH host-key pattern
 
