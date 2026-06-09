@@ -13,7 +13,7 @@
 #   BENCHER      "1" to run bencher upload    (default unset = skip)
 #   BENCHER_PROJECT / BENCHER_TESTBED / BENCHER_BRANCH / GIT_HASH
 #
-# Requires: go, fio, iperf3, ping, tc, and a built perfbmf at $PERFBMF
+# Requires: go, fio, iperf3, ping, tc, ss, and a built perfbmf at $PERFBMF
 # (default: built into $WORKDIR).
 set -euo pipefail
 
@@ -47,7 +47,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "== assert toolchain present =="
-for bin in go fio iperf3 ping tc; do command -v "$bin" >/dev/null || { echo "missing $bin" >&2; exit 1; }; done
+for bin in go fio iperf3 ping tc ss; do command -v "$bin" >/dev/null || { echo "missing $bin" >&2; exit 1; }; done
 [ "${BENCHER:-}" = "1" ] && { command -v bencher >/dev/null || { echo "missing bencher" >&2; exit 1; }; }
 
 echo "== assert pinned tool versions =="
@@ -70,11 +70,24 @@ echo "== cpu + disk substrate =="
 cpu="$("$PERFBMF" cpuprobe)"
 fio --output-format=json "$repo/test/e2e/perf/substrate/substrate.fio" > "$WORKDIR/fio.json"
 
+# Wait until something is LISTENing on TCP :5201. A fixed sleep between
+# server start and client connect was a flake source under load (set -e
+# kills the whole run on one refused connect).
+wait_iperf3_listening() {
+  local i
+  for i in $(seq 1 100); do
+    if ss -ltn 2>/dev/null | grep -q ':5201[[:space:]]'; then return 0; fi
+    sleep 0.1
+  done
+  echo "iperf3 server not listening on :5201 after 10s" >&2
+  return 1
+}
+
 run_net_probe() { # $1=profile $2=iperf seconds
   local p="$1" secs="$2"
   "$here/profile.sh" apply "$p" "$IFACE" >/dev/null
   iperf3 -s -1 -D                                  # one-shot server, daemonized
-  sleep 0.3
+  wait_iperf3_listening
   # WAN needs a longer window so TCP slow-start doesn't drag the average
   # below the 100 Mbit cap; LAN over lo settles almost instantly.
   iperf3 -c 127.0.0.1 -t "$secs" -J > "$WORKDIR/iperf-$p.json"
