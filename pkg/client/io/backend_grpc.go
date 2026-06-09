@@ -135,6 +135,32 @@ func ioCtx(parent context.Context, timeout time.Duration) (context.Context, cont
 	return withTimeout(context.WithoutCancel(parent), timeout)
 }
 
+// statusFromRPCError maps a transport-level gRPC error to the closest FUSE
+// errno, instead of the blanket EIO that loses errno fidelity. The mapping
+// mirrors what the server actually produces (controller/*.go, grpc/auth.go):
+//
+//	NotFound         → ENOENT  (path gone, fd/session not found — e.g. reaped)
+//	PermissionDenied → EACCES  (ACL/identity denial, session ownership)
+//	Unauthenticated  → EACCES  (revoked cert, bad credentials)
+//	anything else    → EIO     (honest "transport-level unknown")
+//
+// In-band failures still arrive as fuse.Status in the reply body; this helper
+// only covers the error arm of each RPC.
+func statusFromRPCError(err error) fuse.Status {
+	s, ok := grpcstatus.FromError(err)
+	if !ok || s == nil {
+		return fuse.EIO
+	}
+	switch s.Code() {
+	case codes.NotFound:
+		return fuse.ENOENT
+	case codes.PermissionDenied, codes.Unauthenticated:
+		return fuse.EACCES
+	default:
+		return fuse.EIO
+	}
+}
+
 // Stat returns the attributes of path. Idempotent; no request_id stamping.
 func (b *BackendClient) Stat(ctx context.Context, path string) (*Attr, fuse.Status) {
 	res, err := retryOp(b.client, ctx, "GetAttr", classIdempotentRead, b.client.MetaTimeout(),
@@ -147,7 +173,7 @@ func (b *BackendClient) Stat(ctx context.Context, path string) (*Attr, fuse.Stat
 		})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: GetAttr", zap.String("path", path), zap.Error(err))
-		return nil, fuse.EIO
+		return nil, statusFromRPCError(err)
 	}
 	if res.GetAttributes() == nil {
 		return nil, fuse.Status(res.Status)
@@ -169,11 +195,13 @@ func (b *BackendClient) GetAttrIfChanged(ctx context.Context, path string, known
 			}, grpc.WaitForReady(true))
 		})
 	if err != nil {
-		if st, ok := grpcstatus.FromError(err); ok && st.Code() == codes.NotFound {
+		st := statusFromRPCError(err)
+		if st == fuse.ENOENT {
+			// Path gone is an expected revalidation outcome — no error log.
 			return nil, false, fuse.ENOENT
 		}
 		log.Log.Error("error in call: GetAttrIfChanged", zap.String("path", path), zap.Error(err))
-		return nil, false, fuse.EIO
+		return nil, false, st
 	}
 	if reply.GetNotModified() {
 		return nil, true, fuse.OK
@@ -204,7 +232,7 @@ func (b *BackendClient) ListDir(ctx context.Context, path string) ([]DirEntry, f
 		})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: OpenDir", zap.String("path", path), zap.Error(err))
-		return nil, fuse.EIO
+		return nil, statusFromRPCError(err)
 	}
 	var entries []DirEntry
 	for _, entry := range res.Entries {
@@ -230,7 +258,7 @@ func (b *BackendClient) Access(ctx context.Context, path string, mode uint32) fu
 		})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Access", zap.String("path", path), zap.Error(err))
-		return fuse.EIO
+		return statusFromRPCError(err)
 	}
 	return fuse.Status(res.Status)
 }
@@ -245,7 +273,7 @@ func (b *BackendClient) Readlink(ctx context.Context, path string) (string, fuse
 		})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Readlink", zap.String("path", path), zap.Error(err))
-		return "", fuse.EIO
+		return "", statusFromRPCError(err)
 	}
 	return res.Target, fuse.Status(res.Status)
 }
@@ -256,8 +284,8 @@ func (b *BackendClient) Readlink(ctx context.Context, path string) (string, fuse
 // idempotency cache. Routes through retryOp with classPathMutation so a
 // session-id change (Create-fallback recovery) stops the retry immediately
 // — the new session's idempotency cache is empty and a replay could surface
-// a spurious EEXIST/ENOENT. Returns fuse.EIO on gRPC error, otherwise
-// fuse.Status as returned by statusOf.
+// a spurious EEXIST/ENOENT. Returns statusFromRPCError's errno mapping on a
+// gRPC error, otherwise fuse.Status as returned by statusOf.
 func mutatePath[Rep any](
 	b *BackendClient,
 	ctx context.Context,
@@ -272,7 +300,7 @@ func mutatePath[Rep any](
 		})
 	if err != nil {
 		log.Log.Error("error in call: "+op, zap.Error(err))
-		return fuse.EIO
+		return statusFromRPCError(err)
 	}
 	return fuse.Status(statusOf(res))
 }
@@ -304,7 +332,7 @@ func (b *BackendClient) StatFs(ctx context.Context, path string) (*StatFs, fuse.
 		})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: StatFs", zap.String("path", path), zap.Error(err))
-		return nil, fuse.EIO
+		return nil, statusFromRPCError(err)
 	}
 	return &StatFs{
 		Blocks:  res.Blocks,
@@ -328,7 +356,7 @@ func (b *BackendClient) GetXAttr(ctx context.Context, path, attr string) ([]byte
 		})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: GetXAttr", zap.String("path", path), zap.Error(err))
-		return nil, fuse.EIO
+		return nil, statusFromRPCError(err)
 	}
 	return res.Data, fuse.Status(res.Status)
 }
@@ -380,7 +408,7 @@ func (b *BackendClient) ListXAttr(ctx context.Context, path string) ([]string, f
 		})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: ListXAttr", zap.String("path", path), zap.Error(err))
-		return nil, fuse.EIO
+		return nil, statusFromRPCError(err)
 	}
 	return res.Attributes, fuse.Status(res.Status)
 }
@@ -552,7 +580,7 @@ func (b *BackendClient) Open(ctx context.Context, path string, flags uint32) (Fi
 		})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Open", zap.String("path", path), zap.Error(err))
-		return nil, fuse.EIO
+		return nil, statusFromRPCError(err)
 	}
 	if fuse.Status(res.Status) != fuse.OK {
 		return nil, fuse.Status(res.Status)
@@ -590,7 +618,7 @@ func (b *BackendClient) Create(ctx context.Context, parent, name string, flags, 
 		})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Create", zap.String("path", path), zap.Error(err))
-		return nil, nil, fuse.EIO
+		return nil, nil, statusFromRPCError(err)
 	}
 	if fuse.Status(res.Status) != fuse.OK {
 		return nil, nil, fuse.Status(res.Status)
@@ -661,7 +689,7 @@ func (b *BackendClient) Read(ctx context.Context, fh FileHandle, off int64, dest
 	})
 	if err != nil {
 		log.Log.Error("error in call: Read", zap.String("path", h.path), zap.Error(err))
-		return 0, fuse.EIO
+		return 0, statusFromRPCError(err)
 	}
 	if !res.status.Ok() {
 		return 0, res.status
@@ -778,7 +806,7 @@ func (b *BackendClient) streamingWrite(h *grpcFileHandle, data []byte, off int64
 		})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Write", zap.String("path", h.path), zap.Error(err))
-		return 0, fuse.EIO
+		return 0, statusFromRPCError(err)
 	}
 	return res.Written, fuse.Status(res.Status)
 }
@@ -871,7 +899,7 @@ func (b *BackendClient) Release(ctx context.Context, fh FileHandle) fuse.Status 
 		})
 	if err != nil {
 		log.Log.Error("error in call: Release", zap.String("path", h.path), zap.Error(err))
-		return fuse.EIO
+		return statusFromRPCError(err)
 	}
 	return fuse.OK
 }
@@ -924,7 +952,7 @@ func (b *BackendClient) Flush(ctx context.Context, fh FileHandle) fuse.Status {
 		})
 	if err != nil {
 		log.Log.Error("error in call: WriteAndFlush", zap.String("path", h.path), zap.Error(err))
-		return fuse.EIO
+		return statusFromRPCError(err)
 	}
 	st := fuse.Status(res.Status)
 	if st.Ok() {
@@ -957,7 +985,7 @@ func (b *BackendClient) Fsync(ctx context.Context, fh FileHandle, flags int64) f
 		})
 	if err != nil {
 		log.Log.Error("error in call: Fsync", zap.String("path", h.path), zap.Error(err))
-		return fuse.EIO
+		return statusFromRPCError(err)
 	}
 	st := fuse.Status(res.Status)
 	if st.Ok() {
@@ -990,7 +1018,7 @@ func (b *BackendClient) Allocate(ctx context.Context, fh FileHandle, off, size u
 		})
 	if err != nil {
 		log.Log.Error("error in call: Allocate", zap.String("path", h.path), zap.Error(err))
-		return fuse.EIO
+		return statusFromRPCError(err)
 	}
 	return fuse.Status(res.Status)
 }
@@ -1030,7 +1058,7 @@ func (b *BackendClient) CopyFileRange(ctx context.Context, fhIn FileHandle, offI
 	})
 	if err != nil {
 		log.Log.Error("error in call: CopyFileRange", zap.String("path", dst.path), zap.Error(err))
-		return 0, fuse.EIO
+		return 0, statusFromRPCError(err)
 	}
 	st := fuse.Status(res.Status)
 	if st.Ok() && res.BytesCopied > 0 {
@@ -1065,7 +1093,7 @@ func (b *BackendClient) Lseek(ctx context.Context, fh FileHandle, offset uint64,
 		})
 	if err != nil {
 		log.Log.Error("error in call: Lseek", zap.String("path", h.path), zap.Error(err))
-		return 0, fuse.EIO
+		return 0, statusFromRPCError(err)
 	}
 	return res.Offset, fuse.Status(res.Status)
 }
@@ -1092,7 +1120,7 @@ func (b *BackendClient) GetLk(ctx context.Context, fh FileHandle, owner uint64, 
 		})
 	if err != nil {
 		log.Log.Error("error in call: GetLk", zap.String("path", h.path), zap.Error(err))
-		return fuse.EIO
+		return statusFromRPCError(err)
 	}
 	if res.Lk != nil {
 		*out = fuse.FileLock{Start: res.Lk.Start, End: res.Lk.End, Typ: res.Lk.Typ, Pid: res.Lk.Pid}
@@ -1122,7 +1150,7 @@ func (b *BackendClient) SetLk(ctx context.Context, fh FileHandle, owner uint64, 
 		})
 	if err != nil {
 		log.Log.Error("error in call: SetLk", zap.String("path", h.path), zap.Error(err))
-		return fuse.EIO
+		return statusFromRPCError(err)
 	}
 	return fuse.Status(res.Status)
 }
@@ -1149,7 +1177,7 @@ func (b *BackendClient) SetLkw(ctx context.Context, fh FileHandle, owner uint64,
 	})
 	if err != nil {
 		log.Log.Error("error in call: SetLkw", zap.String("path", h.path), zap.Error(err))
-		return fuse.EIO
+		return statusFromRPCError(err)
 	}
 	return fuse.Status(res.Status)
 }

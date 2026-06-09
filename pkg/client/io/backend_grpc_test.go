@@ -1352,6 +1352,57 @@ func (s *BackendClientTestSuite) TestListXAttr_HappyPath() {
 	s.Assert().Equal("user.bar", names[1])
 }
 
+// --- transport-error errno fidelity ---
+
+// TestStatusFromRPCError_Mapping pins the transport-error → errno table:
+// NotFound→ENOENT, PermissionDenied/Unauthenticated→EACCES, everything
+// else→EIO. The server emits these codes for reaped sessions / dead fds /
+// denied identities; blanket EIO would mask them as generic I/O errors.
+func (s *BackendClientTestSuite) TestStatusFromRPCError_Mapping() {
+	tests := []struct {
+		name string
+		err  error
+		want fuse.Status
+	}{
+		{"NotFound", status.Error(codes.NotFound, "fd not found"), fuse.ENOENT},
+		{"PermissionDenied", status.Error(codes.PermissionDenied, "denied"), fuse.EACCES},
+		{"Unauthenticated", status.Error(codes.Unauthenticated, "revoked"), fuse.EACCES},
+		{"Unavailable", status.Error(codes.Unavailable, "down"), fuse.EIO},
+		{"Internal", status.Error(codes.Internal, "boom"), fuse.EIO},
+		{"non-grpc error", context.DeadlineExceeded, fuse.EIO},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.Equal(tt.want, statusFromRPCError(tt.err))
+		})
+	}
+}
+
+// TestStat_TransportPermissionDeniedMapsToEACCES verifies the helper is wired
+// into a path-level op's error arm: a server-side PermissionDenied (revoked
+// session, denied identity) surfaces as EACCES, not EIO.
+func (s *BackendClientTestSuite) TestStat_TransportPermissionDeniedMapsToEACCES() {
+	s.fsClient.EXPECT().GetAttr(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, status.Error(codes.PermissionDenied, "identity denied")).Once()
+
+	attr, st := s.backend.Stat(context.Background(), "/secret")
+	s.Assert().Equal(fuse.EACCES, st)
+	s.Assert().Nil(attr)
+}
+
+// TestRead_DeadFdNotFoundMapsToENOENT verifies the fd-op error arm: the
+// server's NotFound for a dead/reaped fd surfaces as ENOENT (non-retryable,
+// single attempt) rather than EIO.
+func (s *BackendClientTestSuite) TestRead_DeadFdNotFoundMapsToENOENT() {
+	s.fileClient.EXPECT().Read(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, status.Error(codes.NotFound, "fd 1 not found in session")).Once()
+
+	h := s.newHandle(grpcclient.PerFileConfig{})
+	n, st := s.backend.Read(context.Background(), h, 0, make([]byte, 8))
+	s.Assert().Equal(fuse.ENOENT, st)
+	s.Assert().Equal(0, n)
+}
+
 // badHandle is a FileHandle implementation that is not a *grpcFileHandle,
 // used to exercise the type-assertion guard on fd-level ops. Unwrap
 // returns the receiver (leaf marker) so resolveHandle's walk terminates
