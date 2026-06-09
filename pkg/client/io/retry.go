@@ -117,11 +117,3 @@ func retryOp[T any](c retryClient, fuseCtx context.Context, op string, class opC
 		metrics.OnRetry(op, status.Code(err).String())
 	}
 }
-
-// withTimeout returns a context bounded by timeout. Still used by the two
-// non-retried fd paths that bound their own context: ioCtx (CopyFileRange) and
-// the readahead prefetch / blocking SetLkw call sites. Callers must defer the
-// returned cancel function.
-func withTimeout(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(parent, timeout)
-}

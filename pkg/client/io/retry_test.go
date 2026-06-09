@@ -36,15 +36,6 @@ func (s *RetryTestSuite) TestIsRetryableGrpcError_Codes() {
 	}
 }
 
-func (s *RetryTestSuite) TestWithTimeout_DerivesDeadline() {
-	parent := context.Background()
-	ctx, cancel := withTimeout(parent, 100*time.Millisecond)
-	defer cancel()
-	deadline, ok := ctx.Deadline()
-	s.True(ok)
-	s.WithinDuration(time.Now().Add(100*time.Millisecond), deadline, 50*time.Millisecond)
-}
-
 func TestRetryTestSuite(t *testing.T) {
 	suite.Run(t, new(RetryTestSuite))
 }
