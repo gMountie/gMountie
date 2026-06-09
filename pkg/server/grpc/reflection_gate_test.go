@@ -21,6 +21,8 @@ import (
 // allowAllAuth is a minimal AuthService that permits every request.
 type allowAllAuth struct{}
 
+func (allowAllAuth) ReloadUsers(config.AuthConfig) {}
+
 func (allowAllAuth) Authorize(_ context.Context, _ string) (*service.UserDetails, error) {
 	return &service.UserDetails{Username: "test"}, nil
 }

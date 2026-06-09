@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"go.gmountie.dev/gmountie/pkg/common"
+	"go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/server/principal"
 	"go.gmountie.dev/gmountie/pkg/server/service"
 
@@ -25,6 +26,8 @@ type countingAuthService struct {
 	inner service.AuthService
 	calls int
 }
+
+func (c *countingAuthService) ReloadUsers(config.AuthConfig) {}
 
 func (c *countingAuthService) Authorize(ctx context.Context, method string) (*service.UserDetails, error) {
 	c.calls++
@@ -68,6 +71,8 @@ type alwaysGrantAuthService struct {
 func newAlwaysGrantAuthService(principal string) *alwaysGrantAuthService {
 	return &alwaysGrantAuthService{principal: principal}
 }
+
+func (a *alwaysGrantAuthService) ReloadUsers(config.AuthConfig) {}
 
 func (a *alwaysGrantAuthService) Authorize(ctx context.Context, _ string) (*service.UserDetails, error) {
 	md, ok := metadata.FromIncomingContext(ctx)
