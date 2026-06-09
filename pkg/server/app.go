@@ -64,8 +64,9 @@ func NewServerAppContext(cfg *config.Config) (*AppContext, error) {
 	}
 	authService := service.NewAuthServiceFromConfig(cfg.Auth)
 	sessionMgr := service.NewSessionManager(service.SessionManagerOptions{
-		Metrics:     m,
-		GracePeriod: cfg.Server.Session.GracePeriod,
+		Metrics:              m,
+		GracePeriod:          cfg.Server.Session.GracePeriod,
+		IdempotencyCacheSize: cfg.Server.Session.IdempotencyCacheSize,
 	})
 	bus := io.NewLocalEventBus(io.EventBusOptions{
 		BufferSize:        cfg.Server.SubscribeBufferSize,
