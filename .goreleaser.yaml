@@ -40,7 +40,10 @@ dockers_v2:
       # chart's appVersion. Goreleaser's `.Version` strips the `v`,
       # which we don't want here.
       - "{{ .Tag }}"
-      - latest
+      # Only stable releases move `latest` — alpha prereleases must not
+      # repoint it (compose defaults to :latest and the weekly trivy scan
+      # targets it). Goreleaser drops tag entries that template to "".
+      - "{{ if not .Prerelease }}latest{{ end }}"
     platforms:
       - linux/amd64
       - linux/arm64
