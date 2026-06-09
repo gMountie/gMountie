@@ -10,6 +10,7 @@ import (
 
 	mock "github.com/stretchr/testify/mock"
 	"go.gmountie.dev/gmountie/pkg/client/grpc"
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
 	"go.gmountie.dev/gmountie/pkg/proto"
 )
 
@@ -394,6 +395,52 @@ func (_c *MockClient_MetaTimeout_Call) Return(duration time.Duration) *MockClien
 }
 
 func (_c *MockClient_MetaTimeout_Call) RunAndReturn(run func() time.Duration) *MockClient_MetaTimeout_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Metrics provides a mock function for the type MockClient
+func (_mock *MockClient) Metrics() *metrics.Metrics {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Metrics")
+	}
+
+	var r0 *metrics.Metrics
+	if returnFunc, ok := ret.Get(0).(func() *metrics.Metrics); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*metrics.Metrics)
+		}
+	}
+	return r0
+}
+
+// MockClient_Metrics_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Metrics'
+type MockClient_Metrics_Call struct {
+	*mock.Call
+}
+
+// Metrics is a helper method to define mock.On call
+func (_e *MockClient_Expecter) Metrics() *MockClient_Metrics_Call {
+	return &MockClient_Metrics_Call{Call: _e.mock.On("Metrics")}
+}
+
+func (_c *MockClient_Metrics_Call) Run(run func()) *MockClient_Metrics_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockClient_Metrics_Call) Return(metrics1 *metrics.Metrics) *MockClient_Metrics_Call {
+	_c.Call.Return(metrics1)
+	return _c
+}
+
+func (_c *MockClient_Metrics_Call) RunAndReturn(run func() *metrics.Metrics) *MockClient_Metrics_Call {
 	_c.Call.Return(run)
 	return _c
 }

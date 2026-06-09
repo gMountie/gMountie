@@ -57,6 +57,15 @@ type Client interface {
 	// WhoAmI returns the server-side identity the caller maps to on the given
 	// volume (used by the mount layer to set up id rewriting).
 	WhoAmI(ctx context.Context, volume string) (*proto.Identity, error)
+	// Metrics returns this client's collector set (retries, in-flight RPCs,
+	// cache hits/misses, subscribe-stream state). NewClientFromConfig
+	// registers the collectors on prometheus.DefaultRegisterer, so library
+	// consumers embedding the client in a long-running process can expose
+	// them by serving promhttp.Handler() (which gathers from
+	// prometheus.DefaultGatherer) on an endpoint of their choosing. Returns
+	// nil when the client was built without WithMetrics (the factory paths
+	// always provide one).
+	Metrics() *metrics.Metrics
 }
 
 // PerFileConfig bundles the runtime tuning knobs that each newly-opened
@@ -327,6 +336,13 @@ func (c *ClientImpl) Lifetime() context.Context { return c.lifeCtx }
 // instances inherit from this Client.
 func (c *ClientImpl) PerFileConfig() PerFileConfig {
 	return c.perFile
+}
+
+// Metrics returns the per-client collector set attached via WithMetrics
+// (nil if none was attached). See the Client interface doc for how library
+// consumers expose these via promhttp.
+func (c *ClientImpl) Metrics() *metrics.Metrics {
+	return c.metrics
 }
 
 // WhoAmI asks the server which identity the current OS user maps to on the
