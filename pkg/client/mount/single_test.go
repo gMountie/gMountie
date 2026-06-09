@@ -49,10 +49,10 @@ func (s *SingleVolumeMounterTestSuite) SetupTest() {
 	//mockFileClient := &mockProto.MockRpcFileClient{}
 	//mockVolumeClient := &mockProto.MockVolumeServiceClient{}
 
-	mockFsClient.EXPECT().Access(mock.Anything, mock.Anything).Return(&proto.AccessReply{
+	mockFsClient.EXPECT().Access(mock.Anything, mock.Anything, mock.Anything).Return(&proto.AccessReply{
 		Status: int32(fuse.ENOSYS),
 	}, nil).Maybe()
-	mockFsClient.EXPECT().GetAttr(mock.Anything, mock.Anything).Return(&proto.GetAttrReply{
+	mockFsClient.EXPECT().GetAttr(mock.Anything, mock.Anything, mock.Anything).Return(&proto.GetAttrReply{
 		Status: int32(fuse.ENOSYS),
 	}, nil).Maybe()
 	// Mount path negotiates the FUSE frame ceiling via Version.Get; return
@@ -70,6 +70,7 @@ func (s *SingleVolumeMounterTestSuite) SetupTest() {
 	s.client.EXPECT().MetaTimeout().Return(2 * time.Second).Maybe()
 	s.client.EXPECT().IOTimeout().Return(30 * time.Second).Maybe()
 	s.client.EXPECT().SessionID().Return("test-session").Maybe()
+	s.client.EXPECT().RetryWindow().Return(2 * time.Second).Maybe()
 	s.client.EXPECT().Lifetime().Return(context.Background()).Maybe()
 	// WhoAmI is called once per Mount when raw_ids=false. We allow it to fail
 	// (degrade path) so existing tests keep passing without extra per-test setup.
