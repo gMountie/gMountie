@@ -26,6 +26,32 @@ type FileEntry struct {
 	Volume string
 	Path   string
 	Fd     uint64
+	// refs guards File against the reap-vs-in-flight race: the fd table holds
+	// one ref; every in-flight fd-op holds one more. File.Release() runs only
+	// when the last ref drops, so a grace-expiry reap (or revocation ReapIf)
+	// can no longer close the fd under a concurrent pread/pwrite.
+	refs atomic.Int64
+}
+
+// Acquire takes a ref for the duration of an fd-op. It fails once the entry
+// is fully released (refs hit zero) — a dead entry can never be revived.
+func (e *FileEntry) Acquire() bool {
+	for {
+		r := e.refs.Load()
+		if r <= 0 {
+			return false
+		}
+		if e.refs.CompareAndSwap(r, r+1) {
+			return true
+		}
+	}
+}
+
+// ReleaseRef drops one ref; the last ref out closes the underlying File.
+func (e *FileEntry) ReleaseRef() {
+	if e.refs.Add(-1) == 0 && e.File != nil {
+		e.File.Release()
+	}
 }
 
 // Session is the per-client view of server state. Each session owns its own
@@ -133,7 +159,9 @@ func (s *sessionImpl) Serial() string    { return s.serial }
 
 func (s *sessionImpl) RegisterFile(volume, path string, file nodefs.File) uint64 {
 	fd := s.fdNum.Add(1)
-	s.files.Store(fd, &FileEntry{File: file, Volume: volume, Path: path, Fd: fd})
+	entry := &FileEntry{File: file, Volume: volume, Path: path, Fd: fd}
+	entry.refs.Store(1) // the fd table's own ref
+	s.files.Store(fd, entry)
 	s.metrics.OpenFilesInc(volume)
 	return fd
 }
@@ -150,9 +178,9 @@ func (s *sessionImpl) ReleaseFile(fd uint64) {
 		// removal.
 		return
 	}
-	if entry.File != nil {
-		entry.File.Release()
-	}
+	// Drop the table's ref only — the close happens whenever the last
+	// in-flight op finishes (possibly right here, if none is running).
+	entry.ReleaseRef()
 	s.metrics.OpenFilesDec(entry.Volume)
 }
 
@@ -182,9 +210,9 @@ func (s *sessionImpl) ReleaseAll() int {
 	released := 0
 	s.files.Range(func(fd uint64, entry *FileEntry) bool {
 		if e, ok := s.files.LoadAndDelete(fd); ok {
-			if e.File != nil {
-				e.File.Release()
-			}
+			// Same contract as ReleaseFile: drop the table ref; an in-flight op
+			// holding its own ref defers the actual close until it finishes.
+			e.ReleaseRef()
 			s.metrics.OpenFilesDec(e.Volume)
 			released++
 		}

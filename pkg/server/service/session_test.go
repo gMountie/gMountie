@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -235,6 +236,113 @@ func (s *SessionManagerTestSuite) TestDoOnceLRUEvictsOldEntries() {
 	})
 	s.Require().NoError(err)
 	s.Assert().Equal(1, calls, "evicted request_id must re-execute")
+}
+
+// releaseRecorder is a nodefs.File stub that records Release calls. inFlight,
+// when set, lets Release detect overlap with an op that still holds a ref —
+// the exact race the FileEntry refcount exists to prevent.
+type releaseRecorder struct {
+	nodefs.File
+	releases             atomic.Int32
+	inFlight             *atomic.Int32
+	releasedWithInFlight atomic.Int32
+}
+
+func (r *releaseRecorder) Release() {
+	if r.inFlight != nil && r.inFlight.Load() != 0 {
+		r.releasedWithInFlight.Add(1)
+	}
+	r.releases.Add(1)
+}
+
+// TestReleaseFileWaitsForInFlightRef: ReleaseFile must only drop the table
+// ref — the underlying File closes when the last in-flight op releases its
+// ref, never under it.
+func (s *SessionManagerTestSuite) TestReleaseFileWaitsForInFlightRef() {
+	id, err := s.mgr.Create("test-user", "")
+	s.Require().NoError(err)
+	sess, _ := s.mgr.Get(id)
+
+	rec := &releaseRecorder{File: nodefs.NewDefaultFile()}
+	fd := sess.RegisterFile("vol", "/p", rec)
+	entry, ok := sess.GetFile(fd)
+	s.Require().True(ok)
+	s.Require().True(entry.Acquire(), "live entry must grant a ref")
+
+	sess.ReleaseFile(fd) // table ref dropped; the op above still holds one
+	s.Equal(int32(0), rec.releases.Load(), "must not close under an in-flight op")
+	_, ok = sess.GetFile(fd)
+	s.False(ok, "fd must leave the table immediately on ReleaseFile")
+
+	entry.ReleaseRef()
+	s.Equal(int32(1), rec.releases.Load(), "last ref out closes the file")
+	s.False(entry.Acquire(), "fully released entry must refuse new refs")
+}
+
+// TestReleaseAllWaitsForInFlightRef: a reap (grace expiry / revocation /
+// shutdown all funnel through ReleaseAll) must likewise defer the close to
+// the in-flight op.
+func (s *SessionManagerTestSuite) TestReleaseAllWaitsForInFlightRef() {
+	id, err := s.mgr.Create("test-user", "")
+	s.Require().NoError(err)
+	sess, _ := s.mgr.Get(id)
+
+	rec := &releaseRecorder{File: nodefs.NewDefaultFile()}
+	fd := sess.RegisterFile("vol", "/p", rec)
+	entry, ok := sess.GetFile(fd)
+	s.Require().True(ok)
+	s.Require().True(entry.Acquire())
+
+	s.Equal(1, sess.ReleaseAll(), "ReleaseAll must still count the fd as released")
+	s.Equal(int32(0), rec.releases.Load(), "reap must not close under an in-flight op")
+
+	entry.ReleaseRef()
+	s.Equal(int32(1), rec.releases.Load(), "last ref out closes the file")
+}
+
+// TestConcurrentOpsNeverRaceWithRelease hammers Acquire/ReleaseRef from many
+// goroutines while ReleaseFile runs. Under -race: File.Release must be
+// observed exactly once and never while any op still holds a ref.
+func (s *SessionManagerTestSuite) TestConcurrentOpsNeverRaceWithRelease() {
+	id, err := s.mgr.Create("test-user", "")
+	s.Require().NoError(err)
+	sess, _ := s.mgr.Get(id)
+
+	var inFlight atomic.Int32
+	rec := &releaseRecorder{File: nodefs.NewDefaultFile(), inFlight: &inFlight}
+	fd := sess.RegisterFile("vol", "/p", rec)
+	entry, ok := sess.GetFile(fd)
+	s.Require().True(ok)
+
+	const workers = 16
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for j := 0; j < 1000; j++ {
+				if !entry.Acquire() {
+					return // entry fully released; no new ops may begin
+				}
+				inFlight.Add(1)
+				inFlight.Add(-1)
+				entry.ReleaseRef()
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		sess.ReleaseFile(fd)
+	}()
+	close(start)
+	wg.Wait()
+
+	s.Equal(int32(1), rec.releases.Load(), "File.Release must run exactly once")
+	s.Equal(int32(0), rec.releasedWithInFlight.Load(), "File.Release must never overlap an op holding a ref")
 }
 
 func (s *SessionManagerTestSuite) TearDownTest() {

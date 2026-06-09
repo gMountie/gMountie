@@ -106,9 +106,14 @@ func (r *RpcFileServerImpl) emitMutatedAttr(volume, path string, attr *fuse.Attr
 // probe whether an fd exists by guessing volumes — and, transitively, every
 // fd-based handler's versionAfterPath/bus.Emit runs against the fd's true
 // volume only (SEC-1).
+//
+// A successful return holds a ref on the entry (Acquire), pinning the
+// underlying File open for the op's duration even if a session reap or
+// Release RPC removes the fd concurrently. EVERY caller must pair it with
+// entry.ReleaseRef() on all paths — a leaked ref keeps the file open forever.
 func sessionFile(sess service.Session, fd uint64, volume string) (*service.FileEntry, bool) {
 	entry, ok := sess.GetFile(fd)
-	if !ok || entry.Volume != volume {
+	if !ok || entry.Volume != volume || !entry.Acquire() {
 		return nil, false
 	}
 	return entry, true
@@ -175,6 +180,9 @@ func (r *RpcFileServerImpl) Read(request *proto.ReadRequest, stream proto.RpcFil
 		// through the FUSE layer.
 		return stream.Send(&proto.ReadFrame{Status: int32(fuse.EBADF)})
 	}
+	// Held for the whole stream: fileRead closures below run until the
+	// streamer finishes.
+	defer entry.ReleaseRef()
 
 	fileRead := func(buf []byte, off int64) (int, fuse.Status) {
 		res, st := entry.File.Read(buf, off)
@@ -243,6 +251,8 @@ func (r *RpcFileServerImpl) Write(stream proto.RpcFile_WriteServer) error {
 		if !ok {
 			return nil, status.Errorf(codes.NotFound, "fd %d not found in session", first.Fd)
 		}
+		// Held for the whole apply loop — released when the closure returns.
+		defer entry.ReleaseRef()
 		entryPath = entry.Path
 		return r.applyWriteStream(stream, first, entry.File)
 	})
@@ -362,6 +372,7 @@ func (r *RpcFileServerImpl) Fsync(ctx context.Context, request *proto.FsyncReque
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 	}
+	defer entry.ReleaseRef()
 	return &proto.FsyncReply{Status: int32(entry.File.Fsync(int(request.Flags)))}, nil
 }
 
@@ -373,8 +384,14 @@ func (r *RpcFileServerImpl) Release(ctx context.Context, request *proto.ReleaseR
 	// ReleaseFile no-ops (and does not move the open-files gauge) when the fd
 	// is already gone, so a retried Release is harmless. The sessionFile guard
 	// keeps a cross-volume Release from touching another volume's fd.
-	if _, ok := sessionFile(sess, request.Fd, request.Volume); ok {
+	//
+	// Ref math: sessionFile acquired one ref on top of the table's (refs=2);
+	// ReleaseFile drops the table ref (refs=1); our ReleaseRef drops the last
+	// one and performs the actual File.Release — unless another op is still
+	// in flight on the fd, in which case that op's ReleaseRef closes it.
+	if entry, ok := sessionFile(sess, request.Fd, request.Volume); ok {
 		sess.ReleaseFile(request.Fd)
+		entry.ReleaseRef()
 	}
 	return &proto.ReleaseReply{}, nil
 }
@@ -388,6 +405,7 @@ func (r *RpcFileServerImpl) Flush(ctx context.Context, request *proto.FlushReque
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 	}
+	defer entry.ReleaseRef()
 	return &proto.FlushReply{Status: int32(entry.File.Flush())}, nil
 }
 
@@ -400,6 +418,7 @@ func (r *RpcFileServerImpl) GetLk(ctx context.Context, request *proto.GetLkReque
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 	}
+	defer entry.ReleaseRef()
 	lock := &fuse.FileLock{Start: request.Lk.Start, End: request.Lk.End, Typ: request.Lk.Typ, Pid: request.Lk.Pid}
 	out := &fuse.FileLock{}
 	s := entry.File.GetLk(request.Owner, lock, request.Flags, out)
@@ -418,6 +437,7 @@ func (r *RpcFileServerImpl) SetLk(ctx context.Context, request *proto.SetLkReque
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 	}
+	defer entry.ReleaseRef()
 	lock := &fuse.FileLock{Start: request.Lk.Start, End: request.Lk.End, Typ: request.Lk.Typ, Pid: request.Lk.Pid}
 	return &proto.SetLkReply{Status: int32(entry.File.SetLk(request.Owner, lock, request.Flags))}, nil
 }
@@ -431,6 +451,7 @@ func (r *RpcFileServerImpl) SetLkw(ctx context.Context, request *proto.SetLkwReq
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 	}
+	defer entry.ReleaseRef()
 	lock := &fuse.FileLock{Start: request.Lk.Start, End: request.Lk.End, Typ: request.Lk.Typ, Pid: request.Lk.Pid}
 	return &proto.SetLkwReply{Status: int32(entry.File.SetLkw(request.Owner, lock, request.Flags))}, nil
 }
@@ -449,6 +470,7 @@ func (r *RpcFileServerImpl) WriteAndFlush(ctx context.Context, req *proto.WriteA
 		// FUSE layer. Covers both an unknown fd and an fd↔volume mismatch.
 		return &proto.WriteAndFlushReply{Status: int32(fuse.EBADF)}, nil
 	}
+	defer entry.ReleaseRef()
 	fs, err := r.fsService.GetVolumeFileSystem(req.Volume)
 	if err != nil {
 		return nil, err
@@ -491,6 +513,7 @@ func (r *RpcFileServerImpl) Allocate(ctx context.Context, request *proto.Allocat
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 	}
+	defer entry.ReleaseRef()
 	s := entry.File.Allocate(request.Off, request.Size, request.Mode)
 	if s == fuse.OK {
 		path := entry.Path
@@ -508,11 +531,9 @@ func (r *RpcFileServerImpl) Allocate(ctx context.Context, request *proto.Allocat
 // handle the session doesn't own, EINVAL for nonzero flags (per
 // copy_file_range(2), flags must be 0). No identity re-bind: permission
 // was checked at Open and the fds carry their access rights, same trust
-// model as Read/Write/Allocate.
-// Like every GetFile-then-use handler, this holds no reference on the
-// entry: a concurrent session reap can Release the files mid-copy. The
-// window here is wider than Read/Write (one RPC can loop over many
-// chunks), accepted for now alongside the rest of the session layer.
+// model as Read/Write/Allocate. sessionFile's ref pins BOTH entries open
+// for the whole chunk loop — a concurrent reap defers the close until the
+// copy finishes.
 func (r *RpcFileServerImpl) CopyFileRange(ctx context.Context, request *proto.CopyFileRangeRequest) (*proto.CopyFileRangeReply, error) {
 	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
@@ -525,10 +546,12 @@ func (r *RpcFileServerImpl) CopyFileRange(ctx context.Context, request *proto.Co
 	if !ok {
 		return &proto.CopyFileRangeReply{Status: int32(fuse.EBADF)}, nil
 	}
+	defer srcEntry.ReleaseRef()
 	dstEntry, ok := sessionFile(sess, request.FdOut, request.Volume)
 	if !ok {
 		return &proto.CopyFileRangeReply{Status: int32(fuse.EBADF)}, nil
 	}
+	defer dstEntry.ReleaseRef()
 	copied, st := serverio.CopyFileRange(srcEntry.File, dstEntry.File, request.OffIn, request.OffOut, request.Length)
 	if st == fuse.OK && copied > 0 {
 		path := dstEntry.Path
@@ -557,6 +580,7 @@ func (r *RpcFileServerImpl) Lseek(ctx context.Context, request *proto.LseekReque
 	if !ok {
 		return &proto.LseekReply{Status: int32(fuse.EBADF)}, nil
 	}
+	defer entry.ReleaseRef()
 	off, st := serverio.Lseek(entry.File, request.Offset, request.Whence)
 	return &proto.LseekReply{Offset: off, Status: int32(st)}, nil
 }
