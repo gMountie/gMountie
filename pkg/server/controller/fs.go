@@ -76,10 +76,9 @@ func (r *RpcServerImpl) Mkdir(ctx context.Context, request *proto.MkdirRequest) 
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.MkdirReply, error) {
-		s := fs.Mkdir(request.Path, request.Mode, createContext(ctx, request.Caller))
-		if s == fuse.OK {
-			r.bus.Emit(request.Volume, request.Path, versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
-		}
+		s := r.mutateEmit(ctx, fs, request.Volume, request.Path, request.Caller, func() fuse.Status {
+			return fs.Mkdir(request.Path, request.Mode, createContext(ctx, request.Caller))
+		})
 		return &proto.MkdirReply{Status: int32(s)}, nil
 	})
 }
@@ -94,10 +93,9 @@ func (r *RpcServerImpl) Rmdir(ctx context.Context, request *proto.RmdirRequest) 
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.RmdirReply, error) {
-		s := fs.Rmdir(request.Path, createContext(ctx, request.Caller))
-		if s == fuse.OK {
-			r.bus.Emit(request.Volume, request.Path, 0, serverio.KindDeleted)
-		}
+		s := r.deleteEmit(request.Volume, request.Path, func() fuse.Status {
+			return fs.Rmdir(request.Path, createContext(ctx, request.Caller))
+		})
 		return &proto.RmdirReply{Status: int32(s)}, nil
 	})
 }
@@ -112,11 +110,9 @@ func (r *RpcServerImpl) Rename(ctx context.Context, request *proto.RenameRequest
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.RenameReply, error) {
-		s := fs.Rename(request.OldName, request.NewName, createContext(ctx, request.Caller))
-		if s == fuse.OK {
-			r.bus.EmitRename(request.Volume, request.OldName, request.NewName,
-				versionAfter(ctx, fs, request.NewName, request.Caller))
-		}
+		s := r.renameEmit(ctx, fs, request.Volume, request.OldName, request.NewName, request.Caller, func() fuse.Status {
+			return fs.Rename(request.OldName, request.NewName, createContext(ctx, request.Caller))
+		})
 		return &proto.RenameReply{Status: int32(s)}, nil
 	})
 }
@@ -143,11 +139,9 @@ func (r *RpcServerImpl) Symlink(ctx context.Context, request *proto.SymlinkReque
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.SymlinkReply, error) {
-		s := fs.Symlink(request.Target, request.LinkPath, createContext(ctx, request.Caller))
-		if s == fuse.OK {
-			r.bus.Emit(request.Volume, request.LinkPath,
-				versionAfter(ctx, fs, request.LinkPath, request.Caller), serverio.KindMutated)
-		}
+		s := r.mutateEmit(ctx, fs, request.Volume, request.LinkPath, request.Caller, func() fuse.Status {
+			return fs.Symlink(request.Target, request.LinkPath, createContext(ctx, request.Caller))
+		})
 		return &proto.SymlinkReply{Status: int32(s)}, nil
 	})
 }
@@ -209,10 +203,9 @@ func (r *RpcServerImpl) Unlink(ctx context.Context, request *proto.UnlinkRequest
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.UnlinkReply, error) {
-		s := fs.Unlink(request.Path, createContext(ctx, request.Caller))
-		if s == fuse.OK {
-			r.bus.Emit(request.Volume, request.Path, 0, serverio.KindDeleted)
-		}
+		s := r.deleteEmit(request.Volume, request.Path, func() fuse.Status {
+			return fs.Unlink(request.Path, createContext(ctx, request.Caller))
+		})
 		return &proto.UnlinkReply{Status: int32(s)}, nil
 	})
 }
@@ -236,10 +229,9 @@ func (r *RpcServerImpl) Truncate(ctx context.Context, request *proto.TruncateReq
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.TruncateReply, error) {
-		s := fs.Truncate(request.Path, request.Size, createContext(ctx, request.Caller))
-		if s == fuse.OK {
-			r.bus.Emit(request.Volume, request.Path, versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
-		}
+		s := r.mutateEmit(ctx, fs, request.Volume, request.Path, request.Caller, func() fuse.Status {
+			return fs.Truncate(request.Path, request.Size, createContext(ctx, request.Caller))
+		})
 		return &proto.TruncateReply{Status: int32(s)}, nil
 	})
 }
@@ -254,10 +246,9 @@ func (r *RpcServerImpl) Chmod(ctx context.Context, request *proto.ChmodRequest) 
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.ChmodReply, error) {
-		s := fs.Chmod(request.Path, request.Mode, createContext(ctx, request.Caller))
-		if s == fuse.OK {
-			r.bus.Emit(request.Volume, request.Path, versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
-		}
+		s := r.mutateEmit(ctx, fs, request.Volume, request.Path, request.Caller, func() fuse.Status {
+			return fs.Chmod(request.Path, request.Mode, createContext(ctx, request.Caller))
+		})
 		return &proto.ChmodReply{Status: int32(s)}, nil
 	})
 }
@@ -272,10 +263,9 @@ func (r *RpcServerImpl) Chown(ctx context.Context, request *proto.ChownRequest) 
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.ChownReply, error) {
-		s := fs.Chown(request.Path, request.Uid, request.Gid, createContext(ctx, request.Caller))
-		if s == fuse.OK {
-			r.bus.Emit(request.Volume, request.Path, versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
-		}
+		s := r.mutateEmit(ctx, fs, request.Volume, request.Path, request.Caller, func() fuse.Status {
+			return fs.Chown(request.Path, request.Uid, request.Gid, createContext(ctx, request.Caller))
+		})
 		return &proto.ChownReply{Status: int32(s)}, nil
 	})
 }
@@ -302,10 +292,9 @@ func (r *RpcServerImpl) Utimens(ctx context.Context, request *proto.UtimensReque
 	return withIdempotency(sess, request.RequestId, func() (*proto.UtimensReply, error) {
 		atime := fileTimeToTime(request.Atime)
 		mtime := fileTimeToTime(request.Mtime)
-		s := fs.Utimens(request.Path, atime, mtime, createContext(ctx, request.Caller))
-		if s == fuse.OK {
-			r.bus.Emit(request.Volume, request.Path, versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
-		}
+		s := r.mutateEmit(ctx, fs, request.Volume, request.Path, request.Caller, func() fuse.Status {
+			return fs.Utimens(request.Path, atime, mtime, createContext(ctx, request.Caller))
+		})
 		return &proto.UtimensReply{Status: int32(s)}, nil
 	})
 }
@@ -346,10 +335,9 @@ func (r *RpcServerImpl) SetXAttr(ctx context.Context, request *proto.SetXAttrReq
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.SetXAttrReply, error) {
-		s := fs.SetXAttr(request.Path, request.Attribute, request.Data, int(request.Flags), createContext(ctx, request.Caller))
-		if s == fuse.OK {
-			r.bus.Emit(request.Volume, request.Path, versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
-		}
+		s := r.mutateEmit(ctx, fs, request.Volume, request.Path, request.Caller, func() fuse.Status {
+			return fs.SetXAttr(request.Path, request.Attribute, request.Data, int(request.Flags), createContext(ctx, request.Caller))
+		})
 		return &proto.SetXAttrReply{Status: int32(s)}, nil
 	})
 }
@@ -367,10 +355,9 @@ func (r *RpcServerImpl) RemoveXAttr(ctx context.Context, request *proto.RemoveXA
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.RemoveXAttrReply, error) {
-		s := fs.RemoveXAttr(request.Path, request.Attribute, createContext(ctx, request.Caller))
-		if s == fuse.OK {
-			r.bus.Emit(request.Volume, request.Path, versionAfter(ctx, fs, request.Path, request.Caller), serverio.KindMutated)
-		}
+		s := r.mutateEmit(ctx, fs, request.Volume, request.Path, request.Caller, func() fuse.Status {
+			return fs.RemoveXAttr(request.Path, request.Attribute, createContext(ctx, request.Caller))
+		})
 		return &proto.RemoveXAttrReply{Status: int32(s)}, nil
 	})
 }
