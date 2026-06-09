@@ -82,18 +82,21 @@ func (s *StreamLogInterceptorSuite) TestStreamLogContextCapturesFirstMessage() {
 		msgs: []any{&carrierMsg{sessionID: raw, volume: "photos"}},
 	}
 
-	var handlerCtx context.Context
+	var fields logging.Fields
 	err := ServerStreamLogContext()(nil, stream, &grpc.StreamServerInfo{FullMethod: "/x/Y"},
 		func(_ any, ss grpc.ServerStream) error {
-			handlerCtx = ss.Context()
 			// Before any message: holder present but empty.
-			s.Empty(StreamLogFields(handlerCtx))
+			s.Empty(StreamLogFields(ss.Context()))
 			var m carrierMsg
-			return ss.RecvMsg(&m)
+			if err := ss.RecvMsg(&m); err != nil {
+				return err
+			}
+			// After the first message the SAME ctx (captured at stream start,
+			// as the logging interceptor does) must yield the fields.
+			fields = StreamLogFields(ss.Context())
+			return nil
 		})
 	s.Require().NoError(err)
-
-	fields := StreamLogFields(handlerCtx)
 	s.Require().Len(fields, 4) // session_fp + volume key/value pairs
 	asMap := map[string]any{}
 	for i := 0; i+1 < len(fields); i += 2 {
