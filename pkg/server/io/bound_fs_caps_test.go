@@ -7,11 +7,12 @@ import (
 	"testing"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	"github.com/stretchr/testify/suite"
 )
 
-// BoundFSCapsSuite exercises the three credential paths in identityBoundFS
-// dispatched by id.Caps: no caps (unchanged), dac_read_search, dac_override.
+// BoundFSCapsSuite exercises the three credential paths in the identity-bound
+// FS dispatched by id.Caps: no caps (unchanged), dac_read_search, dac_override.
 // All tests require root — capabilities and per-thread setfsuid are unavailable
 // to unprivileged processes.
 type BoundFSCapsSuite struct {
@@ -44,11 +45,12 @@ func (s *BoundFSCapsSuite) SetupTest() {
 }
 
 // newBoundFS builds a ConfinedLoopbackFileSystem over s.tempDir wrapped by an
-// identityBoundFS with the supplied identity.
-func (s *BoundFSCapsSuite) newBoundFS(id *Identity) *identityBoundFS {
+// identity-bound FS (a resolverBoundFS over a constant resolver) with the
+// supplied identity.
+func (s *BoundFSCapsSuite) newBoundFS(id *Identity) pathfs.FileSystem {
 	base, err := NewLocalFilesystem(s.tempDir)
 	s.Require().NoError(err)
-	return NewIdentityBoundFS(base, id).(*identityBoundFS)
+	return NewIdentityBoundFS(base, id)
 }
 
 // TestDacReadSearchReadsForeignFile — a uid 65501 identity with dac_read_search

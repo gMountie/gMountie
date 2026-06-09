@@ -94,30 +94,33 @@ func (s *ResolverBoundFSSuite) TestCacheSafety_ResolverUpdateReflectedImmediatel
 	s.Equal(uint32(1002), id1.Uid, "second resolve must return updated uid 1002 (no snapshot)")
 }
 
-// TestWantsFchownFor_PropagatesIdentity asserts that wantsFchownFor returns
-// the uid/gid from the resolver when dac_override is set, without caching them.
-func (s *ResolverBoundFSSuite) TestWantsFchownFor_PropagatesIdentity() {
+// TestWantsFchown_DacOverrideTriggersPostCreateChown asserts the dac_override
+// cap on the resolved identity is what drives the post-create chown decision
+// (the identity used is the one returned by changeIdentityFor, resolved once
+// per op — see maybeChownNew).
+func (s *ResolverBoundFSSuite) TestWantsFchown_DacOverrideTriggersPostCreateChown() {
 	resolve := IdentityResolveFunc(func(principal string) (Identity, error) {
 		return Identity{Uid: 2000, Gid: 2001, Gids: []uint32{2001}, Caps: []string{"dac_override"}}, nil
 	})
 	base := pathfs.NewLoopbackFileSystem(s.T().TempDir())
 	r := NewResolverBoundFS(base, resolve, "bob").(*resolverBoundFS)
 
-	uid, gid, ok := r.wantsFchownFor()
-	s.True(ok, "dac_override cap should trigger fchown")
-	s.Equal(uint32(2000), uid)
-	s.Equal(uint32(2001), gid)
+	id, err := r.resolve(r.principal)
+	s.Require().NoError(err)
+	s.True(wantsFchown(&id), "dac_override cap should trigger fchown")
+	s.Equal(uint32(2000), id.Uid)
+	s.Equal(uint32(2001), id.Gid)
 }
 
-// TestWantsFchownFor_NoCap asserts that wantsFchownFor returns false when
-// no dac_override cap is present.
-func (s *ResolverBoundFSSuite) TestWantsFchownFor_NoCap() {
+// TestWantsFchown_NoCap asserts no post-create chown without dac_override.
+func (s *ResolverBoundFSSuite) TestWantsFchown_NoCap() {
 	resolve := IdentityResolveFunc(func(principal string) (Identity, error) {
 		return Identity{Uid: 1000, Gid: 1000, Gids: []uint32{1000}}, nil
 	})
 	base := pathfs.NewLoopbackFileSystem(s.T().TempDir())
 	r := NewResolverBoundFS(base, resolve, "carol").(*resolverBoundFS)
 
-	_, _, ok := r.wantsFchownFor()
-	s.False(ok, "no dac_override cap should not trigger fchown")
+	id, err := r.resolve(r.principal)
+	s.Require().NoError(err)
+	s.False(wantsFchown(&id), "no dac_override cap should not trigger fchown")
 }
