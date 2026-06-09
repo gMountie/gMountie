@@ -168,10 +168,10 @@ func (s *SessionTimeoutSuite) TestResumeTimesOutOnBlackHoledServer() {
 	defer cancel()
 
 	h := &SessionHandshake{
-		client:      s.sessionClient,
-		streamCtx:   streamCtx,
+		client:       s.sessionClient,
+		streamCtx:    streamCtx,
 		streamCancel: cancel,
-		callTimeout: shortCall,
+		callTimeout:  shortCall,
 	}
 	h.setSessionID("existing-session-id")
 
@@ -207,10 +207,10 @@ func (s *SessionTimeoutSuite) TestCreateFallbackTimesOutOnBlackHoledServer() {
 	defer cancel()
 
 	h := &SessionHandshake{
-		client:      s.sessionClient,
-		streamCtx:   streamCtx,
+		client:       s.sessionClient,
+		streamCtx:    streamCtx,
 		streamCancel: cancel,
-		callTimeout: shortCall,
+		callTimeout:  shortCall,
 	}
 	h.setSessionID("expired-session-id")
 
@@ -249,10 +249,10 @@ func (s *SessionTimeoutSuite) TestReattachKeepaliveUsesStreamCtxNotCallCtx() {
 	defer cancel()
 
 	h := &SessionHandshake{
-		client:      s.sessionClient,
-		streamCtx:   streamCtx,
+		client:       s.sessionClient,
+		streamCtx:    streamCtx,
 		streamCancel: cancel,
-		callTimeout: shortCall,
+		callTimeout:  shortCall,
 	}
 	h.setSessionID("live-session-id")
 
@@ -265,6 +265,57 @@ func (s *SessionTimeoutSuite) TestReattachKeepaliveUsesStreamCtxNotCallCtx() {
 	keepaliveCtx := <-keepaliveCtxCh
 	s.Require().NoError(keepaliveCtx.Err(),
 		"keepalive stream must be opened on the long-lived streamCtx, not the bounded callCtx")
+}
+
+// TestReattachFallbackKeepaliveUsesStreamCtxNotCallCtx verifies that when
+// Resume returns Resumed=false (session expired) and a fresh Create succeeds,
+// the resulting Keepalive stream is opened on h.streamCtx, NOT on the bounded
+// callCtx. If the fallback Keepalive used callCtx the stream would be torn down
+// the instant the callTimeout fired, triggering a spurious recovery cycle on
+// every create-fallback reattach.
+func (s *SessionTimeoutSuite) TestReattachFallbackKeepaliveUsesStreamCtxNotCallCtx() {
+	const shortCall = 20 * time.Millisecond
+
+	// Resume reports the session as expired — forces the Create fallback path.
+	s.sessionClient.EXPECT().
+		Resume(mock.Anything, mock.Anything).
+		Return(&proto.SessionResumeReply{Resumed: false}, nil).Once()
+
+	// Create succeeds, returning a new session ID.
+	s.sessionClient.EXPECT().
+		Create(mock.Anything, mock.Anything).
+		Return(&proto.SessionCreateReply{SessionId: "fallback-session-id"}, nil).Once()
+
+	keepaliveCtxCh := make(chan context.Context, 1)
+	stream, bind := newParkingKeepaliveStream(s.T())
+	s.sessionClient.EXPECT().
+		Keepalive(mock.Anything, mock.Anything).
+		RunAndReturn(func(ctx context.Context, _ *proto.KeepaliveRequest, _ ...grpc.CallOption) (proto.SessionService_KeepaliveClient, error) {
+			keepaliveCtxCh <- ctx
+			bind(ctx)
+			return stream, nil
+		}).Once()
+
+	streamCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	h := &SessionHandshake{
+		client:       s.sessionClient,
+		streamCtx:    streamCtx,
+		streamCancel: cancel,
+		callTimeout:  shortCall,
+	}
+	h.setSessionID("expired-session-id")
+
+	_, err := h.tryReattach()
+	s.Require().NoError(err)
+
+	// Sleep well past callTimeout; the keepalive stream context must still be live.
+	time.Sleep(5 * shortCall)
+
+	keepaliveCtx := <-keepaliveCtxCh
+	s.Require().NoError(keepaliveCtx.Err(),
+		"fallback keepalive stream must be opened on the long-lived streamCtx, not the bounded callCtx")
 }
 
 func TestSessionTimeoutSuite(t *testing.T) {
