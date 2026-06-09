@@ -76,12 +76,15 @@ tasks:
 
   test:race:
     # Race detector over the concurrent logic packages. Trees are listed
-    # explicitly to skip the heavy e2e suite (its correctness is covered by
+    # explicitly to skip the heavy e2e suites (their correctness is covered by
     # `task test`; running fio / 1 GiB streaming under -race every run isn't
     # worth the minutes). Data races live in the server streaming/cache/subscribe
-    # and client IO code, which this covers.
+    # and client IO code, which this covers. test/e2e/api is included on
+    # purpose: it holds the suite purpose-built to exercise server-side races
+    # under concurrent clients (bufconn, no FUSE). The package's cache/streaming
+    # suites do FUSE-mount, but CI runners have /dev/fuse and no fio is needed.
     cmds:
-      - go test -race -failfast ./cmd/... ./pkg/client/... ./pkg/server/... ./pkg/common/... ./pkg/utils/...
+      - go test -race -failfast ./cmd/... ./pkg/client/... ./pkg/server/... ./pkg/common/... ./pkg/utils/... ./test/e2e/api/...
 
   test:coverage:
     cmds:
@@ -95,7 +98,6 @@ tasks:
       # prints nothing. Keep this comfortably under timeout-minutes.
       - go test -timeout 8m -v -count=1 -coverpkg=./... -covermode=atomic -coverprofile coverage.out ./...
       - grep -v -E "gmountie/internal/mocks|gmountie/test|gmountie/pkg/proto" coverage.out > coverage-filtered.out
-      - sed -i 's/^gmountie\///g' coverage-filtered.out
       - mv coverage-filtered.out coverage.out
 
   build:
