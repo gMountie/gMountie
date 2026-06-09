@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"go.gmountie.dev/gmountie/pkg/common/config"
-	serverConfig "go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/go-playground/validator/v10"
@@ -20,7 +19,7 @@ type Config struct {
 	// Server is the server configuration
 	Server *ServerConfig `validate:"required"`
 	// Auth is the authentication configuration
-	Auth serverConfig.AuthConfig `validate:"required"`
+	Auth config.AuthConfig `validate:"required"`
 	// Mount is the mount configuration
 	Mount MountConfig `yaml:"mount,omitempty"`
 	// Rpc is the RPC configuration
@@ -115,7 +114,7 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	// `log.level`, etc. AutomaticEnv alone doesn't propagate through
 	// Sub(...), so nested keys we want overridable are bound explicitly
 	// and read from the parent viper directly.
-	v.SetEnvPrefix(serverConfig.EnvironmentPrefix)
+	v.SetEnvPrefix(config.EnvironmentPrefix)
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 

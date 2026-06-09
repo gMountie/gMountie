@@ -5,8 +5,6 @@ import "time"
 const (
 	// DefaultAddress is the default address that the server will listen on
 	DefaultAddress = "0.0.0.0"
-	// DefaultPort is the default port that the server will listen on
-	DefaultPort = 9449
 	// DefaultFrameSizeBytes is the default chunk size for server-streamed
 	// reads. One frame per ReadStreamer iteration; the client accumulates
 	// frames into the caller-supplied buffer. 1 MiB balances per-RPC

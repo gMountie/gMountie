@@ -13,17 +13,13 @@ import (
 	"github.com/spf13/viper"
 )
 
-const (
-	EnvironmentPrefix = "GMOUNTIE"
-)
-
 // Config is a struct that holds the configuration for the server
 type Config struct {
 	// Server is the server configuration
 	Server *ServerConfig `validate:"required"`
 
 	// Auth is the auth configuration
-	Auth AuthConfig `validate:"required"`
+	Auth config.AuthConfig `validate:"required"`
 
 	// Volumes is the volume configuration
 	Volumes []*VolumeConfig `validate:"required,dive"`
@@ -50,7 +46,7 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	// keys can be reached. AutomaticEnv alone doesn't propagate through
 	// Sub(...), so we explicitly bind the nested keys we want overridable
 	// and read them from the parent viper directly.
-	v.SetEnvPrefix(EnvironmentPrefix)
+	v.SetEnvPrefix(config.EnvironmentPrefix)
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
@@ -87,7 +83,7 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	// Parse the server configuration — read directly from the parent viper
 	// to honour env-var overrides (see comment above).
 	v.SetDefault("server.address", DefaultAddress)
-	v.SetDefault("server.port", DefaultPort)
+	v.SetDefault("server.port", config.DefaultPort)
 	v.SetDefault("server.metrics", true)
 	v.SetDefault("server.frame_size_bytes", DefaultFrameSizeBytes)
 	v.SetDefault("server.compound_max_parallel", DefaultCompoundMaxParallel)

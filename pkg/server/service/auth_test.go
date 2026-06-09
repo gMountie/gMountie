@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"go.gmountie.dev/gmountie/pkg/common"
+	commonconfig "go.gmountie.dev/gmountie/pkg/common/config"
 	"go.gmountie.dev/gmountie/pkg/common/passhash"
 	"go.gmountie.dev/gmountie/pkg/server/config"
 
@@ -140,8 +141,8 @@ type AuthServiceFactoryTestSuite struct {
 
 func (s *AuthServiceFactoryTestSuite) TestNewAuthServiceFromConfig_Basic() {
 	cfg := &config.BasicAuthConfig{
-		AuthConfigBase: config.AuthConfigBase{
-			Type: config.AuthConfigTypeBasic,
+		AuthConfigBase: commonconfig.AuthConfigBase{
+			Type: commonconfig.AuthConfigTypeBasic,
 		},
 		Users: []config.BasicAuthConfigUser{
 			{Username: "test", PasswordHash: mustHash(s.T(), "pass")},
@@ -175,7 +176,7 @@ func (s *BasicAuthServiceTestSuite) TestReloadUsers_RemovedUserStopsAuthenticati
 
 	// Reload with a config that no longer contains testuser.
 	s.service.ReloadUsers(&config.BasicAuthConfig{
-		AuthConfigBase: config.AuthConfigBase{Type: config.AuthConfigTypeBasic},
+		AuthConfigBase: commonconfig.AuthConfigBase{Type: commonconfig.AuthConfigTypeBasic},
 		Users: []config.BasicAuthConfigUser{
 			{Username: "admin", PasswordHash: mustHash(s.T(), "adminpass")},
 		},

@@ -5,6 +5,7 @@ import (
 	"net"
 	"testing"
 
+	commonconfig "go.gmountie.dev/gmountie/pkg/common/config"
 	"go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/server/service"
 
@@ -21,7 +22,7 @@ import (
 // allowAllAuth is a minimal AuthService that permits every request.
 type allowAllAuth struct{}
 
-func (allowAllAuth) ReloadUsers(config.AuthConfig) {}
+func (allowAllAuth) ReloadUsers(commonconfig.AuthConfig) {}
 
 func (allowAllAuth) Authorize(_ context.Context, _ string) (*service.UserDetails, error) {
 	return &service.UserDetails{Username: "test"}, nil

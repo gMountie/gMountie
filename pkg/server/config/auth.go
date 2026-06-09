@@ -4,38 +4,18 @@ import (
 	"errors"
 	"fmt"
 
+	"go.gmountie.dev/gmountie/pkg/common/config"
 	"go.gmountie.dev/gmountie/pkg/common/passhash"
 
 	"github.com/spf13/viper"
 )
 
-type AuthConfigType string
-
-const (
-	AuthConfigTypeBasic AuthConfigType = "basic"
-	AuthConfigTypeMTLS  AuthConfigType = "mtls"
-)
-
-type AuthConfig interface {
-	// GetType returns the type of the auth configuration
-	GetType() AuthConfigType
-}
-
-// AuthConfigBase is a struct that holds the configuration for the auth
-type AuthConfigBase struct {
-	Type AuthConfigType
-}
-
-func (a *AuthConfigBase) GetType() AuthConfigType {
-	return a.Type
-}
-
 // NewFromConfig creates a new AuthConfig from a viper config
-func NewFromConfig(v *viper.Viper) (AuthConfig, error) {
+func NewFromConfig(v *viper.Viper) (config.AuthConfig, error) {
 	if v == nil {
 		return nil, errors.New("auth: missing 'auth' section in config")
 	}
-	var auth AuthConfig
+	var auth config.AuthConfig
 	var err error
 	switch v.GetString("type") {
 	case "basic":
@@ -70,7 +50,7 @@ type BasicAuthConfigUser struct {
 
 // BasicAuthConfig is a struct that holds the configuration for the basic auth
 type BasicAuthConfig struct {
-	AuthConfigBase
+	config.AuthConfigBase
 	Users []BasicAuthConfigUser `validate:"required,dive"`
 	// DefaultAllow controls access for principals that have no explicit volumes
 	// list. nil (unset) is treated as true for backwards compatibility.
@@ -90,7 +70,7 @@ func (c *BasicAuthConfig) DefaultAllowOrTrue() bool {
 // NewBasicAuthConfig creates a new BasicAuthConfig with defaults
 func NewBasicAuthConfig(v *viper.Viper) (*BasicAuthConfig, error) {
 	var conf BasicAuthConfig
-	conf.Type = AuthConfigTypeBasic
+	conf.Type = config.AuthConfigTypeBasic
 	err := v.Unmarshal(&conf)
 	if err != nil {
 		return nil, err
@@ -106,7 +86,7 @@ func NewBasicAuthConfig(v *viper.Viper) (*BasicAuthConfig, error) {
 // GetType returns the type of the auth configuration.
 // Delegates to the embedded AuthConfigBase so the value set by the factory
 // constructor is returned faithfully (basic or mtls).
-func (b *BasicAuthConfig) GetType() AuthConfigType {
+func (b *BasicAuthConfig) GetType() config.AuthConfigType {
 	return b.Type
 }
 
@@ -115,7 +95,7 @@ func (b *BasicAuthConfig) GetType() AuthConfigType {
 // and must not be present (the verified client cert is the credential).
 func NewMTLSAuthConfig(v *viper.Viper) (*BasicAuthConfig, error) {
 	var conf BasicAuthConfig
-	conf.Type = AuthConfigTypeMTLS
+	conf.Type = config.AuthConfigTypeMTLS
 	err := v.Unmarshal(&conf)
 	if err != nil {
 		return nil, err

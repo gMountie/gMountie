@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"go.gmountie.dev/gmountie/pkg/common/config"
+
 	"github.com/stretchr/testify/suite"
 )
 
@@ -43,7 +45,7 @@ func (s *ConfigTestSuite) TestParse_Full_Server() {
 	s.Require().NoError(err)
 	s.Assert().Equal("0.0.0.0", result.Server.Address)
 	s.Assert().Equal(uint(8000), result.Server.Port)
-	s.Assert().Equal(AuthConfigTypeBasic, result.Auth.GetType())
+	s.Assert().Equal(config.AuthConfigTypeBasic, result.Auth.GetType())
 	s.Assert().True(result.Server.Metrics)
 }
 
@@ -83,7 +85,7 @@ volumes:
 
 	// Verify.
 	s.Require().NoError(err)
-	s.Assert().Equal(AuthConfigTypeBasic, result.Auth.GetType())
+	s.Assert().Equal(config.AuthConfigTypeBasic, result.Auth.GetType())
 	s.Assert().Len(result.Auth.(*BasicAuthConfig).Users, 1)
 	s.Assert().Equal("test", result.Auth.(*BasicAuthConfig).Users[0].Username)
 	s.Assert().Equal(testPHC, result.Auth.(*BasicAuthConfig).Users[0].PasswordHash)

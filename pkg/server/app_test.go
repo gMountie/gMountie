@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	commonconfig "go.gmountie.dev/gmountie/pkg/common/config"
 	"go.gmountie.dev/gmountie/pkg/common/passhash"
 	"go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/server/service"
@@ -53,7 +54,7 @@ func (s *ServerAppTestSuite) TestStart_ContextCancellationShutsDownGracefully() 
 			},
 		},
 		Auth: &config.BasicAuthConfig{
-			AuthConfigBase: config.AuthConfigBase{Type: config.AuthConfigTypeBasic},
+			AuthConfigBase: commonconfig.AuthConfigBase{Type: commonconfig.AuthConfigTypeBasic},
 			Users: []config.BasicAuthConfigUser{
 				{Username: "admin", PasswordHash: mustHashApp(s.T(), "admin")},
 			},
