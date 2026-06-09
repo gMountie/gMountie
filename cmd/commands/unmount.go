@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -18,6 +19,30 @@ import (
 // the same handler as Ctrl-C, so the process unmounts cleanly via its deferred
 // teardown. A var so tests can substitute it.
 var signalMount = func(pid int) error { return syscall.Kill(pid, syscall.SIGTERM) }
+
+// unmountWaitTimeout / unmountPollInterval bound waitMountExit's polling.
+// Package vars so tests can shorten them.
+var (
+	unmountWaitTimeout  = 10 * time.Second
+	unmountPollInterval = 50 * time.Millisecond
+)
+
+// waitMountExit polls until the signalled mount process has exited — the
+// process removes its FUSE mount in its deferred teardown before exiting, so
+// process-gone is the "mount actually detached" signal. Without this wait,
+// `gmountie unmount` reported success the instant the signal was delivered,
+// while the unmount was still in flight (or stuck).
+func waitMountExit(pid int) error {
+	deadline := time.Now().Add(unmountWaitTimeout)
+	for time.Now().Before(deadline) {
+		if !processAlive(pid) {
+			return nil
+		}
+		time.Sleep(unmountPollInterval)
+	}
+	return fmt.Errorf("mount process %d is still running after %s; the mount may still be attached (is the mountpoint busy?)",
+		pid, unmountWaitTimeout)
+}
 
 // fuseUnmount tears down a FUSE mount we don't own a process for, trying the
 // FUSE-aware tools first and falling back to umount. A var so tests can
@@ -80,6 +105,11 @@ func unmountTarget(out io.Writer, path string) error {
 		_, _ = fmt.Fprintf(out, "Stopping gMountie mount at %s (pid %d)…\n", abs, st.PID)
 		if err := signalMount(st.PID); err != nil {
 			return fmt.Errorf("signal mount process %d: %w", st.PID, err)
+		}
+		// Only report success once the mount process is actually gone — it
+		// removes the FUSE mount in its teardown before exiting.
+		if err := waitMountExit(st.PID); err != nil {
+			return err
 		}
 		_ = removeMountState(abs)
 		_, _ = fmt.Fprintf(out, "Unmounted %s\n", abs)

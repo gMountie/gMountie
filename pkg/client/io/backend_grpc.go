@@ -8,6 +8,7 @@ package io
 import (
 	"context"
 	stdio "io"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -661,7 +662,7 @@ func (b *BackendClient) Read(ctx context.Context, fh FileHandle, off int64, dest
 	if h.readahead != nil {
 		if n, hit := h.readahead.Serve(dest, off); hit {
 			for _, prefetchOff := range h.readahead.Observe(off, n) {
-				go b.doPrefetch(h, prefetchOff)
+				b.spawnPrefetch(h, prefetchOff)
 			}
 			return n, fuse.OK
 		}
@@ -713,10 +714,29 @@ func (b *BackendClient) Read(ctx context.Context, fh FileHandle, off int64, dest
 	}
 	if h.readahead != nil {
 		for _, prefetchOff := range h.readahead.Observe(off, res.written) {
-			go b.doPrefetch(h, prefetchOff)
+			b.spawnPrefetch(h, prefetchOff)
 		}
 	}
 	return res.written, fuse.OK
+}
+
+// spawnPrefetch launches doPrefetch in a goroutine tracked by the handle's
+// WaitGroup so Release can wait for in-flight prefetches. It is a no-op once
+// Release has begun: the released flag is flipped under prefetchMu before
+// Release calls Wait, which guarantees no WaitGroup.Add can race the Wait
+// (the documented Add/Wait discipline).
+func (b *BackendClient) spawnPrefetch(h *grpcFileHandle, off int64) {
+	h.prefetchMu.Lock()
+	if h.released {
+		h.prefetchMu.Unlock()
+		return
+	}
+	h.prefetchWG.Add(1)
+	h.prefetchMu.Unlock()
+	go func() {
+		defer h.prefetchWG.Done()
+		b.doPrefetch(h, off)
+	}()
 }
 
 // doPrefetch issues a streaming Read for the next chunk and parks the
@@ -894,17 +914,26 @@ func (b *BackendClient) drainCoalescer(h *grpcFileHandle) fuse.Status {
 }
 
 // Release closes the open file. Cancels lifeCtx first so any in-flight
-// prefetch goroutine bails out, then drains the coalescer best-effort,
-// then issues the server-side Release RPC. Always proceeds to the
-// server-side Release even if drain fails.
+// prefetch goroutine bails out, WAITS for those goroutines to finish (they
+// hold the server fd and write into the readahead ring — returning early
+// would let `gmountie unmount` report success while the mount is still
+// active), then drains the coalescer best-effort, then issues the
+// server-side Release RPC. Always proceeds to the server-side Release even
+// if drain fails.
 func (b *BackendClient) Release(ctx context.Context, fh FileHandle) fuse.Status {
 	h := resolveHandle(fh)
 	if h == nil {
 		return fuse.EBADF
 	}
+	// Stop new prefetch spawns before waiting; see spawnPrefetch for the
+	// Add/Wait discipline.
+	h.prefetchMu.Lock()
+	h.released = true
+	h.prefetchMu.Unlock()
 	if h.lifeCancel != nil {
 		h.lifeCancel()
 	}
+	h.prefetchWG.Wait()
 	if st := b.drainCoalescer(h); !st.Ok() {
 		log.Log.Error("error draining coalescer on Release",
 			zap.String("path", h.path), zap.Stringer("status", st))
@@ -1239,6 +1268,12 @@ type grpcFileHandle struct {
 	// past the FUSE close.
 	lifeCtx    context.Context
 	lifeCancel context.CancelFunc
+	// prefetchWG tracks in-flight prefetch goroutines so Release can wait
+	// for them after cancelling lifeCtx. prefetchMu guards released, which
+	// is flipped before Release waits so no Add can race the Wait.
+	prefetchWG sync.WaitGroup
+	prefetchMu sync.Mutex
+	released   bool
 }
 
 // Path returns the path this handle was opened against.
