@@ -78,11 +78,23 @@ func identityFromProto(p *proto.Identity) *io.Identity {
 }
 
 // Mount mounts a volume
-func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) error {
+func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 	// Check if the volume is already mounted
 	if m.IsVolumeMounted(volume) {
 		return errors.Errorf("volume %s is already mounted", volume)
 	}
+
+	// Roll back partial state on any failure below. The persist and backend
+	// are stored into the maps BEFORE gofs.Mount runs; without this rollback a
+	// failed mount would leak them for the process lifetime — including the
+	// cache flock, which makes every retry of the same volume in-process fail
+	// with ErrCacheLocked. Matters for the importable pkg/... library
+	// use-case, where the process outlives a failed mount.
+	defer func() {
+		if err != nil {
+			m.releaseVolume(volume)
+		}
+	}()
 
 	maxWrite := negotiateMaxWriteBytes(m.client, m.fuse)
 
