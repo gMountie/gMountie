@@ -178,15 +178,18 @@ func (s *LargeFileSuite) SetupSuite() {
 		s.T().Fatal(err)
 	}
 	s.ctx = testAppCtx
+	// Safety net: a failed Require below skips TearDownSuite (testify never
+	// marks the suite set up), which would leak the running server. Close is
+	// idempotent, so this coexists with TearDownSuite's Close.
+	s.T().Cleanup(func() { _ = testAppCtx.Close() })
 	s.volume = s.ctx.GetVolumes()[0]
 	s.Require().NotNil(s.volume)
 
-	// --- FUSE mount (skip guard: skip cleanly if fusermount3 absent) ---
-	if err := s.ctx.MountVolumeErr(s.volume); err != nil {
-		_ = testAppCtx.Close()
-		s.ctx = nil
-		s.T().Skipf("FUSE mount unavailable (not on VM?): %v", err)
-	}
+	// --- FUSE mount ---
+	// The env gate above asserted the dedicated large-file environment, so
+	// FUSE must work here: a mount failure is a regression, not a skip.
+	s.Require().NoError(s.ctx.MountVolumeErr(s.volume),
+		"FUSE mount must work when GMOUNTIE_E2E_LARGEFILE=1")
 }
 
 func (s *LargeFileSuite) TearDownSuite() {
