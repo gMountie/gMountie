@@ -102,7 +102,8 @@ func (c *SessionController) Keepalive(req *proto.KeepaliveRequest, stream proto.
 	}
 	sess, err := c.sessions.Get(req.SessionId)
 	if err != nil {
-		return status.Errorf(codes.NotFound, "unknown session: %s", req.SessionId)
+		// Fingerprint, never the raw id (bearer token; lands in logs via grpc.error).
+		return status.Errorf(codes.NotFound, "unknown session: %s", common.FingerprintID(req.SessionId))
 	}
 	// Ownership: only the session's owner may drive its keepalive — otherwise a
 	// cross-user caller could open+close a keepalive on someone else's session

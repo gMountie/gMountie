@@ -244,3 +244,78 @@ func (s *SessionManagerTestSuite) TearDownTest() {
 func TestSessionManagerTestSuite(t *testing.T) {
 	suite.Run(t, new(SessionManagerTestSuite))
 }
+
+// fakeSessionMetrics records the open-files gauge per volume so tests can pin
+// the session-layer accounting (OBS-6 / CQ-12).
+type fakeSessionMetrics struct {
+	mu     sync.Mutex
+	open   map[string]int
+	active int
+}
+
+func newFakeSessionMetrics() *fakeSessionMetrics {
+	return &fakeSessionMetrics{open: map[string]int{}}
+}
+func (f *fakeSessionMetrics) SessionsActiveInc() { f.mu.Lock(); f.active++; f.mu.Unlock() }
+func (f *fakeSessionMetrics) SessionsActiveDec() { f.mu.Lock(); f.active--; f.mu.Unlock() }
+func (f *fakeSessionMetrics) OpenFilesInc(volume string) {
+	f.mu.Lock()
+	f.open[volume]++
+	f.mu.Unlock()
+}
+func (f *fakeSessionMetrics) OpenFilesDec(volume string) {
+	f.mu.Lock()
+	f.open[volume]--
+	f.mu.Unlock()
+}
+func (f *fakeSessionMetrics) openFor(volume string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.open[volume]
+}
+
+// TestOpenFilesGaugeFollowsRegisterAndRelease: the gauge moves on actual fd
+// table changes only — a retried ReleaseFile of an already-released fd must
+// NOT double-decrement.
+func (s *SessionManagerTestSuite) TestOpenFilesGaugeFollowsRegisterAndRelease() {
+	fm := newFakeSessionMetrics()
+	mgr := NewSessionManager(SessionManagerOptions{Metrics: fm})
+	defer func() { _ = mgr.Stop(context.Background()) }()
+
+	id, err := mgr.Create("test-user", "")
+	s.Require().NoError(err)
+	sess, _ := mgr.Get(id)
+
+	fd := sess.RegisterFile("photos", "/p", nodefs.NewDefaultFile())
+	s.Equal(1, fm.openFor("photos"))
+
+	sess.ReleaseFile(fd)
+	s.Equal(0, fm.openFor("photos"))
+
+	// Retried Release: fd already gone — gauge must not go negative.
+	sess.ReleaseFile(fd)
+	s.Equal(0, fm.openFor("photos"), "retried Release must not double-decrement")
+}
+
+// TestOpenFilesGaugeDecrementsOnReap: a session reaped by grace expiry (or
+// ReapIf/Stop, which share ReleaseAll) must return its fds to the gauge —
+// previously only the explicit Release RPC decremented and the gauge stayed
+// permanently elevated after every reap.
+func (s *SessionManagerTestSuite) TestOpenFilesGaugeDecrementsOnReap() {
+	fm := newFakeSessionMetrics()
+	mgr := NewSessionManager(SessionManagerOptions{Metrics: fm, GracePeriod: 50 * time.Millisecond})
+	defer func() { _ = mgr.Stop(context.Background()) }()
+
+	id, err := mgr.Create("test-user", "")
+	s.Require().NoError(err)
+	sess, _ := mgr.Get(id)
+	sess.RegisterFile("photos", "/a", nodefs.NewDefaultFile())
+	sess.RegisterFile("docs", "/b", nodefs.NewDefaultFile())
+	s.Equal(1, fm.openFor("photos"))
+	s.Equal(1, fm.openFor("docs"))
+
+	mgr.MarkDisconnected(id)
+	s.Require().Eventually(func() bool {
+		return fm.openFor("photos") == 0 && fm.openFor("docs") == 0
+	}, time.Second, 10*time.Millisecond, "reap must decrement the per-volume open-files gauge")
+}

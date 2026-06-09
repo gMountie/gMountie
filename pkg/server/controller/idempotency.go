@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 
+	"go.gmountie.dev/gmountie/pkg/common"
 	"go.gmountie.dev/gmountie/pkg/server/principal"
 	"go.gmountie.dev/gmountie/pkg/server/service"
 
@@ -24,7 +25,9 @@ func resolveSession(ctx context.Context, sessions service.SessionManager, sessio
 	}
 	sess, err := sessions.Get(sessionID)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "session not found: %s", sessionID)
+		// Fingerprint, never the raw id: session_id is a bearer token and this
+		// string lands in the finish-call log line via grpc.error (#62 redaction).
+		return nil, status.Errorf(codes.NotFound, "session not found: %s", common.FingerprintID(sessionID))
 	}
 	// Ownership check: reject if session belongs to a specific principal and
 	// the caller is different (or unauthenticated under a session-owning server).

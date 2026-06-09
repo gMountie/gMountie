@@ -96,7 +96,6 @@ func (r *RpcFileServerImpl) Open(ctx context.Context, request *proto.OpenRequest
 		reply := &proto.OpenReply{Status: int32(s)}
 		if s == fuse.OK {
 			reply.Fd = sess.RegisterFile(request.Volume, request.Path, file)
-			r.metrics.OpenFilesInc(request.Volume, request.SessionId)
 		}
 		return reply, nil
 	})
@@ -116,7 +115,6 @@ func (r *RpcFileServerImpl) Create(ctx context.Context, request *proto.CreateReq
 		reply := &proto.CreateReply{Status: int32(s)}
 		if s == fuse.OK {
 			reply.Fd = sess.RegisterFile(request.Volume, request.Path, file)
-			r.metrics.OpenFilesInc(request.Volume, request.SessionId)
 			if attr, gst := fs.GetAttr(request.Path, createContext(ctx, request.Caller)); gst.Ok() {
 				reply.Attributes = toProtoAttr(attr, &id)
 				r.bus.Emit(request.Volume, request.Path, serverio.VersionFromAttr(attr), serverio.KindMutated)
@@ -341,9 +339,11 @@ func (r *RpcFileServerImpl) Release(ctx context.Context, request *proto.ReleaseR
 	if err != nil {
 		return nil, err
 	}
+	// ReleaseFile no-ops (and does not move the open-files gauge) when the fd
+	// is already gone, so a retried Release is harmless. The sessionFile guard
+	// keeps a cross-volume Release from touching another volume's fd.
 	if _, ok := sessionFile(sess, request.Fd, request.Volume); ok {
 		sess.ReleaseFile(request.Fd)
-		r.metrics.OpenFilesDec(request.Volume, request.SessionId)
 	}
 	return &proto.ReleaseReply{}, nil
 }
