@@ -209,10 +209,12 @@ func (h *SessionHandshake) recover() (proto.SessionService_KeepaliveClient, erro
 // fresh Create if Resume returns Resumed=false. Returns the new Keepalive
 // stream on success.
 //
-// The unary Resume and Create calls are bounded by a callTimeout-derived
-// context so a TCP-reachable-but-unresponsive server (e.g. mid rolling-restart)
-// cannot stall the recovery loop indefinitely while pending FS ops burn their
-// retry budget. The Keepalive stream is deliberately opened on h.streamCtx —
+// The unary Resume and Create calls share a single callTimeout-derived
+// context — one reattach attempt never exceeds callTimeout in total, so a
+// TCP-reachable-but-unresponsive server (e.g. mid rolling-restart) cannot
+// stall the recovery loop indefinitely while pending FS ops burn their
+// retry budget. A Create after a slow Resumed=false therefore runs on the
+// budget's remainder; do not split this into two per-call timeouts. The Keepalive stream is deliberately opened on h.streamCtx —
 // not the bounded callCtx — so the stream survives past the per-call deadline.
 func (h *SessionHandshake) tryReattach() (proto.SessionService_KeepaliveClient, error) {
 	callCtx, cancel := context.WithTimeout(h.streamCtx, h.callTimeout)
