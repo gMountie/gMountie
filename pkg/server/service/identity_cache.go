@@ -4,17 +4,27 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
 	"golang.org/x/sync/singleflight"
 )
 
 type cacheEntry struct {
 	id      Identity
+	err     error // non-nil for a negative (not-found) entry
 	expires time.Time
 }
 
-// cachedResolver wraps a resolver with a per-principal TTL cache. Errors are
-// never cached (a transient resolver failure must not pin a denial). One
-// cachedResolver exists per volume, so the volume is implicit.
+// negativeTTL bounds how long a definitive ErrPrincipalNotFound is cached.
+// Short on purpose: it only needs to stop a misbehaving (or malicious) client
+// from forking one `id` subprocess per RPC for a nonexistent principal, while
+// a freshly-created system account becomes resolvable within seconds.
+const negativeTTL = 5 * time.Second
+
+// cachedResolver wraps a resolver with a per-principal TTL cache. Transient
+// errors are never cached (a flaky resolver must not pin a denial); a
+// definitive ErrPrincipalNotFound IS cached for negativeTTL so unknown
+// principals can't drive a subprocess fork per request. One cachedResolver
+// exists per volume, so the volume is implicit.
 //
 // Concurrent cache misses for the same principal are collapsed via singleflight
 // so at most one subprocess (id/getent) is forked per principal at a time.
@@ -35,7 +45,7 @@ func (c *cachedResolver) Resolve(principal string) (Identity, error) {
 	c.mu.Lock()
 	if e, ok := c.store[principal]; ok && now.Before(e.expires) {
 		c.mu.Unlock()
-		return e.id, nil
+		return e.id, e.err
 	}
 	c.mu.Unlock()
 
@@ -47,12 +57,18 @@ func (c *cachedResolver) Resolve(principal string) (Identity, error) {
 		c.mu.Lock()
 		if e, ok := c.store[principal]; ok && now2.Before(e.expires) {
 			c.mu.Unlock()
-			return e.id, nil
+			return e.id, e.err
 		}
 		c.mu.Unlock()
 
 		id, err := c.inner.Resolve(principal)
 		if err != nil {
+			if errors.Is(err, ErrPrincipalNotFound) {
+				// Definitive not-found: negative-cache it briefly.
+				c.mu.Lock()
+				c.store[principal] = cacheEntry{err: err, expires: now2.Add(negativeTTL)}
+				c.mu.Unlock()
+			}
 			return Identity{}, err
 		}
 		c.mu.Lock()
