@@ -265,7 +265,15 @@ func (c *ClientImpl) Version() proto.VersionServiceClient {
 // the broken state via SessionID() == "".
 func (c *ClientImpl) Connect() error {
 	c.conn.Connect()
-	if err := c.handshake.Establish(context.Background()); err != nil {
+	// Bound session establishment: 3×metaTimeout covers TLS negotiation, the
+	// unary SessionService/Create RPC, and the initial Keepalive stream open
+	// against a slow server — without letting gmountie mount hang forever on a
+	// half-open connection. The Keepalive stream itself is opened on its own
+	// long-lived context inside Establish, so cancelling this ctx only bounds
+	// the unary Create; the stream is not torn down when this deadline fires.
+	ctx, cancel := context.WithTimeout(c.lifeCtx, 3*c.metaTimeout)
+	defer cancel()
+	if err := c.handshake.Establish(ctx); err != nil {
 		log.Log.Error("session handshake failed", zap.Error(err))
 		return err
 	}
