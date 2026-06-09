@@ -63,8 +63,8 @@ type SessionConfig struct {
 	// window.
 	GracePeriod time.Duration `mapstructure:"grace_period" validate:"gte=1s"`
 	// IdempotencyCacheSize is the per-session LRU capacity for request-id
-	// deduplication. 0 uses the service-layer default (4096). Must be >= 1 when
-	// set explicitly.
+	// deduplication. 0 (or omitted) is equivalent to unset and delegates to
+	// the service-layer default (4096). A positive value overrides it.
 	IdempotencyCacheSize int `mapstructure:"idempotency_cache_size" validate:"min=0"`
 }
 
@@ -189,7 +189,9 @@ type ServerConfig struct {
 	CompoundMaxParallel int `validate:"min=1,max=256" mapstructure:"compound_max_parallel"`
 	// Keepalive controls gRPC HTTP/2 keepalive pings and enforcement.
 	Keepalive ServerKeepaliveConfig `mapstructure:"keepalive"`
-	// Session controls per-client session retention (grace period).
+	// Session controls per-client session behaviour: grace period (how long
+	// a disconnected session is retained before reaping) and idempotency
+	// cache capacity (per-session LRU size for request-id deduplication).
 	Session SessionConfig `mapstructure:"session"`
 	// SubscribeBufferSize is the per-subscriber channel depth in the
 	// event bus. Larger values tolerate bursty invalidation storms at
