@@ -8,8 +8,10 @@ on:
     branches:
       - master
 
+# Default to read-only; the badges commit is the only write in this
+# workflow and the `test` job elevates to contents:write for it alone.
 permissions:
-  contents: write
+  contents: read
   pull-requests: read
 
 # Cancel an in-progress CI run when a new commit lands on the same
@@ -46,7 +48,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.cache/golangci-lint
-          key: golangci-lint-${{ runner.os }}-${{ hashFiles('.golang-ci.yaml', 'go.mod') }}
+          key: golangci-lint-${{ runner.os }}-${{ hashFiles('.golangci.yaml', 'go.mod') }}
           restore-keys: |
             golangci-lint-${{ runner.os }}-
       - name: Lint
@@ -75,9 +77,15 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # The only job that writes: go-test-coverage commits the coverage
+    # badge to the `badges` branch on master pushes.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v6
-      - uses: awalsh128/cache-apt-pkgs-action@v1
+      # Non-GitHub-org mutable actions are pinned to commit SHAs (dependabot
+      # updates SHA pins fine); the comment tracks the resolved tag.
+      - uses: awalsh128/cache-apt-pkgs-action@2c09a5e66da6c8016428a2172bd76e5e4f14bb17 # v1.5.3 (current v1)
         with:
           packages: fio
           version: 2.0
@@ -96,10 +104,12 @@ jobs:
         run: |
           task test:coverage
       - name: check test coverage
-        uses: vladopajic/go-test-coverage@v2
+        # Intentionally badge-only: no coverage threshold is enforced (no
+        # .testcoverage.yml); revisit once a meaningful floor is agreed.
+        uses: vladopajic/go-test-coverage@a93b868a4cbcbf18dc3781650fad241f0020e609 # v2.18.8
         with:
           profile: coverage.out
-          local-prefix: github.com/gMountie/gMountie
+          local-prefix: go.gmountie.dev/gmountie
           ## when token is not specified (value '') this feature is turned off
           ## in this example badge is created and committed only for main branch
           git-token: ${{ github.ref_name == 'master' && secrets.GITHUB_TOKEN || '' }}
@@ -109,7 +119,9 @@ jobs:
 
   test-race:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 20m (was 15m): test/e2e/api now runs under -race too, and its
+    # streaming suite moves real gigabytes.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - name: Setup Go
@@ -123,10 +135,53 @@ jobs:
         # GitHub release API rate limit that arduino/setup-task hits
         # on busy shared runners.
         run: go install github.com/go-task/task/v3/cmd/task@v3.51.1
-      # Scoped to the concurrent logic packages (see Taskfile test:race) — no
-      # fio apt deps needed since the e2e suite is excluded.
+      # Scoped to the concurrent logic packages plus test/e2e/api (see
+      # Taskfile test:race) — no fio apt deps needed since the fio e2e
+      # suites stay excluded; the api cache suites FUSE-mount, which works
+      # on GitHub-hosted runners.
       - name: Race detector
         run: task test:race
+
+  gen-drift:
+    # Generated code must match its sources. Regenerates mocks (mockery
+    # pinned in Taskfile gen:mocks) and proto stubs, then fails on any
+    # diff — catches hand-edited or stale generated files.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+          cache-dependency-path: 'go.sum'
+      - name: Install Task
+        run: go install github.com/go-task/task/v3/cmd/task@v3.51.1
+      # protoc is the one unpinned variable in proto generation (the Go
+      # plugins are pinned via go.mod's tool block), so install the exact
+      # release the committed stubs were generated with (see the
+      # "protoc vX.Y.Z" header in pkg/proto/*.pb.go) and verify its digest.
+      - name: Install pinned protoc
+        run: |
+          curl -fsSL -o /tmp/protoc.zip \
+            https://github.com/protocolbuffers/protobuf/releases/download/v21.12/protoc-21.12-linux-x86_64.zip
+          echo "3a4c1e5f2516c639d3079b1586e703fc7bcfa2136d58bda24d1d54f949c315e8  /tmp/protoc.zip" | sha256sum -c -
+          sudo unzip -o -q /tmp/protoc.zip -d /usr/local bin/protoc 'include/*'
+          protoc --version
+      - name: Install pinned protoc plugins
+        # Installs go.mod's `tool (...)` block (protoc-gen-go, protoc-gen-go-grpc).
+        run: go install tool
+      - name: Regenerate mocks and proto stubs
+        run: |
+          task gen:mocks
+          task gen:grpc
+      - name: Fail on generated-code drift
+        run: |
+          git add -A internal/mocks pkg/proto
+          git diff --cached --exit-code -- internal/mocks pkg/proto || {
+            echo "::error::generated code is out of date — run 'task gen:mocks' and 'task gen:grpc' and commit the result"
+            exit 1
+          }
 
   build-darwin:
     # Cross-compile regression guard for the macOS client. cmd/ compiles on
