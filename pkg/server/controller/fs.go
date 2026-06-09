@@ -11,6 +11,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/server/service"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -297,6 +298,113 @@ func (r *RpcServerImpl) Utimens(ctx context.Context, request *proto.UtimensReque
 		})
 		return &proto.UtimensReply{Status: int32(s)}, nil
 	})
+}
+
+// SetAttr applies any combination of settable attributes in ONE RPC,
+// replacing the per-field Truncate/Chmod/Chown/Utimens round-trips (those
+// handlers stay until the client migrates). request.Valid mirrors FUSE
+// FATTR_* — the wire contract pins the exact values go-fuse exports
+// (1=MODE 2=UID 4=GID 8=SIZE 16=ATIME 32=MTIME), so the fuse constants are
+// used directly. Fields apply size→mode→owner→times; the first non-OK status
+// aborts the rest and travels in-band in Status like the per-field handlers.
+// On success the reply carries the final attrs, so the client needs no
+// trailing GetAttr — and that same stat seeds the mutation event.
+func (r *RpcServerImpl) SetAttr(ctx context.Context, request *proto.SetAttrRequest) (*proto.SetAttrReply, error) {
+	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	if err != nil {
+		return nil, err
+	}
+	return withIdempotency(sess, request.RequestId, func() (*proto.SetAttrReply, error) {
+		fctx := createContext(ctx, request.Caller)
+		s, mutated := applySetAttr(fs, request, fctx)
+		if s != fuse.OK {
+			// A failure mid-sequence may leave earlier fields applied; client
+			// caches must still be invalidated. Version 0 (no fresh attr in
+			// hand) makes them revalidate via GetAttrIfChanged.
+			if mutated {
+				r.emitMutatedAttr(request.Volume, request.Path, nil)
+			}
+			return &proto.SetAttrReply{Status: int32(s)}, nil
+		}
+		reply := &proto.SetAttrReply{Status: int32(fuse.OK)}
+		// ONE trailing stat serves both the reply attrs and the event seed —
+		// emitMutatedAttr deliberately replaces versionAfter, which re-stats.
+		// mutated is false only for a degenerate request with no settable
+		// bits: nothing changed, so no invalidation event is broadcast.
+		if attr, gst := fs.GetAttr(request.Path, fctx); gst.Ok() {
+			reply.Attributes = toProtoAttr(attr, &id)
+			if mutated {
+				r.emitMutatedAttr(request.Volume, request.Path, attr)
+			}
+		} else if mutated {
+			r.emitMutatedAttr(request.Volume, request.Path, nil)
+		}
+		return reply, nil
+	})
+}
+
+// applySetAttr applies the attribute changes selected by request.Valid in the
+// wire-contract order size→mode→owner→times, stopping at the first non-OK
+// status. mutated reports whether any step succeeded before returning, so a
+// partial failure can still invalidate client caches.
+func applySetAttr(fs pathfs.FileSystem, request *proto.SetAttrRequest, fctx *fuse.Context) (st fuse.Status, mutated bool) {
+	if request.Valid&fuse.FATTR_SIZE != 0 {
+		if s := fs.Truncate(request.Path, request.Size, fctx); s != fuse.OK {
+			return s, mutated
+		}
+		mutated = true
+	}
+	if request.Valid&fuse.FATTR_MODE != 0 {
+		if s := fs.Chmod(request.Path, request.Mode, fctx); s != fuse.OK {
+			return s, mutated
+		}
+		mutated = true
+	}
+	if request.Valid&(fuse.FATTR_UID|fuse.FATTR_GID) != 0 {
+		uid, gid := request.Uid, request.Gid
+		// pathfs.Chown has no "leave unchanged" sentinel, so when only one
+		// half is requested the other half is read back via GetAttr instead
+		// of clobbering it with the request's zero value.
+		if request.Valid&fuse.FATTR_UID == 0 || request.Valid&fuse.FATTR_GID == 0 {
+			attr, s := fs.GetAttr(request.Path, fctx)
+			if !s.Ok() {
+				return s, mutated
+			}
+			if attr == nil {
+				return fuse.EIO, mutated
+			}
+			if request.Valid&fuse.FATTR_UID == 0 {
+				uid = attr.Uid
+			}
+			if request.Valid&fuse.FATTR_GID == 0 {
+				gid = attr.Gid
+			}
+		}
+		if s := fs.Chown(request.Path, uid, gid, fctx); s != fuse.OK {
+			return s, mutated
+		}
+		mutated = true
+	}
+	if request.Valid&(fuse.FATTR_ATIME|fuse.FATTR_MTIME) != 0 {
+		// Only timestamps whose valid bit is set are touched; the rest pass
+		// as nil (UTIME_OMIT), matching the Utimens handler's nil contract.
+		var atime, mtime *time.Time
+		if request.Valid&fuse.FATTR_ATIME != 0 {
+			atime = fileTimeToTime(request.Atime)
+		}
+		if request.Valid&fuse.FATTR_MTIME != 0 {
+			mtime = fileTimeToTime(request.Mtime)
+		}
+		if s := fs.Utimens(request.Path, atime, mtime, fctx); s != fuse.OK {
+			return s, mutated
+		}
+		mutated = true
+	}
+	return fuse.OK, mutated
 }
 
 // ----- Extended attributes -----
