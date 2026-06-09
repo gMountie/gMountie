@@ -550,6 +550,7 @@ func (b *cachedBackend) Rmdir(ctx context.Context, p string) fuse.Status {
 	b.dir.invalidate(p)
 	parent := pathParent(p)
 	b.dir.invalidate(parent)
+	b.attr.invalidate(parent) // Rmdir changes the parent's mtime
 	b.attr.putNegative(p)
 	return fuse.OK
 }
@@ -563,6 +564,7 @@ func (b *cachedBackend) Unlink(ctx context.Context, p string) fuse.Status {
 	b.data.invalidatePath(p)
 	parent := pathParent(p)
 	b.dir.invalidate(parent)
+	b.attr.invalidate(parent) // Unlink changes the parent's mtime
 	b.attr.putNegative(p)
 	return fuse.OK
 }
@@ -576,8 +578,12 @@ func (b *cachedBackend) Rename(ctx context.Context, oldPath, newPath string) fus
 	b.attr.invalidate(newPath)
 	b.data.invalidatePath(oldPath)
 	b.data.invalidatePath(newPath)
-	b.dir.invalidate(pathParent(oldPath))
-	b.dir.invalidate(pathParent(newPath))
+	oldParent := pathParent(oldPath)
+	newParent := pathParent(newPath)
+	b.dir.invalidate(oldParent)
+	b.dir.invalidate(newParent)
+	b.attr.invalidate(oldParent) // Rename changes the mtime of both parent dirs
+	b.attr.invalidate(newParent)
 	b.attr.putNegative(oldPath)
 	return fuse.OK
 }

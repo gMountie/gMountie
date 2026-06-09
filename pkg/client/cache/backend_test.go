@@ -343,6 +343,17 @@ func (s *CachedBackendTestSuite) TestRmdirInvalidatesAndNegativesPath() {
 	s.Assert().False(parentDirHit)
 }
 
+func (s *CachedBackendTestSuite) TestRmdirInvalidatesParentAttr() {
+	s.b.attr.putPositive("", &io.Attr{Ino: 1}) // parent attr cached
+	s.inner.EXPECT().Rmdir(mock.Anything, "/d").Return(fuse.OK).Once()
+	st := s.b.Rmdir(context.Background(), "/d")
+	s.Require().Equal(fuse.OK, st)
+	// Rmdir removes a dir entry, bumping the parent's mtime — parent attr
+	// must be invalidated so the originating client doesn't serve stale mtime.
+	_, parentHit, _ := s.b.attr.get("")
+	s.Assert().False(parentHit, "parent attr must be invalidated on Rmdir")
+}
+
 func (s *CachedBackendTestSuite) TestUnlinkInvalidatesAndNegativesPath() {
 	s.b.attr.putPositive("/f", &io.Attr{Ino: 1})
 	s.b.data.put("/f", 0, []byte("c"))
@@ -359,6 +370,17 @@ func (s *CachedBackendTestSuite) TestUnlinkInvalidatesAndNegativesPath() {
 	// Parent listing invalidated.
 	_, dirHit := s.b.dir.get("")
 	s.Assert().False(dirHit)
+}
+
+func (s *CachedBackendTestSuite) TestUnlinkInvalidatesParentAttr() {
+	s.b.attr.putPositive("", &io.Attr{Ino: 1}) // parent attr cached
+	s.inner.EXPECT().Unlink(mock.Anything, "/f").Return(fuse.OK).Once()
+	st := s.b.Unlink(context.Background(), "/f")
+	s.Require().Equal(fuse.OK, st)
+	// Unlink removes a dir entry, bumping the parent's mtime — parent attr
+	// must be invalidated so the originating client doesn't serve stale mtime.
+	_, parentHit, _ := s.b.attr.get("")
+	s.Assert().False(parentHit, "parent attr must be invalidated on Unlink")
 }
 
 func (s *CachedBackendTestSuite) TestRenameInvalidatesBothPaths() {
@@ -383,6 +405,27 @@ func (s *CachedBackendTestSuite) TestRenameInvalidatesBothPaths() {
 	// Parent dir invalidated.
 	_, dirHit := s.b.dir.get("")
 	s.Assert().False(dirHit)
+}
+
+func (s *CachedBackendTestSuite) TestRenameInvalidatesOldParentAttr() {
+	// Rename from "src/a" to "src/b" (same parent): old-parent attr must be
+	// invalidated because the rename changes the parent directory's mtime.
+	s.b.attr.putPositive("src", &io.Attr{Ino: 10})
+	s.inner.EXPECT().Rename(mock.Anything, "src/a", "src/b").Return(fuse.OK).Once()
+	st := s.b.Rename(context.Background(), "src/a", "src/b")
+	s.Require().Equal(fuse.OK, st)
+	_, oldParentHit, _ := s.b.attr.get("src")
+	s.Assert().False(oldParentHit, "old parent attr must be invalidated on Rename")
+}
+
+func (s *CachedBackendTestSuite) TestRenameInvalidatesNewParentAttr() {
+	// Rename across directories: new-parent attr must also be invalidated.
+	s.b.attr.putPositive("dst", &io.Attr{Ino: 20})
+	s.inner.EXPECT().Rename(mock.Anything, "src/a", "dst/a").Return(fuse.OK).Once()
+	st := s.b.Rename(context.Background(), "src/a", "dst/a")
+	s.Require().Equal(fuse.OK, st)
+	_, newParentHit, _ := s.b.attr.get("dst")
+	s.Assert().False(newParentHit, "new parent attr must be invalidated on Rename")
 }
 
 func (s *CachedBackendTestSuite) TestTruncateInvalidatesAllChunks() {
