@@ -154,3 +154,28 @@ jobs:
           CGO_ENABLED: '0'
         run: go build ./cmd/...
 
+  install-script:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: shellcheck
+        run: shellcheck -s sh website/static/install.sh
+      - name: unit tests
+        run: sh scripts/install/install_test.sh
+
+  install-smoke:
+    # End-to-end: run the real installer against the live release artifacts and
+    # confirm the binary works. Guards against goreleaser name-template / artifact
+    # drift that the unit tests (which use a fixture) cannot see.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: install via script
+        env:
+          BIN_DIR: ${{ github.workspace }}/bin
+        run: sh website/static/install.sh
+      - name: verify binary
+        run: ${{ github.workspace }}/bin/gmountie version
+
