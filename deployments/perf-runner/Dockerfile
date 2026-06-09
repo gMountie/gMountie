@@ -47,8 +47,9 @@ RUN printf 'runner ALL=(root) NOPASSWD: /usr/sbin/tc, /sbin/tc\n' \
 # Match the gMountie FUSE setup (allow_other mounts).
 RUN echo user_allow_other >> /etc/fuse.conf
 
-# Go toolchain, pinned to go.mod's version.
-ARG GO_VERSION=1.26.3
+# Go toolchain, pinned to go.mod's version. Keep in sync with go.mod when
+# bumping Go, or the toolchain auto-download undermines comparability.
+ARG GO_VERSION=1.26.4
 RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
         | tar -C /usr/local -xz
 ENV PATH=/usr/local/go/bin:/home/runner/go/bin:${PATH}
