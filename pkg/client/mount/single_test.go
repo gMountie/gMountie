@@ -187,6 +187,52 @@ func (s *SingleVolumeMounterTestSuite) TestMountFailsWithLockedCacheDir() {
 	s.Assert().ErrorIs(err, persist.ErrCacheLocked)
 }
 
+// TestMountFailureReleasesStateAndAllowsRetry is the regression test for the
+// mount-failure leak: persist/backend are stored before gofs.Mount, so a
+// failed mount must roll them back. Without the rollback the leaked persist
+// holds the cache flock for the process lifetime and every retry of the same
+// volume fails ErrCacheLocked.
+func (s *SingleVolumeMounterTestSuite) TestMountFailureReleasesStateAndAllowsRetry() {
+	cacheRoot := s.T().TempDir()
+	volume := "retry-vol"
+	cacheCfg := config.CacheConfig{
+		Enabled:        true,
+		Path:           cacheRoot,
+		MemoryMaxBytes: config.DefaultCacheMemoryMaxBytes,
+		DiskMaxBytes:   config.DefaultCacheDiskMaxBytes,
+		ChunkSizeBytes: config.DefaultCacheChunkSizeBytes,
+		AttrTTL:        time.Second,
+		DirTTL:         time.Second,
+		NegativeTTL:    time.Second,
+	}
+	m := NewSingleVolumeMounter(s.client, &config.FUSEConfig{
+		MaxWriteBytes:  config.DefaultFUSEMaxWriteBytes,
+		MaxBackground:  config.DefaultFUSEMaxBackground,
+		WritebackCache: config.DefaultFUSEWritebackCache,
+	}, cacheCfg, false)
+	defer func() { s.Require().NoError(m.Close()) }()
+
+	// First attempt: nonexistent mountpoint → gofs.Mount fails after the
+	// persist/backend were stored.
+	badMountpoint := filepath.Join(s.tempDir, "does-not-exist")
+	err := m.Mount(volume, badMountpoint)
+	s.Require().Error(err)
+	s.Require().NotErrorIs(err, persist.ErrCacheLocked)
+	s.Assert().False(m.IsVolumeMounted(volume))
+
+	// The rollback must have released the cache flock: a direct persist.Open
+	// of the same volume cache dir succeeds (FUSE-independent check).
+	p, err := persist.Open(persist.Options{Root: filepath.Join(cacheRoot, volume)})
+	s.Require().NoError(err, "cache flock must be released after a failed Mount")
+	s.Require().NoError(p.Close())
+
+	// A retry of the same volume at a valid mountpoint must succeed — in
+	// particular it must NOT fail with ErrCacheLocked against our own leak.
+	err = m.Mount(volume, s.mntDir)
+	s.Require().NoError(err, "retrying the same volume after a failed mount must succeed")
+	s.Assert().True(m.IsVolumeMounted(volume))
+}
+
 func TestSingleVolumeMounterTestSuite(t *testing.T) {
 	suite.Run(t, new(SingleVolumeMounterTestSuite))
 }
