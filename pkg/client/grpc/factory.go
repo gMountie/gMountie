@@ -3,7 +3,6 @@ package grpc
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -12,7 +11,6 @@ import (
 	clienttls "go.gmountie.dev/gmountie/pkg/client/tls"
 	serverconfig "go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/server/grpc/snappy"
-	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
@@ -42,11 +40,10 @@ func newUnconnectedClient(cfg *config.Config, endpoint string) (Client, error) {
 	if cfg == nil || cfg.Server == nil || cfg.Auth == nil {
 		return nil, errors.New("config is empty or auth config is empty")
 	}
-	if cfg.Log != nil {
-		if err := log.Reconfigure(*cfg.Log, os.Stderr); err != nil {
-			return nil, errors.Wrap(err, "configure logger")
-		}
-	}
+	// NOTE: the client factory deliberately does NOT reconfigure the logger
+	// from cfg.Log — that's a CLI concern (cmd/commands applies it after
+	// config parsing). A library consumer constructing clients keeps its own
+	// logger untouched.
 	authConfig := cfg.Auth
 
 	opts := make([]ClientOption, 0)
