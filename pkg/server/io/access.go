@@ -23,7 +23,7 @@ func accessAllowed(attr *fuse.Attr, id *Identity, mode uint32) bool {
 	switch {
 	case id.Uid == attr.Uid:
 		perm = (attr.Mode >> 6) & 7
-	case inGids(attr.Gid, id.Gids):
+	case InGids(attr.Gid, id.Gids):
 		perm = (attr.Mode >> 3) & 7
 	default:
 		perm = attr.Mode & 7
@@ -58,7 +58,11 @@ func accessAllowed(attr *fuse.Attr, id *Identity, mode uint32) bool {
 	return false
 }
 
-func inGids(gid uint32, gids []uint32) bool {
+// InGids reports whether gid appears in gids. Identity group lists are short
+// (primary + a handful of supplementary groups), so a linear scan beats
+// building a set. Shared with the controller's Owner-name filling (the former
+// controller.groupMember duplicate).
+func InGids(gid uint32, gids []uint32) bool {
 	for _, g := range gids {
 		if g == gid {
 			return true

@@ -32,7 +32,7 @@ func toProtoAttr(a *fuse.Attr, id *service.Identity) *proto.Attr {
 		if a.Uid == id.Uid {
 			owner.UserName = id.UserName
 		}
-		if name, ok := id.GroupNames[a.Gid]; ok && groupMember(id.Gids, a.Gid) {
+		if name, ok := id.GroupNames[a.Gid]; ok && serverio.InGids(a.Gid, id.Gids) {
 			owner.GroupName = name
 		}
 	}
@@ -45,18 +45,6 @@ func toProtoAttr(a *fuse.Attr, id *service.Identity) *proto.Attr {
 		Rdev:  a.Rdev, Blksize: a.Blksize, Padding: a.Padding,
 		Version: serverio.VersionFromAttr(a),
 	}
-}
-
-// groupMember reports whether gid appears in gids. Identity.Gids is typically
-// short (primary + a handful of supplementary groups), so a linear scan is
-// cheaper than building a set.
-func groupMember(gids []uint32, gid uint32) bool {
-	for _, g := range gids {
-		if g == gid {
-			return true
-		}
-	}
-	return false
 }
 
 // versionAfter re-Stats path on fs and returns the freshness token for use in

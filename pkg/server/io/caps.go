@@ -30,11 +30,12 @@ type capState struct {
 	effective, permitted, inheritable uint64
 }
 
-// getCaps reads the current thread's capability sets.
+// capgetThread reads the current thread's capability sets. It is the real
+// implementation behind the injectable getCaps seam in bound_fs.go.
 // unix.Capget/Capset target the calling thread (Pid=0) and do NOT broadcast
 // to all threads (unlike Go's syscall.Setgroups), so they are safe to call on
 // a LockOSThread-pinned goroutine.
-func getCaps() (capState, error) {
+func capgetThread() (capState, error) {
 	hdr := &unix.CapUserHeader{
 		Version: unix.LINUX_CAPABILITY_VERSION_3,
 		Pid:     0,
@@ -50,10 +51,12 @@ func getCaps() (capState, error) {
 	}, nil
 }
 
-// setCapsEffective writes back a new capability state. Only EFFECTIVE is
-// expected to change between calls; PERMITTED and INHERITABLE are passed
-// through unmodified to avoid violating the monotonicity constraint.
-func setCapsEffective(c capState) error {
+// capsetEffectiveThread writes back a new capability state; the real
+// implementation behind the injectable setCapsEffective seam in bound_fs.go.
+// Only EFFECTIVE is expected to change between calls; PERMITTED and
+// INHERITABLE are passed through unmodified to avoid violating the
+// monotonicity constraint.
+func capsetEffectiveThread(c capState) error {
 	hdr := &unix.CapUserHeader{
 		Version: unix.LINUX_CAPABILITY_VERSION_3,
 		Pid:     0,
