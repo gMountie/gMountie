@@ -129,10 +129,10 @@ func joinPath(parent, name string) string {
 // op (reads, mutations, fd-ops, Open/Create). ioCtx survives only for
 // CopyFileRange, which is deliberately NOT retried (a partially-applied copy
 // that lost its reply must not be replayed). The blocking lock wait (SetLkw)
-// keeps a cancellable context (via withTimeout) so a signal can still interrupt
-// it; the readahead prefetch path bounds h.lifeCtx the same way.
+// keeps a cancellable context (plain context.WithTimeout) so a signal can
+// still interrupt it; the readahead prefetch path bounds h.lifeCtx the same way.
 func ioCtx(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	return withTimeout(context.WithoutCancel(parent), timeout)
+	return context.WithTimeout(context.WithoutCancel(parent), timeout)
 }
 
 // statusFromRPCError maps a transport-level gRPC error to the closest FUSE
@@ -728,7 +728,7 @@ func (b *BackendClient) doPrefetch(h *grpcFileHandle, off int64) {
 		return
 	}
 	chunk := h.readahead.chunkSize
-	ctx, cancel := withTimeout(h.lifeCtx, h.ioTimeout)
+	ctx, cancel := context.WithTimeout(h.lifeCtx, h.ioTimeout)
 	defer cancel()
 	stream, err := h.fileClient.Read(ctx, &proto.ReadRequest{
 		Volume:    h.volume,
@@ -1188,7 +1188,7 @@ func (b *BackendClient) SetLkw(ctx context.Context, fh FileHandle, owner uint64,
 	}
 	// SetLkw is a BLOCKING lock acquisition (F_SETLKW): keep it cancellable so a
 	// signal can interrupt a stuck wait, rather than detaching it via ioCtx.
-	ctx2, cancel := withTimeout(ctx, h.ioTimeout)
+	ctx2, cancel := context.WithTimeout(ctx, h.ioTimeout)
 	defer cancel()
 	res, err := h.fileClient.SetLkw(ctx2, &proto.SetLkwRequest{
 		Volume:    h.volume,
