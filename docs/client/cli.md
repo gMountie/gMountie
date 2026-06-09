@@ -37,26 +37,30 @@ gmountie mount ~/mnt/shared -s your-server.example:9449 -n shared -u admin
 
 ## Command Flags
 
-| Flag         | Short | Default        | Description                                                                            |
-|--------------|-------|----------------|----------------------------------------------------------------------------------------|
-| `--server`   | `-s`  | 127.0.0.1:9449 | Server address and port.                                                               |
-| `--volume`   | `-n`  | _(required)_   | Volume name to mount.                                                                  |
-| `--auth-type`| `-t`  | basic          | Authentication scheme. Only `basic` is supported today.                                |
-| `--username` | `-u`  | _(required)_   | Username for basic auth.                                                                |
-| `--password` | `-p`  | _(optional)_   | Password for basic auth (visible in shell history; prefer the prompt or `$GMOUNTIE_AUTH_PASSWORD`). |
-| `--daemon`   |       | false          | Mount in the background; detaches after mount is ready. Logs go to `$XDG_STATE_HOME/gmountie/mount-daemon.log`. |
-| `--raw-ids`  |       | false          | Expose the server's raw uid/gid on file metadata instead of mapping to the local user. |
-| `--verbose`  | `-v`  | false          | Enable verbose (debug-level) logging.                                                   |
-| `--config`   | `-c`  |                | Path to client.yaml. CLI flags override fields in this file.                            |
+| Flag            | Short | Default        | Description                                                                            |
+|-----------------|-------|----------------|----------------------------------------------------------------------------------------|
+| `--server`      | `-s`  | 127.0.0.1:9449 | Server address and port.                                                               |
+| `--volume`      | `-n`  | _(auto)_       | Volume name to mount. May be omitted when the config/profile sets `mount.volume` or the server exposes exactly one volume (auto-resolved). |
+| `--auth-type`   | `-t`  | basic          | Authentication scheme: `basic` or `mtls` (mTLS takes the client cert/key from the config or a credentials blob). |
+| `--username`    | `-u`  | _(required for basic)_ | Username for basic auth.                                                        |
+| `--password`    | `-p`  | _(optional)_   | Password for basic auth (visible in shell history; prefer the prompt or `$GMOUNTIE_AUTH_PASSWORD`). |
+| `--credentials` |       |                | Path to a single-blob mount credential (cert/key/CA/endpoint); `$GMOUNTIE_CREDENTIALS` is used when unset. |
+| `--profile`     | `-P`  |                | Named profile under `~/.config/gmountie/profiles/`. Mutually exclusive with `--config`. |
+| `--daemon`      |       | false          | Mount in the background; detaches after mount is ready. Logs go to `$XDG_STATE_HOME/gmountie/mount-daemon.log`. |
+| `--raw-ids`     |       | false          | Expose the server's raw uid/gid on file metadata instead of mapping to the local user. |
+| `--verbose`     | `-v`  | false          | Enable verbose (debug-level) logging.                                                   |
+| `--config`      | `-c`  |                | Path to client.yaml. CLI flags override fields in this file.                            |
 
 ### Password resolution
 
 The password is never required on the command line. Resolution order (first non-empty wins):
 
 1. `--password` flag
-2. `auth.password` in the client config file (if `-c` is used)
-3. `$GMOUNTIE_AUTH_PASSWORD` environment variable
-4. Interactive no-echo prompt on the terminal
+2. `auth.password_command` in the config/profile (stdout of a command run via `sh -c`)
+3. `auth.password_file` in the config/profile (a 0600 file), or `$GMOUNTIE_AUTH_PASSWORD_FILE`
+4. `auth.password` inline in the config/profile
+5. `$GMOUNTIE_AUTH_PASSWORD` environment variable
+6. Interactive no-echo prompt on the terminal
 
 ### `--raw-ids`
 
@@ -72,9 +76,10 @@ For day-to-day mounts, leave it off.
 
 ## Authentication Types
 
-The client supports the following authentication method:
+The client supports two authentication methods:
 
-1. Basic (username/password) — password is resolved as described above; never required on the CLI.
+1. **Basic** (username/password) — password is resolved as described above; never required on the CLI.
+2. **mTLS** (`--auth-type mtls` or `auth.type: mtls`) — the verified client certificate is the identity; no username/password. The cert/key come from `server.tls.cert_file`/`key_file` (or inline `*_pem`) in the config, or from a single-blob credential passed via `--credentials` / `$GMOUNTIE_CREDENTIALS`.
 
 ## Examples
 

@@ -107,9 +107,16 @@ per-attempt deadline and exponential backoff (100 ms → 1 s).
 | readahead\_window       | integer  | 4        | Prefetch chunks kept in flight ahead of the cursor (range 1–64) |
 | write\_coalesce\_bytes  | integer  | 1048576  | Per-fd small-write coalescing threshold (0 disables)        |
 | max\_message\_bytes     | integer  | 16777216 | Cap on inbound/outbound gRPC message size (16 MiB default)  |
+| compression             | string   | none     | gRPC compressor for every RPC on the connection: `none` \| `snappy` |
 
 `max_message_bytes` is validated to the range [65536, 67108864] (64 KiB to
 64 MiB) and should typically mirror the server's value.
+
+`compression` is off by default: on a fast link the compressor itself
+becomes the bottleneck, so Snappy is opt-in. Set `compression: snappy`
+when the network — not CPU — is the constraint (slow WAN links,
+text-heavy payloads); see [Performance § 2.7](../design/performance.md)
+for the measurements behind the default.
 
 `retry_window` is validated to `gte=0` (any non-negative duration). The
 default 60 s is aligned with `server.session.grace_period` (also 60 s) so
@@ -231,9 +238,11 @@ kernel never asks for a frame the server would split anyway. A failed
 or unavailable Version call falls back to the configured value — the
 mount is not gated on the negotiation.
 
-`writeback_cache` defaults to off; the client read/write path is still
-synchronous pending the cache layer. Toggling it on enables the FUSE
-`CAP_WRITEBACK_CACHE` capability bit.
+`writeback_cache` defaults to off. Toggling it on enables the FUSE
+`CAP_WRITEBACK_CACHE` capability bit — an opt-in for single-writer
+workloads over high-latency links. The client-side cache, readahead, and
+write coalescing work independently of this kernel knob; see
+[Caching & consistency](../design/caching-and-consistency.md).
 
 Example:
 
@@ -307,13 +316,13 @@ The `auth` section configures client authentication:
 
 | Option           | Type   | Required | Description                                        |
 |------------------|--------|----------|----------------------------------------------------|
-| type             | string | yes      | Authentication type ("basic")                      |
+| type             | string | yes      | Authentication type: `basic` or `mtls` (mTLS uses the client cert/key under `server.tls`) |
 | username         | string | yes      | Username for basic auth                            |
 | password         | string | no       | Inline plaintext password. Prefer `password_command` or `password_file` to keep secrets out of the config. |
 | password_command | string | no       | Shell command whose stdout (trailing newline stripped) is the password — e.g. `pass show gmountie/work`. Runs via `sh -c`. |
 | password_file    | string | no       | Path to a file containing the password (must be mode 0600). `$GMOUNTIE_AUTH_PASSWORD_FILE` is checked when this field is absent. |
 
-Authentication is required; every client must supply at least `username` and `type`. The password can be omitted from the config file and supplied at runtime.
+Authentication is required. With `type: basic` the client must supply at least `username`; the password can be omitted from the config file and supplied at runtime. With `type: mtls` no username/password is needed — the verified client certificate (`server.tls.cert_file`/`key_file` or the `*_pem` variants) is the identity.
 
 **Password resolution order** (first non-empty wins): `--password` flag → `auth.password_command` → `auth.password_file` / `$GMOUNTIE_AUTH_PASSWORD_FILE` → `auth.password` (inline) → `$GMOUNTIE_AUTH_PASSWORD` → interactive no-echo prompt.
 

@@ -64,7 +64,8 @@ gmountie.example.com {
     }
 
     # Compress text responses Caddy returns directly (does not touch the
-    # already-Snappy-compressed gRPC traffic).
+    # gRPC traffic — gMountie payloads are uncompressed by default, or
+    # Snappy-compressed when the client opts in via rpc.compression).
     encode zstd gzip
 
     log {

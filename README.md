@@ -81,7 +81,7 @@ go build -o gmountie ./cmd
 <details>
 <summary>Prefer not to build?</summary>
 
-Grab a `gMountie_linux_*.tar.gz` (or `gMountie_darwin_*.tar.gz` for the macOS client) from the [releases page](https://github.com/gMountie/gMountie/releases), or run the server from the container image `ghcr.io/gmountie/gmountie-server`.
+Grab a `gMountie_*_linux_*.tar.gz` (or `gMountie_*_darwin_*.tar.gz` for the macOS client) from the [releases page](https://github.com/gMountie/gMountie/releases), or run the server from the container image `ghcr.io/gmountie/gmountie-server`.
 
 </details>
 
