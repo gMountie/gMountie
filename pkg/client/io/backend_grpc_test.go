@@ -115,6 +115,7 @@ func (s *BackendClientTestSuite) SetupTest() {
 	s.client.EXPECT().MetaTimeout().Return(2 * time.Second).Maybe()
 	s.client.EXPECT().IOTimeout().Return(30 * time.Second).Maybe()
 	s.client.EXPECT().SessionID().Return("test-session").Maybe()
+	s.client.EXPECT().RetryWindow().Return(2 * time.Second).Maybe()
 	s.client.EXPECT().Lifetime().Return(context.Background()).Maybe()
 	s.client.EXPECT().PerFileConfig().Return(grpcclient.PerFileConfig{}).Maybe()
 	s.backend = NewBackendClient(s.client, "testVolume")
@@ -145,7 +146,7 @@ func (s *BackendClientTestSuite) TestStat() {
 	}
 	s.fsClient.EXPECT().GetAttr(mock.Anything, mock.MatchedBy(func(req *proto.GetAttrRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/test"
-	})).Return(&proto.GetAttrReply{
+	}), mock.Anything).Return(&proto.GetAttrReply{
 		Status:     int32(fuse.OK),
 		Attributes: testAttr,
 	}, nil)
@@ -162,7 +163,7 @@ func (s *BackendClientTestSuite) TestStat() {
 }
 
 func (s *BackendClientTestSuite) TestStat_Error() {
-	s.fsClient.EXPECT().GetAttr(mock.Anything, mock.Anything).
+	s.fsClient.EXPECT().GetAttr(mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, context.DeadlineExceeded)
 
 	attr, st := s.backend.Stat(context.Background(), "/test")
@@ -187,6 +188,7 @@ func (s *BackendClientTestSuite) TestStat_CancelledParentDoesNotAbortRPC() {
 	s.fsClient.EXPECT().GetAttr(
 		mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() == nil }),
 		mock.Anything,
+		mock.Anything,
 	).Return(&proto.GetAttrReply{
 		Status:     int32(fuse.OK),
 		Attributes: &proto.Attr{Mode: 0o644, Owner: &proto.Owner{Uid: 1, Gid: 1}},
@@ -204,6 +206,7 @@ func (s *BackendClientTestSuite) TestListDir_CancelledParentDoesNotAbortRPC() {
 	s.fsClient.EXPECT().OpenDir(
 		mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() == nil }),
 		mock.Anything,
+		mock.Anything,
 	).Return(&proto.OpenDirReply{
 		Status:  int32(fuse.OK),
 		Entries: []*proto.DirEntry{{Name: "f", Mode: 0o644, Ino: 1}},
@@ -220,6 +223,7 @@ func (s *BackendClientTestSuite) TestStatFs_CancelledParentDoesNotAbortRPC() {
 
 	s.fsClient.EXPECT().StatFs(
 		mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() == nil }),
+		mock.Anything,
 		mock.Anything,
 	).Return(&proto.StatFsReply{Bsize: 4096}, nil)
 
@@ -281,10 +285,9 @@ func (s *BackendClientTestSuite) TestSetLkw_StaysCancellable() {
 // TestStat_RetriesOnUnavailable verifies that an idempotent metadata
 // call survives a single transient Unavailable via the retry wrapper.
 func (s *BackendClientTestSuite) TestStat_RetriesOnUnavailable() {
-	s.T().Skip("retry moved to retryOp; re-enable when this call site routes through retryOp (Tasks 5-7)")
-	s.fsClient.EXPECT().GetAttr(mock.Anything, mock.Anything).
+	s.fsClient.EXPECT().GetAttr(mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, status.Error(codes.Unavailable, "down")).Once()
-	s.fsClient.EXPECT().GetAttr(mock.Anything, mock.Anything).
+	s.fsClient.EXPECT().GetAttr(mock.Anything, mock.Anything, mock.Anything).
 		Return(&proto.GetAttrReply{
 			Status:     int32(fuse.OK),
 			Attributes: &proto.Attr{Mode: 0o644, Owner: &proto.Owner{Uid: 1000, Gid: 1000}},
@@ -302,7 +305,7 @@ func (s *BackendClientTestSuite) TestStat_RetriesOnUnavailable() {
 func (s *BackendClientTestSuite) TestLookup() {
 	s.fsClient.EXPECT().GetAttr(mock.Anything, mock.MatchedBy(func(req *proto.GetAttrRequest) bool {
 		return req.Path == "/parent/child"
-	})).Return(&proto.GetAttrReply{
+	}), mock.Anything).Return(&proto.GetAttrReply{
 		Status:     int32(fuse.OK),
 		Attributes: &proto.Attr{Ino: 42, Mode: 0o644, Owner: &proto.Owner{Uid: 1, Gid: 1}},
 	}, nil)
@@ -320,7 +323,7 @@ func (s *BackendClientTestSuite) TestListDir() {
 	}
 	s.fsClient.EXPECT().OpenDir(mock.Anything, mock.MatchedBy(func(req *proto.OpenDirRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/test"
-	})).Return(&proto.OpenDirReply{
+	}), mock.Anything).Return(&proto.OpenDirReply{
 		Status:  int32(fuse.OK),
 		Entries: entries,
 	}, nil)
@@ -337,7 +340,7 @@ func (s *BackendClientTestSuite) TestListDir() {
 func (s *BackendClientTestSuite) TestAccess() {
 	s.fsClient.EXPECT().Access(mock.Anything, mock.MatchedBy(func(req *proto.AccessRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/test" && req.Mode == 0444
-	})).Return(&proto.AccessReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.AccessReply{Status: int32(fuse.OK)}, nil)
 
 	st := s.backend.Access(context.Background(), "/test", 0444)
 	s.Assert().Equal(fuse.OK, st)
@@ -347,7 +350,7 @@ func (s *BackendClientTestSuite) TestStatFs() {
 	s.fsClient.EXPECT().StatFs(mock.Anything, &proto.StatFsRequest{
 		Volume: "testVolume",
 		Path:   "/test",
-	}).Return(&proto.StatFsReply{
+	}, mock.Anything).Return(&proto.StatFsReply{
 		Blocks:  1000,
 		Bfree:   500,
 		Bavail:  400,
@@ -370,7 +373,7 @@ func (s *BackendClientTestSuite) TestGetXAttr() {
 	expectedData := []byte("xattr_value")
 	s.fsClient.EXPECT().GetXAttr(mock.Anything, mock.MatchedBy(func(req *proto.GetXAttrRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/test" && req.Attribute == "user.test"
-	})).Return(&proto.GetXAttrReply{
+	}), mock.Anything).Return(&proto.GetXAttrReply{
 		Status: int32(fuse.OK),
 		Data:   expectedData,
 	}, nil)
@@ -983,7 +986,7 @@ func (s *BackendClientTestSuite) TestStat_PropagatesCallerFromCtx() {
 		return req.Caller != nil && req.Caller.Owner != nil &&
 			req.Caller.Owner.Uid == wantUID && req.Caller.Owner.Gid == wantGID &&
 			req.Caller.Pid == wantPID
-	})).Return(&proto.GetAttrReply{
+	}), mock.Anything).Return(&proto.GetAttrReply{
 		Status:     int32(fuse.OK),
 		Attributes: &proto.Attr{Mode: 0o644, Owner: &proto.Owner{Uid: wantUID, Gid: wantGID}},
 	}, nil)
@@ -1002,7 +1005,7 @@ func (s *BackendClientTestSuite) TestStat_BareCtxStampsZeroCaller() {
 	s.fsClient.EXPECT().GetAttr(mock.Anything, mock.MatchedBy(func(req *proto.GetAttrRequest) bool {
 		return req.Caller != nil && req.Caller.Owner != nil &&
 			req.Caller.Owner.Uid == 0 && req.Caller.Owner.Gid == 0 && req.Caller.Pid == 0
-	})).Return(&proto.GetAttrReply{
+	}), mock.Anything).Return(&proto.GetAttrReply{
 		Status:     int32(fuse.OK),
 		Attributes: &proto.Attr{Mode: 0o644, Owner: &proto.Owner{}},
 	}, nil)
@@ -1341,7 +1344,7 @@ func (s *BackendClientTestSuite) TestRemoveXAttr_HappyPath() {
 func (s *BackendClientTestSuite) TestListXAttr_HappyPath() {
 	s.fsClient.EXPECT().ListXAttr(mock.Anything, mock.MatchedBy(func(req *proto.ListXAttrRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/test"
-	})).Return(&proto.ListXAttrReply{
+	}), mock.Anything).Return(&proto.ListXAttrReply{
 		Attributes: []string{"user.foo", "user.bar"},
 		Status:     int32(fuse.OK),
 	}, nil)
