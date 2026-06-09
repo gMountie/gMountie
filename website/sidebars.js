@@ -59,6 +59,7 @@ const sidebars = {
         'design/performance',
         'design/identity-and-permissions',
         'design/security-and-transport',
+        'design/server-side-copy-and-fs-ops',
         'design/operations-and-packaging',
       ],
     },

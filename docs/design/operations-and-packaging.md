@@ -90,6 +90,28 @@ cosign verify \
   ghcr.io/gmountie/gmountie-server:<tag>
 ```
 
+## Install script (`get.gmountie.dev`)
+
+`curl -fsSL https://get.gmountie.dev | sh` installs the public `gmountie` CLI
+from GitHub Releases.
+
+- **Source of truth is `website/static/install.sh`** — the published artifact
+  *is* the canonical committed file. It's served at
+  `https://docs.gmountie.dev/install.sh` by the docs Pages site; a Cloudflare
+  Redirect Rule points `get.gmountie.dev` → that URL (302; `curl -L` follows).
+  No Worker/compute in the install path.
+- **Version resolution:** explicit `GMOUNTIE_VERSION` wins; else the stable
+  channel (`releases/latest` redirect); else the newest prerelease from the
+  releases API (there is no stable release yet, so prereleases install today).
+- **Integrity:** the archive name and expected SHA-256 are read from the
+  release's `checksums.txt` (never reconstructed from the goreleaser name
+  template), and the download is verified before extraction; cosign
+  verification of `checksums.txt` runs when cosign is available.
+- **Install dir:** `BIN_DIR` override, else `/usr/local/bin` (directly if
+  writable, via sudo if available), else `~/.local/bin`.
+- **CI:** shellcheck + unit tests + a live smoke install (including the cosign
+  verify path) run on changes to the script.
+
 ## Platform support
 
 The server is **Linux-only**; the client (`gmountie mount`) builds and runs on
@@ -127,6 +149,7 @@ The server is **Linux-only**; the client (`gmountie mount`) builds and runs on
 ## Out of scope
 
 macOS / Windows **server** builds, a Kubernetes operator, and desktop release
-artifacts (the Wails desktop build is deferred to Phase 8). For the macOS
+artifacts (the Wails desktop app was extracted to a future separate repo and
+ships from there, not from this one). For the macOS
 client specifically: no Homebrew tap, no Mac-runner integration test, no code
 signing / notarization, and no universal (`lipo`) binary.

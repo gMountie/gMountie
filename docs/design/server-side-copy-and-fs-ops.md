@@ -1,6 +1,6 @@
 # Server-side copy and missing filesystem operations
 
-Status: approved design, pre-implementation.
+Status: implemented (shipped in v0.15.0-alpha.0) — this is the as-built record; the Motivation below describes the pre-implementation state.
 
 ## Motivation
 

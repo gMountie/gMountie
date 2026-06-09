@@ -1,7 +1,7 @@
 # gMountie Architecture & Protocol Overview
 
 **Status:** Living document
-**Last updated:** 2026-05-15
+**Last updated:** 2026-06-09
 
 This document describes how gMountie is shaped today: the pieces, the wire
 protocol's surface, and the contracts each side relies on. No code-level
@@ -9,8 +9,8 @@ detail — for that, the package READMEs and source comments are the source
 of truth.
 
 For UID/GID semantics and the identity model see
-[identity-and-permissions.md](identity-and-permissions.md). That doc is
-forward-looking; this one describes what the codebase actually does.
+[identity-and-permissions.md](identity-and-permissions.md) — the durable
+record of the shipped identity feature.
 
 ## 1. What gMountie is
 
@@ -29,7 +29,7 @@ glued on top.
 
 ```
 +--------------------+                  +-----------------+
-| client process     |   gRPC + Snappy  | server process  |
+| client process     |   gRPC / TLS     | server process  |
 |                    | <==============> |                 |
 |  FUSE mount  <----+|                  |+----> loopback  |
 |  (/mnt/photos)    ||                  ||      FS under  |
@@ -46,9 +46,10 @@ glued on top.
 - **Server** runs `gMountie serve`, exposes a configured list of named
   volumes, and answers gRPC calls by routing them to a loopback
   filesystem rooted at the volume's local path.
-- **Wire** is gRPC over HTTP/2 with the Snappy codec as a custom
-  compressor. Reflection is on; gRPC keepalive at the connection level is
-  configured by gRPC itself.
+- **Wire** is gRPC over HTTP/2, TLS-terminated. A custom Snappy codec is
+  available as an opt-in compressor (`rpc.compression: snappy`, default
+  `none` — see §8). Reflection is opt-in (default off); gRPC keepalive at
+  the connection level is configured by gRPC itself.
 
 There is no NFS, no VPN, no shared filesystem of any kind between the
 two ends. Anything not explicitly modelled in the proto cannot cross.
@@ -71,20 +72,21 @@ The server is a layered application:
   the host kernel.
 
 Cross-cutting concerns — request logging, auth, optional Prometheus
-metrics — are gRPC interceptors. Identity middleware (UID/GID handling)
-runs per-request and is the subject of its own design document.
+metrics — are gRPC interceptors. Identity resolution and per-op
+credential binding (UID/GID handling) happen in the service/io layers
+and are the subject of their own design document
+([identity-and-permissions.md](identity-and-permissions.md)).
 
 ### 3.2 The client
 
-Smaller and simpler. Two mount modes:
+Smaller and simpler. One mount model:
 
-- **Single-volume mount.** One remote volume mounted at one local path.
-  This is what `gMountie mount` produces.
-- **Multi-volume mount.** An in-memory `MemFS` root mounted at one local
-  path, with each requested remote volume attached as a subdirectory
-  underneath. This mode exists to support the desktop UI (deferred until
-  the rest of the project stabilises) which wants several volumes under
-  one parent.
+- **Single-volume mount** (`mount.SingleVolumeMounter`). One remote
+  volume mounted at one local path. This is what `gmountie mount`
+  produces, and the only `mount.type` the config accepts (`single`).
+
+(The earlier multi-volume/`MemFS` mounter that backed the desktop UI was
+extracted from this repo for a future separate desktop repository.)
 
 The client also runs a small gRPC client wrapper that:
 - Holds the single connection to the server.
@@ -187,11 +189,13 @@ volume service per request; there is no per-connection "current volume"
 state. A single client connection (and a single session) can use any of
 the volumes the server exposes.
 
-The server's middleware chain (logging, auth interceptors, identity
-middleware, prometheus metrics) runs uniformly across all volumes — at
-this level the volume name is just a routing parameter, not a security
-boundary. Per-volume security policy is a planned addition (see the
-identity design doc).
+The server's interceptor chain (logging, auth, prometheus metrics) runs
+uniformly across all volumes — at that level the volume name is just a
+routing parameter. The security boundary is enforced when the volume is
+resolved: the authenticated principal must pass the per-volume ACL
+(`auth.users[].volumes` / `auth.default_allow`), and the filesystem
+handed back is bound to the principal's resolved identity (see §7 and
+the identity design doc).
 
 ## 6. Reliability primitives
 
@@ -261,29 +265,43 @@ The client distinguishes the two: a gRPC error is the wire failing
 (retry candidate); a non-OK FUSE status is the filesystem refusing
 (propagate to the kernel as the corresponding errno).
 
-## 7. Authentication
+## 7. Authentication and identity
 
 All requests are authenticated. Two modes ship, selected by `auth.type`,
 at the gRPC interceptor layer:
 
-- `basic` — username/password against a configured user list. The
-  authenticated principal is the basic-auth user; today it isn't yet
-  used for permission decisions (those still come from the wire UID/GID
-  field — see the identity design doc for the planned shape).
+- `basic` — username/password (argon2id at rest) against a configured
+  user list. Verification runs once per session; later RPCs authorize by
+  `session_id` (session-scoped auth).
 - `mtls` — the client's TLS certificate carries its identity, verified
-  during the handshake.
+  during the handshake (cert CN as principal).
+
+The authenticated **principal drives permission decisions**: per request
+the server resolves the principal through the volume's identity mapping
+(`squash` default / `static` / `system` / `passthrough`) and binds the
+volume filesystem to the resolved identity, so every operation runs
+under the principal's credentials and the **kernel** enforces
+permissions natively. The UID/GID the client forwards on the wire is
+advisory display data, never an authority. Per-volume ACLs
+(`auth.users[].volumes`, `auth.default_allow`) gate which volumes a
+principal can touch at all. Full model:
+[identity-and-permissions.md](identity-and-permissions.md) and
+[security-and-transport.md](security-and-transport.md).
 
 TLS at the transport layer ships as well: the server auto-generates a
 certificate, and the client chooses a verification mode (`verify`,
-`tofu`, or `insecure`).
+`tofu`, or `insecure`). A renewed server cert+key on disk is picked up
+live at the next handshake (leaf live-reload) — no restart.
 
 ## 8. Compression
 
-A custom Snappy codec is registered server-side and is the preferred
-codec for the I/O RPCs (`Read`, `Write`). Metadata RPCs are typically
-small enough that compression is dropped per call. Gzip is registered
-too but Snappy is the default — it's chosen for speed-over-ratio
-rather than ratio.
+Compression is **opt-in and off by default** (`rpc.compression: none`).
+A custom Snappy codec is registered server-side (gzip is registered as
+well); a client sets `rpc.compression: snappy` to compress every RPC on
+the connection. Snappy is chosen for speed-over-ratio: it pays off on
+slow WAN links, while on a fast link the compressor itself becomes the
+bottleneck — see [performance.md §2.7](performance.md) for the
+measurements behind the default.
 
 ## 9. What this protocol intentionally does not do
 
@@ -325,5 +343,7 @@ The protocol still does not do:
   protocol ops into ordinary host-kernel syscalls under the volume's
   path.
 - **Principal** — the authenticated identity from the auth interceptor
-  (basic-auth username today). Distinct from the UID/GID the client
-  forwards on each call, which is currently advisory.
+  (basic-auth username or mTLS cert CN). Resolved through the volume's
+  identity mapping and enforced kernel-natively on every operation (§7).
+  Distinct from the UID/GID the client forwards on each call, which is
+  advisory display data.
