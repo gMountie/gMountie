@@ -4,132 +4,156 @@ All notable changes to gMountie. Format is loosely based on [Keep a Changelog](h
 
 ## Unreleased
 
-The work that will ship in the next `v0.3.0-alpha.x` cut. Tracks `develop`.
-
-### Headline features
-
-- **Persistent client-side cache (Phase 4).** Per-volume `<cache.path>/<volume>/{LOCK, meta.db, chunks/}` survives client restarts. Read of a file already in the cache hits the network only for a tiny `GetAttrIfChanged` revalidation; with the Subscribe stream healthy, zero RPCs.
-- **Push-driven invalidation.** Server emits `MUTATED`/`DELETED`/`RENAMED` events from every mutating handler; clients subscribe per volume and apply invalidations within tens of milliseconds. Heartbeat every 10 s confirms stream health.
-- **Per-connection session + idempotency (Phase 1c).** Reconnects don't re-execute mutations — each one carries a `request_id`; the server's per-session LRU + singleflight cache deduplicates. `Write` is now safely retryable.
-- **Streaming Read/Write + Compound metadata batching (Phase 3).** `Read` and `Write` are now streaming RPCs (no unary frame cap); `Compound` batches 100 `GetAttr` into one RTT.
-- **Observability foundations (Phase 2).** Prometheus metrics on server and client, request-id-propagating log fields, gRPC health protocol, `/healthz` / `/readyz` / `/version` HTTP endpoints.
-- **Sequential readahead + small-write coalescing (Phase 3).** Detected per-fd, contiguous-only — no speculation, no write-back semantics.
-- **Server TLS leaf live-reload.** Both the gRPC and ops listeners pick up a renewed cert+key from disk at the next handshake (stat-stamped `GetCertificate`, fail-open to the last good pair) — cert-manager-style rotation no longer needs a restart, and existing sessions are never disturbed. Note for fingerprint-pinning setups: replacing the cert files changes the fingerprint clients must pin; nothing changes unless you replace the files.
-
-### ⚠ Breaking changes
-
-Operators who explicitly set any of these in `~/.config/gmountie/client.yaml` need to update:
-
-- **`mount.type: vfs` removed.** The VFS multi-volume mounter and `VFSMountConfig` have been extracted to a separate future desktop repo. Only `type: single` is valid. Any config with `type: vfs` will get "invalid mount type: vfs" at startup — change to `type: single` with an explicit `volume:` field.
-- **`NewAppContext` signature changed (library users).** The `multiMountPath string` positional argument has been removed. Callers must drop that argument.
-- **`github.com/wailsapp/wails/v3` and `github.com/samber/slog-zap/v2` removed from `go.mod`.** Any downstream code that imported these transitively through this module must now take them directly.
-
-- **`cache.max_size_bytes` removed.** Replaced by two independent caps: `cache.memory_max_bytes` (256 MiB default) and `cache.disk_max_bytes` (10 GiB default). Sub-spec C made the cache a two-tier memory + disk structure with separate budgets — one cap can no longer express both.
-- **`cache.enabled` default flipped to `true`.** Anyone running `gmountie mount` with no cache config now gets the cache turned on. To opt out: set `cache.enabled: false` explicitly. Cache directory defaults to `$XDG_CACHE_HOME/gmountie`.
-- **`cache.attr_ttl` / `cache.dir_ttl` / `cache.negative_ttl` defaults relaxed.** Previously 5 s / 5 s / 2 s when TTL was the only freshness signal; now 5 min / 5 min / 30 s with Subscribe push handling fast invalidation. Zero on any TTL disables that tier for operators who fully trust Subscribe.
-- **Wire protocol additions, no removals.** `Attr.version` is new (server-packed from mtime+size+ctime). `GetAttrIfChanged` and `Subscribe` are new RPCs on `RpcFs`. Older clients ignore the new field and don't open the new streams — they still work, just without push-driven invalidation.
-
-### Added
-
-#### Server-side copy, lseek, and xattr writes
-
-- **Server-side `copy_file_range`**. Intra-volume file copies now execute entirely on the server — one RPC instead of streaming all bytes through the client. On filesystems that support `copy_file_range(2)` (Btrfs, XFS, NFS 4.2), the server falls through to a reflink, making large copies near-instant.
-- **`lseek` SEEK_DATA / SEEK_HOLE support**. Server exposes a `Lseek` RPC backed by the real syscall, so sparse-aware tools (`cp --sparse`, `rsync --sparse`, `tar -S`) can skip holes efficiently.
-- **xattr write support** (`setxattr` / `removexattr`; `listxattr` already existed). A server-side allowlist restricts writes to `user.*` keys and the four POSIX-ACL names (`system.posix_acl_access`, `system.posix_acl_default`, `trusted.posix_acl_access`, `trusted.posix_acl_default`); all other namespaces are rejected with `EPERM`.
-
-#### Phase 1c — Session + idempotency
-
-- `SessionService` gRPC (`Create`, `Resume`, `Keepalive`) with per-session fd tables and grace-period reap on disconnect.
-- `session_id` field on every fd-carrying file RPC; `request_id` on every mutating RPC.
-- Per-session idempotency cache via golang-lru + singleflight; safely deduplicates Write retries.
-- Self-healing client `Keepalive` loop with Resume/Create fallback.
-- Per-RPC request-id interceptors and context-aware log fields (`request_id`, `session_id`, `volume`, `user`).
-
-#### Phase 1d — Server reliability fixes
-
-- Graceful shutdown on `SIGTERM` / `SIGINT`.
-- Metrics listener failure is non-fatal (won't kill the server process).
-- `nodefs.NewServer` / mount errors return up the stack instead of `log.Fatal`.
-- Middleware `AssumeUser` failure returns EPERM instead of fatal-erroring.
-- Nil-`Caller`/nil-`Owner` guards in `createContext`.
-- Non-fatal-`StatFs` reply path returns the error instead of swallowing.
-- Viper config now binds nested env vars; `NewFromConfig` errors on nil viper.
-
-#### Phase 2 — Observability
-
-- Server-side per-volume / per-op Prometheus collectors.
-- Client-side retry + in-flight collectors.
-- gRPC health protocol + HTTP `/healthz` `/readyz` `/version`.
-- `VersionService` gRPC + version controller.
-- Configurable ops port via `server.metrics_addr`.
-
-#### Phase 3 — Performance
-
-- Streaming `Read` (server-streaming) and `Write` (client-streaming) — removed unary frame cap.
-- `Compound` RPC batches metadata ops; 100 `GetAttr` in one RTT.
-- Configurable gRPC keepalive and max message size.
-- Tunable client FUSE `MaxWrite` + background depth, server-negotiated.
-- Sequential per-fd readahead (single-chunk window, no speculation).
-- Small-write coalescing per fd, contiguous-only.
-- `PerFileConfig` bundle of per-file knobs.
-- Perf benchmark harness (`test/e2e/perf/`) with localhost + slow-30ms-loopback variants; benchstat-comparable.
-
-#### Phase 4 — Persistent client-side cache
-
-**Sub-spec A — pathfs → go-fuse/v2/fs migration:**
-- New `FileSystemBackend` interface seam in `pkg/client/io`.
-- `BackendClient` gRPC implementation of `FileSystemBackend`.
-- go-fuse `fs.NodeXXX` adapters delegating to `FileSystemBackend`.
-- Single + VFS mounters switched to the new API; legacy `pathfs.FileSystem` deleted.
-
-**Sub-spec B — in-memory cache + TTL:**
-- `cachedBackend` decorator wrapping the gRPC client.
-- Three sub-caches: `attrCache` (positive + negative TTL), `dirCache`, `dataCache` (chunked, no TTL).
-- Shared `accountant` with global LRU eviction under a single byte budget.
-- Per-op invalidation contract (Write/Truncate/Unlink/Rename drop the right slices).
-
-**Sub-spec C — disk persistence:**
-- New `pkg/client/cache/persist` package with bbolt index + content-addressable chunk storage.
-- xxh3-128 content addressing — rename and copy are free in the cache; dedupe across files.
-- Refcounted chunk lifecycle in `chunk_refs` bbolt bucket.
-- Per-volume flock-based `LOCK` file — refuses dual-mount with `ErrCacheLocked`.
-- Format-versioned schema; wipe-on-mismatch (no migration code).
-- Disk accountant with FIFO eviction under `disk_max_bytes`.
-- Sampled ghost sweep + async orphan sweep on startup.
-- Cache hit metrics split by tier (`memory|disk`) + chunk dedupe counter.
-
-**Sub-spec D — Subscribe + version push:**
-- `Attr.version` field — server packs (mtime_ns, size, ctime_ns) into uint64.
-- `GetAttrIfChanged(volume, path, known_version) → (not_modified | new_attrs | ENOENT)` lightweight revalidation RPC.
-- `Subscribe(volume) → stream SubscribeEvent` server-streaming RPC. Per-volume fan-out, bounded subscriber buffers, drop-on-overflow, 10 s heartbeat.
-- Client `validityTracker` (verified | unverified) gates cached reads on `GetAttrIfChanged` when the Subscribe stream is unhealthy.
-- `subscribeConsumer` goroutine with exp-backoff reconnect; first heartbeat flips the cache to verified.
-- Client + server Prometheus counters for revalidations, events received/emitted, stream state, slow-subscriber drops.
-
-### Performance
-
-- Phase 4 / Sub-spec D adds zero measurable overhead on the metadata hot path (OpenStatClose / Lookup / Readdir100 deltas within noise; allocations flat). Geomean shift -1.33 % latency, -0.10 % allocs, +1.23 % throughput. Two benchstat-flagged streaming rows (`SeqRead64MiB +23.64 %` and `SeqWrite16MiB -14.20 %`) are VM scheduling variance (flat B/op confirms; deltas contradict each other on adjacent sizes). Details: `docs/perf/phase4d-2026-05-18.md`.
-
-### Testing
-
-- E2E suites added on the kubevirt VM: `CacheEnabledFSSuite` (push-/pop-/dir-cache correctness), `CachePersistentFSSuite` (restart, dual-mount lock, disk cap), `CacheSubscribeFSSuite` (push across clients, restart-revalidates, deleted-while-offline, subscribe-disabled-falls-back-to-TTL).
-- New unit suites for the persist package (Open/Close, ChunkIO, Refcount, DataIdx, KV, Sweep) and the cache validity tracker + subscriber.
-- Standalone test functions migrated to testify suites across the tree.
-- Mockery upgraded to v3.7.0; mocks regenerated for the new `FileSystemBackend` interface.
-
-### Infrastructure
-
-- Go 1.26 toolchain; protoc plugins pinned via `go.mod`'s `tool` directive.
-- CI now runs on `develop` in addition to `master`. Test job timeout bumped to 20 min.
-- Release workflow requires a green CI run for the same SHA before allowing a `production` or `alpha` build.
-- New roadmap appendix: **Cache proxy / edge tier** as a future capability — Subscribe protocol is already shaped to support a proxy node re-broadcasting events to N downstream clients in the same AZ.
+Tracks `master`. Nothing user-visible since v0.16.0-alpha.0.
 
 ---
 
-## [v0.2.0-alpha.0] — 2026-05-13
+## [v0.16.0-alpha.0] — 2026-06-09
 
-Last release before the Phase 1c-4d cycle. Tagged from `master` with the pathfs-based client and unary `Read`/`Write` RPCs.
+### Headline features
 
-## [v0.1.0-alpha.0] — earlier alpha
+- **Resilient mount retry.** Transient FS-RPC failures retry inside a wall-clock window (`rpc.retry_window`, default 60 s; `0` = fail-fast) with a fresh per-attempt deadline, exponential backoff, and `WaitForReady` dialing — a network blip no longer surfaces `EIO` to applications. A session-change guard keeps idempotent reads retrying across a reconnect while fd ops and path mutations stop immediately when the session was reaped.
+- **`get.gmountie.dev` installer.** `curl -fsSL https://get.gmountie.dev | sh` installs the CLI from GitHub Releases (`website/static/install.sh`): resolves stable-then-newest-prerelease, verifies the archive against `checksums.txt`, optional cosign verification; covered by shellcheck + unit tests + a live smoke job in CI.
+
+### ⚠ Breaking changes
+
+- **`server.session.grace_period` default raised 30 s → 60 s** (and is now configurable). The grace period must stay ≥ the client's `rpc.retry_window` for transparent resume.
+- Client retry behaviour changed: operations that previously failed on the first transient error now retry for up to `rpc.retry_window`. Set `rpc.retry_window: 0` for the old fail-fast behaviour.
+
+## [v0.15.0-alpha.0] — 2026-06-07
+
+### Headline features
+
+- **Server-side `copy_file_range`.** Intra-volume copies execute entirely on the server — one RPC instead of streaming bytes through the client; reflink-capable filesystems (Btrfs, XFS, NFS 4.2) make large copies near-instant.
+- **`lseek` `SEEK_DATA`/`SEEK_HOLE`.** Sparse-aware tools (`cp --sparse`, `rsync --sparse`, `tar -S`) can skip holes efficiently.
+- **xattr writes** (`setxattr`/`removexattr`) behind a server-side namespace allowlist (`user.*` plus the four POSIX-ACL names); other namespaces get `EPERM`.
+- **Server TLS leaf live-reload.** Both the gRPC and ops listeners pick up a renewed cert+key from disk at the next handshake (stat-stamped `GetCertificate`, fail-open to the last good pair) — cert-manager-style rotation no longer needs a restart, and existing sessions are never disturbed. Fingerprint-pinning setups: replacing the cert files changes the fingerprint clients must pin; nothing changes unless you replace the files.
+
+## [v0.14.0-alpha.0] — 2026-06-04
+
+- **Single-blob credential mount.** `gmountie mount` (and `ls`) accept a `--credentials` file or the `$GMOUNTIE_CREDENTIALS` env var carrying cert/key/CA/endpoint in one blob — cert-only (mTLS) auth with nothing else on the command line.
+- `--volume` may be omitted: the client auto-resolves the volume when the server exposes exactly one.
+- Go toolchain bumped to 1.26.4 for stdlib security fixes.
+
+## [v0.13.0-alpha.0] — 2026-06-02
+
+- **Config profiles.** Named client configs under `~/.config/gmountie/profiles/<name>.yaml`, selected with `--profile/-P` on `mount`/`ls`/`config show`; `gmountie profile list`. Secrets can come from `auth.password_command` or a 0600 `auth.password_file`.
+- **CLI hardening.** New `gmountie status` and `gmountie unmount`; friendly config-validation errors; `config show` prints the file verbatim with secrets redacted, `--effective` shows the merged config; a foreground mount exits on external unmount.
+- `/ops/acl/reload` echoes the loaded `revoked_serials`; release ldflags fixed after the module rename; SECURITY.md, CONTRIBUTING.md, and issue/PR templates added.
+
+## [v0.12.0-alpha.0] — 2026-06-01
+
+- **macOS client.** `gmountie mount` / `ls` build and run on darwin (via macFUSE or FUSE-T). The server stays Linux-only.
+
+## [v0.11.0-alpha.2] — 2026-06-01
+
+- Client accepts a hostname (not just an IP) as the server address; spurious keepalive-recovery noise fixed; chart probes default to a TCP dial of the gRPC port and `appProtocol` became configurable.
+
+## [v0.11.0-alpha.1] — 2026-06-01
+
+- Helm chart made deployable against the v0.11 server.
+
+## [v0.11.0-alpha.0] — 2026-06-01
+
+- **Inline TLS PEM config.** `tls.ca_pem` / `tls.cert_pem` / `tls.key_pem` accepted as alternatives to the `*_file` paths — container-native credential injection.
+
+## [v0.10.0-alpha.0] — 2026-05-31
+
+### Headline features
+
+- **Mount-time referrals.** New `VolumeService.Resolve` RPC (ACL-checked, local by default); the client follows a referral to another endpoint at mount time.
+- **Cert revocation without restart.** `auth.revoked_serials` cert-serial blocklist, `POST /ops/acl/reload` re-reads config / swaps the ACL snapshot / reaps revoked sessions, optional operator mTLS on the ops listener.
+
+### ⚠ Breaking changes
+
+- **Module renamed** `gmountie` → `go.gmountie.dev/gmountie` (vanity import). All library imports change.
+- **`mount.type: vfs` removed.** The VFS multi-volume mounter and the desktop UI left the repo (future separate desktop repo). Only `type: single` is valid; `type: vfs` now fails with "invalid mount type".
+- **`NewAppContext` signature changed (library users):** the `multiMountPath string` argument is gone.
+- **`github.com/wailsapp/wails/v3` and `github.com/samber/slog-zap/v2` dropped from `go.mod`.** Downstream code that relied on them transitively must import them directly.
+
+## [v0.9.0-alpha.0] — 2026-05-31
+
+### Headline features
+
+- **CLI/config UX overhaul.** sshfs-style shorthand `gmountie mount [user@]host[:port]/volume mountpoint`; interactive no-echo password prompt; `--daemon` background mounts; error remediation hints; new `gmountie ls` and `gmountie config show`; `gmountie fingerprint` emits a paste-ready client snippet; systemd units for serve and mount.
+- Server/identity hot-path refactor (bound-FS wrapper cache, O(1) ACL, singleflight identity misses) plus a client reliability + cache-performance sweep (per-instance metrics dispatcher, binary chunk encoding, batched eviction).
+
+### ⚠ Breaking changes (behavior)
+
+- `gmountie serve` first run now **binds 0.0.0.0** (was 127.0.0.1), ships a working `shared` volume at `$XDG_DATA_HOME/gmountie/shared`, and generates a **random admin password printed once** (was the fixed `admin`). Rotate with `gmountie genpass`.
+- The server **validates volume paths at startup** and refuses to start when a configured path is missing or not a directory (was: failed lazily at first I/O).
+- Config files are written with 0600 permissions; `host:port` parsing is IPv6-correct.
+
+## [v0.8.0-alpha.0] — 2026-05-30
+
+- **Session ownership binding.** Sessions are bound to the caller identity at create; `Resume`/`Keepalive`/data RPCs from a different principal are rejected (closes cross-user `session_id` reuse under mTLS). Raw `session_id` values are redacted in logs (`session_fp` fingerprint instead).
+
+## [v0.7.0-alpha.0] — 2026-05-29
+
+- **Session-scoped authentication.** The argon2id password verify runs once per session; later RPCs authorize by `session_id` (fail-closed). Fixes the per-request-hashing throughput collapse under load; the client also stops re-sending basic-auth credentials once a session is live.
+
+## [v0.6.0-alpha.0] — 2026-05-29
+
+### Headline features
+
+- **TLS everywhere (Phase 7).** Server TLS on every connection; zero-config self-signed cert auto-generation with fingerprint logging and `gmountie fingerprint`; client verification modes `verify` / `tofu` / `insecure` + `expected_fingerprint` pin.
+- **Identity & kernel-native permission enforcement (Phase 1a/1b/2/3).** The authenticated principal — not the client-supplied uid/gid — is resolved through per-volume mapping modes (`squash` default / `static` / `system` / `passthrough`) and enforced by the kernel via per-op credential switching; `WhoAmI` RPC + client-side uid/gid rewriting (`--raw-ids` opts out); volume confinement via `openat2(RESOLVE_BENEATH)`; opt-in admin capabilities (`dac_read_search`, `dac_override`).
+- **Per-user volume ACL** (`auth.users[].volumes`, `auth.default_allow`) and **mTLS auth** (`auth.type: mtls`, client-cert CN as principal).
+- Failure-mode e2e suite (auth rejection, server killed mid-I/O, reconnect with open fds, ≥4 GiB files, concurrent clients); docs site migrated to Docusaurus; race-detector CI job + scheduled Trivy image scan.
+
+### ⚠ Breaking changes
+
+- **`auth: none` removed** — authentication is mandatory; unknown auth types fail closed.
+- **Plaintext `auth.users[].password` removed** — only argon2id `password_hash` (PHC string) is accepted; generate with `gmountie genpass`. Startup fails on plaintext.
+- **Client-supplied uid/gid is no longer trusted** for permission decisions (wire field is advisory); `AssumeUserMiddleware` deleted in favour of identity-bound filesystems.
+- gRPC reflection is now opt-in (default off); ops endpoints bind loopback by default; per-connection DoS limits enforced.
+
+## [v0.5.0-alpha.1] — 2026-05-27
+
+- Release pipeline fix: upload SBOMs + signatures in a cosign-verifiable format.
+
+## [v0.5.0-alpha.0] — 2026-05-27
+
+- **Phase 6 — operations & packaging.** Hardened non-root container image (pinned base, healthcheck); compose credential hygiene; Helm `fsGroup` + default resources; SBOMs + keyless cosign signing on releases.
+- **SP5 partial-consume pipelined readahead** — ≈2× sequential-read throughput on high-RTT links; new defaults `readahead_chunk_bytes: 1 MiB`, `readahead_window: 4`.
+- **`Utimens` RPC** — `FATTR_ATIME`/`FATTR_MTIME` honored, writeback mtime fidelity.
+- Server frame-buffer pooling on the streaming read path; declarative Bencher dashboard plots.
+
+## [v0.4.0-alpha.0] — 2026-05-25
+
+- **`WriteAndFlush` RPC (SP3)** fuses the small-file close tail (create-write-close 8→5 RPCs, ~1.9× faster); `Create` returns attributes so the post-create `Stat` is dropped; `Fsync` clears the dirty flag so a following close-`Flush` is a no-op.
+
+## [v0.3.0-alpha.1] — 2026-05-25
+
+- Interrupted FUSE metadata ops return `EINTR` (not `EIO`); idempotent metadata RPCs detached from FUSE-interrupt cancellation; redundant self-copy removed from streaming `Read`.
+
+## [v0.3.0-alpha.0] — 2026-05-25
+
+- **In-repo perf pipeline.** `perfbmf` CLI (bench parsing, substrate probes, BMF emit), release-gated Bencher upload, fio substrate job + named netem profiles, dedicated runner image. Fix: persist cache `Close` joins background sweeps.
+
+## [v0.2.0-alpha.1] — 2026-05-25
+
+- **Cache fsync reduction** — `meta.db` opened NoSync with periodic + close-time sync; no-op invalidation transactions skipped (~3× persistent-cache write throughput).
+
+## [v0.2.0-alpha.0] — 2026-05-24
+
+The Phase 1c–4d cycle, in one tag.
+
+### Headline features
+
+- **Persistent client-side cache (Phase 4).** Two-tier (memory + disk) cache that survives client restarts; bbolt index + content-addressable chunks; per-volume `LOCK` against dual mounts; LRU eviction under `cache.memory_max_bytes` / `cache.disk_max_bytes`. Client FUSE layer migrated from `pathfs` to go-fuse v2 `fs` (inode-based) behind a unified `FileSystemBackend` seam.
+- **Push-driven invalidation.** Server emits `MUTATED`/`DELETED`/`RENAMED` events from every mutating handler; clients `Subscribe` per volume; `Attr.version` + `GetAttrIfChanged` give cheap revalidation when the stream is unhealthy.
+- **Per-connection session + idempotency (Phase 1c).** `SessionService` (`Create`/`Resume`/`Keepalive`), per-session fd tables with grace-period reap, `request_id` idempotency LRU + singleflight — `Write` is safely retryable.
+- **Streaming Read/Write + `Compound` batching (Phase 3).** No more unary frame cap; 100 metadata ops in one RTT; sequential readahead + small-write coalescing; compression became opt-in.
+- **Observability (Phase 2).** Prometheus metrics on both sides, request-id log correlation, gRPC health protocol, `/healthz` `/readyz` `/version`.
+
+### ⚠ Breaking changes
+
+- **`cache.max_size_bytes` removed** — replaced by `cache.memory_max_bytes` (256 MiB default) and `cache.disk_max_bytes` (10 GiB default).
+- **`cache.enabled` default flipped to `true`** (opt out explicitly); cache dir defaults to `$XDG_CACHE_HOME/gmountie`.
+- **TTL defaults relaxed** — `attr_ttl`/`dir_ttl`/`negative_ttl` now 5 m / 5 m / 30 s with Subscribe push handling fast invalidation.
+- Wire additions only: `Attr.version`, `GetAttrIfChanged`, `Subscribe`.
+
+## [v0.1.0-alpha.0], [v0.1.0-alpha.1] — earlier alphas
 
 ## [v0.0.3], [v0.0.2], [v0.0.1] — initial development tags
