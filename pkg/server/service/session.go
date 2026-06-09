@@ -134,6 +134,9 @@ func (noopSessionMetrics) OpenFilesDec(string) {}
 
 type SessionManagerOptions struct {
 	GracePeriod time.Duration
+	// IdempotencyCacheSize is the per-session LRU capacity for request-id
+	// deduplication. 0 uses DefaultIdempotencyCacheSize.
+	IdempotencyCacheSize int
 	// Metrics is an optional sink for the active-session gauge. Nil
 	// substitutes a no-op implementation.
 	Metrics SessionMetrics
@@ -145,9 +148,13 @@ type SessionManagerOptions struct {
 // Cost: a dropped client's fds and POSIX locks are held for this long.
 const DefaultGracePeriod = 60 * time.Second
 
-// DefaultIdempotencyCacheSize is the per-session LRU size for dedup. 256 covers
-// a comfortable churn window for typical FUSE traffic without bloating memory.
-const DefaultIdempotencyCacheSize = 256
+// DefaultIdempotencyCacheSize is the per-session LRU capacity for request-id
+// deduplication. With kernel writeback enabled the client keeps up to 64 WRITEs
+// in flight, each retried with a stable request_id; the LRU must comfortably
+// hold the in-flight + recently-completed set or an evicted entry's retry
+// re-executes the write. 4096 × ~100 B cached replies ≈ 400 KiB/session,
+// cheap insurance against spurious double-writes.
+const DefaultIdempotencyCacheSize = 4096
 
 type sessionImpl struct {
 	id        string
@@ -235,11 +242,12 @@ type pendingReap struct {
 }
 
 type sessionManagerImpl struct {
-	sessions *xsync.MapOf[string, *sessionImpl]
-	reapers  *xsync.MapOf[string, *pendingReap]
-	grace    time.Duration
-	metrics  SessionMetrics
-	wg       sync.WaitGroup
+	sessions             *xsync.MapOf[string, *sessionImpl]
+	reapers              *xsync.MapOf[string, *pendingReap]
+	grace                time.Duration
+	idempotencyCacheSize int
+	metrics              SessionMetrics
+	wg                   sync.WaitGroup
 }
 
 func NewSessionManager(opts SessionManagerOptions) SessionManager {
@@ -247,21 +255,26 @@ func NewSessionManager(opts SessionManagerOptions) SessionManager {
 	if grace == 0 {
 		grace = DefaultGracePeriod
 	}
+	cacheSize := opts.IdempotencyCacheSize
+	if cacheSize == 0 {
+		cacheSize = DefaultIdempotencyCacheSize
+	}
 	m := opts.Metrics
 	if m == nil {
 		m = noopSessionMetrics{}
 	}
 	return &sessionManagerImpl{
-		sessions: xsync.NewMapOf[string, *sessionImpl](),
-		reapers:  xsync.NewMapOf[string, *pendingReap](),
-		grace:    grace,
-		metrics:  m,
+		sessions:             xsync.NewMapOf[string, *sessionImpl](),
+		reapers:              xsync.NewMapOf[string, *pendingReap](),
+		grace:                grace,
+		idempotencyCacheSize: cacheSize,
+		metrics:              m,
 	}
 }
 
 func (m *sessionManagerImpl) Create(principal, serial string) (string, error) {
 	id := uuid.NewString()
-	replies, err := lru.New[string, any](DefaultIdempotencyCacheSize)
+	replies, err := lru.New[string, any](m.idempotencyCacheSize)
 	if err != nil {
 		return "", errors.Wrap(err, "create idempotency cache")
 	}

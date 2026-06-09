@@ -219,8 +219,11 @@ func (s *SessionManagerTestSuite) TestDoOnceCollapsesConcurrentDuplicates() {
 }
 
 func (s *SessionManagerTestSuite) TestDoOnceLRUEvictsOldEntries() {
-	id, _ := s.mgr.Create("test-user", "")
-	sess, _ := s.mgr.Get(id)
+	// Use an explicit small cache so the test doesn't need to fill 4096 entries.
+	m := NewSessionManager(SessionManagerOptions{IdempotencyCacheSize: 256})
+	defer func() { _ = m.Stop(context.Background()) }()
+	id, _ := m.Create("test-user", "")
+	sess, _ := m.Get(id)
 
 	// Saturate the LRU (256 entries) and verify the first one is gone.
 	for i := 0; i < 300; i++ {
@@ -349,6 +352,24 @@ func (s *SessionManagerTestSuite) TestConcurrentOpsNeverRaceWithRelease() {
 
 	s.Equal(int32(1), rec.releases.Load(), "File.Release must run exactly once")
 	s.Equal(int32(0), rec.releasedWithInFlight.Load(), "File.Release must never overlap an op holding a ref")
+}
+
+func (s *SessionManagerTestSuite) TestIdempotencyCacheSizeConfigurable() {
+	m := NewSessionManager(SessionManagerOptions{IdempotencyCacheSize: 2})
+	id, err := m.Create("p", "")
+	s.Require().NoError(err)
+	sess, err := m.Get(id)
+	s.Require().NoError(err)
+	defer func() { _ = m.Stop(context.Background()) }()
+
+	for i := 0; i < 3; i++ {
+		_, _ = sess.DoOnce(fmt.Sprintf("r%d", i), func() (any, error) { return i, nil })
+	}
+	// r0 was evicted when i=2 was inserted into a size-2 cache: fn must re-execute.
+	calls := 0
+	_, err = sess.DoOnce("r0", func() (any, error) { calls++; return 0, nil })
+	s.Require().NoError(err)
+	s.Equal(1, calls, "r0 evicted at size 2 — fn re-executes")
 }
 
 func (s *SessionManagerTestSuite) TearDownTest() {

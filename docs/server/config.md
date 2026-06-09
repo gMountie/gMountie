@@ -100,9 +100,10 @@ table and an idempotency cache. Keeping it alive for a grace period lets
 a reconnecting client resume its open file handles transparently, without
 issuing fresh `Open` calls.
 
-| Option        | Type     | Default | Description                                                                                              |
-|---------------|----------|---------|----------------------------------------------------------------------------------------------------------|
-| grace\_period | duration | 60s     | How long a disconnected session (fds + idempotency cache) is retained before reaping. Must be >= 1s. |
+| Option                     | Type     | Default | Description                                                                                              |
+|----------------------------|----------|---------|----------------------------------------------------------------------------------------------------------|
+| grace\_period              | duration | 60s     | How long a disconnected session (fds + idempotency cache) is retained before reaping. Must be >= 1s.    |
+| idempotency\_cache\_size   | int      | 4096    | Per-session LRU capacity for request-id deduplication. 0 uses the default. Raise if you see spurious double-writes under heavy write concurrency. |
 
 `grace_period` should be **>= the client's `rpc.retry_window`** (default
 60 s) so that a disconnect which the client is retrying transparently

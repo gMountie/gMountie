@@ -49,6 +49,10 @@ const (
 	// client rpc.retry_window default. Cost: a dropped client's fds and POSIX
 	// locks are held for this long before release.
 	DefaultSessionGracePeriod = 60 * time.Second
+	// DefaultSessionIdempotencyCacheSize is the config-layer sentinel that
+	// delegates to the service-layer default (4096). Zero means "use the
+	// service default"; a positive value overrides it.
+	DefaultSessionIdempotencyCacheSize = 0
 )
 
 // SessionConfig controls per-client session retention.
@@ -58,6 +62,10 @@ type SessionConfig struct {
 	// rpc.retry_window (default 60s) so transparent resume holds for the whole
 	// window.
 	GracePeriod time.Duration `mapstructure:"grace_period" validate:"gte=1s"`
+	// IdempotencyCacheSize is the per-session LRU capacity for request-id
+	// deduplication. 0 uses the service-layer default (4096). Must be >= 1 when
+	// set explicitly.
+	IdempotencyCacheSize int `mapstructure:"idempotency_cache_size" validate:"min=0"`
 }
 
 // ServerKeepaliveConfig holds the gRPC server-side keepalive parameters
