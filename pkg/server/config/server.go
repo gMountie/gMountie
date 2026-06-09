@@ -7,9 +7,6 @@ const (
 	DefaultAddress = "0.0.0.0"
 	// DefaultPort is the default port that the server will listen on
 	DefaultPort = 9449
-	// DefaultMetricsAddr is the default address the ops HTTP server
-	// (/metrics, /healthz, /readyz, /version) listens on.
-	DefaultMetricsAddr = ":9090"
 	// DefaultFrameSizeBytes is the default chunk size for server-streamed
 	// reads. One frame per ReadStreamer iteration; the client accumulates
 	// frames into the caller-supplied buffer. 1 MiB balances per-RPC
@@ -21,10 +18,10 @@ const (
 	// 8 keeps tail latency reasonable on slow links without flooding the
 	// volume filesystem with parallel metadata syscalls.
 	DefaultCompoundMaxParallel = 8
-	// DefaultMaxMessageBytes is the default cap for gRPC inbound/outbound
-	// message sizes. 16 MiB sits well above the streaming Read/Write frame
-	// size while still rejecting accidental jumbo payloads. Validation pins
-	// the configurable range to [64 KiB, 64 MiB].
+	// DefaultMaxMessageBytes seeds server.grpc.limits.max_recv_message_size:
+	// the cap on the largest single gRPC message the server accepts. 16 MiB
+	// sits well above the streaming Read/Write frame size while still
+	// rejecting accidental jumbo payloads.
 	DefaultMaxMessageBytes = 16 << 20
 	// DefaultKeepaliveTime is how often the server pings an otherwise idle
 	// connection to verify liveness.
@@ -159,11 +156,10 @@ type ServerConfig struct {
 	// Ops controls the operational HTTP endpoint (/metrics, /healthz,
 	// /readyz, /version, /debug/pprof).
 	Ops OpsConfig `mapstructure:"ops"`
-	// Metrics enables the ops HTTP server.
+	// Metrics enables the gRPC Prometheus interceptors (the generic
+	// grpc_server_* series). It does NOT gate the ops HTTP server — that
+	// always runs on Ops.Addr — nor the custom gmountie_server_* collectors.
 	Metrics bool
-	// MetricsAddr is the address the ops HTTP server listens on.
-	// Deprecated: use Ops.Addr instead.
-	MetricsAddr string `validate:"hostname_port" mapstructure:"metrics_addr"`
 	// Pprof exposes /debug/pprof/* on the ops HTTP server. Off by
 	// default: pprof endpoints leak goroutine names + symbols and can
 	// stall the runtime on large captures, so they have no business
@@ -177,11 +173,6 @@ type ServerConfig struct {
 	// Compound RPC. Defaults to DefaultCompoundMaxParallel; the upper bound is
 	// a sanity cap, not a tuned value.
 	CompoundMaxParallel int `validate:"min=1,max=256" mapstructure:"compound_max_parallel"`
-	// MaxMessageBytes caps both inbound and outbound gRPC message sizes.
-	// Range pins values to [64 KiB, 64 MiB] — small enough to refuse runaway
-	// requests, large enough to handle the streaming Read/Write frame plus
-	// header overhead.
-	MaxMessageBytes int `validate:"min=65536,max=67108864" mapstructure:"max_message_bytes"`
 	// Keepalive controls gRPC HTTP/2 keepalive pings and enforcement.
 	Keepalive ServerKeepaliveConfig `mapstructure:"keepalive"`
 	// Session controls per-client session retention (grace period).

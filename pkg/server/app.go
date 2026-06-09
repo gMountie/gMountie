@@ -367,6 +367,10 @@ func hostFromBind(bind string) string {
 //   - auth.type: none is only allowed on loopback addresses.
 //   - auth.type: basic requires at least one user and every user's PasswordHash
 //     must be a valid argon2id PHC string.
+//   - auth.type: basic on a NON-loopback bind additionally requires ops TLS
+//     (cert_file/key_file) — otherwise operator passwords and the mutating
+//     /ops/acl/reload endpoint travel in cleartext. Mirrors the gRPC plane's
+//     "tls.disabled ⇒ loopback only" rule and the mtls branch below.
 func validateOpsConfig(ops config.OpsConfig) error {
 	authType := ops.Auth.Type
 	if authType == "" || authType == "none" {
@@ -380,6 +384,13 @@ func validateOpsConfig(ops config.OpsConfig) error {
 		return nil
 	}
 	if authType == "basic" {
+		if !isLoopback(ops.Addr) && (ops.TLS.CertFile == "" || ops.TLS.KeyFile == "") {
+			return errors.Errorf(
+				"server.ops.addr %q with auth.type: basic requires server.ops.tls.cert_file "+
+					"and key_file (basic credentials must not travel plaintext off-loopback)",
+				ops.Addr,
+			)
+		}
 		if len(ops.Auth.Users) == 0 {
 			return errors.New("server.ops.auth.type: basic requires at least one entry in server.ops.auth.users")
 		}

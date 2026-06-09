@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pkg/errors"
+
 	"go.gmountie.dev/gmountie/pkg/common/config"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 
@@ -56,10 +58,8 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		"server.address",
 		"server.port",
 		"server.metrics",
-		"server.metrics_addr",
 		"server.frame_size_bytes",
 		"server.compound_max_parallel",
-		"server.max_message_bytes",
 		"server.keepalive.time",
 		"server.keepalive.timeout",
 		"server.keepalive.min_time",
@@ -89,10 +89,8 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	v.SetDefault("server.address", DefaultAddress)
 	v.SetDefault("server.port", DefaultPort)
 	v.SetDefault("server.metrics", true)
-	v.SetDefault("server.metrics_addr", DefaultMetricsAddr)
 	v.SetDefault("server.frame_size_bytes", DefaultFrameSizeBytes)
 	v.SetDefault("server.compound_max_parallel", DefaultCompoundMaxParallel)
-	v.SetDefault("server.max_message_bytes", DefaultMaxMessageBytes)
 	v.SetDefault("server.keepalive.time", DefaultKeepaliveTime)
 	v.SetDefault("server.keepalive.timeout", DefaultKeepaliveTimeout)
 	v.SetDefault("server.keepalive.min_time", DefaultKeepaliveMinTime)
@@ -112,11 +110,9 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		Address:             v.GetString("server.address"),
 		Port:                v.GetUint("server.port"),
 		Metrics:             v.GetBool("server.metrics"),
-		MetricsAddr:         v.GetString("server.metrics_addr"),
 		Pprof:               v.GetBool("server.pprof"),
 		FrameSizeBytes:      v.GetInt("server.frame_size_bytes"),
 		CompoundMaxParallel: v.GetInt("server.compound_max_parallel"),
-		MaxMessageBytes:     v.GetInt("server.max_message_bytes"),
 		Keepalive: ServerKeepaliveConfig{
 			Time:                v.GetDuration("server.keepalive.time"),
 			Timeout:             v.GetDuration("server.keepalive.timeout"),
@@ -154,10 +150,15 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	}
 	result.Auth = auth
 
-	// Parse the volume configuration.
+	// Parse the volume configuration. A bad mapping block fails the whole
+	// config load (fail-closed: identity mapping must never part-decode).
 	volumes := make([]*VolumeConfig, 0)
 	for sub, i := v.Sub("volumes.0"), 0; sub != nil; sub = v.Sub(fmt.Sprintf("volumes.%d", i)) {
-		volumes = append(volumes, NewVolumeConfig(sub))
+		vc, err := NewVolumeConfig(sub)
+		if err != nil {
+			return nil, errors.Wrapf(err, "volumes[%d]", i)
+		}
+		volumes = append(volumes, vc)
 		i++
 	}
 	result.Volumes = volumes

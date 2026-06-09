@@ -73,7 +73,7 @@ One-line definitions. Cross-linked into the rest of the docs — when you hit an
 
 **Mapping mode** — Per-volume identity policy on the server: **`squash`**, **`static`**, **`system`**, or **`passthrough`**. Decides which uid/gid the server acts as for that volume's RPCs. See [Identity & ownership](./concepts/identity.mdx).
 
-**`max_message_bytes`** — Cap on inbound/outbound gRPC message size (default 16 MiB). Should match between server and client.
+**`max_message_bytes`** — Client-side cap on inbound/outbound gRPC message size (default 16 MiB). The server-side equivalent is `server.grpc.limits.max_recv_message_size`.
 
 **Mount** — In FUSE terms, attaching a filesystem at a path. In gMountie terms, attaching a server's named volume to a local path via `gmountie mount`.
 
