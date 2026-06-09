@@ -376,6 +376,32 @@ func (r *resolverBoundFS) OpenDir(name string, context *fuse.Context) ([]fuse.Di
 	return r.FileSystem.OpenDir(name, context)
 }
 
+// ReadDirPlus forwards under the SAME credential switch as OpenDir — the
+// listing and the per-entry stats all run with the principal's fsuid/fsgid.
+// When the wrapped FS lacks the capability, fall back to its OpenDir with nil
+// attrs (still under the switched credentials) so the wrapper satisfies
+// ReadDirPlusser unconditionally without inventing attributes.
+func (r *resolverBoundFS) ReadDirPlus(name string, context *fuse.Context) ([]DirEntryPlus, fuse.Status) {
+	_, cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return nil, fuse.EPERM
+	}
+	defer cleanup()
+	if rdp, ok := r.FileSystem.(ReadDirPlusser); ok {
+		return rdp.ReadDirPlus(name, context)
+	}
+	entries, st := r.FileSystem.OpenDir(name, context)
+	if !st.Ok() {
+		return nil, st
+	}
+	out := make([]DirEntryPlus, len(entries))
+	for i, e := range entries {
+		out[i] = DirEntryPlus{Entry: e}
+	}
+	return out, st
+}
+
 func (r *resolverBoundFS) Symlink(value string, linkName string, context *fuse.Context) fuse.Status {
 	id, cleanup, err := r.changeIdentityFor()
 	if err != nil {
