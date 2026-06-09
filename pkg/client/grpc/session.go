@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	recoveryInitialBackoff  = 200 * time.Millisecond
-	recoveryMaxBackoff      = 5 * time.Second
+	recoveryInitialBackoff     = 200 * time.Millisecond
+	recoveryMaxBackoff         = 5 * time.Second
 	defaultReattachCallTimeout = 5 * time.Second
 )
 
