@@ -187,6 +187,36 @@ func (s *RetryOpSuite) TestReadContinuesOnSessionChange() {
 	s.Equal(2, calls)
 }
 
+// Protective property (per the project's "test the property the fix
+// protects" rule): EVERY retry attempt must observe a fresh, non-expired
+// per-attempt deadline — not a single deadline-bound context shared across
+// attempts, which would make DeadlineExceeded-retry dead code (the bug class
+// the windowed retryOp replaced). Failing attempts return DeadlineExceeded
+// specifically, so this also proves that code is genuinely retryable now.
+func (s *RetryOpSuite) TestEachAttemptObservesFreshDeadline() {
+	const perAttempt = 50 * time.Millisecond
+	f := &fakeRetryClient{id: "A", life: context.Background(), window: 10 * time.Second, meta: perAttempt}
+	var remaining []time.Duration
+	calls := 0
+	_, err := retryOp[int](f, context.Background(), "Op", classIdempotentRead, perAttempt,
+		func(ctx context.Context) (int, error) {
+			calls++
+			dl, ok := ctx.Deadline()
+			s.Require().True(ok, "attempt ctx must carry a deadline")
+			remaining = append(remaining, time.Until(dl))
+			if calls < 4 {
+				return 0, status.Error(codes.DeadlineExceeded, "attempt timed out")
+			}
+			return 1, nil
+		})
+	s.Require().NoError(err)
+	s.Require().Len(remaining, 4)
+	for i, r := range remaining {
+		s.Greaterf(r, perAttempt/2,
+			"attempt %d observed %v left of its %v budget — a shared/expired deadline leaked across attempts", i+1, r, perAttempt)
+	}
+}
+
 // Lifetime cancel aborts promptly.
 func (s *RetryOpSuite) TestLifetimeCancelAborts() {
 	ctx, cancel := context.WithCancel(context.Background())

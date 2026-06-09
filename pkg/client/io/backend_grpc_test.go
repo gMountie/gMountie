@@ -3,6 +3,7 @@ package io
 import (
 	"context"
 	stdio "io"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1350,6 +1351,55 @@ func (s *BackendClientTestSuite) TestListXAttr_HappyPath() {
 	s.Require().Len(names, 2)
 	s.Assert().Equal("user.foo", names[0])
 	s.Assert().Equal("user.bar", names[1])
+}
+
+// TestRead_ReadaheadConcurrentWithRelease drives sequential Reads (readahead
+// armed, so prefetch goroutines spawn) concurrently with Release on the same
+// handle. Run under -race in the test-race job: the assertions are (1) no
+// data race between the prefetch goroutines, the readahead ring and Release's
+// teardown, and (2) Release returns only after in-flight prefetches finished
+// (the WaitGroup discipline) without deadlocking against a racing Read.
+func (s *BackendClientTestSuite) TestRead_ReadaheadConcurrentWithRelease() {
+	const chunkBytes = 4 << 10
+	h := s.newHandle(grpcclient.PerFileConfig{
+		ReadaheadChunkBytes: chunkBytes,
+		ReadaheadThreshold:  1,
+		ReadaheadWindow:     4,
+	})
+
+	s.fileClient.EXPECT().Read(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ *proto.ReadRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[proto.ReadFrame], error) {
+			data := make([]byte, chunkBytes)
+			return newBackendReadStreamStubOptional(s.T(),
+				&proto.ReadFrame{Data: data, Status: int32(fuse.OK)},
+				&proto.ReadFrame{Status: int32(fuse.OK)},
+			), nil
+		}).Maybe()
+	s.fileClient.EXPECT().Release(mock.Anything, mock.Anything, mock.Anything).
+		Return(&proto.ReleaseReply{}, nil).Once()
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { // reader: sequential pattern keeps prefetches firing
+		defer wg.Done()
+		<-start
+		dest := make([]byte, chunkBytes)
+		for i := 0; i < 64; i++ {
+			if _, st := s.backend.Read(context.Background(), h, int64(i)*chunkBytes, dest); !st.Ok() {
+				return // an error after Release cancelled lifeCtx is fine; we chase races
+			}
+		}
+	}()
+	go func() { // releaser
+		defer wg.Done()
+		<-start
+		time.Sleep(2 * time.Millisecond) // let some prefetches get in flight
+		st := s.backend.Release(context.Background(), h)
+		s.True(st.Ok() || st == fuse.EIO, "Release must terminate cleanly, got %v", st)
+	}()
+	close(start)
+	wg.Wait()
 }
 
 // --- transport-error errno fidelity ---
