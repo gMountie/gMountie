@@ -1,12 +1,12 @@
 ---
 title: Client configuration
 sidebar_label: Configuration
-description: Every client.yaml field — server, RPC tuning, FUSE knobs, cache, auth, mount type — with types, defaults, and valid ranges.
+description: Every client.yaml field — server, RPC tuning (timeouts, retry window, readahead, write coalescing, keepalive), FUSE knobs, cache, auth, mount type — with types, defaults, and valid ranges.
 ---
 
 # Client configuration
 
-The client reads a YAML file with up to six sections: **`server`** (where to connect), **`rpc`** (per-RPC timeouts, message size, [readahead](#readahead), [write coalescing](#write-coalescing), keepalive), **`fuse`** (kernel-side mount knobs), **`cache`** (client-side cache), **`auth`** (credentials), and **`mount`** (volume and path). CLI flags override the corresponding fields — see **[Client CLI](./cli.md)** for the override list.
+The client reads a YAML file with up to six sections: **`server`** (where to connect), **`rpc`** (per-RPC timeouts, retry window, message size, [readahead](#readahead), [write coalescing](#write-coalescing), keepalive), **`fuse`** (kernel-side mount knobs), **`cache`** (client-side cache), **`auth`** (credentials), and **`mount`** (volume and path). CLI flags override the corresponding fields — see **[Client CLI](./cli.md)** for the override list.
 
 ## Configuration File Structure
 
@@ -86,14 +86,22 @@ server:
 
 ## RPC Options
 
-The `rpc` section configures per-RPC timeouts, message-size caps, and
-HTTP/2 keepalive params on the client side. Match the server's keepalive
-defaults so dead-connection detection is symmetric in both directions.
+The `rpc` section configures per-RPC timeouts, the transient-retry
+window, message-size caps, and HTTP/2 keepalive params on the client
+side. Match the server's keepalive defaults so dead-connection detection
+is symmetric in both directions.
+
+`timeout_meta` and `timeout_io` bound a **single attempt** — the time
+budget for one try at the underlying gRPC call. `retry_window` bounds the
+**whole operation** across retries: as long as time remains in the window,
+a transient `Unavailable` / `DeadlineExceeded` retries with a fresh
+per-attempt deadline and exponential backoff (100 ms → 1 s).
 
 | Option                  | Type     | Default  | Description                                                 |
 |-------------------------|----------|----------|-------------------------------------------------------------|
-| timeout\_meta           | duration | 5s       | Per-RPC timeout for metadata ops                            |
-| timeout\_io             | duration | 30s      | Per-RPC timeout for data ops (Read, Write, ...)             |
+| timeout\_meta           | duration | 5s       | Deadline for a single metadata-op attempt (Lookup, GetAttr, Readdir, …) |
+| timeout\_io             | duration | 30s      | Deadline for a single data-op attempt (Read, Write, …)      |
+| retry\_window           | duration | 60s      | Wall-clock budget for retrying one FS op through transient failures. `0` = fail-fast (single attempt, no retry). Set high for hard-mount-style behaviour. |
 | readahead\_chunk\_bytes | integer  | 1048576  | Size of a single readahead fetch / prefetch chunk (0 disables readahead) |
 | readahead\_threshold    | integer  | 3        | Sequential reads required before a prefetch is armed        |
 | readahead\_window       | integer  | 4        | Prefetch chunks kept in flight ahead of the cursor (range 1–64) |
@@ -102,6 +110,12 @@ defaults so dead-connection detection is symmetric in both directions.
 
 `max_message_bytes` is validated to the range [65536, 67108864] (64 KiB to
 64 MiB) and should typically mirror the server's value.
+
+`retry_window` is validated to `gte=0` (any non-negative duration). The
+default 60 s is aligned with `server.session.grace_period` (also 60 s) so
+a transient disconnect can be transparently resumed within the whole retry
+window. To match the pre-retry behaviour (one attempt, fail fast) set
+`retry_window: 0`.
 
 `readahead_threshold` is validated to the range [1, 16]; smaller values
 arm prefetch sooner (more aggressive, more wasted fetches on
@@ -181,6 +195,7 @@ Example:
 rpc:
   timeout_meta: 5s
   timeout_io: 30s
+  retry_window: 60s       # 0 = fail-fast (single attempt)
   readahead_chunk_bytes: 131072  # 128 KiB
   readahead_threshold: 3
   write_coalesce_bytes: 1048576  # 1 MiB
