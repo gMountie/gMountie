@@ -4,7 +4,6 @@ go 1.26.4
 
 require (
 	github.com/adrg/xdg v0.5.3
-	github.com/avast/retry-go/v4 v4.7.0
 	github.com/go-playground/validator/v10 v10.30.3
 	github.com/go-task/task/v3 v3.51.1
 	github.com/go-viper/mapstructure/v2 v2.5.0
