@@ -147,6 +147,126 @@ func (s *SessionTimeoutSuite) TestKeepaliveStreamSurvivesBoundedEstablishContext
 	s.Assert().Equal("ka-test-123", c.SessionID())
 }
 
+// TestResumeTimesOutOnBlackHoledServer asserts that tryReattach returns an
+// error within callTimeout when the server's Resume RPC blocks indefinitely
+// (TCP-reachable but never responding — the rolling-restart / half-open case).
+// Without the per-call deadline, streamCtx is only cancelled by Close, so
+// tryReattach would block indefinitely and the recovery loop would stop cycling.
+func (s *SessionTimeoutSuite) TestResumeTimesOutOnBlackHoledServer() {
+	const shortCall = 50 * time.Millisecond
+
+	// Resume blocks until its context is cancelled, simulating a server that
+	// accepts TCP but never responds to the Resume RPC.
+	s.sessionClient.EXPECT().
+		Resume(mock.Anything, mock.Anything).
+		RunAndReturn(func(ctx context.Context, _ *proto.SessionResumeRequest, _ ...grpc.CallOption) (*proto.SessionResumeReply, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}).Once()
+
+	streamCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	h := &SessionHandshake{
+		client:      s.sessionClient,
+		streamCtx:   streamCtx,
+		streamCancel: cancel,
+		callTimeout: shortCall,
+	}
+	h.setSessionID("existing-session-id")
+
+	before := time.Now()
+	_, err := h.tryReattach()
+	elapsed := time.Since(before)
+
+	s.Require().Error(err, "tryReattach must fail when Resume never responds")
+	s.Assert().Less(elapsed, 3*time.Second,
+		"tryReattach must return within a bounded window, not hang indefinitely")
+}
+
+// TestCreateFallbackTimesOutOnBlackHoledServer asserts that when Resume returns
+// Resumed=false (session expired) and the subsequent Create RPC blocks
+// indefinitely, tryReattach still returns within callTimeout.
+func (s *SessionTimeoutSuite) TestCreateFallbackTimesOutOnBlackHoledServer() {
+	const shortCall = 50 * time.Millisecond
+
+	// Resume reports the session as expired; session re-creation is needed.
+	s.sessionClient.EXPECT().
+		Resume(mock.Anything, mock.Anything).
+		Return(&proto.SessionResumeReply{Resumed: false}, nil).Once()
+
+	// Create blocks indefinitely on ctx.Done — server is black-holed for Create too.
+	s.sessionClient.EXPECT().
+		Create(mock.Anything, mock.Anything).
+		RunAndReturn(func(ctx context.Context, _ *proto.SessionCreateRequest, _ ...grpc.CallOption) (*proto.SessionCreateReply, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}).Once()
+
+	streamCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	h := &SessionHandshake{
+		client:      s.sessionClient,
+		streamCtx:   streamCtx,
+		streamCancel: cancel,
+		callTimeout: shortCall,
+	}
+	h.setSessionID("expired-session-id")
+
+	before := time.Now()
+	_, err := h.tryReattach()
+	elapsed := time.Since(before)
+
+	s.Require().Error(err, "tryReattach must fail when Create (after Resume=false) never responds")
+	s.Assert().Less(elapsed, 3*time.Second,
+		"tryReattach must return within a bounded window even on Create fallback")
+}
+
+// TestReattachKeepaliveUsesStreamCtxNotCallCtx verifies that when Resume
+// succeeds the resulting Keepalive stream is opened on h.streamCtx, NOT on the
+// bounded callCtx. If Keepalive used the call-scoped context, the stream would
+// be torn down the instant the callTimeout fired, triggering a spurious recovery
+// cycle on every successful reattach.
+func (s *SessionTimeoutSuite) TestReattachKeepaliveUsesStreamCtxNotCallCtx() {
+	const shortCall = 20 * time.Millisecond
+
+	s.sessionClient.EXPECT().
+		Resume(mock.Anything, mock.Anything).
+		Return(&proto.SessionResumeReply{Resumed: true}, nil).Once()
+
+	keepaliveCtxCh := make(chan context.Context, 1)
+	stream, bind := newParkingKeepaliveStream(s.T())
+	s.sessionClient.EXPECT().
+		Keepalive(mock.Anything, mock.Anything).
+		RunAndReturn(func(ctx context.Context, _ *proto.KeepaliveRequest, _ ...grpc.CallOption) (proto.SessionService_KeepaliveClient, error) {
+			keepaliveCtxCh <- ctx
+			bind(ctx)
+			return stream, nil
+		}).Once()
+
+	streamCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	h := &SessionHandshake{
+		client:      s.sessionClient,
+		streamCtx:   streamCtx,
+		streamCancel: cancel,
+		callTimeout: shortCall,
+	}
+	h.setSessionID("live-session-id")
+
+	_, err := h.tryReattach()
+	s.Require().NoError(err)
+
+	// Wait well past callTimeout; the keepalive stream context must still be live.
+	time.Sleep(5 * shortCall)
+
+	keepaliveCtx := <-keepaliveCtxCh
+	s.Require().NoError(keepaliveCtx.Err(),
+		"keepalive stream must be opened on the long-lived streamCtx, not the bounded callCtx")
+}
+
 func TestSessionTimeoutSuite(t *testing.T) {
 	suite.Run(t, new(SessionTimeoutSuite))
 }

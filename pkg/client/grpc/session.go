@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	recoveryInitialBackoff = 200 * time.Millisecond
-	recoveryMaxBackoff     = 5 * time.Second
+	recoveryInitialBackoff  = 200 * time.Millisecond
+	recoveryMaxBackoff      = 5 * time.Second
+	defaultReattachCallTimeout = 5 * time.Second
 )
 
 // SessionHandshake owns the client-side lifecycle of a server session: it
@@ -40,11 +41,19 @@ type SessionHandshake struct {
 	streamCancel context.CancelFunc
 	done         chan struct{}
 
+	// callTimeout bounds the unary Resume and Create RPCs inside tryReattach.
+	// The Keepalive stream itself is still opened on the long-lived streamCtx
+	// so a timeout firing does not tear down an otherwise-healthy stream.
+	callTimeout time.Duration
+
 	mu sync.Mutex
 }
 
 func NewSessionHandshake(client proto.SessionServiceClient) *SessionHandshake {
-	return &SessionHandshake{client: client}
+	return &SessionHandshake{
+		client:      client,
+		callTimeout: defaultReattachCallTimeout,
+	}
 }
 
 func (h *SessionHandshake) SessionID() string {
@@ -199,20 +208,31 @@ func (h *SessionHandshake) recover() (proto.SessionService_KeepaliveClient, erro
 // tryReattach makes ONE attempt at session recovery: Resume first, then a
 // fresh Create if Resume returns Resumed=false. Returns the new Keepalive
 // stream on success.
+//
+// The unary Resume and Create calls are bounded by a callTimeout-derived
+// context so a TCP-reachable-but-unresponsive server (e.g. mid rolling-restart)
+// cannot stall the recovery loop indefinitely while pending FS ops burn their
+// retry budget. The Keepalive stream is deliberately opened on h.streamCtx —
+// not the bounded callCtx — so the stream survives past the per-call deadline.
 func (h *SessionHandshake) tryReattach() (proto.SessionService_KeepaliveClient, error) {
+	callCtx, cancel := context.WithTimeout(h.streamCtx, h.callTimeout)
+	defer cancel()
+
 	currentID := h.SessionID()
 	if currentID != "" {
-		resp, err := h.client.Resume(h.streamCtx, &proto.SessionResumeRequest{SessionId: currentID})
+		resp, err := h.client.Resume(callCtx, &proto.SessionResumeRequest{SessionId: currentID})
 		if err != nil {
 			return nil, errors.Wrap(err, "resume")
 		}
 		if resp.Resumed {
 			log.Log.Info("session resumed", zap.String("session_fp", common.FingerprintID(currentID)))
+			// Keepalive must use the long-lived streamCtx, not callCtx — a bounded
+			// ctx would tear the stream down when the timeout fires.
 			return h.client.Keepalive(h.streamCtx, &proto.KeepaliveRequest{SessionId: currentID})
 		}
 	}
 	// Resume said no — fall back to a fresh Create.
-	resp, err := h.client.Create(h.streamCtx, &proto.SessionCreateRequest{})
+	resp, err := h.client.Create(callCtx, &proto.SessionCreateRequest{})
 	if err != nil {
 		return nil, errors.Wrap(err, "create after resume failure")
 	}
@@ -220,6 +240,7 @@ func (h *SessionHandshake) tryReattach() (proto.SessionService_KeepaliveClient, 
 	log.Log.Info("session re-created after resume failure (open fds are now invalid)",
 		zap.String("old_session_fp", common.FingerprintID(currentID)),
 		zap.String("new_session_fp", common.FingerprintID(resp.SessionId)))
+	// Same as above: Keepalive on streamCtx so the stream outlives the call budget.
 	return h.client.Keepalive(h.streamCtx, &proto.KeepaliveRequest{SessionId: resp.SessionId})
 }
 
