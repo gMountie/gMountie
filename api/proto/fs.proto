@@ -208,6 +208,54 @@ message UtimensReply {
   int32 status = 1;
 }
 
+// SetAttrRequest applies any combination of settable attributes in ONE RPC.
+// `valid` is a bitmask mirroring FUSE FATTR_*: 1=MODE 2=UID 4=GID 8=SIZE
+// 16=ATIME 32=MTIME. The server applies size→mode→owner→times in order and
+// stops at the first failure. Replaces the per-field Truncate/Chmod/Chown/
+// Utimens RPCs (a FUSE SETATTR used to fan out into up to 4 serial RPCs +
+// a trailing GetAttr); those RPCs are removed once the client migrates.
+message SetAttrRequest {
+  string   volume     = 1;
+  Caller   caller     = 2;
+  string   path       = 3;
+  uint32   valid      = 4;
+  uint32   mode       = 5;
+  uint32   uid        = 6;
+  uint32   gid        = 7;
+  uint64   size       = 8;
+  FileTime atime      = 9;   // nil with ATIME unset => untouched
+  FileTime mtime      = 10;
+  string   request_id = 11;
+  string   session_id = 12;
+}
+
+message SetAttrReply {
+  Attr  attributes = 1;  // final attrs on success — no trailing GetAttr
+  int32 status     = 2;
+}
+
+// ReadDirRequest streams the directory in batches, optionally with per-entry
+// attrs (READDIRPLUS). Streaming removes the unary 16 MiB message ceiling
+// that made very large directories fail with EIO; `plus` lets one round-trip
+// prime the client attr cache so the kernel's per-entry LOOKUPs are local
+// hits.
+message ReadDirRequest {
+  string volume = 1;
+  Caller caller = 2;
+  string path   = 3;
+  bool   plus   = 4;
+}
+
+message DirEntryPlus {
+  DirEntry entry      = 1;
+  Attr     attributes = 2;  // set when plus=true and the per-entry stat succeeded
+}
+
+message ReadDirBatch {
+  repeated DirEntryPlus entries = 1;
+  int32 status = 2;  // non-zero only on a terminal error batch
+}
+
 message MkdirRequest {
   string volume = 1;
   Caller caller = 2;
@@ -218,7 +266,8 @@ message MkdirRequest {
 }
 
 message MkdirReply {
-  int32 status = 1;
+  int32 status     = 1;
+  Attr  attributes = 2;  // fills EntryOut without a post-create GetAttr (mirrors CreateReply)
 }
 
 message RmdirRequest {
@@ -259,7 +308,8 @@ message SymlinkRequest {
 }
 
 message SymlinkReply {
-  int32 status = 1;
+  int32 status     = 1;
+  Attr  attributes = 2;  // fills EntryOut without a post-create GetAttr (mirrors CreateReply)
 }
 
 message GetXAttrRequest {
@@ -373,4 +423,6 @@ service RpcFs {
   rpc Compound (CompoundRequest) returns (CompoundBatch);
   rpc GetAttrIfChanged (GetAttrIfChangedRequest) returns (GetAttrIfChangedReply);
   rpc Subscribe (SubscribeRequest) returns (stream SubscribeEvent);
+  rpc SetAttr (SetAttrRequest) returns (SetAttrReply);
+  rpc ReadDir (ReadDirRequest) returns (stream ReadDirBatch);
 }

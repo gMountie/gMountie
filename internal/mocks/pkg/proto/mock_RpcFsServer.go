@@ -719,6 +719,63 @@ func (_c *MockRpcFsServer_OpenDir_Call) RunAndReturn(run func(context1 context.C
 	return _c
 }
 
+// ReadDir provides a mock function for the type MockRpcFsServer
+func (_mock *MockRpcFsServer) ReadDir(readDirRequest *proto.ReadDirRequest, serverStreamingServer grpc.ServerStreamingServer[proto.ReadDirBatch]) error {
+	ret := _mock.Called(readDirRequest, serverStreamingServer)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ReadDir")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(*proto.ReadDirRequest, grpc.ServerStreamingServer[proto.ReadDirBatch]) error); ok {
+		r0 = returnFunc(readDirRequest, serverStreamingServer)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockRpcFsServer_ReadDir_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ReadDir'
+type MockRpcFsServer_ReadDir_Call struct {
+	*mock.Call
+}
+
+// ReadDir is a helper method to define mock.On call
+//   - readDirRequest *proto.ReadDirRequest
+//   - serverStreamingServer grpc.ServerStreamingServer[proto.ReadDirBatch]
+func (_e *MockRpcFsServer_Expecter) ReadDir(readDirRequest interface{}, serverStreamingServer interface{}) *MockRpcFsServer_ReadDir_Call {
+	return &MockRpcFsServer_ReadDir_Call{Call: _e.mock.On("ReadDir", readDirRequest, serverStreamingServer)}
+}
+
+func (_c *MockRpcFsServer_ReadDir_Call) Run(run func(readDirRequest *proto.ReadDirRequest, serverStreamingServer grpc.ServerStreamingServer[proto.ReadDirBatch])) *MockRpcFsServer_ReadDir_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 *proto.ReadDirRequest
+		if args[0] != nil {
+			arg0 = args[0].(*proto.ReadDirRequest)
+		}
+		var arg1 grpc.ServerStreamingServer[proto.ReadDirBatch]
+		if args[1] != nil {
+			arg1 = args[1].(grpc.ServerStreamingServer[proto.ReadDirBatch])
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFsServer_ReadDir_Call) Return(err error) *MockRpcFsServer_ReadDir_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockRpcFsServer_ReadDir_Call) RunAndReturn(run func(readDirRequest *proto.ReadDirRequest, serverStreamingServer grpc.ServerStreamingServer[proto.ReadDirBatch]) error) *MockRpcFsServer_ReadDir_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Readlink provides a mock function for the type MockRpcFsServer
 func (_mock *MockRpcFsServer) Readlink(context1 context.Context, readlinkRequest *proto.ReadlinkRequest) (*proto.ReadlinkReply, error) {
 	ret := _mock.Called(context1, readlinkRequest)
@@ -987,6 +1044,74 @@ func (_c *MockRpcFsServer_Rmdir_Call) Return(rmdirReply *proto.RmdirReply, err e
 }
 
 func (_c *MockRpcFsServer_Rmdir_Call) RunAndReturn(run func(context1 context.Context, rmdirRequest *proto.RmdirRequest) (*proto.RmdirReply, error)) *MockRpcFsServer_Rmdir_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SetAttr provides a mock function for the type MockRpcFsServer
+func (_mock *MockRpcFsServer) SetAttr(context1 context.Context, setAttrRequest *proto.SetAttrRequest) (*proto.SetAttrReply, error) {
+	ret := _mock.Called(context1, setAttrRequest)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SetAttr")
+	}
+
+	var r0 *proto.SetAttrReply
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.SetAttrRequest) (*proto.SetAttrReply, error)); ok {
+		return returnFunc(context1, setAttrRequest)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *proto.SetAttrRequest) *proto.SetAttrReply); ok {
+		r0 = returnFunc(context1, setAttrRequest)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proto.SetAttrReply)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *proto.SetAttrRequest) error); ok {
+		r1 = returnFunc(context1, setAttrRequest)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockRpcFsServer_SetAttr_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetAttr'
+type MockRpcFsServer_SetAttr_Call struct {
+	*mock.Call
+}
+
+// SetAttr is a helper method to define mock.On call
+//   - context1 context.Context
+//   - setAttrRequest *proto.SetAttrRequest
+func (_e *MockRpcFsServer_Expecter) SetAttr(context1 interface{}, setAttrRequest interface{}) *MockRpcFsServer_SetAttr_Call {
+	return &MockRpcFsServer_SetAttr_Call{Call: _e.mock.On("SetAttr", context1, setAttrRequest)}
+}
+
+func (_c *MockRpcFsServer_SetAttr_Call) Run(run func(context1 context.Context, setAttrRequest *proto.SetAttrRequest)) *MockRpcFsServer_SetAttr_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *proto.SetAttrRequest
+		if args[1] != nil {
+			arg1 = args[1].(*proto.SetAttrRequest)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFsServer_SetAttr_Call) Return(setAttrReply *proto.SetAttrReply, err error) *MockRpcFsServer_SetAttr_Call {
+	_c.Call.Return(setAttrReply, err)
+	return _c
+}
+
+func (_c *MockRpcFsServer_SetAttr_Call) RunAndReturn(run func(context1 context.Context, setAttrRequest *proto.SetAttrRequest) (*proto.SetAttrReply, error)) *MockRpcFsServer_SetAttr_Call {
 	_c.Call.Return(run)
 	return _c
 }

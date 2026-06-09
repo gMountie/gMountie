@@ -961,6 +961,9 @@ func (x *FlushReply) GetStatus() int32 {
 // WriteAndFlush fuses the deferred coalesced write and the flush into one RPC
 // at FUSE FLUSH time (the errno reaches the app's close()). data may be empty
 // (a pure flush). Unary: only used for buffers <= WriteCoalesceBytes.
+// request_id makes the write half idempotent: the client stamps it once per
+// logical flush so retries dedup server-side. Empty = pure flush, no dedup
+// needed.
 type WriteAndFlushRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Volume        string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
@@ -968,6 +971,7 @@ type WriteAndFlushRequest struct {
 	Offset        int64                  `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
 	Data          []byte                 `protobuf:"bytes,4,opt,name=data,proto3" json:"data,omitempty"`
 	SessionId     string                 `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	RequestId     string                 `protobuf:"bytes,6,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1033,6 +1037,13 @@ func (x *WriteAndFlushRequest) GetData() []byte {
 func (x *WriteAndFlushRequest) GetSessionId() string {
 	if x != nil {
 		return x.SessionId
+	}
+	return ""
+}
+
+func (x *WriteAndFlushRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
 	}
 	return ""
 }
@@ -1646,6 +1657,7 @@ type CopyFileRangeRequest struct {
 	Length        uint64                 `protobuf:"varint,9,opt,name=length,proto3" json:"length,omitempty"`
 	Flags         uint64                 `protobuf:"varint,10,opt,name=flags,proto3" json:"flags,omitempty"` // must be 0 (copy_file_range(2) contract)
 	SessionId     string                 `protobuf:"bytes,11,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	RequestId     string                 `protobuf:"bytes,12,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"` // server-side dedup makes this RPC safely retryable;
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1753,6 +1765,13 @@ func (x *CopyFileRangeRequest) GetFlags() uint64 {
 func (x *CopyFileRangeRequest) GetSessionId() string {
 	if x != nil {
 		return x.SessionId
+	}
+	return ""
+}
+
+func (x *CopyFileRangeRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
 	}
 	return ""
 }
@@ -2037,14 +2056,16 @@ const file_api_proto_file_proto_rawDesc = "" +
 	"session_id\x18\x03 \x01(\tR\tsessionId\"$\n" +
 	"\n" +
 	"FlushReply\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\x05R\x06status\"\x89\x01\n" +
+	"\x06status\x18\x01 \x01(\x05R\x06status\"\xa8\x01\n" +
 	"\x14WriteAndFlushRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12\x0e\n" +
 	"\x02fd\x18\x02 \x01(\x04R\x02fd\x12\x16\n" +
 	"\x06offset\x18\x03 \x01(\x03R\x06offset\x12\x12\n" +
 	"\x04data\x18\x04 \x01(\fR\x04data\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x05 \x01(\tR\tsessionId\"u\n" +
+	"session_id\x18\x05 \x01(\tR\tsessionId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x06 \x01(\tR\trequestId\"u\n" +
 	"\x12WriteAndFlushReply\x12\x18\n" +
 	"\awritten\x18\x01 \x01(\rR\awritten\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\x05R\x06status\x12-\n" +
@@ -2094,7 +2115,7 @@ const file_api_proto_file_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\b \x01(\tR\tsessionId\"'\n" +
 	"\rAllocateReply\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\x05R\x06status\"\xb5\x02\n" +
+	"\x06status\x18\x01 \x01(\x05R\x06status\"\xd4\x02\n" +
 	"\x14CopyFileRangeRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
 	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x13\n" +
@@ -2108,7 +2129,9 @@ const file_api_proto_file_proto_rawDesc = "" +
 	"\x05flags\x18\n" +
 	" \x01(\x04R\x05flags\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\v \x01(\tR\tsessionId\"O\n" +
+	"session_id\x18\v \x01(\tR\tsessionId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\f \x01(\tR\trequestId\"O\n" +
 	"\x12CopyFileRangeReply\x12!\n" +
 	"\fbytes_copied\x18\x01 \x01(\x04R\vbytesCopied\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\x05R\x06status\"\xc3\x01\n" +
