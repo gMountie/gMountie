@@ -145,6 +145,32 @@ func WithServerStreamInterceptors(interceptors ...grpc.StreamServerInterceptor) 
 	}
 }
 
+// WithClientUnaryInterceptors installs extra unary client interceptors on the
+// test gRPC client. Used by resilience tests to inject a controllable
+// lost-reply failure (return Unavailable after the server applied the call) so
+// the client-side retry/session-change guard can be exercised deterministically.
+func WithClientUnaryInterceptors(interceptors ...grpc.UnaryClientInterceptor) TestOptions {
+	return func(c *AppTestingContext) {
+		c.userClientOptions = append(c.userClientOptions, grpcClient.WithUnaryInterceptors(interceptors...))
+		c.clientOptions = append(c.clientOptions, grpcClient.WithUnaryInterceptors(interceptors...))
+	}
+}
+
+// WithSessionGracePeriod overrides the server-side session grace period — how
+// long a disconnected session (fds + idempotency cache) is retained before the
+// reaper releases it. Resilience tests set a short grace (e.g. 200ms) so a drop
+// longer than it forces the server to reap the session and the client to
+// Create a fresh one (new session id, empty idempotency cache), exercising the
+// past-grace clean-fail path without a multi-second wait.
+func WithSessionGracePeriod(d time.Duration) TestOptions {
+	return func(c *AppTestingContext) {
+		if c.cfg.Server == nil {
+			return
+		}
+		c.cfg.Server.Session.GracePeriod = d
+	}
+}
+
 // WithTCPTransport switches the test harness from the default
 // bufconn (in-process pipe) transport to a real loopback TCP
 // listener on 127.0.0.1:0. Perf benches set this so tc netem
