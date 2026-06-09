@@ -6,7 +6,7 @@ All notable changes to gMountie. Format is loosely based on [Keep a Changelog](h
 
 - **`WaitForReady` on streaming Read/Write.** A server restart or transient network drop no longer burns the retry window: the stream-open call parks and waits for the connection to come back instead of returning `Unavailable` immediately.
 - **Bounded `Connect()` during mount.** Session establishment in `gmountie mount` is now capped at 3× the metadata timeout; a half-open or unresponsive server at connect time can no longer hang the process indefinitely.
-- **Per-call timeout on session recovery.** Each `Resume`/`Create` attempt inside the reconnect loop gets an independent 5 s deadline; a TCP-reachable but unresponsive server can no longer stall the recovery path for the full retry window.
+- **Per-call timeout on session recovery.** Each reattach attempt inside the reconnect loop runs its `Resume`/`Create` calls under a shared 5 s budget; a TCP-reachable but unresponsive server can no longer stall the recovery path for the full retry window.
 - **Parent-directory attr invalidation on mutations.** Remote mutation events (`MUTATED`/`DELETED`/`RENAMED`) and local `unlink`/`rmdir`/`rename` ops now eagerly invalidate the parent directory's cached attributes, fixing stale mtime (up to the 5 min attr TTL) that broke mtime-sensitive tools like `make` and `rsync`.
 
 ---
