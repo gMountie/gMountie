@@ -16,9 +16,9 @@ By participating, please be respectful and constructive: assume good faith, keep
 
 gMountie is a FUSE + gRPC network filesystem. A `gmountie serve` process exposes directories as **volumes**; a `gmountie mount` client mounts one over FUSE and proxies syscalls to the server over gRPC. The module path is `go.gmountie.dev/gmountie`, so internal imports look like `go.gmountie.dev/gmountie/pkg/...`.
 
-Start with **[docs/design/architecture.md](docs/design/architecture.md)** for the layered server (`controller → service → io`), the client FUSE backend, and the wire protocol. The desktop app lives under `ui/` (Wails 3).
+Start with **[docs/design/architecture.md](docs/design/architecture.md)** for the layered server (`controller → service → io`), the client FUSE backend, and the wire protocol.
 
-> Server-side features run on **Linux only**; the CLI client builds for Linux and macOS. The desktop UI needs CGO + `libwebkit2gtk-4.1-dev` / `gtk+-3.0`.
+> Server-side features run on **Linux only**; the CLI client builds for Linux and macOS.
 
 ## Development setup
 
@@ -53,7 +53,6 @@ End-to-end tests in `test/e2e/` spin up a real server + FUSE mount in-process; t
 
 - **gRPC stubs** (`pkg/proto/`) — regenerate with `task gen:grpc` after any change to `api/proto/*.proto`.
 - **Mocks** (`internal/mocks/`) — regenerate with `task gen:mocks`; the directory is wiped on every run.
-- **Wails TS bindings** (`ui/frontend/src/bindings/`) — regenerate via the `ui:` build tasks after changing exported Go controller methods.
 
 ## Conventions
 
@@ -66,7 +65,7 @@ End-to-end tests in `test/e2e/` spin up a real server + FUSE mount in-process; t
 
 1. **Branch** off `master` and keep your change focused — one logical change per PR.
 2. **Commit messages** follow Conventional Commits: `feat(client): …`, `fix(server): …`, `docs: …`, `test(e2e): …`.
-3. **Before opening a PR**, make sure `task test` and `task lint` pass, and regenerate any affected stubs/mocks/bindings.
+3. **Before opening a PR**, make sure `task test` and `task lint` pass, and regenerate any affected stubs/mocks.
 4. **Open the PR** against `master`, fill in the template, and link any related issue (`Fixes #123`).
 5. CI runs tests, lint, and security scans; please keep it green.
 
