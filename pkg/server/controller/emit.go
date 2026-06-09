@@ -18,9 +18,11 @@ import (
 // r.bus.Emit by hand; they wrap the filesystem call in one of the helpers
 // below, which couple "the mutation succeeded" to "the event fired":
 //
-//   - mutateEmit:  path mutation; event seeded with a fresh version stat.
-//   - deleteEmit:  removal; event carries version 0 + KindDeleted.
-//   - renameEmit:  rename; emits the old→new pair with the new path's version.
+//   - mutateEmit:       path mutation; event seeded with a fresh version stat.
+//   - deleteEmit:       removal; event carries version 0 + KindDeleted.
+//   - renameEmit:       rename; emits the old→new pair with the new path's version.
+//   - emitMutatedAttr:  path mutation where the handler already holds a
+//     fresh post-op attr (or knows the mutation happened but has no attr).
 //
 // POLICY: a new mutating RPC must route its filesystem call through one of
 // these (or, for fd-based ops in file.go, through emitMutatedFd). If none
@@ -45,6 +47,15 @@ func (r *RpcServerImpl) deleteEmit(volume, path string, op func() fuse.Status) f
 		r.bus.Emit(volume, path, 0, serverio.KindDeleted)
 	}
 	return s
+}
+
+// emitMutatedAttr emits the KindMutated event for (volume, path) seeded from
+// an attr the handler already holds — SetAttr stats the path for its reply
+// attrs anyway, so re-statting via versionAfter would waste a syscall. A nil
+// attr yields version 0; clients fall back to GetAttrIfChanged. Mirrors
+// RpcFileServerImpl.emitMutatedAttr in file.go.
+func (r *RpcServerImpl) emitMutatedAttr(volume, path string, attr *fuse.Attr) {
+	r.bus.Emit(volume, path, serverio.VersionFromAttr(attr), serverio.KindMutated)
 }
 
 // renameEmit runs op and, when it returns fuse.OK, emits the rename event

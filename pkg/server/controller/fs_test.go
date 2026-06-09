@@ -558,6 +558,220 @@ func (s *RpcServerTestSuite) TestUtimens() {
 	s.Assert().Equal(int32(fuse.OK), reply.Status)
 }
 
+// ----- SetAttr (single-RPC attribute application) -----
+
+func (s *RpcServerTestSuite) TestSetAttr_SizeOnly() {
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
+	attr := &fuse.Attr{Ino: 7, Size: 128, Mode: 0o644, Nlink: 1, Mtime: 1700000000}
+	mockFs.EXPECT().Truncate("/f", uint64(128), mock.Anything).Return(fuse.OK).Once()
+	mockFs.EXPECT().GetAttr("/f", mock.Anything).Return(attr, fuse.OK).Once()
+
+	reply, err := s.server.SetAttr(testAuthedCtx("test-user"), &proto.SetAttrRequest{
+		Volume: "testVolume", Path: "/f",
+		Valid: fuse.FATTR_SIZE, Size: 128,
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID, RequestId: "req-setattr-size",
+	})
+	s.Require().NoError(err)
+	s.Require().Equal(int32(fuse.OK), reply.Status)
+	// Reply attrs must match what a trailing GetAttr would have returned —
+	// the client uses them instead of issuing its own stat.
+	s.Require().NotNil(reply.Attributes)
+	s.Equal(uint64(7), reply.Attributes.Ino)
+	s.Equal(uint64(128), reply.Attributes.Size)
+	s.Equal(serverio.VersionFromAttr(attr), reply.Attributes.Version)
+	mockFs.AssertExpectations(s.T())
+}
+
+func (s *RpcServerTestSuite) TestSetAttr_MultiFieldAppliesAll() {
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
+	mtime := time.Unix(1577836800, 42)
+	mockFs.EXPECT().Truncate("/f", uint64(64), mock.Anything).Return(fuse.OK).Once()
+	mockFs.EXPECT().Chmod("/f", uint32(0o600), mock.Anything).Return(fuse.OK).Once()
+	// ATIME valid bit is unset, so atime must be passed as nil (UTIME_OMIT)
+	// even though the request carries an Atime payload.
+	mockFs.EXPECT().Utimens("/f", (*time.Time)(nil), &mtime, mock.Anything).Return(fuse.OK).Once()
+	mockFs.EXPECT().GetAttr("/f", mock.Anything).Return(&fuse.Attr{Ino: 1, Size: 64}, fuse.OK).Once()
+
+	reply, err := s.server.SetAttr(testAuthedCtx("test-user"), &proto.SetAttrRequest{
+		Volume: "testVolume", Path: "/f",
+		Valid: fuse.FATTR_SIZE | fuse.FATTR_MODE | fuse.FATTR_MTIME,
+		Size:  64, Mode: 0o600,
+		Atime:     &proto.FileTime{Sec: 9999, Nsec: 0}, // bit unset — must be ignored
+		Mtime:     &proto.FileTime{Sec: 1577836800, Nsec: 42},
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID, RequestId: "req-setattr-multi",
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.OK), reply.Status)
+	s.NotNil(reply.Attributes)
+	mockFs.AssertExpectations(s.T()) // every requested field was applied exactly once
+}
+
+func (s *RpcServerTestSuite) TestSetAttr_StopsAtFirstFailure() {
+	events, cancel := s.bus.Subscribe("testVolume")
+	defer cancel()
+
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
+	mockFs.EXPECT().Truncate("/f", uint64(0), mock.Anything).Return(fuse.OK).Once()
+	mockFs.EXPECT().Chmod("/f", uint32(0o600), mock.Anything).Return(fuse.EPERM).Once()
+	// No Chown/Utimens/GetAttr expectations: applying anything after the
+	// failed chmod (or statting for reply attrs) fails the test via the
+	// strict mock.
+
+	reply, err := s.server.SetAttr(testAuthedCtx("test-user"), &proto.SetAttrRequest{
+		Volume: "testVolume", Path: "/f",
+		Valid: fuse.FATTR_SIZE | fuse.FATTR_MODE | fuse.FATTR_UID | fuse.FATTR_GID | fuse.FATTR_MTIME,
+		Size:  0, Mode: 0o600, Uid: 1, Gid: 1,
+		Mtime:     &proto.FileTime{Sec: 1, Nsec: 0},
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID, RequestId: "req-setattr-stop",
+	})
+	s.Require().NoError(err, "fs failures travel in-band, not as RPC errors")
+	s.Equal(int32(fuse.EPERM), reply.Status)
+	s.Nil(reply.Attributes)
+
+	// The truncate before the failing chmod DID mutate the file, so client
+	// caches must still be invalidated — version 0 forces revalidation.
+	select {
+	case ev := <-events:
+		s.Equal(serverio.KindMutated, ev.Kind)
+		s.Equal("/f", ev.Path)
+		s.Equal(uint64(0), ev.NewVersion)
+	case <-time.After(time.Second):
+		s.FailNow("partially-applied SetAttr must still emit a KindMutated event")
+	}
+	mockFs.AssertExpectations(s.T())
+}
+
+func (s *RpcServerTestSuite) TestSetAttr_FirstStepFailureEmitsNothing() {
+	events, cancel := s.bus.Subscribe("testVolume")
+	defer cancel()
+
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
+	mockFs.EXPECT().Truncate("/f", uint64(0), mock.Anything).Return(fuse.EACCES).Once()
+
+	reply, err := s.server.SetAttr(testAuthedCtx("test-user"), &proto.SetAttrRequest{
+		Volume: "testVolume", Path: "/f",
+		Valid: fuse.FATTR_SIZE | fuse.FATTR_MODE,
+		Size:  0, Mode: 0o600,
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID, RequestId: "req-setattr-fail-first",
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.EACCES), reply.Status)
+
+	// Nothing was applied — no mutation event may fire. Emission is
+	// synchronous (buffered channel push inside the handler), so a
+	// non-blocking read after the call is conclusive.
+	select {
+	case ev := <-events:
+		s.FailNowf("unexpected event", "no mutation happened, got %+v", ev)
+	default:
+	}
+}
+
+func (s *RpcServerTestSuite) TestSetAttr_UidOnlyResolvesGidFromStat() {
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
+	attr := &fuse.Attr{Ino: 3, Owner: fuse.Owner{Uid: 500, Gid: 2000}}
+	// One stat resolves the unset gid half; a second serves the reply attrs.
+	mockFs.EXPECT().GetAttr("/f", mock.Anything).Return(attr, fuse.OK).Times(2)
+	mockFs.EXPECT().Chown("/f", uint32(1000), uint32(2000), mock.Anything).Return(fuse.OK).Once()
+
+	reply, err := s.server.SetAttr(testAuthedCtx("test-user"), &proto.SetAttrRequest{
+		Volume: "testVolume", Path: "/f",
+		Valid:     fuse.FATTR_UID,
+		Uid:       1000,
+		Gid:       9999, // GID bit unset — must come from the stat, not the wire
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID, RequestId: "req-setattr-uid-only",
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.OK), reply.Status)
+	mockFs.AssertExpectations(s.T()) // Chown received the stat's gid 2000
+}
+
+func (s *RpcServerTestSuite) TestSetAttr_GidOnlyResolvesUidFromStat() {
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
+	attr := &fuse.Attr{Ino: 3, Owner: fuse.Owner{Uid: 500, Gid: 2000}}
+	mockFs.EXPECT().GetAttr("/f", mock.Anything).Return(attr, fuse.OK).Times(2)
+	mockFs.EXPECT().Chown("/f", uint32(500), uint32(3000), mock.Anything).Return(fuse.OK).Once()
+
+	reply, err := s.server.SetAttr(testAuthedCtx("test-user"), &proto.SetAttrRequest{
+		Volume: "testVolume", Path: "/f",
+		Valid:     fuse.FATTR_GID,
+		Uid:       9999, // UID bit unset — must come from the stat, not the wire
+		Gid:       3000,
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID, RequestId: "req-setattr-gid-only",
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.OK), reply.Status)
+	mockFs.AssertExpectations(s.T()) // Chown received the stat's uid 500
+}
+
+func (s *RpcServerTestSuite) TestSetAttr_IdempotentReplay() {
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
+	attr := &fuse.Attr{Ino: 9, Size: 32, Mtime: 1700000000}
+	mockFs.EXPECT().Truncate("/f", uint64(32), mock.Anything).Return(fuse.OK).Once()
+	mockFs.EXPECT().GetAttr("/f", mock.Anything).Return(attr, fuse.OK).Once()
+
+	req := &proto.SetAttrRequest{
+		Volume: "testVolume", Path: "/f",
+		Valid: fuse.FATTR_SIZE, Size: 32,
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID, RequestId: "req-setattr-replay",
+	}
+	r1, err := s.server.SetAttr(testAuthedCtx("test-user"), req)
+	s.Require().NoError(err)
+	r2, err := s.server.SetAttr(testAuthedCtx("test-user"), req)
+	s.Require().NoError(err)
+	s.Equal(r1.Status, r2.Status)
+	s.Require().NotNil(r2.Attributes)
+	s.Equal(r1.Attributes.Version, r2.Attributes.Version, "replay must return the cached reply")
+	mockFs.AssertExpectations(s.T()) // .Once() on Truncate+GetAttr proves the replay was deduped
+}
+
+func (s *RpcServerTestSuite) TestSetAttr_EmitsMutatedSeededFromReplyStat() {
+	events, cancel := s.bus.Subscribe("testVolume")
+	defer cancel()
+
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
+	attr := &fuse.Attr{Ino: 11, Size: 5, Mtime: 1700000000}
+	mockFs.EXPECT().Chmod("/f", uint32(0o640), mock.Anything).Return(fuse.OK).Once()
+	// ONE stat total: the reply-attrs GetAttr also seeds the event version —
+	// the handler must not re-stat via versionAfter.
+	mockFs.EXPECT().GetAttr("/f", mock.Anything).Return(attr, fuse.OK).Once()
+
+	reply, err := s.server.SetAttr(testAuthedCtx("test-user"), &proto.SetAttrRequest{
+		Volume: "testVolume", Path: "/f",
+		Valid: fuse.FATTR_MODE, Mode: 0o640,
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID, RequestId: "req-setattr-emit",
+	})
+	s.Require().NoError(err)
+	s.Require().Equal(int32(fuse.OK), reply.Status)
+
+	select {
+	case ev := <-events:
+		s.Equal(serverio.KindMutated, ev.Kind)
+		s.Equal("/f", ev.Path)
+		s.NotZero(ev.NewVersion)
+		s.Equal(serverio.VersionFromAttr(attr), ev.NewVersion)
+	case <-time.After(time.Second):
+		s.FailNow("SetAttr did not emit a KindMutated event within 1s")
+	}
+	mockFs.AssertExpectations(s.T()) // GetAttr .Once(): no extra stat beyond the reply attrs
+}
+
 func (s *RpcServerTestSuite) TestReadlink() {
 	mockFs := new(pathfs2.MockFileSystem)
 	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
