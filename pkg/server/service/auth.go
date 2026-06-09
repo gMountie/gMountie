@@ -3,12 +3,14 @@ package service
 import (
 	"context"
 	"crypto/x509"
+	"sync/atomic"
 
 	"go.gmountie.dev/gmountie/pkg/common"
 	"go.gmountie.dev/gmountie/pkg/common/passhash"
 	"go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 
+	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
@@ -25,6 +27,13 @@ type AuthService interface {
 	// Authorize authenticates the caller. A non-nil *UserDetails and nil error
 	// means authorized; a non-nil error means denied (caller receives the error).
 	Authorize(ctx context.Context, method string) (*UserDetails, error)
+	// ReloadUsers atomically swaps the credential state from cfg. Called by
+	// the ops /ops/acl/reload handler so a user deleted (or re-keyed) in the
+	// config file stops authenticating without a restart — previously only
+	// the ACL and the revocation list hot-reloaded, leaving stale basic-auth
+	// credentials valid. No-op for auth modes without server-held credentials
+	// (mtls authenticates by client certificate).
+	ReloadUsers(cfg config.AuthConfig)
 }
 
 // --------------------------- Factory ---------------------------
@@ -66,16 +75,39 @@ func (denyAllAuthService) Authorize(_ context.Context, _ string) (*UserDetails, 
 	return nil, status.Errorf(codes.Unauthenticated, "authentication is not configured")
 }
 
+func (denyAllAuthService) ReloadUsers(config.AuthConfig) {}
+
 // ----------- BasicAuthService -----------
 
-// BasicAuthService is a service that performs basic authentication
+// BasicAuthService is a service that performs basic authentication. The
+// username -> password_hash map is held behind an atomic pointer (same
+// pattern as VolumeServiceImpl's aclSnapshot) so ReloadUsers can swap it
+// without locking the hot Authorize path.
 type BasicAuthService struct {
-	users map[string]string
+	users atomic.Pointer[map[string]string]
 }
 
 // NewBasicAuthService creates a new BasicAuthService
 func NewBasicAuthService(users map[string]string) *BasicAuthService {
-	return &BasicAuthService{users: users}
+	s := &BasicAuthService{}
+	s.users.Store(&users)
+	return s
+}
+
+// ReloadUsers rebuilds and atomically swaps the credential map from cfg.
+// A cfg that is not a *BasicAuthConfig is ignored (the auth TYPE cannot be
+// hot-swapped; only the user set can).
+func (a *BasicAuthService) ReloadUsers(cfg config.AuthConfig) {
+	bac, ok := cfg.(*config.BasicAuthConfig)
+	if !ok {
+		return
+	}
+	users := make(map[string]string, len(bac.Users))
+	for _, user := range bac.Users {
+		users[user.Username] = user.PasswordHash
+	}
+	a.users.Store(&users)
+	log.Log.Info("basic-auth credential map reloaded", zap.Int("users", len(users)))
 }
 
 // Authorize checks if the user is authorized
@@ -93,7 +125,8 @@ func (a *BasicAuthService) Authorize(ctx context.Context, _ string) (*UserDetail
 	}
 
 	// Check if the user exists
-	if storedHash, ok := a.users[user[0]]; ok {
+	users := *a.users.Load()
+	if storedHash, ok := users[user[0]]; ok {
 		// Verify the password against the stored argon2id PHC hash.
 		// On a malformed hash treat as auth-denied (fail closed); never panic.
 		match, err := passhash.Verify(storedHash, password[0])
@@ -114,6 +147,11 @@ func (a *BasicAuthService) Authorize(ctx context.Context, _ string) (*UserDetail
 // (Phase 7 decision #6). Per-volume authorization is the ACL's job
 // (VolumeService.PrincipalCanAccess), run later in BindIdentity.
 type mtlsAuthService struct{}
+
+// ReloadUsers is a no-op: mTLS holds no server-side credential map — identity
+// comes from the verified client certificate; revocation is the serial
+// blocklist, which has its own reload path.
+func (mtlsAuthService) ReloadUsers(config.AuthConfig) {}
 
 func (mtlsAuthService) Authorize(ctx context.Context, _ string) (*UserDetails, error) {
 	p, ok := peer.FromContext(ctx)

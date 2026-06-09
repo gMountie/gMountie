@@ -163,3 +163,37 @@ func TestBasicAuthServiceTestSuite(t *testing.T) {
 func TestAuthServiceFactoryTestSuite(t *testing.T) {
 	suite.Run(t, new(AuthServiceFactoryTestSuite))
 }
+
+// TestReloadUsers_RemovedUserStopsAuthenticating pins MAINT-1: after an ops
+// reload that drops a user from the config, the old credentials must stop
+// working — previously only the ACL and revocation list hot-reloaded and the
+// stale credential map kept authenticating deleted users.
+func (s *BasicAuthServiceTestSuite) TestReloadUsers_RemovedUserStopsAuthenticating() {
+	ctx := s.createContextWithBasicAuth("testuser", "testpass")
+	_, err := s.service.Authorize(ctx, "test-method")
+	s.Require().NoError(err, "sanity: user authenticates before the reload")
+
+	// Reload with a config that no longer contains testuser.
+	s.service.ReloadUsers(&config.BasicAuthConfig{
+		AuthConfigBase: config.AuthConfigBase{Type: config.AuthConfigTypeBasic},
+		Users: []config.BasicAuthConfigUser{
+			{Username: "admin", PasswordHash: mustHash(s.T(), "adminpass")},
+		},
+	})
+
+	_, err = s.service.Authorize(ctx, "test-method")
+	s.Require().Error(err, "deleted user must stop authenticating after ReloadUsers")
+
+	adminCtx := s.createContextWithBasicAuth("admin", "adminpass")
+	_, err = s.service.Authorize(adminCtx, "test-method")
+	s.Require().NoError(err, "retained user keeps authenticating")
+}
+
+// TestReloadUsers_NonBasicConfigIgnored: a non-basic auth config must leave
+// the credential map untouched (auth TYPE cannot be hot-swapped).
+func (s *BasicAuthServiceTestSuite) TestReloadUsers_NonBasicConfigIgnored() {
+	s.service.ReloadUsers(nil)
+	ctx := s.createContextWithBasicAuth("testuser", "testpass")
+	_, err := s.service.Authorize(ctx, "test-method")
+	s.Require().NoError(err, "nil/non-basic config must not clear the credential map")
+}
