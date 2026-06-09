@@ -387,7 +387,7 @@ func (s *BackendClientTestSuite) TestMkdir() {
 	s.fsClient.EXPECT().Mkdir(mock.Anything, mock.MatchedBy(func(req *proto.MkdirRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/test" && req.Mode == 0755 &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	})).Return(&proto.MkdirReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.MkdirReply{Status: int32(fuse.OK)}, nil)
 
 	st := s.backend.Mkdir(context.Background(), "/test", 0755)
 	s.Assert().Equal(fuse.OK, st)
@@ -397,7 +397,7 @@ func (s *BackendClientTestSuite) TestRmdir() {
 	s.fsClient.EXPECT().Rmdir(mock.Anything, mock.MatchedBy(func(req *proto.RmdirRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/test" &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	})).Return(&proto.RmdirReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.RmdirReply{Status: int32(fuse.OK)}, nil)
 
 	st := s.backend.Rmdir(context.Background(), "/test")
 	s.Assert().Equal(fuse.OK, st)
@@ -407,7 +407,7 @@ func (s *BackendClientTestSuite) TestUnlink() {
 	s.fsClient.EXPECT().Unlink(mock.Anything, mock.MatchedBy(func(req *proto.UnlinkRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/test" &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	})).Return(&proto.UnlinkReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.UnlinkReply{Status: int32(fuse.OK)}, nil)
 
 	st := s.backend.Unlink(context.Background(), "/test")
 	s.Assert().Equal(fuse.OK, st)
@@ -417,7 +417,7 @@ func (s *BackendClientTestSuite) TestRename() {
 	s.fsClient.EXPECT().Rename(mock.Anything, mock.MatchedBy(func(req *proto.RenameRequest) bool {
 		return req.Volume == "testVolume" && req.OldName == "/old" && req.NewName == "/new" &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	})).Return(&proto.RenameReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.RenameReply{Status: int32(fuse.OK)}, nil)
 
 	st := s.backend.Rename(context.Background(), "/old", "/new")
 	s.Assert().Equal(fuse.OK, st)
@@ -427,7 +427,7 @@ func (s *BackendClientTestSuite) TestTruncate() {
 	s.fsClient.EXPECT().Truncate(mock.Anything, mock.MatchedBy(func(req *proto.TruncateRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/test" && req.Size == 1024 &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	})).Return(&proto.TruncateReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.TruncateReply{Status: int32(fuse.OK)}, nil)
 
 	st := s.backend.Truncate(context.Background(), "/test", 1024)
 	s.Assert().Equal(fuse.OK, st)
@@ -437,7 +437,7 @@ func (s *BackendClientTestSuite) TestChmod() {
 	s.fsClient.EXPECT().Chmod(mock.Anything, mock.MatchedBy(func(req *proto.ChmodRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/test" && req.Mode == 0644 &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	})).Return(&proto.ChmodReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.ChmodReply{Status: int32(fuse.OK)}, nil)
 
 	st := s.backend.Chmod(context.Background(), "/test", 0644)
 	s.Assert().Equal(fuse.OK, st)
@@ -447,7 +447,7 @@ func (s *BackendClientTestSuite) TestChown() {
 	s.fsClient.EXPECT().Chown(mock.Anything, mock.MatchedBy(func(req *proto.ChownRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/test" && req.Uid == 1001 && req.Gid == 1001 &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	})).Return(&proto.ChownReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.ChownReply{Status: int32(fuse.OK)}, nil)
 
 	st := s.backend.Chown(context.Background(), "/test", 1001, 1001)
 	s.Assert().Equal(fuse.OK, st)
@@ -457,16 +457,15 @@ func (s *BackendClientTestSuite) TestChown() {
 // for path-level mutating ops: the same request_id must be reused across
 // retries so the server's dedup cache can short-circuit the duplicate.
 func (s *BackendClientTestSuite) TestMkdir_RetryReusesRequestID() {
-	s.T().Skip("retry moved to retryOp; re-enable when this call site routes through retryOp (Tasks 5-7)")
 	var firstID string
 	s.fsClient.EXPECT().Mkdir(mock.Anything, mock.MatchedBy(func(req *proto.MkdirRequest) bool {
 		firstID = req.RequestId
 		return req.RequestId != ""
-	})).Return(nil, status.Error(codes.Unavailable, "transient")).Once()
+	}), mock.Anything).Return(nil, status.Error(codes.Unavailable, "transient")).Once()
 
 	s.fsClient.EXPECT().Mkdir(mock.Anything, mock.MatchedBy(func(req *proto.MkdirRequest) bool {
 		return req.RequestId == firstID
-	})).Return(&proto.MkdirReply{Status: int32(fuse.OK)}, nil).Once()
+	}), mock.Anything).Return(&proto.MkdirReply{Status: int32(fuse.OK)}, nil).Once()
 
 	st := s.backend.Mkdir(context.Background(), "/d", 0755)
 	s.Assert().Equal(fuse.OK, st)
@@ -1106,7 +1105,7 @@ func (s *BackendClientTestSuite) TestUtimens() {
 			req.Atime == nil && // UTIME_OMIT
 			req.Mtime != nil && req.Mtime.Sec == 1577836800 && req.Mtime.Nsec == 500 &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	})).Return(&proto.UtimensReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.UtimensReply{Status: int32(fuse.OK)}, nil)
 
 	st := s.backend.Utimens(context.Background(), "/test", nil, &mtime)
 	s.Require().Equal(fuse.OK, st)
@@ -1119,14 +1118,14 @@ func (s *BackendClientTestSuite) TestUtimens_BothTimes() {
 		return req.Atime != nil && req.Atime.Sec == 100 && req.Atime.Nsec == 1 &&
 			req.Mtime != nil && req.Mtime.Sec == 200 && req.Mtime.Nsec == 2 &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	})).Return(&proto.UtimensReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.UtimensReply{Status: int32(fuse.OK)}, nil)
 
 	st := s.backend.Utimens(context.Background(), "/test", &atime, &mtime)
 	s.Require().Equal(fuse.OK, st)
 }
 
 func (s *BackendClientTestSuite) TestUtimens_Error() {
-	s.fsClient.EXPECT().Utimens(mock.Anything, mock.Anything).Return(nil, context.DeadlineExceeded)
+	s.fsClient.EXPECT().Utimens(mock.Anything, mock.Anything, mock.Anything).Return(nil, context.DeadlineExceeded)
 	st := s.backend.Utimens(context.Background(), "/test", nil, nil)
 	s.Assert().Equal(fuse.EIO, st)
 }
@@ -1141,6 +1140,7 @@ func (s *BackendClientTestSuite) TestUtimens_CancelledParentDoesNotAbortRPC() {
 	cancel()
 	s.fsClient.EXPECT().Utimens(
 		mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() == nil }),
+		mock.Anything,
 		mock.Anything,
 	).Return(&proto.UtimensReply{Status: int32(fuse.OK)}, nil)
 
@@ -1322,7 +1322,7 @@ func (s *BackendClientTestSuite) TestSetXAttr_HappyPath() {
 			req.Attribute == "user.foo" && string(req.Data) == "xvalue" &&
 			req.Flags == 0 &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	})).Return(&proto.SetXAttrReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.SetXAttrReply{Status: int32(fuse.OK)}, nil)
 
 	st := s.backend.SetXAttr(context.Background(), "/test", "user.foo", data, 0)
 	s.Assert().Equal(fuse.OK, st)
@@ -1334,7 +1334,7 @@ func (s *BackendClientTestSuite) TestRemoveXAttr_HappyPath() {
 		return req.Volume == "testVolume" && req.Path == "/test" &&
 			req.Attribute == "user.foo" &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	})).Return(&proto.RemoveXAttrReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.RemoveXAttrReply{Status: int32(fuse.OK)}, nil)
 
 	st := s.backend.RemoveXAttr(context.Background(), "/test", "user.foo")
 	s.Assert().Equal(fuse.OK, st)
