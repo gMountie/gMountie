@@ -24,9 +24,13 @@ services:
     configs:
       - source: server-config
         target: /config.yaml
+    # Only the gRPC port is published. The ops HTTP endpoint (/metrics,
+    # /healthz) binds loopback INSIDE the container (server.ops.addr default),
+    # so publishing it would forward to a port that never answers. Check
+    # health from inside instead:
+    #   docker compose exec server wget -qO- http://127.0.0.1:9090/healthz
     ports:
       - "${GRPC_PORT:-9449}:9449"
-      - "${METRICS_PORT:-9090}:9090"
 
   # One-shot: give the data volume to uid/gid 1000 (least privilege) instead
   # of the old `chmod 777` sidecar. Runs as root, chowns, exits.
