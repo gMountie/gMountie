@@ -76,8 +76,8 @@ The server isn't listening where the client is looking.
 
 The TCP path went away — NAT rebind, ISP IP change, server reboot, network hiccup. gMountie's keepalive surfaces this as `Unavailable` within ~40 s by default ([sessions & reconnect](./concepts/sessions-and-reconnect.mdx) explains the timing).
 
-- For a sub-second blip, in-flight ops **retry on a bounded budget (~2 s)** and usually succeed; let it ride. A longer blip exceeds that budget and surfaces as `EIO` on the in-flight op, while the session reconnects in the background and fresh ops succeed.
-- If the server actually died, ops return `EIO` on the next syscall. Restart it: the mount auto-recovers, and file handles opened before the blip stay valid **as long as the server comes back within its 30 s session grace period**. After that, the client starts a fresh session and previously open fds are invalid.
+- For a blip, in-flight ops **retry within `rpc.retry_window` (default 60 s)** and usually succeed; let it ride. A blip longer than the window surfaces as `EIO` on the in-flight op, while the session reconnects in the background and fresh ops succeed.
+- If the server actually died, ops return `EIO` on the next syscall. Restart it: the mount auto-recovers, and file handles opened before the blip stay valid **as long as the server comes back within its session grace period (`server.session.grace_period`, default 60 s)**. After that, the client starts a fresh session and previously open fds are invalid.
 
 :::tip
 Tighten or loosen detection with `server.keepalive` and `rpc.keepalive` — see the [server](./server/config.md) and [client](./client/config.md) config pages.

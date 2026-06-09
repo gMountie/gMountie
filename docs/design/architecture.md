@@ -134,7 +134,7 @@ every mutating RPC, is scoped to a session id.
    (currently every 10 s) so that a half-broken TCP connection surfaces
    faster than gRPC's own keepalive would.
 3. When the stream ends — for any reason — the server marks the session
-   "disconnected" and starts a grace-period timer (default 30 s).
+   "disconnected" and starts a grace-period timer (`server.session.grace_period`, default 60 s).
 4. While the timer is running, the session is still resolvable: the
    client can `Resume(session_id)` to cancel the timer and reattach. The
    session's open fds remain valid.
@@ -217,10 +217,15 @@ hanging the FUSE thread.
 
 The client retries idempotent operations and idempotency-token-stamped
 mutating operations on transient gRPC errors (`Unavailable`,
-`DeadlineExceeded`). Bounded exponential backoff: 3 attempts,
-100 ms → 1 s. The `request_id` on mutating ops is generated **once per
-logical operation** and reused across retries — this is what makes
-retry safe.
+`DeadlineExceeded`). The wall-clock budget for the whole operation is
+`rpc.retry_window` (default 60 s; `0` = fail-fast / single attempt).
+Backoff is exponential: 100 ms initial delay, capped at 1 s per sleep;
+each attempt gets its own per-attempt deadline (`timeout_meta` /
+`timeout_io`). The `request_id` on mutating ops is generated **once per
+logical operation** and reused across retries — this is what makes retry
+safe within the same session. On a session-id change (fresh `Create`
+after `Resume` fails), idempotent reads keep retrying; fd ops and path
+mutations stop immediately because their state is gone.
 
 ### 6.3 Idempotency on the server
 
@@ -314,7 +319,8 @@ The protocol still does not do:
   `SessionService.Keepalive`. Used as a disconnect detector by the
   client.
 - **Grace period** — the window after a keepalive stream ends during
-  which the session is still resolvable via `Resume`. Default 30 s.
+  which the session is still resolvable via `Resume`
+  (`server.session.grace_period`, default 60 s).
 - **Loopback filesystem** — the go-fuse helper the server uses to turn
   protocol ops into ordinary host-kernel syscalls under the volume's
   path.

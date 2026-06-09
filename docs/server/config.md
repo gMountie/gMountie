@@ -1,18 +1,18 @@
 ---
 title: Server configuration
 sidebar_label: Configuration
-description: Every server.yaml field — server, keepalive, tls, grpc, ops, log, auth, volumes — with types, defaults, and valid ranges.
+description: Every server.yaml field — server, keepalive, session, tls, grpc, ops, log, auth, volumes — with types, defaults, and valid ranges.
 ---
 
 # Server configuration
 
-The server reads a YAML file. The main sections are **`server`** (listen address and transport tuning, including the `tls`, `grpc`, `ops`, and `keepalive` sub-blocks), **`auth`** (credentials and per-user volume access), **`volumes`** (the directories you're sharing), and an optional **`log`** block. If you don't pass `-c`, gMountie writes a default config to `~/.config/gmountie/server.yaml` on first run.
+The server reads a YAML file. The main sections are **`server`** (listen address and transport tuning, including the `tls`, `grpc`, `ops`, `keepalive`, and `session` sub-blocks), **`auth`** (credentials and per-user volume access), **`volumes`** (the directories you're sharing), and an optional **`log`** block. If you don't pass `-c`, gMountie writes a default config to `~/.config/gmountie/server.yaml` on first run.
 
 ## Configuration File Structure
 
 The configuration file has these main sections:
 
-- Server configuration (`server`, with `tls` / `grpc` / `ops` / `keepalive` sub-blocks)
+- Server configuration (`server`, with `tls` / `grpc` / `ops` / `keepalive` / `session` sub-blocks)
 - Authentication configuration (`auth`)
 - Volumes configuration (`volumes`)
 - Logging configuration (`log`, optional)
@@ -91,6 +91,38 @@ server:
     timeout: 5s
     min_time: 5s
     permit_without_stream: true
+```
+
+### Session
+
+The `server.session` block controls how long the server retains a
+disconnected client's session before reaping it. A session holds an fd
+table and an idempotency cache. Keeping it alive for a grace period lets
+a reconnecting client resume its open file handles transparently, without
+issuing fresh `Open` calls.
+
+| Option        | Type     | Default | Description                                                                                              |
+|---------------|----------|---------|----------------------------------------------------------------------------------------------------------|
+| grace\_period | duration | 60s     | How long a disconnected session (fds + idempotency cache) is retained before reaping. Must be >= 1s. |
+
+`grace_period` should be **>= the client's `rpc.retry_window`** (default
+60 s) so that a disconnect which the client is retrying transparently
+stays within the grace window and the session is still resolvable when
+the client calls `Resume`. A shorter grace period causes the server to
+reap the session before the client's retries are exhausted, invalidating
+all open fds.
+
+**Cost:** a dropped client's fds and POSIX advisory locks are held in
+server memory for the full grace duration. On a server with many short-
+lived clients this adds up; reduce `grace_period` if the session
+memory pressure outweighs the reconnect benefit.
+
+Example:
+
+```yaml
+server:
+  session:
+    grace_period: 60s   # match or exceed the client rpc.retry_window
 ```
 
 ### TLS
@@ -414,4 +446,5 @@ On **first run** (`gmountie serve` with no `-c`), gMountie auto-generates this c
 
 - [Server CLI](./cli.md) — `gmountie serve` invocation.
 - [Wire protocol](../concepts/wire-protocol.mdx) — what the server speaks on the wire.
-- [Sessions & reconnect](../concepts/sessions-and-reconnect.mdx) — how keepalive surfaces dead connections.
+- [Sessions & reconnect](../concepts/sessions-and-reconnect.mdx) — how keepalive, retries, and the session grace period cooperate.
+- [Client config — RPC Options](../client/config.md#rpc-options) — `rpc.retry_window` and the per-attempt timeouts.

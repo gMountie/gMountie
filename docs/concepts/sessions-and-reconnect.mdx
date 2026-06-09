@@ -37,23 +37,24 @@ server:
 
 ## 2 · Bounded retries — safe to retry
 
-The client's retry layer (`avast/retry-go`) wraps data-path RPCs with bounded exponential backoff: up to **3 attempts** with a delay capped at **1 s** (roughly a 2 s total budget). On a transient `Unavailable` / `DeadlineExceeded` it retries quietly; on a logical error (`NotFound`, `PermissionDenied`, `InvalidArgument`) it surfaces immediately. If the retry budget is exhausted before the path recovers, the in-flight syscall returns `fuse.EIO` to the caller.
+The client's retry layer wraps data-path RPCs with a configurable wall-clock window (`rpc.retry_window`, default **60 s**) and exponential backoff (100 ms initial, capped at 1 s). Each attempt gets its own fresh deadline derived from the per-attempt timeout (`timeout_meta` / `timeout_io`); the window bounds the **whole operation** across however many attempts fit within it. On a transient `Unavailable` / `DeadlineExceeded` the client retries quietly; on a logical error (`NotFound`, `PermissionDenied`, `InvalidArgument`) it surfaces immediately. If the window expires before the path recovers, the in-flight syscall returns `EIO` to the caller. Setting `rpc.retry_window: 0` disables retrying entirely (fail-fast, single attempt).
 
-Two classes of RPC get retried:
+Three classes of RPC each have different retry semantics across a session-id change (i.e. when `Resume` fails and a fresh `Create` allocates a new session):
 
-- **`Read(volume, fd, offset, length)`** — a pure function of its inputs, so a retry is a direct no-op on success.
-- **`Lookup`, `Getattr`, `Readdir`** — observation-only; retried directly.
+- **Idempotent reads** (`GetAttr`, `Access`, `Readdir`, `Lookup`, and kin) — safe to retry on any session; the op is a pure observation.
+- **Fd ops** (`Read`, `Write`, `Flush`, `Fsync`, `Release`, …) — the fd was allocated in the old session and is dead in the new one; retry stops as soon as the session id changes.
+- **Path mutations** (`Mkdir`, `Rmdir`, `Rename`, `Unlink`, …) — replay-unsafe on a new session (the old idempotency cache is gone); retry stops on a session-id change.
 
-**`Write` and other mutations** are not pure functions of their inputs, so they aren't retried blindly. Each carries a `request_id`, and the server keeps a per-session idempotency cache (`DoOnce`) keyed by that id: a retried write that already landed is deduplicated server-side rather than applied twice. Operations whose retry semantics can't be made safe this way (e.g. `Mkdir` after the directory already exists, `Unlink` after the file was concurrently deleted) surface the underlying error and let the caller decide.
+**`Write` and other mutations** carry a `request_id` generated once per logical operation, reused across retries. The server keeps a per-session idempotency cache (`DoOnce`) keyed by that id: a retried write that already landed is deduplicated server-side rather than applied twice. This makes retry safe within the same session.
 
 ## 3 · Stable file handles — opens survive a short outage
 
-When the client opens a file, the server allocates an fd in a per-session store. The keepalive/session stream reconnects in the background, and the server holds onto a disconnected session's fds for a **grace period** (`GracePeriod`, default **30 s**) before reaping them:
+When the client opens a file, the server allocates an fd in a per-session store. The keepalive/session stream reconnects in the background, and the server holds onto a disconnected session's fds for a **grace period** (`server.session.grace_period`, default **60 s**) before reaping them:
 
 - If the client reconnects **within** the grace period, it resumes the existing session and its fds stay valid; reads/writes continue from where they were.
 - If the outage **exceeds** the grace period, the server releases the fds. The client then starts a fresh session with a new `Create` and logs that any previously open fds are now invalid.
 
-So an open file handle survives a brief drop, but only up to the 30 s grace window — not indefinitely, and not necessarily for the full keepalive detection window. A data-path op in flight during the drop is still bounded by the ~2 s retry budget from §2: if the path doesn't recover in time, that syscall returns `EIO` even though the session may later resume.
+So an open file handle survives a brief drop, but only up to the grace window. The grace period default (60 s) is aligned with the client's `rpc.retry_window` default (also 60 s) so that a retrying client is likely to find its session still alive. A data-path op in flight during the drop retries within the `rpc.retry_window` budget from §2; if the path doesn't recover in time, that syscall returns `EIO` even though the session may later resume.
 
 ## The connection state machine
 
@@ -73,26 +74,26 @@ stateDiagram-v2
 
   note right of Connected
     in-flight ops retry
-    a bounded budget
-    (~2 s) during
+    within rpc.retry_window
+    (default 60 s) during
     Reconnecting
   end note
 ```
 
-While **Reconnecting**, the session stream re-establishes in the background and fds stay valid for up to the grace period. In-flight data-path ops retry on a ~2 s budget; if they don't recover in time they return `EIO` even before the state machine lands in **Failed**.
+While **Reconnecting**, the session stream re-establishes in the background and fds stay valid for up to the grace period. In-flight data-path ops retry within the `rpc.retry_window` budget; if the path doesn't recover in time they return `EIO` even before the state machine lands in **Failed**.
 
 ## What the user sees
 
 | Situation                                       | Outward symptom                                                                      |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Sub-second blip within the retry budget         | In-flight op retries and succeeds. No error visible.                                  |
-| ~5 s blip (NAT rebind, brief Wi-Fi drop)        | In-flight ops exceed the ~2 s retry budget and return `EIO`; the session reconnects in the background and fresh ops succeed. Open fds stay valid (within the 30 s grace period). |
-| Server reboot, recovery within 30 s grace       | Ops in flight during the drop may return `EIO`; the session resumes with fds intact once the server is back. |
-| Outage longer than the 30 s grace period        | Server releases the fds. Client starts a fresh session — previously open fds are invalid. New attempts retry; server back → recovery. |
+| Sub-second blip within the retry window         | In-flight op retries and succeeds. No error visible.                                  |
+| Blip longer than `rpc.retry_window` (default 60 s) | In-flight ops exhaust the retry window and return `EIO`; the session may still reconnect in the background and fresh ops succeed once it does. Open fds stay valid (within the 60 s grace period). |
+| Server reboot, recovery within 60 s grace       | Ops in flight during the drop may return `EIO` if the window expires; the session resumes with fds intact once the server is back. |
+| Outage longer than the 60 s grace period        | Server releases the fds. Client starts a fresh session — previously open fds are invalid. New attempts retry; server back → recovery. |
 | Server permanently gone (intentional shutdown)  | `EIO` until you `umount` and re-mount somewhere else.                                |
 
 :::tip[Tuning for your network]
-The defaults target consumer-internet flakiness (~40 s detection). If your link is reliable LAN, leave them alone. If it's satellite or cellular with bursts of loss, **raise** `timeout` so you don't tear down a connection that would have recovered. If you need fail-fast for an automation pipeline, **lower** `time` and `timeout`.
+The defaults target consumer-internet flakiness (~40 s keepalive detection, 60 s retry window). If your link is reliable LAN, leave them alone. If it's satellite or cellular with bursts of loss, **raise** `rpc.keepalive.timeout` and `rpc.retry_window` so you don't tear down a connection that would have recovered. Set `server.session.grace_period` to the same value or higher so fds outlast the retry window. If you need fail-fast for an automation pipeline, **lower** `keepalive.time`, `keepalive.timeout`, and set `retry_window: 0`.
 :::
 
 ## What it isn't
@@ -103,6 +104,6 @@ The defaults target consumer-internet flakiness (~40 s detection). If your link 
 
 ## Go deeper
 
-- [Design — Architecture](../design/architecture.md) — session-state model, the exact retry budget, error-mapping table.
+- [Design — Architecture](../design/architecture.md) — session-state model, reliability primitives, error-mapping table.
 - [Wire protocol](./wire-protocol.mdx) — where keepalive lives in the stack.
 - [Cache & consistency](./cache.mdx) — how the cache handles a missed invalidation across a disconnect.
