@@ -72,7 +72,7 @@ type volumePeekStream struct {
 
 func (s *volumePeekStream) RecvMsg(msg any) error {
 	err := s.ServerStream.RecvMsg(msg)
-	if err == nil {
+	if err == nil && s.vol == "" { // unsynchronized read is safe: RecvMsg has a single caller goroutine
 		if v, ok := msg.(commongrpc.VolumeCarrier); ok {
 			s.mu.Lock()
 			if s.vol == "" {
