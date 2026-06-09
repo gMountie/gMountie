@@ -27,11 +27,15 @@ func (s *SimpleFSTestSuite) SetupSuite() {
 	}
 	utils.Must0(s.T(), testAppCtx.Start())
 	s.testAppCtx = testAppCtx
+	// Safety net: a failed Require below skips TearDownSuite (testify never
+	// marks the suite set up), which would leak the running server into later
+	// suites. Close is idempotent, so this coexists with TearDownSuite.
+	s.T().Cleanup(func() { _ = testAppCtx.Close() })
 	// Mount the volume.
 	s.volume = s.testAppCtx.GetVolumes()[0]
 	s.Require().NotNil(s.volume)
 	s.Require().GreaterOrEqual(len(s.volume.GeneratedFiles), 1)
-	s.testAppCtx.MountVolume(s.volume)
+	s.Require().NoError(s.testAppCtx.MountVolumeErr(s.volume))
 }
 
 func (s *SimpleFSTestSuite) TearDownSuite() {

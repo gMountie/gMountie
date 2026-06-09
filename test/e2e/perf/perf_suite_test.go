@@ -141,7 +141,9 @@ func setupBenchEnvWith(b *testing.B, extra ...utils.TestOptions) *benchEnv {
 	if volume == nil {
 		b.Fatal("no test volume registered")
 	}
-	ctx.MountVolume(volume)
+	if err := ctx.MountVolumeErr(volume); err != nil {
+		b.Fatalf("mount volume: %v", err)
+	}
 
 	// FUSE WaitMount returns once the kernel accepts the mount, but in
 	// rapid mount/unmount cycles the very first op against the new mount
@@ -154,15 +156,12 @@ func setupBenchEnvWith(b *testing.B, extra ...utils.TestOptions) *benchEnv {
 	}
 
 	b.Cleanup(func() {
-		// If ctx.Close fails the FUSE mount may still be live; removing the
-		// mountpoint dir via volume.Close in that state corrupts the next
-		// benchmark's setup. Skip volume.Close on a failed ctx.Close.
+		// ctx.Close tears down client+server and, only on a clean teardown,
+		// removes the volume tempdirs itself (a failed close means the FUSE
+		// mount may still be live; removing the mountpoint dir in that state
+		// corrupts the next benchmark's setup).
 		if err := ctx.Close(); err != nil {
-			b.Logf("ctx.Close (mount may still be active, skipping volume removal): %v", err)
-			return
-		}
-		if err := volume.Close(); err != nil {
-			b.Logf("volume.Close: %v", err)
+			b.Logf("ctx.Close (mount may still be active, volume removal skipped): %v", err)
 		}
 	})
 

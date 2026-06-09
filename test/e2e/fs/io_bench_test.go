@@ -25,8 +25,7 @@ func setup(b *testing.B) (*utils.AppTestingContext, *utils.TestVolume) {
 	// Mount the volume.
 	volume := testAppCtx.GetVolumes()[0]
 	require.NotNil(b, volume)
-	testAppCtx.MountVolume(volume)
-	require.NoError(b, err)
+	require.NoError(b, testAppCtx.MountVolumeErr(volume))
 	// Cleanup.
 	b.Cleanup(func() {
 		// Unmount the volume.

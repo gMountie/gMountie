@@ -54,6 +54,9 @@ func (s *FioTestSuite) SetupSuite() {
 	utils.Must0(s.T(), testAppCtx.Start())
 
 	s.testAppCtx = testAppCtx
+	// Safety net: a failed assertion below skips TearDownSuite; Close is
+	// idempotent, so this coexists with TearDownSuite's Close.
+	s.T().Cleanup(func() { _ = testAppCtx.Close() })
 	// Copy the fio config files to the volume.
 	s.volume = s.testAppCtx.GetVolumes()[0]
 	scriptsPath := filepath.Join(s.volume.GetRootPath(), "scripts")
@@ -61,7 +64,7 @@ func (s *FioTestSuite) SetupSuite() {
 	utils.Must0(s.T(), CopyEmbedFiles(configs, scriptsPath))
 
 	// Mount the volume.
-	s.testAppCtx.MountVolume(s.volume)
+	s.Require().NoError(s.testAppCtx.MountVolumeErr(s.volume))
 }
 
 func (s *FioTestSuite) TestFS() {

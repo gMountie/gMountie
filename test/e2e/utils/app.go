@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	stderrors "errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -18,9 +19,11 @@ import (
 	"go.gmountie.dev/gmountie/pkg/server"
 	"go.gmountie.dev/gmountie/pkg/server/config"
 	grpcServer "go.gmountie.dev/gmountie/pkg/server/grpc"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/pkg/errors"
 	"github.com/thanhpk/randstr"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/test/bufconn"
@@ -89,6 +92,13 @@ type AppTestingContext struct {
 	// to the package-level defaults in NewAppTestingContext;
 	// WithFUSEConfig overrides this before NewAppContext sees it.
 	fuseCfg *clientConfig.FUSEConfig
+	// closed and closeErr make Close idempotent: the first call performs
+	// the teardown and records its result; later calls return that result.
+	// This lets suites register a t.Cleanup safety net right after Start
+	// (covering SetupSuite failures, where testify skips TearDownSuite)
+	// without double-stopping the server or re-draining serveErrCh.
+	closed   bool
+	closeErr error
 }
 
 // TestOptions is a type that defines the TestOptions function.
@@ -840,23 +850,42 @@ func (c *AppTestingContext) NewRawClientWithTLS(tlsCfg *tls.Config) (grpcClient.
 	return cl, nil
 }
 
-// MountVolumeErr mounts the test volume and returns any error. Callers
-// that want test-fatal behaviour on error should use MountVolume instead.
-func (c *AppTestingContext) MountVolumeErr(v *TestVolume) error {
-	type result struct{ err error }
-	ch := make(chan result, 1)
-	go func() {
-		ch <- result{err: c.clientCtx.SingleVolumeMounter.Mount(v.Name, v.GetMountPath())}
-	}()
-	r := <-ch
-	return r.err
+// NewRawConn dials a dedicated raw *grpc.ClientConn to the test server,
+// bypassing the grpcClient wrapper entirely: no session handshake, no
+// session-id metadata interceptors, no keepalive recovery loop. Tests that
+// assert the wire-level contract of an RPC service (e.g. SessionService
+// Create/Resume semantics) use this so the client-side machinery cannot mask
+// or auto-repair the behaviour under test. Basic-auth metadata for the given
+// user is attached to every RPC (Create/Resume always require full auth).
+// Only the default bufconn transport is supported. The caller must Close the
+// returned conn.
+func (c *AppTestingContext) NewRawConn(username, password string) (*grpc.ClientConn, error) {
+	if c.listener == nil {
+		return nil, errors.New("NewRawConn supports only the bufconn transport")
+	}
+	tlsCfg := &tls.Config{
+		MinVersion:         tls.VersionTLS13,
+		InsecureSkipVerify: true, //nolint:gosec // intentional for in-process test
+	}
+	conn, err := grpc.NewClient("passthrough://bufnet",
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(grpcClient.NewBasicAuthCredentials(username, password)),
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+			return c.listener.Dial()
+		}),
+	)
+	if err != nil {
+		return nil, errors.Wrap(err, "NewRawConn: dial")
+	}
+	return conn, nil
 }
 
-// MountVolume mounts the test volume and panics on error.
-func (c *AppTestingContext) MountVolume(v *TestVolume) {
-	if err := c.MountVolumeErr(v); err != nil {
-		panic(err)
-	}
+// MountVolumeErr mounts the test volume and returns any error. Callers are
+// expected to fail the test on error (s.Require().NoError / b.Fatalf) so a
+// mount failure never leaves a half-set-up suite running. The call is plainly
+// synchronous: if Mount hangs, the stack trace points straight at it.
+func (c *AppTestingContext) MountVolumeErr(v *TestVolume) error {
+	return c.clientCtx.SingleVolumeMounter.Mount(v.Name, v.GetMountPath())
 }
 
 // UnmountVolume unmounts the test volume.
@@ -931,22 +960,58 @@ func (c *AppTestingContext) RestartServer() error {
 	return c.StartServer()
 }
 
-// Close closes the gRPC server.
+// Close tears down the whole test context: client (unmounts + gRPC conn),
+// server, serve goroutine, proxy, and finally the test volumes' tempdirs.
+//
+// Teardown is best-effort and ordered: a failed client close (e.g. a FUSE
+// unmount error) no longer aborts teardown early — the server is still
+// stopped, the serve goroutine drained, and the proxy closed, so nothing
+// keeps serving/listening for the remainder of the package run. All errors
+// are collected and joined.
+//
+// Close is idempotent: the second and later calls return the first call's
+// result, so suites can register a t.Cleanup safety net right after Start
+// AND call Close from TearDownSuite.
 func (c *AppTestingContext) Close() error {
-	// Close the volumes
-	err := c.clientCtx.Close()
-	if err != nil {
-		return err
+	if c.closed {
+		return c.closeErr
 	}
-	// Close the server
-	c.server.Stop(true)
+	c.closed = true
+
+	var errs []error
+	if err := c.clientCtx.Close(); err != nil {
+		errs = append(errs, errors.Wrap(err, "close client"))
+	}
+	// Stop gracefully only on a clean client close. If the client failed to
+	// close (likeliest: a stuck FUSE unmount), a GracefulStop could block on
+	// that client's still-open streams — hard-stop instead; teardown after a
+	// failure has nothing left to drain politely.
+	c.server.Stop(len(errs) == 0)
 	// Drain the serve goroutine if Start was called.
 	if c.serveErrCh != nil {
 		<-c.serveErrCh
 	}
 	// Shut down the proxy if one was created by WithProxy.
 	if c.proxy != nil {
-		_ = c.proxy.Close()
+		if err := c.proxy.Close(); err != nil {
+			errs = append(errs, errors.Wrap(err, "close proxy"))
+		}
 	}
-	return nil
+	// Remove the volume tempdirs, but only after a clean client+server
+	// teardown: if the unmount failed the mountpoint may still back a live
+	// FUSE mount, and removing it would wedge later suites. Removal itself is
+	// best-effort (squash/static volumes can hold files owned by a foreign
+	// uid that the test user cannot unlink); tempdir residue must not fail an
+	// otherwise-green suite.
+	if len(errs) == 0 {
+		for _, v := range c.volumes {
+			if err := v.Close(); err != nil {
+				log.Log.Warn("test volume cleanup failed",
+					zap.String("volume", v.Name), zap.Error(err))
+			}
+		}
+	}
+
+	c.closeErr = stderrors.Join(errs...)
+	return c.closeErr
 }
