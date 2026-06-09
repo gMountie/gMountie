@@ -314,10 +314,12 @@ func (m *sessionManagerImpl) MarkDisconnected(id string) {
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
+		timer := time.NewTimer(m.grace)
+		defer timer.Stop()
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(m.grace):
+		case <-timer.C:
 			// Only proceed if our reaper entry is still present. If Resume
 			// raced and won the LoadAndDelete, abort without touching the
 			// session.
