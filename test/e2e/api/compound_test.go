@@ -46,8 +46,10 @@ func (s *CompoundE2ESuite) TearDownSuite() {
 // Test100GetAttrInOneRTT pre-creates 100 files server-side, fires a single
 // Compound RPC with 100 GetAttr ops, and asserts: (1) 100 replies; (2) each
 // carries a typed GetAttrReply (no status fallbacks); (3) sizes match what
-// was written; (4) the batch completes well under a generous local-RTT
-// budget.
+// was written. The single-round-trip property is proven structurally (one
+// Compound RPC returned 100 typed replies); elapsed time is logged for
+// context only — latency tracking belongs to the Bencher perf series, never
+// to wall-clock assertions in CI tests.
 func (s *CompoundE2ESuite) Test100GetAttrInOneRTT() {
 	const n = 100
 	const payloadSize = 16
@@ -82,9 +84,7 @@ func (s *CompoundE2ESuite) Test100GetAttrInOneRTT() {
 		s.Require().NotNilf(typed.Attributes, "reply %d missing Attributes", i)
 		s.Equal(uint64(payloadSize), typed.Attributes.Size, "reply %d size mismatch", i)
 	}
-	// Generous budget: 50ms covers VM overhead. Localhost typically lands in
-	// the single-digit-ms range for 100 metadata ops over bufconn.
-	s.Less(elapsed, 50*time.Millisecond, "100-op Compound batch took %v, expected <50ms locally", elapsed)
+	s.T().Logf("100-op Compound batch completed in %v (informational; not asserted)", elapsed)
 }
 
 // TestPerOpErrorReturnsStatus stages two ops: one for an existing file, one
