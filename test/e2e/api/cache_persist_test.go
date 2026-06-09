@@ -58,7 +58,10 @@ func (s *CachePersistentFSSuite) TestRestartReusesCachedChunks() {
 	)
 	s.Require().NoError(err)
 	s.Require().NoError(ctx.Start())
-	ctx.MountVolume(ctx.GetVolumes()[0])
+	// Close is idempotent: the explicit Close below stays authoritative, the
+	// defer only covers a mount/assertion failure before it.
+	defer ctx.Close() //nolint:errcheck
+	s.Require().NoError(ctx.MountVolumeErr(ctx.GetVolumes()[0]))
 	mp := ctx.GetVolumes()[0].GetMountPath()
 
 	payload := make([]byte, 3<<20) // 3 MiB — spans multiple 1 MiB chunks
@@ -80,8 +83,8 @@ func (s *CachePersistentFSSuite) TestRestartReusesCachedChunks() {
 	)
 	s.Require().NoError(err)
 	s.Require().NoError(ctx2.Start())
-	ctx2.MountVolume(ctx2.GetVolumes()[0])
 	defer ctx2.Close() //nolint:errcheck
+	s.Require().NoError(ctx2.MountVolumeErr(ctx2.GetVolumes()[0]))
 
 	mp2 := ctx2.GetVolumes()[0].GetMountPath()
 	got2, err := os.ReadFile(filepath.Join(mp2, "p.bin"))
@@ -104,7 +107,7 @@ func (s *CachePersistentFSSuite) TestSecondMountFailsWithLockedCache() {
 	s.Require().NoError(err)
 	s.Require().NoError(ctx.Start())
 	defer ctx.Close() //nolint:errcheck
-	ctx.MountVolume(ctx.GetVolumes()[0])
+	s.Require().NoError(ctx.MountVolumeErr(ctx.GetVolumes()[0]))
 
 	ctx2, err := utils.NewAppTestingContext(
 		utils.WithBasicAuth("test", "test"),
@@ -154,7 +157,7 @@ func (s *CachePersistentFSSuite) TestDiskCapHoldsUnderManyReads() {
 	s.Require().NoError(err)
 	s.Require().NoError(ctx.Start())
 	defer ctx.Close() //nolint:errcheck
-	ctx.MountVolume(ctx.GetVolumes()[0])
+	s.Require().NoError(ctx.MountVolumeErr(ctx.GetVolumes()[0]))
 	mp := ctx.GetVolumes()[0].GetMountPath()
 
 	// Two large files: 120 MiB + 80 MiB = 200 MiB total, well over the
@@ -218,7 +221,10 @@ func (s *CachePersistentFSSuite) TestWriteThenRestartReadReturnsNewBytes() {
 	)
 	s.Require().NoError(err)
 	s.Require().NoError(ctx.Start())
-	ctx.MountVolume(ctx.GetVolumes()[0])
+	// Close is idempotent: the explicit Close below stays authoritative, the
+	// defer only covers a mount/assertion failure before it.
+	defer ctx.Close() //nolint:errcheck
+	s.Require().NoError(ctx.MountVolumeErr(ctx.GetVolumes()[0]))
 	mp := ctx.GetVolumes()[0].GetMountPath()
 	path := filepath.Join(mp, "modify.bin")
 
@@ -256,8 +262,8 @@ func (s *CachePersistentFSSuite) TestWriteThenRestartReadReturnsNewBytes() {
 	)
 	s.Require().NoError(err)
 	s.Require().NoError(ctx2.Start())
-	ctx2.MountVolume(ctx2.GetVolumes()[0])
 	defer ctx2.Close() //nolint:errcheck
+	s.Require().NoError(ctx2.MountVolumeErr(ctx2.GetVolumes()[0]))
 
 	mp2 := ctx2.GetVolumes()[0].GetMountPath()
 	got2, err := os.ReadFile(filepath.Join(mp2, "modify.bin"))

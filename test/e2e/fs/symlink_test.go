@@ -29,9 +29,12 @@ func (s *SymlinkFSTestSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.Require().NoError(testAppCtx.Start())
 	s.testAppCtx = testAppCtx
+	// Safety net: a failed Require below skips TearDownSuite; Close is
+	// idempotent, so this coexists with TearDownSuite's Close.
+	s.T().Cleanup(func() { _ = testAppCtx.Close() })
 	s.volume = s.testAppCtx.GetVolumes()[0]
 	s.Require().NotNil(s.volume)
-	s.testAppCtx.MountVolume(s.volume)
+	s.Require().NoError(s.testAppCtx.MountVolumeErr(s.volume))
 }
 
 func (s *SymlinkFSTestSuite) TearDownSuite() {

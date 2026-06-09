@@ -32,8 +32,11 @@ func (s *StreamingReadE2ESuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.Require().NoError(ctx.Start())
 	s.testAppCtx = ctx
+	// Safety net: a failed Require below skips TearDownSuite; Close is
+	// idempotent, so this coexists with TearDownSuite's Close.
+	s.T().Cleanup(func() { _ = ctx.Close() })
 	s.volume = ctx.GetVolumes()[0]
-	ctx.MountVolume(s.volume)
+	s.Require().NoError(ctx.MountVolumeErr(s.volume))
 }
 
 func (s *StreamingReadE2ESuite) TearDownSuite() {
@@ -111,8 +114,11 @@ func (s *StreamingWriteE2ESuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.Require().NoError(ctx.Start())
 	s.testAppCtx = ctx
+	// Safety net: a failed Require below skips TearDownSuite; Close is
+	// idempotent, so this coexists with TearDownSuite's Close.
+	s.T().Cleanup(func() { _ = ctx.Close() })
 	s.volume = ctx.GetVolumes()[0]
-	ctx.MountVolume(s.volume)
+	s.Require().NoError(ctx.MountVolumeErr(s.volume))
 }
 
 func (s *StreamingWriteE2ESuite) TearDownSuite() {
@@ -171,13 +177,18 @@ func (s *StreamingWriteE2ESuite) TestWrite16MiB() {
 	s.Require().Equal(want, gotDigest, "payload mismatch server-side")
 }
 
-// TestBidirectional1GiB is the Phase 3 DoD bidirectional test: write a large
-// random file via mount tracking SHA-256, then read it back via mount and
-// confirm the hash. The plan calls for 4 GiB but the kubevirt VM has only
-// 3.8 GiB RAM; 1 GiB exercises the streaming path comfortably without an
-// OOM-killer risk. Task 7 of the Phase 3 plan revisits sizing.
-func (s *StreamingWriteE2ESuite) TestBidirectional1GiB() {
-	const size = 1 << 30
+// TestBidirectionalLargeRoundTrip is the Phase 3 DoD bidirectional test:
+// write a large random file via mount tracking SHA-256, then read it back via
+// mount and confirm the hash. CI runs a 128 MiB payload — plenty to exercise
+// the streaming frame path many times over while staying inside the CI test
+// budget. The full 1 GiB variant (the original Phase 3 sizing, capped from
+// 4 GiB for the kubevirt VM's 3.8 GiB RAM) runs only under
+// GMOUNTIE_E2E_LARGEFILE=1, the same gate as the fs LargeFileSuite.
+func (s *StreamingWriteE2ESuite) TestBidirectionalLargeRoundTrip() {
+	size := int64(128 << 20) // CI default
+	if os.Getenv("GMOUNTIE_E2E_LARGEFILE") == "1" {
+		size = 1 << 30
+	}
 	mountPath := filepath.Join(s.volume.GetMountPath(), "bidir.bin")
 	want := s.writeFromReader(mountPath, rand.Reader, size)
 
@@ -187,7 +198,7 @@ func (s *StreamingWriteE2ESuite) TestBidirectional1GiB() {
 	h := sha256.New()
 	n, err := io.CopyBuffer(h, f, make([]byte, 256<<10))
 	s.Require().NoError(err)
-	s.Require().Equal(int64(size), n, "short read-back through FUSE mount")
+	s.Require().Equal(size, n, "short read-back through FUSE mount")
 	var got [sha256.Size]byte
 	copy(got[:], h.Sum(nil))
 	s.Require().Equal(want, got, "read-back hash mismatch")
@@ -227,8 +238,11 @@ func (s *WriteCoalesceE2ESuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.Require().NoError(ctx.Start())
 	s.testAppCtx = ctx
+	// Safety net: a failed Require below skips TearDownSuite; Close is
+	// idempotent, so this coexists with TearDownSuite's Close.
+	s.T().Cleanup(func() { _ = ctx.Close() })
 	s.volume = ctx.GetVolumes()[0]
-	ctx.MountVolume(s.volume)
+	s.Require().NoError(ctx.MountVolumeErr(s.volume))
 }
 
 func (s *WriteCoalesceE2ESuite) TearDownSuite() {

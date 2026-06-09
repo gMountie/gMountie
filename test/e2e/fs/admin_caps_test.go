@@ -118,11 +118,14 @@ func (s *AdminCapsSuite) buildContext(
 	)
 	s.Require().NoError(err)
 	s.Require().NoError(ctx.Start())
+	// Safety net: a failed Require below skips TearDownSuite; Close is
+	// idempotent, so this coexists with the suite's own teardown.
+	s.T().Cleanup(func() { _ = ctx.Close() })
 
 	vols := ctx.GetVolumes()
 	s.Require().Len(vols, 1, "expected exactly one volume in context for %q", user)
 	vol := vols[0]
-	ctx.MountVolume(vol)
+	s.Require().NoError(ctx.MountVolumeErr(vol))
 	return ctx, vol
 }
 

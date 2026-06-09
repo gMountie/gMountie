@@ -42,8 +42,11 @@ func (s *CacheEnabledFSSuite) SetupSuite() {
 	)
 	s.Require().NoError(err)
 	s.Require().NoError(ctx.Start())
-	ctx.MountVolume(ctx.GetVolumes()[0])
 	s.ctx = ctx
+	// Safety net: a failed Require below skips TearDownSuite; Close is
+	// idempotent, so this coexists with TearDownSuite's Close.
+	s.T().Cleanup(func() { _ = ctx.Close() })
+	s.Require().NoError(ctx.MountVolumeErr(ctx.GetVolumes()[0]))
 }
 
 func (s *CacheEnabledFSSuite) TearDownSuite() {
@@ -188,31 +191,41 @@ func TestCacheEnabledFSSuite(t *testing.T) {
 	suite.Run(t, new(CacheEnabledFSSuite))
 }
 
-// TestCacheDisabledFSSanity is a no-cache control that uses the same
-// fixture pattern without WithCache. Confirms the cache-on suite isn't
-// masking a base failure shared with cache-off.
-func TestCacheDisabledFSSanity(t *testing.T) {
+// CacheDisabledFSSuite is a no-cache control that uses the same fixture
+// pattern without WithCache. Confirms the cache-on suite isn't masking a
+// base failure shared with cache-off.
+type CacheDisabledFSSuite struct {
+	suite.Suite
+	ctx *utils.AppTestingContext
+}
+
+func (s *CacheDisabledFSSuite) SetupSuite() {
 	ctx, err := utils.NewAppTestingContext(
 		utils.WithBasicAuth("test", "test"),
 		utils.WithRandomTestVolume(false),
 	)
-	if err != nil {
-		t.Fatal(err)
+	s.Require().NoError(err)
+	s.Require().NoError(ctx.Start())
+	s.ctx = ctx
+	// Safety net: a failed Require below skips TearDownSuite; Close is
+	// idempotent, so this coexists with TearDownSuite's Close.
+	s.T().Cleanup(func() { _ = ctx.Close() })
+	s.Require().NoError(ctx.MountVolumeErr(ctx.GetVolumes()[0]))
+}
+
+func (s *CacheDisabledFSSuite) TearDownSuite() {
+	if s.ctx != nil {
+		_ = s.ctx.Close()
 	}
-	if err := ctx.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = ctx.Close() }()
-	ctx.MountVolume(ctx.GetVolumes()[0])
-	mp := ctx.GetVolumes()[0].GetMountPath()
+}
+
+func (s *CacheDisabledFSSuite) TestSanityWriteReadRename() {
+	mp := s.ctx.GetVolumes()[0].GetMountPath()
 	path := filepath.Join(mp, fmt.Sprintf("sanity-%d.bin", time.Now().UnixNano()))
-	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	s.Require().NoError(os.WriteFile(path, []byte("x"), 0o644))
 	got, err := os.ReadFile(path)
-	if err != nil || string(got) != "x" {
-		t.Fatalf("sanity: %v / %q", err, got)
-	}
+	s.Require().NoError(err)
+	s.Require().Equal("x", string(got))
 
 	// Rename round-trip: the underlying node-adapter relPath bug
 	// reproduces with the cache disabled, so this guard belongs in the
@@ -221,13 +234,13 @@ func TestCacheDisabledFSSanity(t *testing.T) {
 	a := filepath.Join(mp, fmt.Sprintf("rn-a-%d.bin", time.Now().UnixNano()))
 	b := filepath.Join(mp, fmt.Sprintf("rn-b-%d.bin", time.Now().UnixNano()))
 	body := []byte("rename-body-nocache")
-	if err := os.WriteFile(a, body, 0o644); err != nil {
-		t.Fatalf("write a: %v", err)
-	}
-	if err := os.Rename(a, b); err != nil {
-		t.Fatalf("rename a->b: %v", err)
-	}
-	if got, err := os.ReadFile(b); err != nil || string(got) != string(body) {
-		t.Fatalf("read b after rename: %v / %q", err, got)
-	}
+	s.Require().NoError(os.WriteFile(a, body, 0o644))
+	s.Require().NoError(os.Rename(a, b))
+	gotB, err := os.ReadFile(b)
+	s.Require().NoError(err, "read b after rename")
+	s.Require().Equal(body, gotB, "rename must preserve content")
+}
+
+func TestCacheDisabledFSSuite(t *testing.T) {
+	suite.Run(t, new(CacheDisabledFSSuite))
 }

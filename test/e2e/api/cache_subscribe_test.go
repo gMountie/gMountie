@@ -93,7 +93,7 @@ func (s *CacheSubscribeFSSuite) TestPushInvalidatesAcrossClients() {
 	s.Require().NoError(err)
 	s.Require().NoError(ctx.Start())
 	defer ctx.Close() //nolint:errcheck
-	ctx.MountVolume(ctx.GetVolumes()[0])
+	s.Require().NoError(ctx.MountVolumeErr(ctx.GetVolumes()[0]))
 	mpA := ctx.GetVolumes()[0].GetMountPath()
 
 	// Seed the file through Client A.
@@ -157,7 +157,10 @@ func (s *CacheSubscribeFSSuite) TestRestartRevalidatesAfterMutation() {
 	)
 	s.Require().NoError(err)
 	s.Require().NoError(ctx.Start())
-	ctx.MountVolume(ctx.GetVolumes()[0])
+	// Close is idempotent: the explicit Close below stays authoritative, the
+	// defer only covers a mount/assertion failure before it.
+	defer ctx.Close() //nolint:errcheck
+	s.Require().NoError(ctx.MountVolumeErr(ctx.GetVolumes()[0]))
 	mp := ctx.GetVolumes()[0].GetMountPath()
 
 	v1 := []byte("v1-original-bytes")
@@ -187,8 +190,8 @@ func (s *CacheSubscribeFSSuite) TestRestartRevalidatesAfterMutation() {
 	)
 	s.Require().NoError(err)
 	s.Require().NoError(ctx2.Start())
-	ctx2.MountVolume(ctx2.GetVolumes()[0])
 	defer ctx2.Close() //nolint:errcheck
+	s.Require().NoError(ctx2.MountVolumeErr(ctx2.GetVolumes()[0]))
 
 	mp2 := ctx2.GetVolumes()[0].GetMountPath()
 	got2, err := os.ReadFile(filepath.Join(mp2, "rv.txt"))
@@ -221,7 +224,10 @@ func (s *CacheSubscribeFSSuite) TestDeletedWhileOfflineSurfacesENOENT() {
 	)
 	s.Require().NoError(err)
 	s.Require().NoError(ctx.Start())
-	ctx.MountVolume(ctx.GetVolumes()[0])
+	// Close is idempotent: the explicit Close below stays authoritative, the
+	// defer only covers a mount/assertion failure before it.
+	defer ctx.Close() //nolint:errcheck
+	s.Require().NoError(ctx.MountVolumeErr(ctx.GetVolumes()[0]))
 	mp := ctx.GetVolumes()[0].GetMountPath()
 
 	s.Require().NoError(os.WriteFile(filepath.Join(mp, "gone.txt"), []byte("present"), 0o644))
@@ -242,8 +248,8 @@ func (s *CacheSubscribeFSSuite) TestDeletedWhileOfflineSurfacesENOENT() {
 	)
 	s.Require().NoError(err)
 	s.Require().NoError(ctx2.Start())
-	ctx2.MountVolume(ctx2.GetVolumes()[0])
 	defer ctx2.Close() //nolint:errcheck
+	s.Require().NoError(ctx2.MountVolumeErr(ctx2.GetVolumes()[0]))
 
 	mp2 := ctx2.GetVolumes()[0].GetMountPath()
 	_, err = os.Stat(filepath.Join(mp2, "gone.txt"))
@@ -289,7 +295,7 @@ func (s *CacheSubscribeFSSuite) TestSubscribeDisabledFallsBackToTTL() {
 	s.Require().NoError(err)
 	s.Require().NoError(ctx.Start())
 	defer ctx.Close() //nolint:errcheck
-	ctx.MountVolume(ctx.GetVolumes()[0])
+	s.Require().NoError(ctx.MountVolumeErr(ctx.GetVolumes()[0]))
 	mp := ctx.GetVolumes()[0].GetMountPath()
 
 	// Write a file through the mount so it's registered in the cache.

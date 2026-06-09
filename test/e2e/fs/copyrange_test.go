@@ -30,9 +30,12 @@ func (s *CopyRangeE2ESuite) SetupSuite() {
 	s.Require().NoError(err)
 	utils.Must0(s.T(), ctx.Start())
 	s.testAppCtx = ctx
+	// Safety net: a failed Require below skips TearDownSuite; Close is
+	// idempotent, so this coexists with TearDownSuite's Close.
+	s.T().Cleanup(func() { _ = ctx.Close() })
 	s.volume = ctx.GetVolumes()[0]
 	s.Require().NotNil(s.volume)
-	ctx.MountVolume(s.volume)
+	s.Require().NoError(ctx.MountVolumeErr(s.volume))
 }
 
 func (s *CopyRangeE2ESuite) TearDownSuite() {

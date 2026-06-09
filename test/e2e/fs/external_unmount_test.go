@@ -29,9 +29,12 @@ func (s *ExternalUnmountTestSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.Require().NoError(appCtx.Start())
 	s.appCtx = appCtx
+	// Safety net: a failed Require below skips TearDownSuite; Close is
+	// idempotent, so this coexists with TearDownSuite's Close.
+	s.T().Cleanup(func() { _ = appCtx.Close() })
 	s.volume = appCtx.GetVolumes()[0]
 	s.Require().NotNil(s.volume)
-	s.appCtx.MountVolume(s.volume)
+	s.Require().NoError(s.appCtx.MountVolumeErr(s.volume))
 }
 
 func (s *ExternalUnmountTestSuite) TearDownSuite() {
