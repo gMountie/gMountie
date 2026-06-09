@@ -43,14 +43,12 @@ jobs:
         fi
         sha="${{ github.sha }}"
         echo "looking for a successful CI run for $sha"
-        # gh run list filters by workflow + branch; we filter by sha
-        # in jq because gh's --commit flag is gated behind a newer
-        # version on some runners.
-        conclusion="$(gh run list \
-          --workflow ci.yml \
-          --json headSha,conclusion,status \
-          --limit 50 \
-          --jq "[.[] | select(.headSha==\"$sha\") | select(.status==\"completed\")][0].conclusion")"
+        # Exact server-side lookup by head_sha on the CI workflow's runs —
+        # unlike `gh run list --limit N`, this cannot miss the run when
+        # the commit has scrolled past the most recent N runs.
+        conclusion="$(gh api \
+          "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=$sha&status=completed&per_page=100" \
+          --jq '.workflow_runs[0].conclusion')"
         if [ "$conclusion" != "success" ]; then
           echo "::error::no successful CI run found for $sha (got: '$conclusion')"
           echo "Run the CI workflow on this commit and wait for it to pass before releasing."
@@ -86,10 +84,11 @@ jobs:
         username: ${{github.actor}}
         password: ${{secrets.GITHUB_TOKEN}}
 
-    - name: Install dependencies
-      run: |
-        go install github.com/go-task/task/v3/cmd/task
-        go install github.com/caarlos0/svu@latest
+    - name: Install svu
+      # Pinned: svu computes the release tag, so an unpinned @latest on
+      # this path could silently change tagging behavior (v2/v3 renamed
+      # flags). v1 is what @latest resolved to here.
+      run: go install github.com/caarlos0/svu@v1.12.0
 
     - name: Tag Release (Production)
       if: ${{  github.event.inputs.type == 'production' }}
