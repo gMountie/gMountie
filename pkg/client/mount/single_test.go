@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -69,6 +70,7 @@ func (s *SingleVolumeMounterTestSuite) SetupTest() {
 	s.client.EXPECT().MetaTimeout().Return(2 * time.Second).Maybe()
 	s.client.EXPECT().IOTimeout().Return(30 * time.Second).Maybe()
 	s.client.EXPECT().SessionID().Return("test-session").Maybe()
+	s.client.EXPECT().Lifetime().Return(context.Background()).Maybe()
 	// WhoAmI is called once per Mount when raw_ids=false. We allow it to fail
 	// (degrade path) so existing tests keep passing without extra per-test setup.
 	s.client.EXPECT().WhoAmI(mock.Anything, mock.Anything).

@@ -642,6 +642,13 @@ Run: `go test ./pkg/client/io/ -v`
 Expected: PASS (reads now go through `retryOp`; the shim still covers any
 not-yet-migrated mutation/fd sites).
 
+> **Un-skip note (Task 4 deferred coverage):** Task 4 made `retryableCall` a
+> single-attempt shim and `s.T().Skip(...)`-guarded the call-site retry tests
+> that asserted multi-attempt behaviour. As this task routes the read sites
+> through `retryOp`, remove the `s.T().Skip(...)` line from
+> `TestStat_RetriesOnUnavailable` (and any other now-migrated read-site retry
+> test) in `backend_grpc_test.go` and confirm it goes green.
+
 - [ ] **Step 3: Commit**
 
 ```bash
@@ -708,6 +715,11 @@ arg). Example for `Mkdir`:
 Run: `go test ./pkg/client/io/ -v`
 Expected: PASS.
 
+> **Un-skip note (Task 4 deferred coverage):** remove the `s.T().Skip(...)` line
+> from `TestMkdir_RetryReusesRequestID` (the path-mutation request-id-reuse
+> invariant) in `backend_grpc_test.go` now that `mutatePath` routes through
+> `retryOp`, and confirm it goes green.
+
 - [ ] **Step 4: Commit**
 
 ```bash
@@ -772,6 +784,15 @@ should show no remaining references). Remove dead imports.
 
 Run: `go test ./pkg/client/io/... -v`
 Expected: PASS, package compiles with no `retryableCall` references.
+
+> **Un-skip note (Task 4 deferred coverage):** remove the remaining
+> `s.T().Skip(...)` lines from the fd-op retry tests in `backend_grpc_test.go`
+> (`TestRead_RetriesOnUnavailable`, `TestWrite_RetriesOnUnavailable`,
+> `TestWrite_RetryReusesRequestID`, `TestFlush_RetriesOnUnavailable`,
+> `TestFsync_RetriesOnUnavailable`, `TestLseek_RetryReusesResult`) now that
+> these call sites route through `retryOp`, and confirm each goes green. No
+> `*_RetriesOnUnavailable` / `*RetryReuses*` test should remain skipped after
+> this task.
 
 - [ ] **Step 4: Lint**
 
