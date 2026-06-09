@@ -63,8 +63,37 @@ type SubscribeStreamSuite struct {
 	suite.Suite
 }
 
+// newSignallingBus builds a bus whose OnSubscribe hook signals registration,
+// plus a wait func tests call to deterministically join the Subscribe
+// goroutine's registration instead of sleeping (TEST-7).
+func (s *SubscribeStreamSuite) newSignallingBus() (serverio.EventBus, func()) {
+	registered := make(chan struct{}, 4)
+	bus := serverio.NewLocalEventBus(serverio.EventBusOptions{
+		BufferSize:  16,
+		OnSubscribe: func(string) { registered <- struct{}{} },
+	})
+	wait := func() {
+		select {
+		case <-registered:
+		case <-time.After(2 * time.Second):
+			s.FailNow("Subscribe stream never registered with the bus")
+		}
+	}
+	return bus, wait
+}
+
+// joinSubscribe cancels the stream ctx and joins the Subscribe goroutine.
+func (s *SubscribeStreamSuite) joinSubscribe(cancel context.CancelFunc, done <-chan error) {
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		s.FailNow("Subscribe didn't return after cancel")
+	}
+}
+
 func (s *SubscribeStreamSuite) TestEmittedEventsReachStream() {
-	bus := serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
+	bus, waitRegistered := s.newSignallingBus()
 	defer bus.Close()
 	srv := newRpcServerWithBus(s.T(), bus)
 
@@ -74,28 +103,22 @@ func (s *SubscribeStreamSuite) TestEmittedEventsReachStream() {
 	done := make(chan error, 1)
 	go func() { done <- srv.Subscribe(&proto.SubscribeRequest{Volume: "vol-test"}, stream) }()
 
-	// Wait a tick to ensure the subscriber is registered before we Emit.
-	time.Sleep(50 * time.Millisecond)
+	waitRegistered() // deterministic: the subscriber IS registered before Emit
 	bus.Emit("vol-test", "p1", 42, serverio.KindMutated)
-	time.Sleep(100 * time.Millisecond)
-	cancel()
-	<-done
 
-	// Snapshot sent under the stub's internal lock.
-	stream.mu <- struct{}{}
-	defer func() { <-stream.mu }()
-	s.Require().GreaterOrEqual(len(stream.sent), 1)
-	found := false
-	for _, ev := range stream.sent {
-		if ev.Path == "p1" && ev.Kind == proto.SubscribeEvent_MUTATED && ev.NewVersion == 42 {
-			found = true
+	s.Require().Eventually(func() bool {
+		for _, ev := range snapshotSent(stream) {
+			if ev.Path == "p1" && ev.Kind == proto.SubscribeEvent_MUTATED && ev.NewVersion == 42 {
+				return true
+			}
 		}
-	}
-	s.Assert().True(found, "stream did not see the emitted event")
+		return false
+	}, 2*time.Second, 5*time.Millisecond, "stream did not see the emitted event")
+	s.joinSubscribe(cancel, done)
 }
 
 func (s *SubscribeStreamSuite) TestCtxCancelTearsDownStream() {
-	bus := serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
+	bus, waitRegistered := s.newSignallingBus()
 	defer bus.Close()
 	srv := newRpcServerWithBus(s.T(), bus)
 
@@ -104,7 +127,7 @@ func (s *SubscribeStreamSuite) TestCtxCancelTearsDownStream() {
 
 	done := make(chan error, 1)
 	go func() { done <- srv.Subscribe(&proto.SubscribeRequest{Volume: "v"}, stream) }()
-	time.Sleep(50 * time.Millisecond)
+	waitRegistered()
 	cancel()
 	select {
 	case err := <-done:
@@ -130,19 +153,6 @@ func newRpcServerWithAccessFilter(t *testing.T, bus serverio.EventBus, allowedPa
 	return NewGrpcServer(fsService, sessionMgr, 0, bus, nil)
 }
 
-// drainAndCancel emits, waits a tick for events to flow, then cancels and
-// joins the Subscribe goroutine. Centralizes the per-test boilerplate.
-func drainAndCancel(t *testing.T, cancel context.CancelFunc, done <-chan error) {
-	t.Helper()
-	time.Sleep(100 * time.Millisecond)
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("Subscribe didn't return after cancel")
-	}
-}
-
 // snapshotSent returns the events the stub received without racing the
 // Subscribe goroutine still in flight.
 func snapshotSent(stream *stubSubscribeStream) []*proto.SubscribeEvent {
@@ -154,7 +164,7 @@ func snapshotSent(stream *stubSubscribeStream) []*proto.SubscribeEvent {
 }
 
 func (s *SubscribeStreamSuite) TestDeniedPathIsFiltered() {
-	bus := serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
+	bus, waitRegistered := s.newSignallingBus()
 	defer bus.Close()
 	srv := newRpcServerWithAccessFilter(s.T(), bus, map[string]bool{"/public": true})
 
@@ -162,28 +172,32 @@ func (s *SubscribeStreamSuite) TestDeniedPathIsFiltered() {
 	stream := newStubSubscribeStream(ctx)
 	done := make(chan error, 1)
 	go func() { done <- srv.Subscribe(&proto.SubscribeRequest{Volume: "vol-test"}, stream) }()
-	time.Sleep(50 * time.Millisecond)
+	waitRegistered()
 
+	// /secret first, /public second: per-subscriber channel ordering means
+	// that once /public is observed, /secret has definitely been processed
+	// (and filtered) — no fixed drain needed.
 	bus.Emit("vol-test", "/secret", 1, serverio.KindMutated)
 	bus.Emit("vol-test", "/public", 2, serverio.KindMutated)
-	drainAndCancel(s.T(), cancel, done)
 
-	sent := snapshotSent(stream)
-	for _, ev := range sent {
+	s.Require().Eventually(func() bool {
+		for _, ev := range snapshotSent(stream) {
+			if ev.Path == "/public" {
+				return true
+			}
+		}
+		return false
+	}, 2*time.Second, 5*time.Millisecond, "allowed-path event must reach subscriber")
+
+	for _, ev := range snapshotSent(stream) {
 		s.NotEqual("/secret", ev.Path, "denied-path event must not reach subscriber")
 	}
-	publicSeen := false
-	for _, ev := range sent {
-		if ev.Path == "/public" {
-			publicSeen = true
-		}
-	}
-	s.True(publicSeen, "allowed-path event must reach subscriber")
+	s.joinSubscribe(cancel, done)
 }
 
 func (s *SubscribeStreamSuite) TestHeartbeatBypassesFilter() {
 	// Heartbeats carry no path; the filter must always forward them.
-	bus := serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
+	bus, waitRegistered := s.newSignallingBus()
 	defer bus.Close()
 	srv := newRpcServerWithAccessFilter(s.T(), bus, map[string]bool{}) // nothing allowed
 
@@ -191,25 +205,26 @@ func (s *SubscribeStreamSuite) TestHeartbeatBypassesFilter() {
 	stream := newStubSubscribeStream(ctx)
 	done := make(chan error, 1)
 	go func() { done <- srv.Subscribe(&proto.SubscribeRequest{Volume: "vol-test"}, stream) }()
-	time.Sleep(50 * time.Millisecond)
+	waitRegistered()
 
 	bus.Emit("vol-test", "", 0, serverio.KindHeartbeat)
-	drainAndCancel(s.T(), cancel, done)
 
-	sent := snapshotSent(stream)
-	heartbeatSeen := false
-	for _, ev := range sent {
-		if ev.Kind == proto.SubscribeEvent_HEARTBEAT {
-			heartbeatSeen = true
+	s.Require().Eventually(func() bool {
+		for _, ev := range snapshotSent(stream) {
+			if ev.Kind == proto.SubscribeEvent_HEARTBEAT {
+				return true
+			}
 		}
-	}
-	s.True(heartbeatSeen, "heartbeat must always reach subscriber even when no paths are allowed")
+		return false
+	}, 2*time.Second, 5*time.Millisecond,
+		"heartbeat must always reach subscriber even when no paths are allowed")
+	s.joinSubscribe(cancel, done)
 }
 
 func (s *SubscribeStreamSuite) TestRenameRequiresBothPathsAccessible() {
 	// A rename where the subscriber can see only one side reveals that a
 	// rename happened between two paths it shouldn't know about. Skip.
-	bus := serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
+	bus, waitRegistered := s.newSignallingBus()
 	defer bus.Close()
 	srv := newRpcServerWithAccessFilter(s.T(), bus, map[string]bool{"/visible": true})
 
@@ -217,17 +232,29 @@ func (s *SubscribeStreamSuite) TestRenameRequiresBothPathsAccessible() {
 	stream := newStubSubscribeStream(ctx)
 	done := make(chan error, 1)
 	go func() { done <- srv.Subscribe(&proto.SubscribeRequest{Volume: "vol-test"}, stream) }()
-	time.Sleep(50 * time.Millisecond)
+	waitRegistered()
 
-	// Half-visible rename: only the new path is allowed.
+	// Half-visible rename: only the new path is allowed. The trailing
+	// heartbeat is a sentinel — heartbeats always pass the filter and the
+	// per-subscriber channel preserves order, so once it arrives the rename
+	// has definitely been processed (and filtered).
 	bus.EmitRename("vol-test", "/hidden", "/visible", 1)
-	drainAndCancel(s.T(), cancel, done)
+	bus.Emit("vol-test", "", 0, serverio.KindHeartbeat)
 
-	sent := snapshotSent(stream)
-	for _, ev := range sent {
+	s.Require().Eventually(func() bool {
+		for _, ev := range snapshotSent(stream) {
+			if ev.Kind == proto.SubscribeEvent_HEARTBEAT {
+				return true
+			}
+		}
+		return false
+	}, 2*time.Second, 5*time.Millisecond, "sentinel heartbeat never arrived")
+
+	for _, ev := range snapshotSent(stream) {
 		s.NotEqual(proto.SubscribeEvent_RENAMED, ev.Kind,
 			"rename with one inaccessible side must be filtered, not leaked")
 	}
+	s.joinSubscribe(cancel, done)
 }
 
 func TestSubscribeStreamSuite(t *testing.T) { suite.Run(t, new(SubscribeStreamSuite)) }
