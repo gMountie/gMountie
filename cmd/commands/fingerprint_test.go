@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	clientconfig "go.gmountie.dev/gmountie/pkg/client/config"
+	commontls "go.gmountie.dev/gmountie/pkg/common/tls"
 	servertls "go.gmountie.dev/gmountie/pkg/server/tls"
 
 	"github.com/adrg/xdg"
@@ -56,7 +57,7 @@ func (s *FingerprintCmdSuite) writeCert(host string) (certPath string, fingerpri
 	dir := s.T().TempDir()
 	certPath = filepath.Join(dir, "server.crt")
 	s.Require().NoError(os.WriteFile(certPath, certPEM, 0o644))
-	fp, err := servertls.Fingerprint(certPEM)
+	fp, err := commontls.Fingerprint(certPEM)
 	s.Require().NoError(err)
 	return certPath, fp
 }

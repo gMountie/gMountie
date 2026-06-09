@@ -3,6 +3,7 @@ package utils
 import (
 	"crypto/tls"
 
+	commontls "go.gmountie.dev/gmountie/pkg/common/tls"
 	servertls "go.gmountie.dev/gmountie/pkg/server/tls"
 )
 
@@ -23,7 +24,7 @@ func NewEphemeralTLS(host string) (*EphemeralTLS, error) {
 	if err != nil {
 		return nil, err
 	}
-	fp, err := servertls.Fingerprint(certPEM)
+	fp, err := commontls.Fingerprint(certPEM)
 	if err != nil {
 		return nil, err
 	}

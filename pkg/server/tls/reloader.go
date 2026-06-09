@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	commontls "go.gmountie.dev/gmountie/pkg/common/tls"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 	"go.uber.org/zap"
 )
@@ -64,7 +65,7 @@ func NewReloader(certPath, keyPath string) (*Reloader, error) {
 	if err != nil {
 		return nil, err
 	}
-	fp, err := Fingerprint(certPEM)
+	fp, err := commontls.Fingerprint(certPEM)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +113,7 @@ func (r *Reloader) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error
 		r.warnOnce("server cert changed on disk but reload failed; serving previous cert", err)
 		return r.current.Load(), nil
 	}
-	fp, err := Fingerprint(certPEM)
+	fp, err := commontls.Fingerprint(certPEM)
 	if err != nil {
 		r.warnOnce("server cert changed on disk but reload failed; serving previous cert", err)
 		return r.current.Load(), nil

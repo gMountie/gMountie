@@ -1,24 +1,24 @@
 // Package tls owns the server-side certificate lifecycle: generating a
-// self-signed ECDSA P-256 cert on first startup (SSH host-key pattern),
-// loading an existing cert from disk, and computing the SSH-style SHA-256
-// fingerprint used in client config and the `gmountie fingerprint` CLI.
+// self-signed ECDSA P-256 cert on first startup (SSH host-key pattern) and
+// loading an existing cert from disk. The SSH-style SHA-256 fingerprint
+// shared with the client lives in pkg/common/tls.
 package tls
 
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"math/big"
 	"net"
 	"os"
 	"time"
+
+	commontls "go.gmountie.dev/gmountie/pkg/common/tls"
 )
 
 // Generate creates a fresh self-signed ECDSA P-256 certificate for host.
@@ -104,7 +104,7 @@ func LoadOrGenerate(certPath, keyPath, host string) (tls.Certificate, []byte, st
 	// Fast path: both files already exist.
 	cert, certPEM, err := Load(certPath, keyPath)
 	if err == nil {
-		fp, fpErr := Fingerprint(certPEM)
+		fp, fpErr := commontls.Fingerprint(certPEM)
 		if fpErr != nil {
 			return tls.Certificate{}, nil, "", fpErr
 		}
@@ -129,7 +129,7 @@ func LoadOrGenerate(certPath, keyPath, host string) (tls.Certificate, []byte, st
 			if loadErr != nil {
 				return tls.Certificate{}, nil, "", loadErr
 			}
-			fp, fpErr := Fingerprint(certPEM)
+			fp, fpErr := commontls.Fingerprint(certPEM)
 			if fpErr != nil {
 				return tls.Certificate{}, nil, "", fpErr
 			}
@@ -157,7 +157,7 @@ func LoadOrGenerate(certPath, keyPath, host string) (tls.Certificate, []byte, st
 		return tls.Certificate{}, nil, "", err
 	}
 
-	fp, err := Fingerprint(certPEM)
+	fp, err := commontls.Fingerprint(certPEM)
 	if err != nil {
 		return tls.Certificate{}, nil, "", err
 	}
@@ -170,22 +170,4 @@ func LoadOrGenerate(certPath, keyPath, host string) (tls.Certificate, []byte, st
 // also requiring the private key on disk.
 func LoadCertOnly(certPath string) ([]byte, error) {
 	return os.ReadFile(certPath)
-}
-
-// Fingerprint returns the SSH-style SHA-256 fingerprint of a PEM-encoded
-// certificate: "SHA256:<base64-raw-no-padding>".
-//
-// This matches the output of:
-//
-//	openssl x509 -in cert.pem -outform DER | openssl dgst -sha256 -binary | base64
-//
-// (minus the trailing "=" padding and the "SHA256:" prefix that openssl
-// does not print).
-func Fingerprint(certPEM []byte) (string, error) {
-	block, _ := pem.Decode(certPEM)
-	if block == nil {
-		return "", errors.New("tls: no PEM block found in cert data")
-	}
-	sum := sha256.Sum256(block.Bytes)
-	return "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:]), nil
 }

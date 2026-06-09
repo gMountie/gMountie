@@ -6,8 +6,8 @@ import (
 	"net"
 
 	grpc2 "go.gmountie.dev/gmountie/pkg/common/grpc"
-	"go.gmountie.dev/gmountie/pkg/server/config"
 	_ "go.gmountie.dev/gmountie/pkg/common/grpc/snappy" // Installing the snappy encoding as an available compressor.
+	"go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/server/service"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 

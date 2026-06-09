@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	commontls "go.gmountie.dev/gmountie/pkg/common/tls"
 	servertls "go.gmountie.dev/gmountie/pkg/server/tls"
 
 	"github.com/stretchr/testify/suite"
@@ -53,7 +54,7 @@ func (s *VerifyTestSuite) SetupSuite() {
 	s.Require().NotNil(block)
 	s.certDER = block.Bytes
 
-	fp, err := servertls.Fingerprint(certPEM)
+	fp, err := commontls.Fingerprint(certPEM)
 	s.Require().NoError(err)
 	s.certFP = fp
 
