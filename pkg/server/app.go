@@ -139,6 +139,7 @@ func newOpsServer(cfg *config.Config, appCtx *AppContext) (*ops.Server, error) {
 		ops.NewBasicAuth(cfg.Server.Ops.Auth.Users),
 		cfg,
 		appCtx.VolumeService,
+		appCtx.AuthService,
 		appCtx.SessionManager,
 		appCtx.Revocation,
 	)

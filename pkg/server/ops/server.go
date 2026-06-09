@@ -42,6 +42,7 @@ func NewServer(
 	auth *BasicAuth,
 	reloadCfg *config.Config,
 	vs service.VolumeService,
+	as service.AuthService,
 	sm service.SessionManager,
 	rs *service.RevocationStore,
 ) *Server {
@@ -50,8 +51,8 @@ func NewServer(
 	mux.Handle("/healthz", LivenessHandler())
 	mux.Handle("/readyz", ReadinessHandler(readiness))
 	mux.Handle("/version", VersionHandler())
-	if reloadCfg != nil && vs != nil && sm != nil && rs != nil {
-		mux.Handle("/ops/acl/reload", ReloadHandler(reloadCfg, vs, sm, rs))
+	if reloadCfg != nil && vs != nil && as != nil && sm != nil && rs != nil {
+		mux.Handle("/ops/acl/reload", ReloadHandler(reloadCfg, vs, as, sm, rs))
 	}
 	if enablePprof {
 		// net/http/pprof registers on DefaultServeMux on import; we use a

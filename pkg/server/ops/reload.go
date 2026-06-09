@@ -23,10 +23,11 @@ type ReloadResponse struct {
 }
 
 // ReloadHandler handles POST /ops/acl/reload. It re-reads the config file,
-// validates it, atomically swaps the ACL + cert-serial blocklist, then reaps
-// sessions that the new state revokes. A bad config returns 400 and changes
-// nothing (fail-safe). Only auth state is hot-reloaded.
-func ReloadHandler(cfg *config.Config, vs service.VolumeService, sm service.SessionManager, rs *service.RevocationStore) http.Handler {
+// validates it, atomically swaps the ACL + basic-auth credential map +
+// cert-serial blocklist, then reaps sessions that the new state revokes. A
+// bad config returns 400 and changes nothing (fail-safe). Only auth state is
+// hot-reloaded.
+func ReloadHandler(cfg *config.Config, vs service.VolumeService, as service.AuthService, sm service.SessionManager, rs *service.RevocationStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -43,8 +44,11 @@ func ReloadHandler(cfg *config.Config, vs service.VolumeService, sm service.Sess
 			return
 		}
 
-		// Swap auth state.
+		// Swap auth state: ACL, credential map, and serial blocklist together —
+		// a user deleted from config must stop authenticating, not only lose
+		// volume grants.
 		vs.ReloadAuth(newCfg)
+		as.ReloadUsers(newCfg.Auth)
 		rs.Set(revokedSerials(newCfg))
 
 		// Warn about the revoke-by-deletion footgun: under default_allow=true a

@@ -57,7 +57,7 @@ func writeOpsCertKeyCA(t *testing.T, dir string) (certFile, keyFile, caFile stri
 }
 
 func (s *ServerTestSuite) TestPprofDisabledByDefault() {
-	srv := NewServer(":0", stubReadiness{}, false, nil, nil, nil, nil, nil)
+	srv := NewServer(":0", stubReadiness{}, false, nil, nil, nil, nil, nil, nil)
 	for _, path := range []string{"/debug/pprof/", "/debug/pprof/cmdline"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rr := httptest.NewRecorder()
@@ -68,7 +68,7 @@ func (s *ServerTestSuite) TestPprofDisabledByDefault() {
 }
 
 func (s *ServerTestSuite) TestPprofEnabledServesIndex() {
-	srv := NewServer(":0", stubReadiness{}, true, nil, nil, nil, nil, nil)
+	srv := NewServer(":0", stubReadiness{}, true, nil, nil, nil, nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
 	rr := httptest.NewRecorder()
 	muxOf(srv).ServeHTTP(rr, req)
@@ -79,7 +79,7 @@ func (s *ServerTestSuite) TestPprofEnabledServesIndex() {
 }
 
 func (s *ServerTestSuite) TestPprofEnabledLeavesCoreRoutesIntact() {
-	srv := NewServer(":0", stubReadiness{}, true, nil, nil, nil, nil, nil)
+	srv := NewServer(":0", stubReadiness{}, true, nil, nil, nil, nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rr := httptest.NewRecorder()
 	muxOf(srv).ServeHTTP(rr, req)

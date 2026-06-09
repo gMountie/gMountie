@@ -93,9 +93,9 @@ func reapedCount(s *ReloadSuite, rec *httptest.ResponseRecorder) int {
 func (s *ReloadSuite) TestReloadEchoesLoadedSerials() {
 	dir := s.T().TempDir()
 	path := s.writeConfig(dir, reloadCfgRevoked) // blocks serial "dead"
-	vs, sm, rs, cfg := s.deps(path)
+	vs, as, sm, rs, cfg := s.deps(path)
 
-	h := ReloadHandler(cfg, vs, sm, rs)
+	h := ReloadHandler(cfg, vs, as, sm, rs)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/ops/acl/reload", nil))
 
@@ -105,25 +105,26 @@ func (s *ReloadSuite) TestReloadEchoesLoadedSerials() {
 	s.Contains(body.RevokedSerials, "dead") // canonical lowercase hex, echoed
 }
 
-func (s *ReloadSuite) deps(path string) (service.VolumeService, service.SessionManager, *service.RevocationStore, *config.Config) {
+func (s *ReloadSuite) deps(path string) (service.VolumeService, service.AuthService, service.SessionManager, *service.RevocationStore, *config.Config) {
 	cfg, err := config.ReloadFromFile(path)
 	s.Require().NoError(err)
 	vs, err := service.NewVolumeService(cfg)
 	s.Require().NoError(err)
-	return vs, service.NewSessionManager(service.SessionManagerOptions{}), service.NewRevocationStore(), cfg
+	as := service.NewAuthServiceFromConfig(cfg.Auth)
+	return vs, as, service.NewSessionManager(service.SessionManagerOptions{}), service.NewRevocationStore(), cfg
 }
 
 func (s *ReloadSuite) TestReloadAppliesAndReaps() {
 	dir := s.T().TempDir()
 	path := s.writeConfig(dir, reloadCfgGranted)
-	vs, sm, rs, cfg := s.deps(path)
+	vs, as, sm, rs, cfg := s.deps(path)
 	// alice has an open session on the revoked device.
 	id, _ := sm.Create("alice", "dead")
 
 	// Operator rewrites the file to revoke alice's volume + block the serial.
 	s.Require().NoError(os.WriteFile(path, []byte(reloadCfgRevoked), 0o600))
 
-	h := ReloadHandler(cfg, vs, sm, rs)
+	h := ReloadHandler(cfg, vs, as, sm, rs)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/ops/acl/reload", nil))
 
@@ -139,14 +140,14 @@ func (s *ReloadSuite) TestReloadAppliesAndReaps() {
 func (s *ReloadSuite) TestReloadReapsByACLRevocationKeepsRetained() {
 	dir := s.T().TempDir()
 	path := s.writeConfig(dir, reloadCfgTwoUsers)
-	vs, sm, rs, cfg := s.deps(path)
+	vs, as, sm, rs, cfg := s.deps(path)
 	aliceID, _ := sm.Create("alice", "alicecert") // serial NOT blocked
 	bobID, _ := sm.Create("bob", "bobcert")
 
 	// alice loses her volume; bob keeps his; no serial is blocked.
 	s.Require().NoError(os.WriteFile(path, []byte(reloadCfgAliceRevokedByACL), 0o600))
 
-	h := ReloadHandler(cfg, vs, sm, rs)
+	h := ReloadHandler(cfg, vs, as, sm, rs)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/ops/acl/reload", nil))
 
@@ -162,7 +163,7 @@ func (s *ReloadSuite) TestReloadReapsByACLRevocationKeepsRetained() {
 func (s *ReloadSuite) TestReloadBadConfigKeepsState() {
 	dir := s.T().TempDir()
 	path := s.writeConfig(dir, reloadCfgGranted)
-	vs, sm, rs, cfg := s.deps(path)
+	vs, as, sm, rs, cfg := s.deps(path)
 
 	// Establish non-trivial prior state the fail-safe must preserve ("beef" is
 	// valid hex, so it survives normalization into the blocklist).
@@ -172,7 +173,7 @@ func (s *ReloadSuite) TestReloadBadConfigKeepsState() {
 	// Corrupt the file: invalid auth type fails validation.
 	s.Require().NoError(os.WriteFile(path, []byte("auth:\n  type: bogus\n"), 0o600))
 
-	h := ReloadHandler(cfg, vs, sm, rs)
+	h := ReloadHandler(cfg, vs, as, sm, rs)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/ops/acl/reload", nil))
 
@@ -185,8 +186,8 @@ func (s *ReloadSuite) TestReloadBadConfigKeepsState() {
 func (s *ReloadSuite) TestReloadRejectsGET() {
 	dir := s.T().TempDir()
 	path := s.writeConfig(dir, reloadCfgGranted)
-	vs, sm, rs, cfg := s.deps(path)
-	h := ReloadHandler(cfg, vs, sm, rs)
+	vs, as, sm, rs, cfg := s.deps(path)
+	h := ReloadHandler(cfg, vs, as, sm, rs)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ops/acl/reload", nil))
 	s.Equal(http.StatusMethodNotAllowed, rec.Code)
