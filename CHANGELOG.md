@@ -4,10 +4,18 @@ All notable changes to gMountie. Format is loosely based on [Keep a Changelog](h
 
 ## Unreleased
 
+### Fixes
+
+- **fd reap race eliminated.** A grace-expiry reap, revocation, or `Release` RPC could call `File.Release()` while a `Read`/`Write`/`CopyFileRange` handler was mid-`pread`/`pwrite` on the same fd — `EBADF` at best, fd-number reuse reading the wrong file at worst. `FileEntry` now carries an atomic refcount: the fd table holds one ref, each in-flight op holds one, and the underlying file closes only when the last ref drops. Removing an entry from the table is still immediate (so the open-files metric and the fd slot are freed promptly); only the `os.File.Close` is deferred.
 - **`WaitForReady` on streaming Read/Write.** A server restart or transient network drop no longer burns the retry window: the stream-open call parks and waits for the connection to come back instead of returning `Unavailable` immediately.
 - **Bounded `Connect()` during mount.** Session establishment in `gmountie mount` is now capped at 3× the metadata timeout; a half-open or unresponsive server at connect time can no longer hang the process indefinitely.
 - **Per-call timeout on session recovery.** Each reattach attempt inside the reconnect loop runs its `Resume`/`Create` calls under a shared 5 s budget; a TCP-reachable but unresponsive server can no longer stall the recovery path for the full retry window.
 - **Parent-directory attr invalidation on mutations.** Remote mutation events (`MUTATED`/`DELETED`/`RENAMED`) and local `unlink`/`rmdir`/`rename` ops now eagerly invalidate the parent directory's cached attributes, fixing stale mtime (up to the 5 min attr TTL) that broke mtime-sensitive tools like `make` and `rsync`.
+
+### Improvements
+
+- **`server.session.idempotency_cache_size` config knob; default raised 256 → 4096.** With kernel writeback the client keeps up to 64 `WRITE`s in flight per session, each retried with a stable `request_id`. At the old size the LRU could evict an in-flight entry and cause the retry to re-execute the write. 4096 entries ≈ 400 KiB/session; raise further when sustained per-session `WRITE` concurrency approaches a few thousand. Set via `server.session.idempotency_cache_size` (env `GMOUNTIE_SERVER_SESSION_IDEMPOTENCY_CACHE_SIZE`); `0` or unset delegates to the default.
+- **`volumePeekStream` per-frame mutex fast-path.** Once a streaming RPC's volume is pinned, the per-`RecvMsg` mutex acquisition is skipped for the rest of the stream — no lock contention on the hot read path after the first frame.
 
 ---
 
