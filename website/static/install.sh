@@ -112,7 +112,7 @@ resolve_version() {
     printf '%s' "$GMOUNTIE_VERSION"
     return 0
   fi
-  _eff=$(http_effective_url "$GH/$REPO/releases/latest")
+  _eff=$(http_effective_url "$GH/$REPO/releases/latest") || die "could not reach GitHub releases"
   if _tag=$(tag_from_latest_url "$_eff"); then
     printf '%s' "$_tag"
     return 0
@@ -146,13 +146,19 @@ main() {
   printf 'install: gmountie %s (%s/%s)\n' "$tag" "$os" "$arch" >&2
 
   base="$GH/$REPO/releases/download/$tag"
-  checksums=$(http_body "$base/checksums.txt") || die "failed to fetch checksums.txt"
-  archive=$(pick_archive "$checksums" "$os" "$arch") \
-    || die "no $os/$arch archive in this release"
-  want=$(sha_for "$checksums" "$archive") || die "no checksum for $archive"
 
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT
+
+  http_body "$base/checksums.txt" > "$tmp/checksums.txt" || die "failed to fetch checksums.txt"
+  checksums=$(cat "$tmp/checksums.txt")
+  archive=$(pick_archive "$checksums" "$os" "$arch") \
+    || die "no $os/$arch archive in this release"
+  case "$archive" in
+    */* | *..*) die "suspicious archive name in checksums.txt: $archive" ;;
+  esac
+  want=$(sha_for "$checksums" "$archive") || die "no checksum for $archive"
+
   http_body "$base/$archive" > "$tmp/$archive" || die "download failed"
 
   got=$(sha256_of "$tmp/$archive")
@@ -161,11 +167,9 @@ main() {
   if have cosign; then
     if http_body "$base/checksums.txt.pem" > "$tmp/checksums.txt.pem" 2>/dev/null \
        && http_body "$base/checksums.txt.sig" > "$tmp/checksums.txt.sig" 2>/dev/null; then
-      printf '%s' "$checksums" > "$tmp/checksums.txt"
-      # Pin the issuer to GitHub Actions' OIDC and scope the signer identity to
-      # this repo, so a valid signature from some *other* Fulcio identity is not
-      # accepted. (Permissive on workflow file / ref to avoid brittleness across
-      # release-workflow renames; tighten to release.yml@refs/tags/$tag later.)
+      # $tmp/checksums.txt already holds the exact signed bytes — do NOT rewrite it.
+      # Pin the issuer to GitHub Actions' OIDC and scope the signer identity to this
+      # repo, so a valid signature from some other Fulcio identity is not accepted.
       cosign verify-blob \
         --certificate "$tmp/checksums.txt.pem" \
         --signature "$tmp/checksums.txt.sig" \
@@ -174,6 +178,8 @@ main() {
         "$tmp/checksums.txt" >/dev/null 2>&1 \
         || die "cosign signature verification failed"
       printf 'install: cosign signature verified\n' >&2
+    else
+      printf 'install: warning: cosign present but signature files not found; skipping signature verification\n' >&2
     fi
   else
     printf 'install: cosign not found; skipping signature verification (checksum verified)\n' >&2
