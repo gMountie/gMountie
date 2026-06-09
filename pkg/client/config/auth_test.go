@@ -3,7 +3,7 @@ package config
 import (
 	"testing"
 
-	serverConfig "go.gmountie.dev/gmountie/pkg/server/config"
+	commonconfig "go.gmountie.dev/gmountie/pkg/common/config"
 
 	"github.com/stretchr/testify/suite"
 )
@@ -36,7 +36,7 @@ auth:
 `
 	result, err := LoadConfigFromString(conf)
 	s.Require().NoError(err)
-	s.Assert().Equal(serverConfig.AuthConfigTypeBasic, result.Auth.GetType())
+	s.Assert().Equal(commonconfig.AuthConfigTypeBasic, result.Auth.GetType())
 
 	basicAuth, ok := result.Auth.(*BasicAuthConfig)
 	s.Require().True(ok)
@@ -59,7 +59,7 @@ auth:
 	result, err := LoadConfigFromString(conf)
 	s.Require().NoError(err)
 	s.Require().NotNil(result.Auth)
-	s.Assert().Equal(serverConfig.AuthConfigTypeMTLS, result.Auth.GetType())
+	s.Assert().Equal(commonconfig.AuthConfigTypeMTLS, result.Auth.GetType())
 	// mtls auth must NOT be a BasicAuthConfig, so the grpc factory skips
 	// attaching per-RPC basic-auth credentials.
 	_, ok := result.Auth.(*BasicAuthConfig)
@@ -134,7 +134,7 @@ func (s *AuthConfigTestSuite) TestGetType() {
 			Password: "test",
 		},
 	}
-	s.Assert().Equal(serverConfig.AuthConfigTypeBasic, basicAuth.GetType())
+	s.Assert().Equal(commonconfig.AuthConfigTypeBasic, basicAuth.GetType())
 }
 
 // Test integration with the main config parser
@@ -152,7 +152,7 @@ auth:
 	s.Require().NoError(err)
 	s.Assert().NotNil(result.Server)
 	s.Assert().NotNil(result.Auth)
-	s.Assert().Equal(serverConfig.AuthConfigTypeBasic, result.Auth.GetType())
+	s.Assert().Equal(commonconfig.AuthConfigTypeBasic, result.Auth.GetType())
 }
 
 var minimalServerConfig = `

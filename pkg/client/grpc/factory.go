@@ -9,8 +9,8 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/config"
 	"go.gmountie.dev/gmountie/pkg/client/metrics"
 	clienttls "go.gmountie.dev/gmountie/pkg/client/tls"
+	commonconfig "go.gmountie.dev/gmountie/pkg/common/config"
 	"go.gmountie.dev/gmountie/pkg/common/grpc/snappy"
-	serverconfig "go.gmountie.dev/gmountie/pkg/server/config"
 
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
@@ -107,7 +107,7 @@ func newUnconnectedClient(cfg *config.Config, endpoint string) (Client, error) {
 	// transport client certificate (built into tlsCfg above from
 	// cfg.Server.TLS.Cert/Key) is the identity — the server's mtls auth reads
 	// the cert CN — so no basic-auth credential metadata is sent.
-	if c, ok := authConfig.(*config.BasicAuthConfig); ok && authConfig.GetType() == serverconfig.AuthConfigTypeBasic {
+	if c, ok := authConfig.(*config.BasicAuthConfig); ok && authConfig.GetType() == commonconfig.AuthConfigTypeBasic {
 		opts = append(opts, WithBasicAuth(c.Username, c.Password))
 	}
 

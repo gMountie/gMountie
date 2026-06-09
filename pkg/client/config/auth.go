@@ -3,7 +3,7 @@ package config
 import (
 	"fmt"
 
-	serverConfig "go.gmountie.dev/gmountie/pkg/server/config"
+	commonconfig "go.gmountie.dev/gmountie/pkg/common/config"
 
 	"github.com/spf13/viper"
 )
@@ -29,12 +29,12 @@ type BasicAuthConfigUser struct {
 
 // BasicAuthConfig is a struct that holds the configuration for the basic auth user
 type BasicAuthConfig struct {
-	Type                serverConfig.AuthConfigType `validate:"required"`
+	Type                commonconfig.AuthConfigType `validate:"required"`
 	BasicAuthConfigUser `yaml:",inline"`
 }
 
-func (b BasicAuthConfig) GetType() serverConfig.AuthConfigType {
-	return serverConfig.AuthConfigTypeBasic
+func (b BasicAuthConfig) GetType() commonconfig.AuthConfigType {
+	return commonconfig.AuthConfigTypeBasic
 }
 
 // NewBasicAuthConfig creates a new BasicAuthConfig with defaults
@@ -45,24 +45,24 @@ func NewBasicAuthConfig(v *viper.Viper) (*BasicAuthConfig, error) {
 	}
 
 	return &BasicAuthConfig{
-		Type:                serverConfig.AuthConfigTypeBasic,
+		Type:                commonconfig.AuthConfigTypeBasic,
 		BasicAuthConfigUser: user,
 	}, nil
 }
 
 // NewAuthFromConfig creates a new AuthConfig from a viper config
-func NewAuthFromConfig(v *viper.Viper) (serverConfig.AuthConfig, error) {
-	var auth serverConfig.AuthConfig
+func NewAuthFromConfig(v *viper.Viper) (commonconfig.AuthConfig, error) {
+	var auth commonconfig.AuthConfig
 	var err error
 	switch v.GetString("type") {
-	case string(serverConfig.AuthConfigTypeBasic):
+	case string(commonconfig.AuthConfigTypeBasic):
 		auth, err = NewBasicAuthConfig(v)
-	case string(serverConfig.AuthConfigTypeMTLS):
+	case string(commonconfig.AuthConfigTypeMTLS):
 		// mTLS needs no username/password: the verified client certificate is
 		// the identity. AuthConfigBase satisfies the AuthConfig interface and
 		// carries no required fields, so the validator passes. The grpc factory
 		// skips per-RPC basic-auth for any non-BasicAuthConfig auth.
-		auth = &serverConfig.AuthConfigBase{Type: serverConfig.AuthConfigTypeMTLS}
+		auth = &commonconfig.AuthConfigBase{Type: commonconfig.AuthConfigTypeMTLS}
 	default:
 		return nil, fmt.Errorf("invalid auth type: %q (only 'basic' and 'mtls' are supported)", v.GetString("type"))
 	}

@@ -14,6 +14,7 @@ import (
 	clientConfig "go.gmountie.dev/gmountie/pkg/client/config"
 	grpcClient "go.gmountie.dev/gmountie/pkg/client/grpc"
 	clienttls "go.gmountie.dev/gmountie/pkg/client/tls"
+	commonconfig "go.gmountie.dev/gmountie/pkg/common/config"
 	"go.gmountie.dev/gmountie/pkg/common/passhash"
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/server"
@@ -116,7 +117,7 @@ func WithBasicAuth(username, password string) TestOptions {
 		// Set the server basic auth. AuthConfigBase.Type must be set
 		// explicitly so NewAuthServiceFromConfig selects the basic-auth branch.
 		c.cfg.Auth = &config.BasicAuthConfig{
-			AuthConfigBase: config.AuthConfigBase{Type: config.AuthConfigTypeBasic},
+			AuthConfigBase: commonconfig.AuthConfigBase{Type: commonconfig.AuthConfigTypeBasic},
 			Users: []config.BasicAuthConfigUser{
 				{
 					Username: username, PasswordHash: h,
@@ -268,7 +269,7 @@ func WithACLUsers(users ...ACLUser) TestOptions {
 	return func(c *AppTestingContext) {
 		f := false
 		bac := &config.BasicAuthConfig{
-			AuthConfigBase: config.AuthConfigBase{Type: config.AuthConfigTypeBasic},
+			AuthConfigBase: commonconfig.AuthConfigBase{Type: commonconfig.AuthConfigTypeBasic},
 			DefaultAllow:   &f,
 		}
 		for _, u := range users {
@@ -309,7 +310,7 @@ func WithMTLS(ca *TestCA, primaryPrincipal string, users ...ACLUser) TestOptions
 		// Build auth config (mtls-typed; no password hashes).
 		f := false
 		bac := &config.BasicAuthConfig{
-			AuthConfigBase: config.AuthConfigBase{Type: config.AuthConfigTypeMTLS},
+			AuthConfigBase: commonconfig.AuthConfigBase{Type: commonconfig.AuthConfigTypeMTLS},
 			DefaultAllow:   &f,
 		}
 		for _, u := range users {

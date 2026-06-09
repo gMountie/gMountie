@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
+	commonconfig "go.gmountie.dev/gmountie/pkg/common/config"
 	"go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/server/service"
 )
@@ -33,7 +34,7 @@ func TestMTLSAuthSuite(t *testing.T) {
 
 func (s *MTLSAuthSuite) SetupTest() {
 	s.svc = service.NewAuthServiceFromConfig(&config.BasicAuthConfig{
-		AuthConfigBase: config.AuthConfigBase{Type: config.AuthConfigTypeMTLS},
+		AuthConfigBase: commonconfig.AuthConfigBase{Type: commonconfig.AuthConfigTypeMTLS},
 	})
 }
 

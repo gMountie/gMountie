@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 
+	commonconfig "go.gmountie.dev/gmountie/pkg/common/config"
 	"go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/server/principal"
 
@@ -19,7 +20,7 @@ func TestACLSuite(t *testing.T) { suite.Run(t, new(ACLSuite)) }
 
 // buildService constructs a VolumeService with two volumes (photos, team) and
 // the given auth config. Volumes use TempDirs so the loopback constructs cleanly.
-func buildService(t *testing.T, auth config.AuthConfig) *VolumeServiceImpl {
+func buildService(t *testing.T, auth commonconfig.AuthConfig) *VolumeServiceImpl {
 	t.Helper()
 	cfg := &config.Config{
 		Volumes: []*config.VolumeConfig{
@@ -52,7 +53,7 @@ func ctxFor(name string) context.Context {
 // default_allow setting.
 func authWithUsers(defaultAllow *bool, users ...config.BasicAuthConfigUser) *config.BasicAuthConfig {
 	return &config.BasicAuthConfig{
-		AuthConfigBase: config.AuthConfigBase{Type: config.AuthConfigTypeBasic},
+		AuthConfigBase: commonconfig.AuthConfigBase{Type: commonconfig.AuthConfigTypeBasic},
 		Users:          users,
 		DefaultAllow:   defaultAllow,
 	}

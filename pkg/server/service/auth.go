@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 
 	"go.gmountie.dev/gmountie/pkg/common"
+	commonconfig "go.gmountie.dev/gmountie/pkg/common/config"
 	"go.gmountie.dev/gmountie/pkg/common/passhash"
 	"go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
@@ -33,15 +34,15 @@ type AuthService interface {
 	// the ACL and the revocation list hot-reloaded, leaving stale basic-auth
 	// credentials valid. No-op for auth modes without server-held credentials
 	// (mtls authenticates by client certificate).
-	ReloadUsers(cfg config.AuthConfig)
+	ReloadUsers(cfg commonconfig.AuthConfig)
 }
 
 // --------------------------- Factory ---------------------------
 
 // NewAuthServiceFromConfig creates a new AuthService from the config
-func NewAuthServiceFromConfig(cfg config.AuthConfig) AuthService {
+func NewAuthServiceFromConfig(cfg commonconfig.AuthConfig) AuthService {
 	switch cfg.GetType() {
-	case config.AuthConfigTypeBasic:
+	case commonconfig.AuthConfigTypeBasic:
 		// Create users map
 		// Switch case AuthConfigTypeBasic guarantees cfg is *BasicAuthConfig.
 		authConfig, _ := cfg.(*config.BasicAuthConfig)
@@ -51,7 +52,7 @@ func NewAuthServiceFromConfig(cfg config.AuthConfig) AuthService {
 		}
 		log.Log.Info("basic authentication is enabled")
 		return NewBasicAuthService(users)
-	case config.AuthConfigTypeMTLS:
+	case commonconfig.AuthConfigTypeMTLS:
 		log.Log.Info("mTLS authentication is enabled — principal from verified client certificate")
 		return &mtlsAuthService{}
 	default:
@@ -75,7 +76,7 @@ func (denyAllAuthService) Authorize(_ context.Context, _ string) (*UserDetails, 
 	return nil, status.Errorf(codes.Unauthenticated, "authentication is not configured")
 }
 
-func (denyAllAuthService) ReloadUsers(config.AuthConfig) {}
+func (denyAllAuthService) ReloadUsers(commonconfig.AuthConfig) {}
 
 // ----------- BasicAuthService -----------
 
@@ -97,7 +98,7 @@ func NewBasicAuthService(users map[string]string) *BasicAuthService {
 // ReloadUsers rebuilds and atomically swaps the credential map from cfg.
 // A cfg that is not a *BasicAuthConfig is ignored (the auth TYPE cannot be
 // hot-swapped; only the user set can).
-func (a *BasicAuthService) ReloadUsers(cfg config.AuthConfig) {
+func (a *BasicAuthService) ReloadUsers(cfg commonconfig.AuthConfig) {
 	bac, ok := cfg.(*config.BasicAuthConfig)
 	if !ok {
 		return
@@ -151,7 +152,7 @@ type mtlsAuthService struct{}
 // ReloadUsers is a no-op: mTLS holds no server-side credential map — identity
 // comes from the verified client certificate; revocation is the serial
 // blocklist, which has its own reload path.
-func (mtlsAuthService) ReloadUsers(config.AuthConfig) {}
+func (mtlsAuthService) ReloadUsers(commonconfig.AuthConfig) {}
 
 func (mtlsAuthService) Authorize(ctx context.Context, _ string) (*UserDetails, error) {
 	p, ok := peer.FromContext(ctx)

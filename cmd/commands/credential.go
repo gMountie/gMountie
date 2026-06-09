@@ -8,7 +8,7 @@ import (
 	"os"
 
 	"go.gmountie.dev/gmountie/pkg/client/credentials"
-	serverconfig "go.gmountie.dev/gmountie/pkg/server/config"
+	commonconfig "go.gmountie.dev/gmountie/pkg/common/config"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -50,7 +50,7 @@ func applyCredential(v *viper.Viper, cred *credentials.Credentials) error {
 	if !v.IsSet("server.tls.verify") {
 		v.Set("server.tls.verify", "verify")
 	}
-	v.Set("auth.type", string(serverconfig.AuthConfigTypeMTLS))
+	v.Set("auth.type", string(commonconfig.AuthConfigTypeMTLS))
 	return nil
 }
 

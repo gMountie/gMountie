@@ -18,6 +18,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/credentials"
 
+	commonconfig "go.gmountie.dev/gmountie/pkg/common/config"
 	"go.gmountie.dev/gmountie/pkg/common/passhash"
 	"go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/server/controller"
@@ -97,7 +98,7 @@ func revokedSerialsFromConfig(cfg *config.Config) []string {
 	// a separate concrete type, returning nil here would start the server with
 	// an empty blocklist — a silent fail-OPEN on restart. Surface it loudly so
 	// it can't pass unnoticed. (Today mtls is *BasicAuthConfig, so unreachable.)
-	if cfg.Auth != nil && cfg.Auth.GetType() == config.AuthConfigTypeMTLS {
+	if cfg.Auth != nil && cfg.Auth.GetType() == commonconfig.AuthConfigTypeMTLS {
 		log.Log.Error("revokedSerialsFromConfig: mTLS auth config is not *BasicAuthConfig; " +
 			"cert-serial blocklist will be EMPTY (fail-open on restart) — wire the new type here")
 	}
@@ -198,7 +199,7 @@ func Start(ctx context.Context, cfg *config.Config) error {
 			GetCertificate: reloader.GetCertificate,
 		}
 		// mTLS: require + verify client certificates against the configured CA.
-		if cfg.Auth.GetType() == config.AuthConfigTypeMTLS {
+		if cfg.Auth.GetType() == commonconfig.AuthConfigTypeMTLS {
 			if cfg.Server.TLS.ClientCAFile == "" {
 				return errors.New("auth.type: mtls requires server.tls.client_ca_file")
 			}
@@ -223,7 +224,7 @@ func Start(ctx context.Context, cfg *config.Config) error {
 			zap.String("cert_path", certPath),
 			zap.String("fingerprint", fp))
 	} else {
-		if cfg.Auth.GetType() == config.AuthConfigTypeMTLS {
+		if cfg.Auth.GetType() == commonconfig.AuthConfigTypeMTLS {
 			return errors.New("auth.type: mtls is incompatible with server.tls.disabled")
 		}
 		if !isLoopback(bind) {

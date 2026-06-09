@@ -1,7 +1,7 @@
 package config
 
 import (
-	"go.gmountie.dev/gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/common/config"
 
 	"github.com/spf13/viper"
 )
