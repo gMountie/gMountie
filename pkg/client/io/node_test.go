@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// NodeAdapterTestSuite exercises the gMountieRoot / gMountieNode /
+// NodeAdapterTestSuite exercises the gMountieNode (root and descendants) /
 // gMountieFile adapters with a mocked FileSystemBackend. The heavy
 // semantic tests live in backend_grpc_test.go; this suite only verifies
 // the delegation shape (path computation, type translation, errno

@@ -2,14 +2,13 @@
 // Each adapter method is intentionally thin: translate path/types,
 // delegate to the backend, and translate fuse.Status to syscall.Errno.
 //
-// Two node types exist: gMountieRoot is the mount point root, gMountieNode
-// is every descendant. Both share a FileSystemBackend (set at
-// construction). Paths are computed on demand via Inode.Path(nil) rather
-// than cached on the struct — go-fuse mutates the inode tree under us
-// (Rename's MvChild, hardlinks) and a cached path would go stale, sending
-// subsequent ops to the old name on the server. Mirrors the
-// LoopbackNode.relativePath() pattern in go-fuse's reference adapter.
-// Shared logic lives in helper functions (lookupAt/openAt/createAt/etc.).
+// A single node type serves both the mount root and every descendant —
+// go-fuse's Inode.Path(nil) already returns "" for the root inode, so no
+// dedicated root type is needed (mirrors go-fuse's own LoopbackNode). All
+// nodes share a FileSystemBackend (set at construction). Paths are computed
+// on demand via Inode.Path(nil) rather than cached on the struct — go-fuse
+// mutates the inode tree under us (Rename's MvChild, hardlinks) and a cached
+// path would go stale, sending subsequent ops to the old name on the server.
 package io
 
 import (
@@ -23,9 +22,11 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
-// gMountieRoot is the root inode of a gMountie mount. Holds the
-// FileSystemBackend that every descendant inode delegates to.
-type gMountieRoot struct {
+// gMountieNode is an inode of a gMountie mount (root and descendants alike).
+// Its path relative to the mount root is derived on demand from the inode
+// tree's current position (see path()); never cache it. backend and rewriter
+// are shared across the whole tree (copied at construction time).
+type gMountieNode struct {
 	fs.Inode
 
 	backend  FileSystemBackend
@@ -37,18 +38,7 @@ type gMountieRoot struct {
 // passthrough (raw_ids mounts or when WhoAmI returned no identity).
 // Mount code passes the returned value to fs.Mount.
 func NewMountieRoot(backend FileSystemBackend, rewriter *IDRewriter) fs.InodeEmbedder {
-	return &gMountieRoot{backend: backend, rewriter: rewriter}
-}
-
-// gMountieNode is a non-root inode. Its path relative to the mount root
-// is derived on demand from the inode tree's current position (see
-// path()); never cache it. backend and rewriter are shared with the root
-// (copied at construction time, matching the backend propagation pattern).
-type gMountieNode struct {
-	fs.Inode
-
-	backend  FileSystemBackend
-	rewriter *IDRewriter
+	return &gMountieNode{backend: backend, rewriter: rewriter}
 }
 
 // path returns the inode's path relative to the mount root, with no
@@ -57,6 +47,17 @@ type gMountieNode struct {
 // path is "".
 func (n *gMountieNode) path() string {
 	return n.Path(nil)
+}
+
+// newChild attaches a child inode sharing this node's backend/rewriter.
+func (n *gMountieNode) newChild(ctx context.Context, a *Attr) *fs.Inode {
+	return n.NewInode(ctx, &gMountieNode{
+		backend:  n.backend,
+		rewriter: n.rewriter,
+	}, fs.StableAttr{
+		Mode: a.Mode,
+		Ino:  a.Ino,
+	})
 }
 
 // gMountieFile is the open-file adapter satisfying fs.FileReader,
@@ -70,23 +71,6 @@ type gMountieFile struct {
 // the go-fuse interfaces it claims to. If a signature drifts upstream,
 // the build breaks here, not at mount-time.
 var (
-	_ fs.NodeLookuper      = (*gMountieRoot)(nil)
-	_ fs.NodeReaddirer     = (*gMountieRoot)(nil)
-	_ fs.NodeStatfser      = (*gMountieRoot)(nil)
-	_ fs.NodeGetattrer     = (*gMountieRoot)(nil)
-	_ fs.NodeSetattrer     = (*gMountieRoot)(nil)
-	_ fs.NodeOpener        = (*gMountieRoot)(nil)
-	_ fs.NodeCreater       = (*gMountieRoot)(nil)
-	_ fs.NodeMkdirer       = (*gMountieRoot)(nil)
-	_ fs.NodeRmdirer       = (*gMountieRoot)(nil)
-	_ fs.NodeUnlinker      = (*gMountieRoot)(nil)
-	_ fs.NodeRenamer       = (*gMountieRoot)(nil)
-	_ fs.NodeAccesser      = (*gMountieRoot)(nil)
-	_ fs.NodeGetxattrer    = (*gMountieRoot)(nil)
-	_ fs.NodeSetxattrer    = (*gMountieRoot)(nil)
-	_ fs.NodeRemovexattrer = (*gMountieRoot)(nil)
-	_ fs.NodeListxattrer   = (*gMountieRoot)(nil)
-
 	_ fs.NodeLookuper       = (*gMountieNode)(nil)
 	_ fs.NodeReaddirer      = (*gMountieNode)(nil)
 	_ fs.NodeStatfser       = (*gMountieNode)(nil)
@@ -151,42 +135,19 @@ func childPath(parent, name string) string {
 
 // --- Lookup ---
 
-func (r *gMountieRoot) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	return lookupAt(ctx, &r.Inode, r.backend, r.rewriter, "", name, out)
-}
-
 func (n *gMountieNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	return lookupAt(ctx, &n.Inode, n.backend, n.rewriter, n.path(), name, out)
-}
-
-func lookupAt(ctx context.Context, parentInode *fs.Inode, backend FileSystemBackend, rw *IDRewriter, parent, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	a, st := backend.Lookup(ctx, parent, name)
+	a, st := n.backend.Lookup(ctx, n.path(), name)
 	if !st.Ok() {
 		return nil, syscall.Errno(st)
 	}
-	setAttrFromBackend(&out.Attr, a, rw)
-	child := parentInode.NewInode(ctx, &gMountieNode{
-		backend:  backend,
-		rewriter: rw,
-	}, fs.StableAttr{
-		Mode: a.Mode,
-		Ino:  a.Ino,
-	})
-	return child, 0
+	setAttrFromBackend(&out.Attr, a, n.rewriter)
+	return n.newChild(ctx, a), 0
 }
 
 // --- Readdir ---
 
-func (r *gMountieRoot) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	return readdirAt(ctx, r.backend, "")
-}
-
 func (n *gMountieNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	return readdirAt(ctx, n.backend, n.path())
-}
-
-func readdirAt(ctx context.Context, backend FileSystemBackend, p string) (fs.DirStream, syscall.Errno) {
-	entries, st := backend.ListDir(ctx, p)
+	entries, st := n.backend.ListDir(ctx, n.path())
 	if !st.Ok() {
 		return nil, syscall.Errno(st)
 	}
@@ -203,34 +164,18 @@ func readdirAt(ctx context.Context, backend FileSystemBackend, p string) (fs.Dir
 
 // --- Getattr ---
 
-func (r *gMountieRoot) Getattr(ctx context.Context, _ fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	return getattrAt(ctx, r.backend, r.rewriter, "", out)
-}
-
 func (n *gMountieNode) Getattr(ctx context.Context, _ fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	return getattrAt(ctx, n.backend, n.rewriter, n.path(), out)
-}
-
-func getattrAt(ctx context.Context, backend FileSystemBackend, rw *IDRewriter, p string, out *fuse.AttrOut) syscall.Errno {
-	a, st := backend.Stat(ctx, p)
+	a, st := n.backend.Stat(ctx, n.path())
 	if !st.Ok() {
 		return syscall.Errno(st)
 	}
-	setAttrFromBackend(&out.Attr, a, rw)
+	setAttrFromBackend(&out.Attr, a, n.rewriter)
 	return 0
 }
 
 // --- Setattr ---
 
-func (r *gMountieRoot) Setattr(ctx context.Context, _ fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
-	return setattrAt(ctx, r.backend, r.rewriter, "", in, out)
-}
-
-func (n *gMountieNode) Setattr(ctx context.Context, _ fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
-	return setattrAt(ctx, n.backend, n.rewriter, n.path(), in, out)
-}
-
-// setattrAt dispatches on SetAttrIn.Valid flags: size -> Truncate, mode ->
+// Setattr dispatches on SetAttrIn.Valid flags: size -> Truncate, mode ->
 // Chmod, uid/gid -> Chown, atime/mtime -> Utimens. For Chown with only one of
 // uid/gid set, we Stat first to read the unset side so we don't overwrite it.
 // in.GetATime()/GetMTime() return the resolved concrete time (UTIME_NOW is
@@ -239,14 +184,15 @@ func (n *gMountieNode) Setattr(ctx context.Context, _ fs.FileHandle, in *fuse.Se
 // rw.Outbound is applied to the local uid/gid before calling Chown so the
 // server receives the server-namespace ids; rw.Inbound is applied by
 // setAttrFromBackend on the final Stat result.
-func setattrAt(ctx context.Context, backend FileSystemBackend, rw *IDRewriter, p string, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
+func (n *gMountieNode) Setattr(ctx context.Context, _ fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
+	p := n.path()
 	if sz, ok := in.GetSize(); ok {
-		if st := backend.Truncate(ctx, p, sz); !st.Ok() {
+		if st := n.backend.Truncate(ctx, p, sz); !st.Ok() {
 			return syscall.Errno(st)
 		}
 	}
 	if mode, ok := in.GetMode(); ok {
-		if st := backend.Chmod(ctx, p, mode); !st.Ok() {
+		if st := n.backend.Chmod(ctx, p, mode); !st.Ok() {
 			return syscall.Errno(st)
 		}
 	}
@@ -254,7 +200,7 @@ func setattrAt(ctx context.Context, backend FileSystemBackend, rw *IDRewriter, p
 	gid, gidOK := in.GetGID()
 	if uidOK || gidOK {
 		if uidOK != gidOK {
-			a, sst := backend.Stat(ctx, p)
+			a, sst := n.backend.Stat(ctx, p)
 			if !sst.Ok() {
 				return syscall.Errno(sst)
 			}
@@ -265,8 +211,8 @@ func setattrAt(ctx context.Context, backend FileSystemBackend, rw *IDRewriter, p
 				gid = a.Gid
 			}
 		}
-		uid, gid = rw.Outbound(uid, gid)
-		if st := backend.Chown(ctx, p, uid, gid); !st.Ok() {
+		uid, gid = n.rewriter.Outbound(uid, gid)
+		if st := n.backend.Chown(ctx, p, uid, gid); !st.Ok() {
 			return syscall.Errno(st)
 		}
 	}
@@ -280,48 +226,33 @@ func setattrAt(ctx context.Context, backend FileSystemBackend, rw *IDRewriter, p
 		if mok {
 			mp = &mtime
 		}
-		if st := backend.Utimens(ctx, p, ap, mp); !st.Ok() {
+		if st := n.backend.Utimens(ctx, p, ap, mp); !st.Ok() {
 			return syscall.Errno(st)
 		}
 	}
-	a, st := backend.Stat(ctx, p)
+	a, st := n.backend.Stat(ctx, p)
 	if !st.Ok() {
 		return syscall.Errno(st)
 	}
-	setAttrFromBackend(&out.Attr, a, rw)
+	setAttrFromBackend(&out.Attr, a, n.rewriter)
 	return 0
 }
 
 // --- Open ---
 
-func (r *gMountieRoot) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
-	return openAt(ctx, r.backend, "", flags)
-}
-
 func (n *gMountieNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
-	return openAt(ctx, n.backend, n.path(), flags)
-}
-
-func openAt(ctx context.Context, backend FileSystemBackend, p string, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
-	h, st := backend.Open(ctx, p, flags)
+	h, st := n.backend.Open(ctx, n.path(), flags)
 	if !st.Ok() {
 		return nil, 0, syscall.Errno(st)
 	}
-	return &gMountieFile{backend: backend, fh: h}, 0, 0
+	return &gMountieFile{backend: n.backend, fh: h}, 0, 0
 }
 
 // --- Create ---
 
-func (r *gMountieRoot) Create(ctx context.Context, name string, flags, mode uint32, out *fuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
-	return createAt(ctx, &r.Inode, r.backend, r.rewriter, "", name, flags, mode, out)
-}
-
 func (n *gMountieNode) Create(ctx context.Context, name string, flags, mode uint32, out *fuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
-	return createAt(ctx, &n.Inode, n.backend, n.rewriter, n.path(), name, flags, mode, out)
-}
-
-func createAt(ctx context.Context, parentInode *fs.Inode, backend FileSystemBackend, rw *IDRewriter, parent, name string, flags, mode uint32, out *fuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
-	handle, attr, st := backend.Create(ctx, parent, name, flags, mode)
+	parent := n.path()
+	handle, attr, st := n.backend.Create(ctx, parent, name, flags, mode)
 	if !st.Ok() {
 		return nil, nil, 0, syscall.Errno(st)
 	}
@@ -334,107 +265,59 @@ func createAt(ctx context.Context, parentInode *fs.Inode, backend FileSystemBack
 	// The server-side Create already succeeded; the leaked fd is bounded
 	// and cleaned up by Release-on-close.
 	if attr == nil {
-		a, sst := backend.Stat(ctx, full)
+		a, sst := n.backend.Stat(ctx, full)
 		if !sst.Ok() {
 			return nil, nil, 0, syscall.Errno(sst)
 		}
 		attr = a
 	}
-	setAttrFromBackend(&out.Attr, attr, rw)
-	child := parentInode.NewInode(ctx, &gMountieNode{
-		backend:  backend,
-		rewriter: rw,
-	}, fs.StableAttr{
-		Mode: attr.Mode,
-		Ino:  attr.Ino,
-	})
-	return child, &gMountieFile{backend: backend, fh: handle}, 0, 0
+	setAttrFromBackend(&out.Attr, attr, n.rewriter)
+	return n.newChild(ctx, attr), &gMountieFile{backend: n.backend, fh: handle}, 0, 0
 }
 
 // --- Mkdir ---
 
-func (r *gMountieRoot) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	return mkdirAt(ctx, &r.Inode, r.backend, r.rewriter, "", name, mode, out)
-}
-
 func (n *gMountieNode) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	return mkdirAt(ctx, &n.Inode, n.backend, n.rewriter, n.path(), name, mode, out)
-}
-
-func mkdirAt(ctx context.Context, parentInode *fs.Inode, backend FileSystemBackend, rw *IDRewriter, parent, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	full := childPath(parent, name)
-	if st := backend.Mkdir(ctx, full, mode); !st.Ok() {
+	full := childPath(n.path(), name)
+	if st := n.backend.Mkdir(ctx, full, mode); !st.Ok() {
 		return nil, syscall.Errno(st)
 	}
 	// Backend Mkdir doesn't return attrs; Stat for the EntryOut so the
 	// kernel can populate its dentry.
-	a, sst := backend.Stat(ctx, full)
+	a, sst := n.backend.Stat(ctx, full)
 	if !sst.Ok() {
 		return nil, syscall.Errno(sst)
 	}
-	setAttrFromBackend(&out.Attr, a, rw)
-	child := parentInode.NewInode(ctx, &gMountieNode{
-		backend:  backend,
-		rewriter: rw,
-	}, fs.StableAttr{
-		Mode: a.Mode,
-		Ino:  a.Ino,
-	})
-	return child, 0
+	setAttrFromBackend(&out.Attr, a, n.rewriter)
+	return n.newChild(ctx, a), 0
 }
 
 // --- Symlink / Readlink ---
 
 // Symlink creates a new symbolic link `name` whose target is `target` (an
 // arbitrary string — confinement enforces on resolve, not on creation).
-// Returns the new inode so the kernel can populate its dentry. Both root
-// and node variants forward through symlinkAt, mirroring mkdirAt.
-func (r *gMountieRoot) Symlink(ctx context.Context, target, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	return symlinkAt(ctx, &r.Inode, r.backend, r.rewriter, "", target, name, out)
-}
-
+// Returns the new inode so the kernel can populate its dentry.
 func (n *gMountieNode) Symlink(ctx context.Context, target, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	return symlinkAt(ctx, &n.Inode, n.backend, n.rewriter, n.path(), target, name, out)
-}
-
-func symlinkAt(ctx context.Context, parentInode *fs.Inode, backend FileSystemBackend, rw *IDRewriter, parent, target, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	full := childPath(parent, name)
-	if st := backend.Symlink(ctx, target, full); !st.Ok() {
+	full := childPath(n.path(), name)
+	if st := n.backend.Symlink(ctx, target, full); !st.Ok() {
 		return nil, syscall.Errno(st)
 	}
 	// Backend Symlink doesn't return attrs; Stat for the EntryOut so the
 	// kernel can populate its dentry. The new entry is the link itself
 	// (S_IFLNK), not the target.
-	a, sst := backend.Stat(ctx, full)
+	a, sst := n.backend.Stat(ctx, full)
 	if !sst.Ok() {
 		return nil, syscall.Errno(sst)
 	}
-	setAttrFromBackend(&out.Attr, a, rw)
-	child := parentInode.NewInode(ctx, &gMountieNode{
-		backend:  backend,
-		rewriter: rw,
-	}, fs.StableAttr{
-		Mode: a.Mode,
-		Ino:  a.Ino,
-	})
-	return child, 0
+	setAttrFromBackend(&out.Attr, a, n.rewriter)
+	return n.newChild(ctx, a), 0
 }
 
 // Readlink returns the link's target string. The kernel calls this during
 // pathwalk when it encounters S_IFLNK; without it FUSE returns EOPNOTSUPP
 // and every symlink under the mount is unfollowable.
-func (r *gMountieRoot) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
-	// Root is the volume root; reading it as a link is nonsensical but
-	// keep the symmetry with other root ops.
-	return readlinkAt(ctx, r.backend, "")
-}
-
 func (n *gMountieNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
-	return readlinkAt(ctx, n.backend, n.path())
-}
-
-func readlinkAt(ctx context.Context, backend FileSystemBackend, path string) ([]byte, syscall.Errno) {
-	target, st := backend.Readlink(ctx, path)
+	target, st := n.backend.Readlink(ctx, n.path())
 	if !st.Ok() {
 		return nil, syscall.Errno(st)
 	}
@@ -443,16 +326,8 @@ func readlinkAt(ctx context.Context, backend FileSystemBackend, path string) ([]
 
 // --- Rmdir / Unlink ---
 
-func (r *gMountieRoot) Rmdir(ctx context.Context, name string) syscall.Errno {
-	return syscall.Errno(r.backend.Rmdir(ctx, childPath("", name)))
-}
-
 func (n *gMountieNode) Rmdir(ctx context.Context, name string) syscall.Errno {
 	return syscall.Errno(n.backend.Rmdir(ctx, childPath(n.path(), name)))
-}
-
-func (r *gMountieRoot) Unlink(ctx context.Context, name string) syscall.Errno {
-	return syscall.Errno(r.backend.Unlink(ctx, childPath("", name)))
 }
 
 func (n *gMountieNode) Unlink(ctx context.Context, name string) syscall.Errno {
@@ -461,31 +336,18 @@ func (n *gMountieNode) Unlink(ctx context.Context, name string) syscall.Errno {
 
 // --- Rename ---
 
-func (r *gMountieRoot) Rename(ctx context.Context, name string, newParent fs.InodeEmbedder, newName string, flags uint32) syscall.Errno {
-	return renameAt(ctx, r.backend, "", name, newParent, newName, flags)
-}
-
-func (n *gMountieNode) Rename(ctx context.Context, name string, newParent fs.InodeEmbedder, newName string, flags uint32) syscall.Errno {
-	return renameAt(ctx, n.backend, n.path(), name, newParent, newName, flags)
-}
-
-// renameAt resolves the destination parent's path from the live inode
-// tree. It must be one of our own node types — Rename is always within
-// the same mount, so the type switch is exhaustive in practice; an
-// EINVAL guard documents the invariant for the reader.
-func renameAt(ctx context.Context, backend FileSystemBackend, parent, name string, newParent fs.InodeEmbedder, newName string, _ uint32) syscall.Errno {
-	var newParentPath string
-	switch np := newParent.(type) {
-	case *gMountieRoot:
-		newParentPath = ""
-	case *gMountieNode:
-		newParentPath = np.path()
-	default:
+// Rename resolves the destination parent's path from the live inode tree. It
+// must be our own node type — Rename is always within the same mount, so the
+// type assert holds in practice; an EINVAL guard documents the invariant for
+// the reader.
+func (n *gMountieNode) Rename(ctx context.Context, name string, newParent fs.InodeEmbedder, newName string, _ uint32) syscall.Errno {
+	np, ok := newParent.(*gMountieNode)
+	if !ok {
 		return syscall.Errno(fuse.EINVAL)
 	}
-	oldP := childPath(parent, name)
-	newP := childPath(newParentPath, newName)
-	return syscall.Errno(backend.Rename(ctx, oldP, newP))
+	oldP := childPath(n.path(), name)
+	newP := childPath(np.path(), newName)
+	return syscall.Errno(n.backend.Rename(ctx, oldP, newP))
 }
 
 // --- CopyFileRange ---
@@ -516,16 +378,8 @@ func (n *gMountieNode) CopyFileRange(ctx context.Context, fhIn fs.FileHandle, of
 
 // --- Statfs ---
 
-func (r *gMountieRoot) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
-	return statfsAt(ctx, r.backend, "", out)
-}
-
 func (n *gMountieNode) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
-	return statfsAt(ctx, n.backend, n.path(), out)
-}
-
-func statfsAt(ctx context.Context, backend FileSystemBackend, p string, out *fuse.StatfsOut) syscall.Errno {
-	s, st := backend.StatFs(ctx, p)
+	s, st := n.backend.StatFs(ctx, n.path())
 	if !st.Ok() {
 		return syscall.Errno(st)
 	}
@@ -542,26 +396,14 @@ func statfsAt(ctx context.Context, backend FileSystemBackend, p string, out *fus
 
 // --- Access ---
 
-func (r *gMountieRoot) Access(ctx context.Context, mask uint32) syscall.Errno {
-	return syscall.Errno(r.backend.Access(ctx, "", mask))
-}
-
 func (n *gMountieNode) Access(ctx context.Context, mask uint32) syscall.Errno {
 	return syscall.Errno(n.backend.Access(ctx, n.path(), mask))
 }
 
 // --- Getxattr ---
 
-func (r *gMountieRoot) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
-	return getxattrAt(ctx, r.backend, "", attr, dest)
-}
-
 func (n *gMountieNode) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
-	return getxattrAt(ctx, n.backend, n.path(), attr, dest)
-}
-
-func getxattrAt(ctx context.Context, backend FileSystemBackend, p, attr string, dest []byte) (uint32, syscall.Errno) {
-	data, st := backend.GetXAttr(ctx, p, attr)
+	data, st := n.backend.GetXAttr(ctx, n.path(), attr)
 	if !st.Ok() {
 		return 0, syscall.Errno(st)
 	}
@@ -573,35 +415,19 @@ func getxattrAt(ctx context.Context, backend FileSystemBackend, p, attr string, 
 
 // --- Setxattr / Removexattr / Listxattr ---
 
-func (r *gMountieRoot) Setxattr(ctx context.Context, attr string, data []byte, flags uint32) syscall.Errno {
-	return syscall.Errno(r.backend.SetXAttr(ctx, "", attr, data, flags))
-}
-
 func (n *gMountieNode) Setxattr(ctx context.Context, attr string, data []byte, flags uint32) syscall.Errno {
 	return syscall.Errno(n.backend.SetXAttr(ctx, n.path(), attr, data, flags))
-}
-
-func (r *gMountieRoot) Removexattr(ctx context.Context, attr string) syscall.Errno {
-	return syscall.Errno(r.backend.RemoveXAttr(ctx, "", attr))
 }
 
 func (n *gMountieNode) Removexattr(ctx context.Context, attr string) syscall.Errno {
 	return syscall.Errno(n.backend.RemoveXAttr(ctx, n.path(), attr))
 }
 
-func (r *gMountieRoot) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
-	return listxattrAt(ctx, r.backend, "", dest)
-}
-
-func (n *gMountieNode) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
-	return listxattrAt(ctx, n.backend, n.path(), dest)
-}
-
-// listxattrAt marshals names into the kernel's NUL-joined buffer format.
+// Listxattr marshals names into the kernel's NUL-joined buffer format.
 // go-fuse contract: if dest is too small, return ERANGE AND the needed
 // size so the caller can re-issue with a bigger buffer.
-func listxattrAt(ctx context.Context, backend FileSystemBackend, p string, dest []byte) (uint32, syscall.Errno) {
-	names, st := backend.ListXAttr(ctx, p)
+func (n *gMountieNode) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
+	names, st := n.backend.ListXAttr(ctx, n.path())
 	if !st.Ok() {
 		return 0, syscall.Errno(st)
 	}
