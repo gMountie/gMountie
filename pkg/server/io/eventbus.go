@@ -47,6 +47,11 @@ type EventBusOptions struct {
 	HeartbeatInterval time.Duration
 	// Metrics is optional; if non-nil, subscribe counters are bumped.
 	Metrics *metrics.Metrics
+	// OnSubscribe, when non-nil, is invoked synchronously after a subscriber
+	// has been registered for volume (outside the bus lock). Test seam: lets
+	// tests wait deterministically for a Subscribe stream's registration
+	// instead of sleeping. Unused in production.
+	OnSubscribe func(volume string)
 }
 
 type subscriber struct {
@@ -115,6 +120,9 @@ func (b *localEventBus) Subscribe(volume string) (<-chan Event, func()) {
 	s := &subscriber{ch: make(chan Event, b.opts.BufferSize)}
 	b.subscribers[volume] = append(b.subscribers[volume], s)
 	b.mu.Unlock()
+	if b.opts.OnSubscribe != nil {
+		b.opts.OnSubscribe(volume)
+	}
 	cancel := func() {
 		b.mu.Lock()
 		defer b.mu.Unlock()
