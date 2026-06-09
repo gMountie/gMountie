@@ -208,10 +208,14 @@ main() {
   printf 'install: installed %s to %s\n' "$BIN_NAME" "$target/$BIN_NAME" >&2
   case ":$PATH:" in
     *":$target:"*) : ;;
-    *) printf 'install: %s is not on PATH — add it: export PATH="%s:$PATH"\n' "$target" "$target" >&2 ;;
+    *)
+      # $PATH is intentionally literal here — the user copy-pastes this line.
+      # shellcheck disable=SC2016
+      printf 'install: %s is not on PATH — add it: export PATH="%s:$PATH"\n' "$target" "$target" >&2
+      ;;
   esac
   "$target/$BIN_NAME" version >&2 || true
-  printf 'install: done — run `%s --help` to get started\n' "$BIN_NAME" >&2
+  printf 'install: done — run %s --help to get started\n' "$BIN_NAME" >&2
 }
 
 if [ "${INSTALL_SH_SOURCED:-0}" != "1" ]; then
