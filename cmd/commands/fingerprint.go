@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"path/filepath"
 
+	commontls "go.gmountie.dev/gmountie/pkg/common/tls"
 	servertls "go.gmountie.dev/gmountie/pkg/server/tls"
 
 	"github.com/adrg/xdg"
@@ -44,7 +45,7 @@ func runFingerprint(cmd *cobra.Command, _ []string) error {
 		}
 		return err
 	}
-	fp, err := servertls.Fingerprint(pemBytes)
+	fp, err := commontls.Fingerprint(pemBytes)
 	if err != nil {
 		return fmt.Errorf("compute fingerprint of %s: %w", certPath, err)
 	}

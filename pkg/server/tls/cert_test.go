@@ -6,7 +6,6 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -33,18 +32,6 @@ func (s *CertSuite) TestGenerateSelfSignedECDSA() {
 		"10-year validity expected, got NotAfter %v", c.NotAfter)
 	_, ok := c.PublicKey.(*ecdsa.PublicKey)
 	s.True(ok, "expected ECDSA public key")
-}
-
-func (s *CertSuite) TestFingerprintStableAndSshShaped() {
-	certPEM, _, err := Generate("foo")
-	s.Require().NoError(err)
-	fp1, err := Fingerprint(certPEM)
-	s.Require().NoError(err)
-	fp2, err := Fingerprint(certPEM)
-	s.Require().NoError(err)
-	s.Equal(fp1, fp2)
-	s.True(strings.HasPrefix(fp1, "SHA256:"))
-	s.Len(fp1[len("SHA256:"):], 43, "expected 43-char base64 raw (no padding)")
 }
 
 func (s *CertSuite) TestLoadFromDisk() {

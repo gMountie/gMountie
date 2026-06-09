@@ -8,6 +8,7 @@ import (
 
 	clientconfig "go.gmountie.dev/gmountie/pkg/client/config"
 	clienttls "go.gmountie.dev/gmountie/pkg/client/tls"
+	commontls "go.gmountie.dev/gmountie/pkg/common/tls"
 	servertls "go.gmountie.dev/gmountie/pkg/server/tls"
 	"go.gmountie.dev/gmountie/test/e2e/utils"
 
@@ -215,7 +216,7 @@ func (s *TLSE2ESuite) TestTofuRejectsRotatedCert() {
 	// BEFORE Start() so the TOFU check sees a mismatch on first dial.
 	staleCertPEM, _, err := servertls.Generate("stale")
 	s.Require().NoError(err)
-	staleFP, err := servertls.Fingerprint(staleCertPEM)
+	staleFP, err := commontls.Fingerprint(staleCertPEM)
 	s.Require().NoError(err)
 
 	// The TCP address is available via GetEndpoint which delegates to

@@ -9,8 +9,8 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/config"
 	"go.gmountie.dev/gmountie/pkg/client/metrics"
 	clienttls "go.gmountie.dev/gmountie/pkg/client/tls"
-	serverconfig "go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/common/grpc/snappy"
+	serverconfig "go.gmountie.dev/gmountie/pkg/server/config"
 
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"

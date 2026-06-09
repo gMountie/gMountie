@@ -12,7 +12,7 @@ import (
 	"net"
 	"os"
 
-	servertls "go.gmountie.dev/gmountie/pkg/server/tls"
+	commontls "go.gmountie.dev/gmountie/pkg/common/tls"
 )
 
 // Mode constants for TLS verification policy.
@@ -155,7 +155,7 @@ func pinVerifier(expected string, kh *KnownHosts, endpoint string) func(rawCerts
 			return fmt.Errorf("server presented no certificate")
 		}
 		leafPEM := derToPEM(rawCerts[0])
-		got, err := servertls.Fingerprint(leafPEM)
+		got, err := commontls.Fingerprint(leafPEM)
 		if err != nil {
 			return fmt.Errorf("fingerprint leaf: %w", err)
 		}
