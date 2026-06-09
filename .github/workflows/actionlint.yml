@@ -1,0 +1,38 @@
+name: Actionlint
+
+# Lints the GitHub Actions workflows (config in .github/actionlint.yaml,
+# which was previously never executed anywhere). Path-filtered: only runs
+# when workflow files or the actionlint config change.
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - '.github/workflows/**'
+      - '.github/actionlint.yaml'
+  pull_request:
+    branches:
+      - master
+    paths:
+      - '.github/workflows/**'
+      - '.github/actionlint.yaml'
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      # Pinned binary download with digest verification — avoids adding
+      # another mutable third-party action to the supply chain.
+      - name: Install actionlint
+        run: |
+          curl -fsSL -o /tmp/actionlint.tar.gz \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  /tmp/actionlint.tar.gz" | sha256sum -c -
+          tar -C /tmp -xzf /tmp/actionlint.tar.gz actionlint
+      - name: actionlint
+        run: /tmp/actionlint -color
