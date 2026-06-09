@@ -13,7 +13,6 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/credentials"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/suite"
 )
@@ -40,7 +39,9 @@ func (s *MountCmdTestSuite) SetupTest() {
 	// Re-declare the persistent --config flag on the test root so
 	// tests can pass -c without depending on the real rootCmd's init.
 	s.cmd.PersistentFlags().StringVarP(&configFile, "config", "c", "", "config file path")
-	s.cmd.AddCommand(mountCmd)
+	// A FRESH mount command per test (closure-pattern flag struct): no
+	// shared flag state survives between tests, so nothing needs resetting.
+	s.cmd.AddCommand(newMountCmd())
 	s.buf = new(bytes.Buffer)
 	s.cmd.SetOut(s.buf)
 	s.cmd.SetErr(s.buf)
@@ -50,19 +51,12 @@ func (s *MountCmdTestSuite) SetupTest() {
 }
 
 func (s *MountCmdTestSuite) TearDownTest() {
-	volumeName = ""
-	serverAddr = "127.0.0.1:9449"
-	authType = "basic"
-	username = ""
-	password = ""
+	// The mount flags themselves are per-command (newMountCmd); only the
+	// genuinely shared globals (root --config, --profile, --credentials)
+	// still need resetting.
 	configFile = ""
 	profileName = ""
-	daemonFlag = false
-	rawIDs = false
 	credentialsFile = ""
-	// Reset cobra flag Changed state so each test starts with a clean slate.
-	mountCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
-	mountCmd.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
 	if s.tempDir != "" {
 		err := os.RemoveAll(s.tempDir)
 		s.Require().NoError(err)

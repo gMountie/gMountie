@@ -14,26 +14,32 @@ import (
 	"github.com/spf13/viper"
 )
 
-var lsCmd = &cobra.Command{
-	Use:   "ls [user@host[:port]]",
-	Short: "List the volumes a gMountie server exposes",
-	Long: "Connect to a server and list its available volumes.\n\n" +
-		"  gmountie ls admin@host:9449\n" +
-		"  gmountie ls -c client.yaml",
-	Args: cobra.MaximumNArgs(1),
-	RunE: runLs,
+// newLsCmd constructs the ls command with its own flag state (closure
+// pattern), so ls and mount no longer share mutable package-level globals.
+func newLsCmd() *cobra.Command {
+	f := &authFlags{}
+	cmd := &cobra.Command{
+		Use:   "ls [user@host[:port]]",
+		Short: "List the volumes a gMountie server exposes",
+		Long: "Connect to a server and list its available volumes.\n\n" +
+			"  gmountie ls admin@host:9449\n" +
+			"  gmountie ls -c client.yaml",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runLs(cmd, args, f)
+		},
+	}
+	addProfileFlag(cmd)
+	addAuthFlags(cmd, f)
+	addCredentialsFlag(cmd)
+	return cmd
 }
 
 func init() {
-	addProfileFlag(lsCmd)
-	lsCmd.PersistentFlags().StringVarP(&authType, "auth-type", "t", "basic", "authentication type (basic)")
-	lsCmd.PersistentFlags().StringVarP(&username, "username", "u", "", "username for basic auth")
-	lsCmd.PersistentFlags().StringVarP(&password, "password", "p", "", "password for basic auth (prefer prompt/$GMOUNTIE_AUTH_PASSWORD)")
-	addCredentialsFlag(lsCmd)
-	rootCmd.AddCommand(lsCmd)
+	rootCmd.AddCommand(newLsCmd())
 }
 
-func runLs(cmd *cobra.Command, args []string) error {
+func runLs(cmd *cobra.Command, args []string, f *authFlags) error {
 	profilePath, err := resolveProfilePath()
 	if err != nil {
 		return err
@@ -68,7 +74,7 @@ func runLs(cmd *cobra.Command, args []string) error {
 	if _, err := applyCredentialToViper(v); err != nil {
 		return err
 	}
-	if err := resolveAuth(cmd, v); err != nil {
+	if err := resolveAuth(cmd, v, f); err != nil {
 		return err
 	}
 

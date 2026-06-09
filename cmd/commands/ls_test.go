@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -28,12 +27,13 @@ func (s *LsSuite) TestRenderEmpty() {
 	s.Contains(out.String(), "no volumes")
 }
 
-// newLsRoot builds a test root with the persistent --config flag and lsCmd
-// attached, mirroring the real rootCmd wiring tests rely on.
+// newLsRoot builds a test root with the persistent --config flag and a FRESH
+// ls command (closure-pattern flag struct) attached, mirroring the real
+// rootCmd wiring tests rely on.
 func (s *LsSuite) newLsRoot() (*cobra.Command, *bytes.Buffer) {
 	root := &cobra.Command{Use: "root"}
 	root.PersistentFlags().StringVarP(&configFile, "config", "c", "", "config file path")
-	root.AddCommand(lsCmd)
+	root.AddCommand(newLsCmd())
 	buf := new(bytes.Buffer)
 	root.SetOut(buf)
 	root.SetErr(buf)
@@ -41,17 +41,13 @@ func (s *LsSuite) newLsRoot() (*cobra.Command, *bytes.Buffer) {
 	return root, buf
 }
 
-// resetLsState clears the package-level flag vars and cobra Changed state that
-// ls shares with mount, so credential/auth tests don't leak into each other.
+// resetLsState clears the package-level flag vars that remain genuinely
+// shared (root --config, --profile, --credentials); the auth flags are
+// per-command now.
 func (s *LsSuite) resetLsState() {
-	authType = "basic"
-	username = ""
-	password = ""
 	configFile = ""
 	profileName = ""
 	credentialsFile = ""
-	lsCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
-	lsCmd.Flags().VisitAll(func(f *pflag.Flag) { f.Changed = false })
 }
 
 // TestLsCmd_CredentialEnv_CertOnlyAuth proves the resolver path: with
@@ -79,7 +75,7 @@ func (s *LsSuite) TestLsCmd_ProfileAndConfigConflict() {
 
 	root := &cobra.Command{Use: "root"}
 	root.PersistentFlags().StringVarP(&configFile, "config", "c", "", "config file path")
-	root.AddCommand(lsCmd)
+	root.AddCommand(newLsCmd())
 	buf := new(bytes.Buffer)
 	root.SetOut(buf)
 	root.SetErr(buf)
