@@ -7,7 +7,7 @@ description: What's shipped, what's in flight, what's planned. Phase ordering an
 
 # Roadmap
 
-**Status / last refreshed:** 2026-05-27
+**Status / last refreshed:** 2026-06-09
 
 **Legend:**
 - **Done** — shipped; see linked design docs for the implementation record.
@@ -23,7 +23,7 @@ gMountie exists to be an **NFS-over-the-internet replacement** — the user want
 
 - **Latency tolerance is core, not an afterthought.** Anything that adds RTTs per syscall (chatty metadata, no caching, no readahead, no batching) is a bug, not a polish item.
 - **Reconnect/resume must be invisible.** Network blips are expected; mounts and open file handles must survive them.
-- **Single-user-ish trust model, for now.** Multi-tenant security is not the priority, but TLS becomes much more pressing because the wire is the public internet. The security hardening phase is deferred but capped — it cannot stay deferred indefinitely once internet exposure is real.
+- **Single-user-ish trust model, for now.** Multi-tenant security is not the priority, but the wire is the public internet — the security hardening phase (Phase 7, now **shipped**) made TLS, mandatory auth, hashed credentials, ACLs, and kernel-native identity enforcement the baseline.
 
 ## What this is, and what it is not
 
@@ -167,55 +167,34 @@ See [Caching & Consistency](design/caching-and-consistency.md) for the design, c
 
 ---
 
-## Phase 5 — Quality, dependencies, and docs — **Planned**
+## Phase 5 — Quality, dependencies, and docs — **Mostly done**
 
 **Goal:** the test suite is trustworthy, the doc copy-paste examples actually work, and dependencies are current.
 
-**In scope:**
+**Delivered:**
 
-1. **CI hardening.**
-   - Add `-race` to `task test` (separate `task test:race` if it makes coverage too slow).
-   - Add `govulncheck` and `Trivy` (on the released Docker image) to CI.
-   - Configure Dependabot for `go.mod`, `npm` (`ui/frontend/`), and GitHub Actions.
-   - Set a real coverage threshold in `vladopajic/go-test-coverage` — start at the current measured value, ratchet up.
-   - Update pinned `golangci-lint@v1.60` in `.github/workflows/ci.yml` to match what `.golang-ci.yaml` declares (v1.62+).
+1. **CI hardening (most of it).**
+   - ~~Add `-race`~~ **Done** — `task test:race` + a dedicated CI job.
+   - ~~`govulncheck` and `Trivy`~~ **Done** — govulncheck job in CI; scheduled Trivy scan of the published image.
+   - Dependabot for `go.mod` and GitHub Actions — **Done**. Still open: enable the `npm` ecosystem for `website/` (the docs site; the old `ui/frontend/` is gone).
+   - ~~golangci-lint pin mismatch~~ **Done / obsolete** — lint runs a single pinned version via `task lint` (`go run …golangci-lint@v2.x`, config `.golangci.yaml`).
+2. **E2E coverage for failure modes** — **Done** (PR #59): auth rejection, server killed mid-read/mid-write, reconnect with open fds, ≥ 4 GiB files (env-gated), concurrent clients; cache hit/miss/persistence suites landed with Phase 4.
+3. **Readiness gate** — **Done**: the e2e harness waits on the gRPC health probe instead of sleeping.
+4. **Dependency refresh** — cobra is current (v1.10.x). Still open: replace `github.com/pkg/errors` with stdlib `errors` + `%w` incrementally.
+5. **Doc fixes** — `auth:` key rename **Done**; `CONTRIBUTING.md` **Done**; the alternatives page **Done** (`docs/comparison.md`).
+6. **CLI client config profiles** — **Done** (2026-06-02): shipped as per-file profiles `~/.config/gmountie/profiles/<name>.yaml` selected with `--profile <name>` (not a single `profiles.yaml`); secrets via `auth.password_command` / `auth.password_file`.
 
-2. **E2E coverage for failure modes.**
-   - Auth failure (basic-auth wrong password).
-   - Server killed mid-read and mid-write.
-   - Network drop / reconnect with open file handle (validates session reclamation from Phase 1).
-   - Large files (≥ 4 GiB).
-   - Many concurrent clients on the same volume.
-   - Cache hit/miss/eviction paths (Phase 4 coverage).
-   - (VFSVolumeMounter and multi-volume e2e coverage are in the separate desktop repo.)
+**Still open:**
 
-3. **Drop the 1-second sleep readiness gate** in `test/e2e/utils/app.go` — wait on the gRPC health probe instead.
-
-4. **Dependency refresh (server + CLI only).**
-   - `cobra v0.0.3` → current.
-   - Replace `github.com/pkg/errors` with stdlib `errors` + `fmt.Errorf("%w", err)` incrementally.
-   - (Wails dependency removed from this repo; lives in the separate desktop repo.)
-
-5. **Proto package rename.** Move `api/proto/*.proto` to `package gmountie.v1;` and `pkg/proto/v1/` for naming clarity. Do it once after Phase 1 + 3 + 4 have stopped churning fields. (No wire-compatibility obligation — see Appendix C.)
-
-6. **Doc fixes.**
-   - `docs/server/config.md` and `docs/quickstart.mdx` use `authentication:` — parser expects `auth:`. Replace.
-   - Add `CONTRIBUTING.md` (the README links to issues/PRs as a stopgap until it exists).
-   - Add an "internet deployment" guide (TLS setup, NAT / firewall, expected latencies, cache sizing recommendations).
-   - Add an **"alternatives — when not to use gMountie"** page comparing honestly against Tailscale + NFS, rclone mount, SSHFS, and Cloudflare Tunnel + WebDAV.
-   - Document the three-service gRPC split intent in the proto files (see Appendix B item 6).
-
-7. **CLI client config profiles.** `gmountie mount` currently takes every parameter on the command line. Add `~/.config/gmountie/profiles.yaml` for named profiles (`gmountie mount <mountpoint> --profile myserver`). Each profile gets its own cache path / size. Pure UX; no protocol changes.
+- Real coverage threshold in `vladopajic/go-test-coverage` (badge-only today) — start at the current measured value, ratchet up.
+- Dependabot `npm` ecosystem for `website/`.
+- Replace `github.com/pkg/errors` incrementally.
+- **Proto package rename.** Move `api/proto/*.proto` to `package gmountie.v1;` and `pkg/proto/v1/` for naming clarity. (No wire-compatibility obligation — see Appendix C.)
+- An "internet deployment" guide (TLS setup, NAT / firewall, expected latencies, cache sizing recommendations).
+- Document the gRPC service-split intent in the proto files (see Appendix B item 6).
 
 **Out of scope:**
-- Frontend (SvelteKit) test scaffolding — separate desktop repo.
 - Desktop app work of any kind — separate desktop repo.
-
-**Definition of done:**
-- CI red on `-race` failures or coverage drop.
-- Every e2e failure-mode test passes deterministically.
-- `go.mod` no longer references pre-1.0 cobra or `pkg/errors`.
-- `docs/server/config.md` examples can be pasted into a YAML file and the server starts.
 
 ---
 
@@ -285,6 +264,18 @@ desktop-UI concern — separate desktop repo).
 ## Phase 8 — Desktop UI — **Extracted to separate repo**
 
 The Wails desktop app (`ui/`, `pkg/ui/`) and the VFS multi-volume mounter (`pkg/client/mount/vfs.go`) have been removed from this repository. The desktop UI and all work that depends on it lives in a dedicated future repo. This repo is CLI + library only (`cmd/`, `pkg/client/`, `pkg/server/`, `pkg/common/`, `pkg/utils/`).
+
+---
+
+## Shipped after Phase 7 (post-phase work, see CHANGELOG for detail)
+
+- **Session-scoped auth + session ownership binding** (v0.7/v0.8) — verify credentials once per session, authorize by `session_id`; sessions bound to the caller identity; `session_id` redacted in logs.
+- **Cert revocation without restart** (v0.10) — `auth.revoked_serials` + `POST /ops/acl/reload`; mount-time referrals via `VolumeService.Resolve`.
+- **macOS client** (v0.12) and **single-blob `GMOUNTIE_CREDENTIALS` mounts** (v0.14).
+- **Server-side `copy_file_range`, `lseek` (`SEEK_DATA`/`SEEK_HOLE`), xattr writes** (v0.15) — see [server-side-copy-and-fs-ops.md](design/server-side-copy-and-fs-ops.md).
+- **Server TLS leaf live-reload** (v0.15) — cert rotation without restart on both listeners; see [Security & Transport](design/security-and-transport.md).
+- **Resilient mount retry** (v0.16) — transient FS-RPC failures retry within `rpc.retry_window` (default 60 s) with fresh per-attempt deadlines and a session-change guard; `server.session.grace_period` configurable (default 60 s, must stay ≥ the client window).
+- **`get.gmountie.dev` install script** (v0.16) — `curl | sh` installer published from `website/static/install.sh`; see [Operations & Packaging](design/operations-and-packaging.md).
 
 ---
 
