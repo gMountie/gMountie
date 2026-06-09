@@ -8,13 +8,12 @@ package io
 // entire retryOp window in sub-millisecond failed attempts instead of
 // parking until the channel reaches READY.
 //
-// Harness: option (b) — mock-based. RunAndReturn captures the opts slice
-// so we can assert the option is present without building a bufconn harness.
+// Both methods live on BackendClientTestSuite so testify discovers them
+// alongside the rest of the backend tests with no extra runner func.
 
 import (
 	"context"
 	stdio "io"
-	"testing"
 
 	mockProto "go.gmountie.dev/gmountie/internal/mocks/pkg/proto"
 	grpcclient "go.gmountie.dev/gmountie/pkg/client/grpc"
@@ -22,7 +21,6 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc"
 )
 
@@ -31,18 +29,14 @@ import (
 // stay readable without inlining the concrete type.
 var waitForReadyOpt = grpc.WaitForReady(true)
 
-// RetryReconnectTestSuite tests that streaming ops carry WaitForReady(true).
-// It embeds BackendClientTestSuite to reuse its setup / handle helpers.
-type RetryReconnectTestSuite struct {
-	BackendClientTestSuite
-}
-
 // TestRead_PassesWaitForReady asserts that BackendClient.Read opens the
 // server-streaming Read RPC with grpc.WaitForReady(true). Without it the
 // stream-open fast-fails on a CONNECTING channel and burns the retry window.
-func (s *RetryReconnectTestSuite) TestRead_PassesWaitForReady() {
-	var capturedOpts []grpc.CallOption
-
+//
+// The positional waitForReadyOpt matcher IS the assertion: testify fails the
+// test immediately if the mock receives a call that does not match, so no
+// additional Contains check is needed.
+func (s *BackendClientTestSuite) TestRead_PassesWaitForReady() {
 	stream := mockProto.NewMockRpcFile_ReadClient(s.T())
 	stream.EXPECT().Recv().Return(&proto.ReadFrame{
 		Data:   []byte("hello"),
@@ -50,51 +44,33 @@ func (s *RetryReconnectTestSuite) TestRead_PassesWaitForReady() {
 	}, nil).Once()
 	stream.EXPECT().Recv().Return(nil, stdio.EOF).Once()
 
-	// Register with the WaitForReady option so the variadic spread matches:
-	// the mock's Called() receives (ctx, req, opt) as three separate args.
+	// positional waitForReadyOpt: an unmatched call fails the test immediately.
 	s.fileClient.EXPECT().Read(mock.Anything, mock.Anything, waitForReadyOpt).
-		RunAndReturn(func(_ context.Context, _ *proto.ReadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[proto.ReadFrame], error) {
-			capturedOpts = opts
-			return stream, nil
-		})
+		Return(stream, nil)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	dest := make([]byte, 8)
 	_, st := s.backend.Read(context.Background(), h, 0, dest)
 	s.Require().Equal(fuse.OK, st)
-
-	s.Require().NotEmpty(capturedOpts, "Read must pass at least one CallOption")
-	s.Assert().Contains(capturedOpts, waitForReadyOpt,
-		"Read stream-open must carry WaitForReady(true) so it parks on a CONNECTING channel")
 }
 
 // TestWrite_PassesWaitForReady asserts that streamingWrite opens the
 // client-streaming Write RPC with grpc.WaitForReady(true).
-func (s *RetryReconnectTestSuite) TestWrite_PassesWaitForReady() {
-	var capturedOpts []grpc.CallOption
-
+//
+// The positional waitForReadyOpt matcher IS the assertion: testify fails the
+// test immediately if the mock receives a call that does not match, so no
+// additional Contains check is needed.
+func (s *BackendClientTestSuite) TestWrite_PassesWaitForReady() {
 	writeStub := newBackendWriteStreamStub(s.T(), &proto.WriteReply{
 		Written: 5,
 		Status:  int32(fuse.OK),
 	}, nil)
 
-	// Register with the WaitForReady option so the variadic spread matches:
-	// the mock's Called() receives (ctx, opt) as two separate args.
+	// positional waitForReadyOpt: an unmatched call fails the test immediately.
 	s.fileClient.EXPECT().Write(mock.Anything, waitForReadyOpt).
-		RunAndReturn(func(_ context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[proto.WriteFrame, proto.WriteReply], error) {
-			capturedOpts = opts
-			return writeStub, nil
-		})
+		Return(writeStub, nil)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	_, st := s.backend.Write(context.Background(), h, 0, []byte("hello"))
 	s.Require().Equal(fuse.OK, st)
-
-	s.Require().NotEmpty(capturedOpts, "Write must pass at least one CallOption")
-	s.Assert().Contains(capturedOpts, waitForReadyOpt,
-		"Write stream-open must carry WaitForReady(true) so it parks on a CONNECTING channel")
-}
-
-func TestRetryReconnectTestSuite(t *testing.T) {
-	suite.Run(t, new(RetryReconnectTestSuite))
 }
