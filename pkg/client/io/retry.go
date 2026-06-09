@@ -118,16 +118,10 @@ func retryOp[T any](c retryClient, fuseCtx context.Context, op string, class opC
 	}
 }
 
-// retryableCall is a deprecated temporary shim — removed in Task 7 once all
-// call sites use retryOp directly. Legacy callers pass an already-deadline-
-// bounded ctx, so it runs a single attempt.
-func retryableCall[T any](ctx context.Context, op string, fn func(context.Context) (T, error)) (T, error) {
-	return fn(ctx)
-}
-
-// withTimeout returns a context bounded by timeout. Used for both metadata
-// (metaCtx) and I/O (ioCtx) bounding — the two callers were byte-identical.
-// Callers must defer the returned cancel function.
+// withTimeout returns a context bounded by timeout. Still used by the two
+// non-retried fd paths that bound their own context: ioCtx (CopyFileRange) and
+// the readahead prefetch / blocking SetLkw call sites. Callers must defer the
+// returned cancel function.
 func withTimeout(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(parent, timeout)
 }
