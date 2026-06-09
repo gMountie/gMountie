@@ -1,0 +1,25 @@
+{{- if and .Values.metrics.enabled .Values.metrics.serviceMonitor.enabled }}
+# Prometheus-Operator scrape config for the plain /metrics listener. Selects
+# the chart Service by its selector labels and scrapes the `metrics` port —
+# no auth/TLS needed (see values.yaml `metrics`). Requires the
+# monitoring.coreos.com CRDs; install kube-prometheus-stack (or equivalent)
+# before enabling.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "gmountie-server.fullname" . }}
+  labels:
+    {{- include "gmountie-server.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  endpoints:
+    - port: metrics
+      {{- with .Values.metrics.serviceMonitor.interval }}
+      interval: {{ . }}
+      {{- end }}
+  selector:
+    matchLabels:
+      {{- include "gmountie-server.selectorLabels" . | nindent 6 }}
+{{- end }}

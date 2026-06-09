@@ -21,8 +21,10 @@ import (
 
 // Server is the HTTP "ops" endpoint mounting /metrics, /healthz, /readyz,
 // and /version. Owns no business logic — pure routing over supplied
-// handlers and the readiness service.
+// handlers and the readiness service. The same type also backs the optional
+// plain metrics listener (NewMetricsServer); name distinguishes them in logs.
 type Server struct {
+	name   string
 	server *http.Server
 	tls    *tls.Config
 }
@@ -66,7 +68,25 @@ func NewServer(
 		mux.HandleFunc("/debug/pprof/", pprof.Index)
 	}
 	return &Server{
+		name:   "ops",
 		server: &http.Server{Addr: addr, Handler: auth.Wrap(mux)},
+	}
+}
+
+// NewMetricsServer constructs the optional plain-HTTP listener serving ONLY
+// /metrics (the same default Prometheus registry the ops listener serves).
+// Deliberately unauthenticated and TLS-free: the surface is read-only
+// telemetry and Prometheus-style scrapers can't present client certs — the
+// node-exporter convention. Everything privileged on the ops surface (pprof,
+// /ops/acl/reload, health) stays on the authenticated ops listener, so this
+// must never grow more routes. Enabled by server.plain_metrics_addr (empty =
+// disabled); bind it to cluster-internal networks only.
+func NewMetricsServer(addr string) *Server {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+	return &Server{
+		name:   "metrics",
+		server: &http.Server{Addr: addr, Handler: mux},
 	}
 }
 
@@ -124,7 +144,8 @@ func NewServerWithTLS(addr string, tlsCfg config.OpsTLSConfig) (*Server, error) 
 // Start blocks running ListenAndServe. Typical callers run it in a
 // goroutine. Returns when the server stops.
 func (s *Server) Start() {
-	log.Log.Info("ops server starting", zap.String("addr", s.server.Addr))
+	log.Log.Info("ops server starting",
+		zap.String("listener", s.name), zap.String("addr", s.server.Addr))
 	var err error
 	if s.tls != nil {
 		// Certs are already embedded in TLSConfig — pass empty strings.
@@ -133,7 +154,8 @@ func (s *Server) Start() {
 		err = s.server.ListenAndServe()
 	}
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Log.Error("ops server stopped", zap.Error(err))
+		log.Log.Error("ops server stopped",
+			zap.String("listener", s.name), zap.Error(err))
 	}
 }
 

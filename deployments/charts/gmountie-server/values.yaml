@@ -161,16 +161,36 @@ auth:
 service:
   type: ClusterIP
   port: 9449
-  # Service-side port for the ops/metrics endpoint. Only rendered when
+  # Service-side port for the authenticated ops endpoint. Only rendered when
   # config.server.ops.addr binds non-loopback (see the ops preset above);
   # with the loopback default there is nothing in-cluster to route to.
-  metricsPort: 9090
+  # (For Prometheus scraping use the dedicated `metrics` block below instead —
+  # the ops endpoint requires auth off-loopback, which scrapers can't do.)
+  opsPort: 9090
   # externalTrafficPolicy: Local
   annotations: {}
   # appProtocol on the grpc port. Empty (default) suits a TLS gRPC backend
   # behind a GRPCRoute + BackendTLSPolicy (Envoy negotiates h2 over TLS via
   # ALPN). Set "kubernetes.io/h2c" only for a cleartext-h2 backend.
   appProtocol: ""
+
+# Plain-HTTP /metrics listener + optional Prometheus-Operator ServiceMonitor.
+# Unlike the ops endpoint this listener is UNAUTHENTICATED by design (it
+# serves only /metrics — the node-exporter convention), so in-cluster
+# scraping works with no credentials or TLS. Enabling it sets
+# `server.plain_metrics_addr` in the rendered config and adds a `metrics`
+# container + Service port.
+metrics:
+  enabled: false
+  port: 9091
+  serviceMonitor:
+    # Requires the Prometheus-Operator CRDs (kube-prometheus-stack et al);
+    # ignored unless metrics.enabled is also true.
+    enabled: false
+    interval: 30s
+    # Extra labels for Prometheus's serviceMonitorSelector matching
+    # (e.g. release: prometheus).
+    labels: {}
 
 # Probes default to a TCP dial of the grpc port. The richer HTTP health
 # endpoints (/healthz, /readyz) live on the ops server, which binds a

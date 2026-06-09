@@ -37,6 +37,23 @@ func (s *ServerOpsConfigSuite) TestDefaultOpsAuthType() {
 	s.Equal("none", cfg.Server.Ops.Auth.Type)
 }
 
+func (s *ServerOpsConfigSuite) TestMetricsAddrDefaultEmpty() {
+	cfg, err := LoadConfigFromString(minimalConfig())
+	s.Require().NoError(err)
+	s.Empty(cfg.Server.PlainMetricsAddr,
+		"the plain metrics listener must be disabled by default")
+}
+
+func (s *ServerOpsConfigSuite) TestMetricsAddrParsed() {
+	yaml := minimalConfig() + `
+server:
+  plain_metrics_addr: ":9091"
+`
+	cfg, err := LoadConfigFromString(yaml)
+	s.Require().NoError(err)
+	s.Equal(":9091", cfg.Server.PlainMetricsAddr)
+}
+
 func (s *ServerOpsConfigSuite) TestExplicitOpsAddrOverride() {
 	yaml := minimalConfig() + `
 server:
