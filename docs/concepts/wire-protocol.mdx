@@ -1,12 +1,12 @@
 ---
 title: The wire protocol
 sidebar_label: Wire protocol
-description: How gMountie talks. Five gRPC services over HTTP/2, snappy-compressed, with every request scoped to a named volume.
+description: How gMountie talks. Five gRPC services over HTTP/2, with optional snappy compression and every request scoped to a named volume.
 ---
 
 # The wire protocol
 
-**Each FUSE syscall on the client becomes one (or a small number of) gRPC calls to the server, framed in HTTP/2, snappy-compressed by default.** Five services split the work; every request carries the volume name so the server picks the right backing directory.
+**Each FUSE syscall on the client becomes one (or a small number of) gRPC calls to the server, framed in HTTP/2.** Five services split the work; every request carries the volume name so the server picks the right backing directory. Compression is opt-in (`rpc.compression: snappy`, default `none`).
 
 ## The five services
 
@@ -31,7 +31,7 @@ A request that names an unknown volume gets `NotFound` from the server; an unaut
 ## Transport
 
 - **gRPC over HTTP/2** — one TCP connection per client, all streams multiplexed.
-- **Snappy compression** — applied as a custom codec on both sides. Cheap on CPU, helpful on text-heavy payloads (readdir entries, attribute blocks). See `pkg/server/grpc/snappy`.
+- **Snappy compression (opt-in)** — a custom codec registered on both sides, enabled with `rpc.compression: snappy` (default `none`). It pays off on slow WAN links; on fast links the compressor itself becomes the bottleneck, which is why it's off by default — see [Performance § 2.7](../design/performance.md). Codec lives at `pkg/server/grpc/snappy`.
 - **Streaming reads and writes** — `Read` and `Write` are server-streaming and client-streaming respectively, so a single RPC frames many in-flight chunks without per-chunk round-trips. The frame size is server-configurable.
 - **Keepalive** — gRPC HTTP/2 pings flow in both directions to detect dead connections within ~40 s by default. See [Sessions & reconnect](./sessions-and-reconnect.mdx).
 
@@ -43,7 +43,7 @@ TLS at the transport layer ships too: the server auto-generates a certificate, a
 
 ## Idempotency and retries
 
-Where the protocol can, RPCs are designed to be **idempotent**: the same `Read(volume, fd, offset, length)` returns the same bytes; `Write` carries the offset rather than relying on an implicit cursor. The client retries transient failures (`Unavailable`, `DeadlineExceeded`) on operations whose retry is safe — see the implementation in `pkg/client/io` (uses `avast/retry-go`).
+Where the protocol can, RPCs are designed to be **idempotent**: the same `Read(volume, fd, offset, length)` returns the same bytes; `Write` carries the offset rather than relying on an implicit cursor. The client retries transient failures (`Unavailable`, `DeadlineExceeded`) on operations whose retry is safe, inside a wall-clock window (`rpc.retry_window`, default 60 s) with fresh per-attempt deadlines — see the implementation in `pkg/client/io/retry.go`.
 
 Operations with side effects whose retry is *not* obviously safe (`Mkdir` on an existing dir, `Unlink` of a file that may have been deleted concurrently) aren't blindly retried; the client surfaces the underlying error and lets the caller decide.
 

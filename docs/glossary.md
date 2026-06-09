@@ -53,7 +53,7 @@ One-line definitions. Cross-linked into the rest of the docs — when you hit an
 
 **`gMountie` vs `gmountie`** — Brand convention. **`gMountie`** in prose (the project name); **`gmountie`** for the CLI, binary, code identifiers, and URLs. The `g` is for gRPC.
 
-**gRPC** — The wire protocol. HTTP/2 with protobuf payloads, Snappy-compressed. Five services share one connection: `fs`, `file`, `session`, `volume`, `version`.
+**gRPC** — The wire protocol. HTTP/2 with protobuf payloads (optionally Snappy-compressed — opt-in via `rpc.compression: snappy`, default `none`). Five services share one connection: `fs`, `file`, `session`, `volume`, `version`.
 
 ## I
 
@@ -117,7 +117,7 @@ One-line definitions. Cross-linked into the rest of the docs — when you hit an
 
 **Session** — Server-side context for one client connection. Holds the fd table and the idempotency cache. Reaped on disconnect.
 
-**Snappy** — Compression codec applied to gRPC payloads via a custom codec at `pkg/server/grpc/snappy`. Cheap on CPU; useful on text-heavy payloads (dirents, attr blocks).
+**Snappy** — Opt-in compression codec for gRPC payloads (`rpc.compression: snappy`, default `none`), registered as a custom codec at `pkg/server/grpc/snappy`. Worth enabling on slow WAN links; on fast links the compressor itself is the bottleneck — see [Performance § 2.7](./design/performance.md).
 
 **`Squash`** — One of the four mapping modes. Every authenticated principal becomes one fixed `(uid, gid)`. NFS `all_squash` style.
 

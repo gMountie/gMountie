@@ -59,10 +59,11 @@ CLI flags override the corresponding fields in the client config. With `-c`, any
 | Flag                | Short | Default          | Meaning                                                                       |
 | ------------------- | ----- | ---------------- | ----------------------------------------------------------------------------- |
 | `--server`          | `-s`  | `127.0.0.1:9449` | Server `host:port`.                                                           |
-| `--volume`          | `-n`  | _(required)_     | Volume name to mount.                                                          |
-| `--auth-type`       | `-t`  | `basic`          | Authentication scheme. Only `basic` is supported today.                       |
-| `--username`        | `-u`  | _(required)_     | Username for basic auth.                                                       |
+| `--volume`          | `-n`  | _(auto)_         | Volume name to mount. May be omitted when the config/profile sets `mount.volume` or the server exposes exactly one volume. |
+| `--auth-type`       | `-t`  | `basic`          | Authentication scheme: `basic` or `mtls`.                                     |
+| `--username`        | `-u`  | _(required for basic)_ | Username for basic auth.                                                 |
 | `--password`        | `-p`  | _(optional)_     | Password for basic auth (visible in shell history; prefer the prompt or `$GMOUNTIE_AUTH_PASSWORD`). |
+| `--credentials`     |       | _(none)_         | Path to a single-blob mount credential (cert/key/CA/endpoint) for mTLS; `$GMOUNTIE_CREDENTIALS` is used when unset. Shared by `mount` and `ls`. |
 | `--daemon`          |       | `false`          | Detach after mount is ready. Logs go to `$XDG_STATE_HOME/gmountie/mount-daemon.log`. |
 | `--raw-ids`         |       | `false`          | Expose the server's raw uid/gid on file metadata, instead of mapping to the local user. Useful for backups and admin tooling. |
 | `--profile`         | `-P`  | _(none)_         | Mount a saved profile from `~/.config/gmountie/profiles/`. Mutually exclusive with `--config`. |
@@ -218,6 +219,7 @@ gmountie unmount /mnt/shared
 | ------------------------------ | -------------------------------------------------------------------------------------------- |
 | `GMOUNTIE_AUTH_PASSWORD`       | Password for basic auth — checked after `--password`, `password_command`, and `password_file`, before prompt. |
 | `GMOUNTIE_AUTH_PASSWORD_FILE`  | Path to a 0600 password file — fallback when `auth.password_file` is not set in config.     |
+| `GMOUNTIE_CREDENTIALS`         | Base64-encoded single-blob mount credential (cert/key/CA/endpoint) — fallback when `--credentials` is not given. Used by `mount` and `ls`. |
 | `GMOUNTIE_PPROF_ADDR`          | If set (e.g. `127.0.0.1:6060`), the client serves `/debug/pprof/` on that address.         |
 
 Most settings are configured via YAML, not the environment. `GMOUNTIE_AUTH_PASSWORD` is useful in scripts where an interactive prompt is not available.
