@@ -49,8 +49,15 @@ func (e *FileEntry) Acquire() bool {
 
 // ReleaseRef drops one ref; the last ref out closes the underlying File.
 func (e *FileEntry) ReleaseRef() {
-	if e.refs.Add(-1) == 0 && e.File != nil {
+	n := e.refs.Add(-1)
+	if n == 0 && e.File != nil {
 		e.File.Release()
+	}
+	if n < 0 {
+		// An unmatched ReleaseRef silently re-arms the reap race this counter
+		// exists to prevent (a later legitimate release would close the file
+		// under a live ref). Fail loud instead.
+		panic("FileEntry: ReleaseRef without matching Acquire")
 	}
 }
 
@@ -179,7 +186,9 @@ func (s *sessionImpl) ReleaseFile(fd uint64) {
 		return
 	}
 	// Drop the table's ref only — the close happens whenever the last
-	// in-flight op finishes (possibly right here, if none is running).
+	// in-flight op finishes (possibly right here, if none is running). The
+	// gauge therefore counts table membership, not actually-open OS fds: it
+	// can decrement up to one op-duration before the real close(2).
 	entry.ReleaseRef()
 	s.metrics.OpenFilesDec(entry.Volume)
 }
