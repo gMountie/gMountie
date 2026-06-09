@@ -26,10 +26,14 @@ type Metrics struct {
 // registered — call MustRegister or Register on a chosen Registerer.
 func NewMetrics() *Metrics {
 	return &Metrics{
+		// Per-volume only — deliberately NO per-session label: session ids are
+		// bearer tokens (must never appear in /metrics, see common.FingerprintID)
+		// and even fingerprinted they'd leak one label series per session for
+		// the server's lifetime. Per-session fd detail belongs in logs.
 		OpenFiles: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "gmountie_server_open_files",
-			Help: "Number of file descriptors currently open on the server, per volume and session.",
-		}, []string{"volume", "session"}),
+			Help: "Number of file descriptors currently open on the server, per volume.",
+		}, []string{"volume"}),
 		Bytes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gmountie_server_bytes_total",
 			Help: "Total bytes transferred per volume and direction (in=write, out=read).",
@@ -116,12 +120,17 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 	return nil
 }
 
-func (m *Metrics) OpenFilesInc(volume, session string) {
-	m.OpenFiles.WithLabelValues(volume, session).Inc()
+// OpenFilesInc/OpenFilesDec are called from the session layer (RegisterFile /
+// ReleaseFile / ReleaseAll), NOT from the RPC handlers — that is what keeps
+// the gauge honest across session reaps (grace expiry, revocation, shutdown)
+// and makes a retried Release idempotent (only an actual fd removal
+// decrements).
+func (m *Metrics) OpenFilesInc(volume string) {
+	m.OpenFiles.WithLabelValues(volume).Inc()
 }
 
-func (m *Metrics) OpenFilesDec(volume, session string) {
-	m.OpenFiles.WithLabelValues(volume, session).Dec()
+func (m *Metrics) OpenFilesDec(volume string) {
+	m.OpenFiles.WithLabelValues(volume).Dec()
 }
 
 func (m *Metrics) BytesAdd(volume, direction string, n float64) {

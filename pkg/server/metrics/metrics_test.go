@@ -15,10 +15,10 @@ type MetricsTestSuite struct {
 func (s *MetricsTestSuite) SetupTest() { s.m = NewMetrics() }
 
 func (s *MetricsTestSuite) TestOpenFilesIncDec() {
-	s.m.OpenFilesInc("photos", "sess-1")
-	s.m.OpenFilesInc("photos", "sess-1")
-	s.m.OpenFilesDec("photos", "sess-1")
-	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.OpenFiles.WithLabelValues("photos", "sess-1"))))
+	s.m.OpenFilesInc("photos")
+	s.m.OpenFilesInc("photos")
+	s.m.OpenFilesDec("photos")
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.OpenFiles.WithLabelValues("photos"))))
 }
 
 func (s *MetricsTestSuite) TestBytesAccumulate() {

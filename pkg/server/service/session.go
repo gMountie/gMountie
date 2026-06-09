@@ -6,11 +6,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.gmountie.dev/gmountie/pkg/common"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
+
 	"github.com/google/uuid"
 	"github.com/hanwen/go-fuse/v2/fuse/nodefs"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/pkg/errors"
 	"github.com/puzpuzpuz/xsync/v3"
+	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -40,9 +44,9 @@ type Session interface {
 	RegisterFile(volume, path string, file nodefs.File) uint64
 	GetFile(fd uint64) (*FileEntry, bool)
 	ReleaseFile(fd uint64)
-	// ReleaseAll releases every fd in the session. Called by the manager when
-	// the session is reaped.
-	ReleaseAll()
+	// ReleaseAll releases every fd in the session, returning the number of
+	// fds released. Called by the manager when the session is reaped.
+	ReleaseAll() int
 	// DoOnce returns the cached reply for requestID if present; otherwise it
 	// calls fn, caches the successful reply, and returns it. Concurrent calls
 	// with the same requestID are collapsed via singleflight so fn runs at
@@ -74,18 +78,26 @@ type SessionManager interface {
 	Stop(ctx context.Context) error
 }
 
-// SessionMetrics is a thin hook for the session manager to report its
-// active-session count to a metrics sink. Defined here so the service
-// package stays decoupled from the metrics package.
+// SessionMetrics is a thin hook for the session layer to report its
+// active-session count and per-volume open-fd gauge to a metrics sink.
+// Defined here so the service package stays decoupled from the metrics
+// package. The open-files accounting lives HERE (RegisterFile/ReleaseFile/
+// ReleaseAll) rather than in the RPC handlers so that session reaps — grace
+// expiry, revocation reload, shutdown — decrement the gauge too, and so a
+// retried Release (fd already gone) cannot double-decrement.
 type SessionMetrics interface {
 	SessionsActiveInc()
 	SessionsActiveDec()
+	OpenFilesInc(volume string)
+	OpenFilesDec(volume string)
 }
 
 type noopSessionMetrics struct{}
 
-func (noopSessionMetrics) SessionsActiveInc() {}
-func (noopSessionMetrics) SessionsActiveDec() {}
+func (noopSessionMetrics) SessionsActiveInc()  {}
+func (noopSessionMetrics) SessionsActiveDec()  {}
+func (noopSessionMetrics) OpenFilesInc(string) {}
+func (noopSessionMetrics) OpenFilesDec(string) {}
 
 type SessionManagerOptions struct {
 	GracePeriod time.Duration
@@ -112,6 +124,7 @@ type sessionImpl struct {
 	files     *xsync.MapOf[uint64, *FileEntry]
 	replies   *lru.Cache[string, any]
 	sf        singleflight.Group
+	metrics   SessionMetrics // never nil; manager injects its sink
 }
 
 func (s *sessionImpl) ID() string        { return s.id }
@@ -121,6 +134,7 @@ func (s *sessionImpl) Serial() string    { return s.serial }
 func (s *sessionImpl) RegisterFile(volume, path string, file nodefs.File) uint64 {
 	fd := s.fdNum.Add(1)
 	s.files.Store(fd, &FileEntry{File: file, Volume: volume, Path: path, Fd: fd})
+	s.metrics.OpenFilesInc(volume)
 	return fd
 }
 
@@ -130,9 +144,16 @@ func (s *sessionImpl) GetFile(fd uint64) (*FileEntry, bool) {
 
 func (s *sessionImpl) ReleaseFile(fd uint64) {
 	entry, ok := s.files.LoadAndDelete(fd)
-	if ok && entry.File != nil {
+	if !ok {
+		// Already released (e.g. a retried Release RPC): nothing to close and,
+		// crucially, nothing to decrement — the gauge only moves on an actual
+		// removal.
+		return
+	}
+	if entry.File != nil {
 		entry.File.Release()
 	}
+	s.metrics.OpenFilesDec(entry.Volume)
 }
 
 func (s *sessionImpl) DoOnce(requestID string, fn func() (any, error)) (any, error) {
@@ -155,14 +176,21 @@ func (s *sessionImpl) DoOnce(requestID string, fn func() (any, error)) (any, err
 	return v, err
 }
 
-func (s *sessionImpl) ReleaseAll() {
+// ReleaseAll releases every fd in the session, decrementing the per-volume
+// open-files gauge for each one, and returns how many fds it released.
+func (s *sessionImpl) ReleaseAll() int {
+	released := 0
 	s.files.Range(func(fd uint64, entry *FileEntry) bool {
-		s.files.Delete(fd)
-		if entry.File != nil {
-			entry.File.Release()
+		if e, ok := s.files.LoadAndDelete(fd); ok {
+			if e.File != nil {
+				e.File.Release()
+			}
+			s.metrics.OpenFilesDec(e.Volume)
+			released++
 		}
 		return true
 	})
+	return released
 }
 
 type pendingReap struct {
@@ -206,6 +234,7 @@ func (m *sessionManagerImpl) Create(principal, serial string) (string, error) {
 		serial:    serial,
 		files:     xsync.NewMapOf[uint64, *FileEntry](),
 		replies:   replies,
+		metrics:   m.metrics,
 	}
 	m.sessions.Store(id, sess)
 	m.metrics.SessionsActiveInc()
@@ -215,7 +244,9 @@ func (m *sessionManagerImpl) Create(principal, serial string) (string, error) {
 func (m *sessionManagerImpl) Get(id string) (Session, error) {
 	sess, ok := m.sessions.Load(id)
 	if !ok {
-		return nil, errors.Errorf("session not found: %s", id)
+		// Fingerprint, never the raw id — session ids are bearer tokens and this
+		// error can propagate into logs and gRPC error strings.
+		return nil, errors.Errorf("session not found: %s", common.FingerprintID(id))
 	}
 	return sess, nil
 }
@@ -261,8 +292,7 @@ func (m *sessionManagerImpl) MarkDisconnected(id string) {
 			// concurrent ReapIf (which also claims via sessions) could
 			// double-ReleaseAll the same session and double-close its fds.
 			if _, ok := m.sessions.LoadAndDelete(sess.id); ok {
-				m.metrics.SessionsActiveDec()
-				sess.ReleaseAll()
+				m.reap(sess, "grace_expired")
 			}
 		}
 	}()
@@ -282,8 +312,7 @@ func (m *sessionManagerImpl) ReapIf(pred func(principal, serial string) bool) in
 			if r, had := m.reapers.LoadAndDelete(id); had {
 				r.cancel()
 			}
-			m.metrics.SessionsActiveDec()
-			sess.ReleaseAll()
+			m.reap(sess, "revoked")
 			reaped++
 		}
 		return true
@@ -316,10 +345,23 @@ func (m *sessionManagerImpl) Stop(ctx context.Context) error {
 	// Claim each remaining session before releasing.
 	m.sessions.Range(func(id string, sess *sessionImpl) bool {
 		if _, ok := m.sessions.LoadAndDelete(id); ok {
-			m.metrics.SessionsActiveDec()
-			sess.ReleaseAll()
+			m.reap(sess, "shutdown")
 		}
 		return true
 	})
 	return nil
+}
+
+// reap finalizes a claimed session: bumps the gauge, releases all fds, and
+// emits the one log line that makes a reap — a consequential, normal
+// lifecycle event under the grace-period model — visible to operators.
+// Callers must have already won the sessions.LoadAndDelete claim.
+func (m *sessionManagerImpl) reap(sess *sessionImpl, reason string) {
+	m.metrics.SessionsActiveDec()
+	released := sess.ReleaseAll()
+	log.Log.Info("session reaped",
+		zap.String("session_fp", common.FingerprintID(sess.id)),
+		zap.String("principal", sess.principal),
+		zap.Int("fds_released", released),
+		zap.String("reason", reason))
 }
