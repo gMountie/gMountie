@@ -33,10 +33,11 @@ const seedSize = 8 * 1024 * 1024 // 8 MiB
 // bytes arrive over fresh server-side Read RPCs (not from the kernel page
 // cache), proving the surviving fd is actually exercised.
 //
-// Skip guard: SetupSuite uses MountVolumeErr so that a FUSE-unavailable
-// environment (CI sandbox, GoLand, non-Linux) skips cleanly instead of
-// panicking. These tests MUST run on the kubevirt VM where fusermount3 is
-// present and the ubuntu user can FUSE-mount without sudo.
+// Env gate: the suite runs only when GMOUNTIE_E2E_VM=1 (the dedicated
+// kubevirt VM, where fusermount3 is present and the ubuntu user can
+// FUSE-mount without sudo). Once that gate passes, FUSE is part of the
+// contract: a mount failure FAILS the suite rather than skipping it, so a
+// mount regression cannot silently void the reconnect coverage.
 type ReconnectOpenFDSuite struct {
 	suite.Suite
 	ctx      *utils.AppTestingContext
@@ -82,16 +83,17 @@ func (s *ReconnectOpenFDSuite) SetupSuite() {
 		s.T().Fatal(err)
 	}
 	s.ctx = testAppCtx
+	// Safety net: a failed Require below skips TearDownSuite (testify never
+	// marks the suite set up), which would leak the running server. Close is
+	// idempotent, so this coexists with TearDownSuite's Close.
+	s.T().Cleanup(func() { _ = testAppCtx.Close() })
 	s.volume = s.ctx.GetVolumes()[0]
 	s.Require().NotNil(s.volume)
 
-	// MountVolumeErr instead of MountVolume: skip cleanly if FUSE is
-	// unavailable (sandbox, GoLand) rather than panicking.
-	if err := s.ctx.MountVolumeErr(s.volume); err != nil {
-		_ = testAppCtx.Close()
-		s.ctx = nil
-		s.T().Skipf("FUSE mount unavailable (not on VM?): %v", err)
-	}
+	// The env gate above asserted "this is the VM", so FUSE must work here:
+	// a mount failure is a regression, not a skip condition.
+	s.Require().NoError(s.ctx.MountVolumeErr(s.volume),
+		"FUSE mount must work when GMOUNTIE_E2E_VM=1")
 }
 
 func (s *ReconnectOpenFDSuite) TearDownSuite() {
