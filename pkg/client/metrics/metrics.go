@@ -183,39 +183,66 @@ func (m *Metrics) CacheUnverifiedAdd(seconds float64) {
 // process) do not cross-wire. Each NewClientFromConfig registers its
 // private *Metrics via RegisterInstance; the dispatchers fan-out to all
 // of them. Protected by instancesMu.
+//
+// Entries are deduplicated by UNDERLYING COLLECTOR, not by wrapper pointer:
+// when two Metrics values registered against the same prometheus Registerer,
+// the second adopted the first's collectors (AlreadyRegisteredError handling
+// in Register), so fanning out to both would increment the same CounterVec
+// twice per event. Entries are refcounted so the fan-out survives until the
+// LAST client sharing the collectors has closed.
 
 var (
 	instancesMu sync.RWMutex
-	instances   []*Metrics
+	instances   []*instanceEntry
 )
 
-// RegisterInstance adds m to the global dispatcher. It is idempotent:
-// registering the same pointer twice is a no-op. Called by NewClientFromConfig
-// after Register() succeeds so the prometheus series are in place.
+// instanceEntry refcounts one distinct collector set in the dispatcher.
+type instanceEntry struct {
+	m    *Metrics
+	refs int
+}
+
+// sameCollectors reports whether two Metrics share the same underlying
+// collectors. RetryTotal is the proxy: Register's AlreadyRegisteredError
+// adoption replaces all collectors together, so comparing one is enough.
+func sameCollectors(a, b *Metrics) bool {
+	return a == b || a.RetryTotal == b.RetryTotal
+}
+
+// RegisterInstance adds m to the global dispatcher. A Metrics whose
+// collectors are already registered (same pointer, or a wrapper that adopted
+// an existing collector set via Register) only bumps the refcount — the
+// fan-out increments each underlying collector exactly once per event.
+// Called by the client factory after Register() succeeds so the prometheus
+// series are in place; paired with UnregisterInstance from ClientImpl.Close.
 func RegisterInstance(m *Metrics) {
 	instancesMu.Lock()
 	defer instancesMu.Unlock()
-	for _, existing := range instances {
-		if existing == m {
+	for _, e := range instances {
+		if sameCollectors(e.m, m) {
+			e.refs++
 			return
 		}
 	}
-	instances = append(instances, m)
+	instances = append(instances, &instanceEntry{m: m, refs: 1})
 }
 
-// UnregisterInstance removes m from the global dispatcher. Used in tests
-// to clean up instances registered within a single test case so they do not
-// bleed into subsequent tests.
+// UnregisterInstance drops one reference to m's collector set, removing the
+// entry from the dispatcher when the last reference is gone. Called by
+// ClientImpl.Close so closed clients stop receiving fan-out (and tests can
+// clean up instances registered within a single test case).
 func UnregisterInstance(m *Metrics) {
 	instancesMu.Lock()
 	defer instancesMu.Unlock()
-	out := instances[:0]
-	for _, existing := range instances {
-		if existing != m {
-			out = append(out, existing)
+	for i, e := range instances {
+		if sameCollectors(e.m, m) {
+			e.refs--
+			if e.refs <= 0 {
+				instances = append(instances[:i], instances[i+1:]...)
+			}
+			return
 		}
 	}
-	instances = out
 }
 
 // OnRetry fires RetryInc on all registered instances. Called by the
@@ -224,8 +251,8 @@ func UnregisterInstance(m *Metrics) {
 func OnRetry(op, code string) {
 	instancesMu.RLock()
 	defer instancesMu.RUnlock()
-	for _, m := range instances {
-		m.RetryInc(op, code)
+	for _, e := range instances {
+		e.m.RetryInc(op, code)
 	}
 }
 
@@ -233,8 +260,8 @@ func OnRetry(op, code string) {
 func CacheHit(tier, cacheType string) {
 	instancesMu.RLock()
 	defer instancesMu.RUnlock()
-	for _, m := range instances {
-		m.CacheHitInc(tier, cacheType)
+	for _, e := range instances {
+		e.m.CacheHitInc(tier, cacheType)
 	}
 }
 
@@ -242,8 +269,8 @@ func CacheHit(tier, cacheType string) {
 func CacheMiss(cacheType string) {
 	instancesMu.RLock()
 	defer instancesMu.RUnlock()
-	for _, m := range instances {
-		m.CacheMissInc(cacheType)
+	for _, e := range instances {
+		e.m.CacheMissInc(cacheType)
 	}
 }
 
@@ -251,8 +278,8 @@ func CacheMiss(cacheType string) {
 func CacheDedupeHit() {
 	instancesMu.RLock()
 	defer instancesMu.RUnlock()
-	for _, m := range instances {
-		m.CacheDedupeHitInc()
+	for _, e := range instances {
+		e.m.CacheDedupeHitInc()
 	}
 }
 
@@ -260,8 +287,8 @@ func CacheDedupeHit() {
 func CacheRevalidation(result string) {
 	instancesMu.RLock()
 	defer instancesMu.RUnlock()
-	for _, m := range instances {
-		m.CacheRevalidationInc(result)
+	for _, e := range instances {
+		e.m.CacheRevalidationInc(result)
 	}
 }
 
@@ -269,8 +296,8 @@ func CacheRevalidation(result string) {
 func SubscribeEventReceived(kind string) {
 	instancesMu.RLock()
 	defer instancesMu.RUnlock()
-	for _, m := range instances {
-		m.SubscribeEventReceivedInc(kind)
+	for _, e := range instances {
+		e.m.SubscribeEventReceivedInc(kind)
 	}
 }
 
@@ -278,8 +305,8 @@ func SubscribeEventReceived(kind string) {
 func SubscribeStreamStateChanged(up bool) {
 	instancesMu.RLock()
 	defer instancesMu.RUnlock()
-	for _, m := range instances {
-		m.SubscribeStreamStateSet(up)
+	for _, e := range instances {
+		e.m.SubscribeStreamStateSet(up)
 	}
 }
 
@@ -287,7 +314,7 @@ func SubscribeStreamStateChanged(up bool) {
 func CacheUnverifiedElapsed(seconds float64) {
 	instancesMu.RLock()
 	defer instancesMu.RUnlock()
-	for _, m := range instances {
-		m.CacheUnverifiedAdd(seconds)
+	for _, e := range instances {
+		e.m.CacheUnverifiedAdd(seconds)
 	}
 }

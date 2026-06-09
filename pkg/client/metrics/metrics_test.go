@@ -224,4 +224,48 @@ func (s *ClientMetricsTestSuite) TestRegisterInstance_Idempotent() {
 	s.Assert().Equal(1, count, "RegisterInstance must deduplicate")
 }
 
+// TestOnRetry_SharedCollectorsCountOnce is the regression test for the
+// double-count bug: the standard mount flow constructs two clients, whose
+// Metrics adopt the SAME underlying collectors via Register's
+// AlreadyRegisteredError handling. Fan-out must increment the shared
+// CounterVec once per event, not once per registered wrapper.
+func (s *ClientMetricsTestSuite) TestOnRetry_SharedCollectorsCountOnce() {
+	reg := prometheus.NewRegistry()
+	s.Require().NoError(s.m.Register(reg))
+	m2 := NewMetrics()
+	s.Require().NoError(m2.Register(reg)) // adopts s.m's collectors
+	s.Require().True(sameCollectors(s.m, m2), "m2 must have adopted s.m's collectors")
+
+	RegisterInstance(s.m)
+	RegisterInstance(m2)
+
+	OnRetry("Read", "Unavailable")
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.RetryTotal.WithLabelValues("Read", "Unavailable"))),
+		"one retry must count once, regardless of how many clients share the collectors")
+}
+
+// TestUnregisterInstance_RefCounted verifies the dispatcher lifecycle that
+// ClientImpl.Close relies on: closing one of two clients sharing a collector
+// set keeps the fan-out alive for the survivor; closing the last one stops it.
+func (s *ClientMetricsTestSuite) TestUnregisterInstance_RefCounted() {
+	reg := prometheus.NewRegistry()
+	s.Require().NoError(s.m.Register(reg))
+	m2 := NewMetrics()
+	s.Require().NoError(m2.Register(reg))
+
+	RegisterInstance(s.m)
+	RegisterInstance(m2)
+
+	// First client closes: the shared entry must survive for the second.
+	UnregisterInstance(s.m)
+	OnRetry("Read", "Unavailable")
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.RetryTotal.WithLabelValues("Read", "Unavailable"))))
+
+	// Last client closes: fan-out stops.
+	UnregisterInstance(m2)
+	OnRetry("Read", "Unavailable")
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.RetryTotal.WithLabelValues("Read", "Unavailable"))),
+		"a closed client set must no longer receive fan-out")
+}
+
 func TestClientMetricsTestSuite(t *testing.T) { suite.Run(t, new(ClientMetricsTestSuite)) }
