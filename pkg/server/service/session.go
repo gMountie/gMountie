@@ -256,7 +256,7 @@ func NewSessionManager(opts SessionManagerOptions) SessionManager {
 		grace = DefaultGracePeriod
 	}
 	cacheSize := opts.IdempotencyCacheSize
-	if cacheSize == 0 {
+	if cacheSize <= 0 {
 		cacheSize = DefaultIdempotencyCacheSize
 	}
 	m := opts.Metrics

@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"go.gmountie.dev/gmountie/pkg/server/metrics"
@@ -116,6 +117,43 @@ func (s *MetricsInterceptorTestSuite) TestStreamWithoutVolumeTagsEmpty() {
 	c, errC := s.m.RequestDuration.GetMetricWithLabelValues("", "Keepalive")
 	s.Require().NoError(errC)
 	s.Require().NotNil(c)
+}
+
+// TestVolumePeekStreamRace pins the happens-before contract between the
+// RecvMsg writer (handler goroutine) and the volume() reader (interceptor
+// goroutine). Under -race it catches any future change that moves the
+// s.vol write outside the mutex.
+func (s *MetricsInterceptorTestSuite) TestVolumePeekStreamRace() {
+	inner := &fakeMetricsStream{}
+	ws := &volumePeekStream{ServerStream: inner}
+
+	const iterations = 1000
+
+	// Reader goroutine: poll volume() concurrently with RecvMsg writes.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			_ = ws.volume()
+		}
+	}()
+
+	// Writer goroutine (this goroutine): drive RecvMsg, alternating between
+	// volume-carrying and non-carrying messages so s.vol is written at least once.
+	for i := 0; i < iterations; i++ {
+		if i%2 == 0 {
+			var m vMsg
+			_ = ws.RecvMsg(&m)
+		} else {
+			// Reset delivered so the next even iteration delivers again.
+			inner.delivered = false
+		}
+	}
+
+	wg.Wait()
+	// After at least one volume-carrying RecvMsg, volume() must return "photos".
+	s.Assert().Equal("photos", ws.volume())
 }
 
 func TestMetricsInterceptorTestSuite(t *testing.T) {
