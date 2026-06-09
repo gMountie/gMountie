@@ -42,6 +42,7 @@ The `server` section configures the core server settings:
 | address                         | string   | "0\.0\.0\.0" | IP address the server listens on                                                             |
 | port                            | integer  | 9449         | Port number for the gRPC server                                                              |
 | metrics                         | boolean  | true         | Enable/disable the gRPC Prometheus interceptors (`grpc_server_*` series)                     |
+| plain\_metrics\_addr            | string   | ""           | Extra **unauthenticated** plain-HTTP listener serving only `/metrics` ([details](#plain-metrics-listener)). Empty = disabled. |
 | frame\_size\_bytes              | integer  | 1048576      | Chunk size for server-streamed reads (1 MiB). Range [4096, 16777216].                        |
 | compound\_max\_parallel         | integer  | 8            | Max concurrent sub-ops in flight for a single Compound RPC. Range [1, 256].                  |
 | pprof                           | boolean  | false        | Expose `/debug/pprof/*` on the ops HTTP server                                               |
@@ -52,7 +53,10 @@ The inbound message-size cap lives under
 [`server.grpc.limits.max_recv_message_size`](#grpc-behavior-and-limits)
 (default 16 MiB) — the legacy top-level `max_message_bytes` and the
 deprecated `metrics_addr` keys were removed. The ops HTTP server address is
-[`server.ops.addr`](#ops-endpoints).
+[`server.ops.addr`](#ops-endpoints). (`plain_metrics_addr` above is
+**unrelated** to the removed `metrics_addr`, which configured the ops
+listener — the new key starts a [separate scrape-only
+listener](#plain-metrics-listener).)
 
 Example:
 
@@ -200,6 +204,28 @@ server:
       cert_file: /etc/gmountie/ops.crt
       key_file: /etc/gmountie/ops.key
 ```
+
+### Plain metrics listener
+
+`server.plain_metrics_addr` starts an **additional** HTTP listener that serves
+only `/metrics` — the same Prometheus registry the ops listener exposes — with
+**no authentication and no TLS**. This is the node-exporter convention:
+Prometheus-style scrapers generally can't present client certificates or
+basic-auth credentials, while metrics are read-only telemetry. Empty (the
+default) disables the listener entirely.
+
+Everything privileged on the ops surface (`/debug/pprof`, `/ops/acl/reload`,
+health endpoints) stays on the authenticated ops listener — the plain listener
+serves nothing else, by design. Expose it only on cluster-internal networks.
+
+```yaml
+server:
+  plain_metrics_addr: ":9091"   # e.g. scraped by an in-cluster Prometheus
+```
+
+The Helm chart wires this up via its `metrics.enabled` value, which also adds
+the container/Service port and (optionally, `metrics.serviceMonitor.enabled`)
+a Prometheus-Operator ServiceMonitor.
 
 ## Logging
 

@@ -158,6 +158,14 @@ type ServerConfig struct {
 	// grpc_server_* series). It does NOT gate the ops HTTP server — that
 	// always runs on Ops.Addr — nor the custom gmountie_server_* collectors.
 	Metrics bool
+	// PlainMetricsAddr, when non-empty, starts an ADDITIONAL plain-HTTP listener
+	// serving only /metrics (the same registry the ops listener serves).
+	// Deliberately unauthenticated and TLS-free — Prometheus-style scrapers
+	// can't present client certs — so bind it to cluster-internal networks
+	// only. Everything else on the ops surface (pprof, /ops/acl/reload,
+	// health) stays on the authenticated ops listener. Empty (the default)
+	// disables it. Flat key (`plain_metrics_addr` — NOT the long-removed `metrics_addr`, which meant the OPS addr; reusing that name would silently resurrect old configs as an unauthenticated listener): `metrics` is already a bool.
+	PlainMetricsAddr string `mapstructure:"plain_metrics_addr"`
 	// Pprof exposes /debug/pprof/* on the ops HTTP server. Off by
 	// default: pprof endpoints leak goroutine names + symbols and can
 	// stall the runtime on large captures, so they have no business

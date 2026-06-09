@@ -43,10 +43,10 @@ gMountie server is running.
 
    # ops binds {{ include "gmountie-server.opsAddr" . }} (non-loopback) — reachable via the Service:
    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "gmountie-server.fullname" . }} \
-     {{ .Values.service.metricsPort }}:{{ .Values.service.metricsPort }}
+     {{ .Values.service.opsPort }}:{{ .Values.service.opsPort }}
    # auth is required on a non-loopback ops bind; with basic auth + TLS:
-   curl -k -u <ops-user> https://127.0.0.1:{{ .Values.service.metricsPort }}/healthz
-   curl -k -u <ops-user> https://127.0.0.1:{{ .Values.service.metricsPort }}/metrics
+   curl -k -u <ops-user> https://127.0.0.1:{{ .Values.service.opsPort }}/healthz
+   curl -k -u <ops-user> https://127.0.0.1:{{ .Values.service.opsPort }}/metrics
 
 {{- else }}
 
@@ -57,7 +57,19 @@ gMountie server is running.
    curl http://127.0.0.1:{{ include "gmountie-server.opsPort" . }}/healthz
    curl http://127.0.0.1:{{ include "gmountie-server.opsPort" . }}/readyz
    curl http://127.0.0.1:{{ include "gmountie-server.opsPort" . }}/metrics
-   # To scrape in-cluster instead, see the `ops:` preset in values.yaml
-   # (non-loopback bind + auth + TLS).
 
+{{- end }}
+{{- if .Values.metrics.enabled }}
+
+   # Prometheus scraping: the plain /metrics listener (no auth/TLS) is on
+   # the `metrics` Service port ({{ .Values.metrics.port }}).
+   curl http://<pod-or-svc>:{{ .Values.metrics.port }}/metrics
+{{- if not .Values.metrics.serviceMonitor.enabled }}
+   # Tip: metrics.serviceMonitor.enabled=true renders a ServiceMonitor for
+   # Prometheus-Operator clusters.
+{{- end }}
+{{- else }}
+
+   # For in-cluster Prometheus scraping without ops auth, enable the plain
+   # /metrics listener: --set metrics.enabled=true (see values.yaml).
 {{- end }}

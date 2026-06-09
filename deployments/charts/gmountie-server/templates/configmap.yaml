@@ -11,5 +11,12 @@ data:
   # `auth` block is deliberately omitted: credentials live in the auth
   # Secret (templates/secret.yaml) and are concatenated at container
   # start.
+  {{- /* deepCopy so the plain_metrics_addr injection can't mutate .Values for
+  other templates; metrics.enabled wires the plain /metrics listener into
+  the server config (server.plain_metrics_addr) alongside the values keys. */}}
+  {{- $cfg := omit (deepCopy .Values.config) "auth" }}
+  {{- if .Values.metrics.enabled }}
+  {{- $_ := set $cfg.server "plain_metrics_addr" (printf "0.0.0.0:%v" .Values.metrics.port) }}
+  {{- end }}
   config.yaml: |-
-{{ omit .Values.config "auth" | toYaml | indent 4 }}
+{{ $cfg | toYaml | indent 4 }}

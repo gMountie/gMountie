@@ -271,6 +271,28 @@ func Start(ctx context.Context, cfg *config.Config) error {
 	}
 	go opsServer.Start()
 
+	// Optional plain metrics listener (server.plain_metrics_addr): /metrics only,
+	// unauthenticated by design so in-cluster scrapers need no client cert —
+	// see ops.NewMetricsServer. Disabled when the addr is empty (the default).
+	var metricsServer *ops.Server
+	if cfg.Server.PlainMetricsAddr != "" {
+		metricsServer = ops.NewMetricsServer(cfg.Server.PlainMetricsAddr)
+		go metricsServer.Start()
+	}
+
+	// stopHTTP gracefully stops an ops-package HTTP listener with a bounded
+	// deadline; nil (a disabled metrics listener) is skipped.
+	stopHTTP := func(label string, srv *ops.Server) {
+		if srv == nil {
+			return
+		}
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := srv.Stop(stopCtx); err != nil {
+			log.Log.Warn(label+" server stop returned error", zap.Error(err))
+		}
+		cancel()
+	}
+
 	serveErr := make(chan error, 1)
 	go func() {
 		serveErr <- s.Serve()
@@ -302,11 +324,8 @@ func Start(ctx context.Context, cfg *config.Config) error {
 				log.Log.Warn("session manager stop returned error", zap.Error(err))
 			}
 			appCtx.Bus.Close()
-			opsCtx, opsCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := opsServer.Stop(opsCtx); err != nil {
-				log.Log.Warn("ops server stop returned error", zap.Error(err))
-			}
-			opsCancel()
+			stopHTTP("ops", opsServer)
+			stopHTTP("metrics", metricsServer)
 			log.Log.Info("server shut down gracefully")
 			return nil
 		case <-time.After(shutdownDeadline):
@@ -318,11 +337,8 @@ func Start(ctx context.Context, cfg *config.Config) error {
 			}
 			sessCancel()
 			appCtx.Bus.Close()
-			opsCtx, opsCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := opsServer.Stop(opsCtx); err != nil {
-				log.Log.Warn("ops server stop returned error", zap.Error(err))
-			}
-			opsCancel()
+			stopHTTP("ops", opsServer)
+			stopHTTP("metrics", metricsServer)
 			return errors.New("shutdown deadline exceeded")
 		}
 	}

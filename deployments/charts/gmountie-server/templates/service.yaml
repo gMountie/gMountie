@@ -29,7 +29,15 @@ spec:
     {{- if include "gmountie-server.opsExposed" . }}
     # Only rendered when config.server.ops.addr binds non-loopback; the
     # default loopback ops endpoint is unreachable through a Service.
-    - port: {{ .Values.service.metricsPort }}
+    - port: {{ .Values.service.opsPort }}
+      targetPort: ops
+      protocol: TCP
+      name: ops
+    {{- end }}
+    {{- if .Values.metrics.enabled }}
+    # The plain (unauthenticated, /metrics-only) listener — scrape target
+    # for the ServiceMonitor below / any in-cluster Prometheus.
+    - port: {{ .Values.metrics.port }}
       targetPort: metrics
       protocol: TCP
       name: metrics

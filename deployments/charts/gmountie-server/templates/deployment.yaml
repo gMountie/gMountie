@@ -73,11 +73,18 @@ spec:
               containerPort: {{ .Values.config.server.port }}
               protocol: TCP
             {{- if include "gmountie-server.opsExposed" . }}
-            - name: metrics
+            - name: ops
               # The ops HTTP server binds server.ops.addr; this port is only
               # rendered when that addr is non-loopback (otherwise nothing
               # in-cluster can reach it — use kubectl port-forward instead).
               containerPort: {{ include "gmountie-server.opsPort" . }}
+              protocol: TCP
+            {{- end }}
+            {{- if .Values.metrics.enabled }}
+            - name: metrics
+              # Plain /metrics-only listener (server.plain_metrics_addr, injected
+              # by the chart) — unauthenticated by design for scrapers.
+              containerPort: {{ .Values.metrics.port }}
               protocol: TCP
             {{- end }}
           {{- with .Values.livenessProbe }}
