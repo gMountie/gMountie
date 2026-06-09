@@ -20,7 +20,7 @@ assert_eq() { # desc expected actual
 }
 assert_fails() { # desc cmd...
   d=$1; shift
-  if "$@" >/dev/null 2>&1; then
+  if ( "$@" ) >/dev/null 2>&1; then
     printf 'FAIL - %s (expected non-zero exit)\n' "$d"; fails=$((fails + 1))
   else
     printf 'ok   - %s\n' "$d"
