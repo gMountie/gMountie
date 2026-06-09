@@ -40,6 +40,8 @@ const (
 	RpcFs_Compound_FullMethodName         = "/gmountie.RpcFs/Compound"
 	RpcFs_GetAttrIfChanged_FullMethodName = "/gmountie.RpcFs/GetAttrIfChanged"
 	RpcFs_Subscribe_FullMethodName        = "/gmountie.RpcFs/Subscribe"
+	RpcFs_SetAttr_FullMethodName          = "/gmountie.RpcFs/SetAttr"
+	RpcFs_ReadDir_FullMethodName          = "/gmountie.RpcFs/ReadDir"
 )
 
 // RpcFsClient is the client API for RpcFs service.
@@ -67,6 +69,8 @@ type RpcFsClient interface {
 	Compound(ctx context.Context, in *CompoundRequest, opts ...grpc.CallOption) (*CompoundBatch, error)
 	GetAttrIfChanged(ctx context.Context, in *GetAttrIfChangedRequest, opts ...grpc.CallOption) (*GetAttrIfChangedReply, error)
 	Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SubscribeEvent], error)
+	SetAttr(ctx context.Context, in *SetAttrRequest, opts ...grpc.CallOption) (*SetAttrReply, error)
+	ReadDir(ctx context.Context, in *ReadDirRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadDirBatch], error)
 }
 
 type rpcFsClient struct {
@@ -296,6 +300,35 @@ func (c *rpcFsClient) Subscribe(ctx context.Context, in *SubscribeRequest, opts 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RpcFs_SubscribeClient = grpc.ServerStreamingClient[SubscribeEvent]
 
+func (c *rpcFsClient) SetAttr(ctx context.Context, in *SetAttrRequest, opts ...grpc.CallOption) (*SetAttrReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetAttrReply)
+	err := c.cc.Invoke(ctx, RpcFs_SetAttr_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *rpcFsClient) ReadDir(ctx context.Context, in *ReadDirRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadDirBatch], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &RpcFs_ServiceDesc.Streams[1], RpcFs_ReadDir_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ReadDirRequest, ReadDirBatch]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RpcFs_ReadDirClient = grpc.ServerStreamingClient[ReadDirBatch]
+
 // RpcFsServer is the server API for RpcFs service.
 // All implementations must embed UnimplementedRpcFsServer
 // for forward compatibility.
@@ -321,6 +354,8 @@ type RpcFsServer interface {
 	Compound(context.Context, *CompoundRequest) (*CompoundBatch, error)
 	GetAttrIfChanged(context.Context, *GetAttrIfChangedRequest) (*GetAttrIfChangedReply, error)
 	Subscribe(*SubscribeRequest, grpc.ServerStreamingServer[SubscribeEvent]) error
+	SetAttr(context.Context, *SetAttrRequest) (*SetAttrReply, error)
+	ReadDir(*ReadDirRequest, grpc.ServerStreamingServer[ReadDirBatch]) error
 	mustEmbedUnimplementedRpcFsServer()
 }
 
@@ -393,6 +428,12 @@ func (UnimplementedRpcFsServer) GetAttrIfChanged(context.Context, *GetAttrIfChan
 }
 func (UnimplementedRpcFsServer) Subscribe(*SubscribeRequest, grpc.ServerStreamingServer[SubscribeEvent]) error {
 	return status.Error(codes.Unimplemented, "method Subscribe not implemented")
+}
+func (UnimplementedRpcFsServer) SetAttr(context.Context, *SetAttrRequest) (*SetAttrReply, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetAttr not implemented")
+}
+func (UnimplementedRpcFsServer) ReadDir(*ReadDirRequest, grpc.ServerStreamingServer[ReadDirBatch]) error {
+	return status.Error(codes.Unimplemented, "method ReadDir not implemented")
 }
 func (UnimplementedRpcFsServer) mustEmbedUnimplementedRpcFsServer() {}
 func (UnimplementedRpcFsServer) testEmbeddedByValue()               {}
@@ -786,6 +827,35 @@ func _RpcFs_Subscribe_Handler(srv interface{}, stream grpc.ServerStream) error {
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RpcFs_SubscribeServer = grpc.ServerStreamingServer[SubscribeEvent]
 
+func _RpcFs_SetAttr_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetAttrRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RpcFsServer).SetAttr(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RpcFs_SetAttr_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RpcFsServer).SetAttr(ctx, req.(*SetAttrRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RpcFs_ReadDir_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ReadDirRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(RpcFsServer).ReadDir(m, &grpc.GenericServerStream[ReadDirRequest, ReadDirBatch]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RpcFs_ReadDirServer = grpc.ServerStreamingServer[ReadDirBatch]
+
 // RpcFs_ServiceDesc is the grpc.ServiceDesc for RpcFs service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -873,11 +943,20 @@ var RpcFs_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "GetAttrIfChanged",
 			Handler:    _RpcFs_GetAttrIfChanged_Handler,
 		},
+		{
+			MethodName: "SetAttr",
+			Handler:    _RpcFs_SetAttr_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "Subscribe",
 			Handler:       _RpcFs_Subscribe_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "ReadDir",
+			Handler:       _RpcFs_ReadDir_Handler,
 			ServerStreams: true,
 		},
 	},
