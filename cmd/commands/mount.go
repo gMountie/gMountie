@@ -55,6 +55,20 @@ var (
 	cfg        *config.Config
 )
 
+// applyClientLogConfig applies the parsed config's log block to the package
+// logger. This used to happen as a constructor side effect inside the client
+// factory (pkg/client/grpc); the CLI owns logger configuration now, so
+// library consumers of pkg/client keep their own logger (see pkg/utils/log).
+func applyClientLogConfig(cfg *config.Config) error {
+	if cfg == nil || cfg.Log == nil {
+		return nil
+	}
+	if err := log.Reconfigure(*cfg.Log, os.Stderr); err != nil {
+		return fmt.Errorf("configure logger: %w", err)
+	}
+	return nil
+}
+
 // applyMountSpec maps a parsed shorthand spec onto the viper instance and
 // returns the volume name it carried. Explicit flags (checked by the caller)
 // still take precedence over these values.
@@ -206,6 +220,9 @@ var mountCmd = &cobra.Command{
 		cfg, err = config.ParseConfig(v)
 		if err != nil {
 			return fmt.Errorf("failed to parse config: %w", err)
+		}
+		if err := applyClientLogConfig(cfg); err != nil {
+			return err
 		}
 
 		// Fall back to the profile/config mount block for anything the CLI omitted.

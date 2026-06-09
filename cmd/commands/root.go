@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"go.gmountie.dev/gmountie/pkg/common"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/spf13/cobra"
 )
@@ -32,6 +33,13 @@ func init() {
 }
 
 func Execute() {
+	// The CLI binary owns the process, so it opts in to process-global
+	// logging: zap's globals and the stdlib `log` default logger route
+	// through pkg/utils/log. This is deliberately NOT an import side effect —
+	// library consumers of pkg/... keep their own global loggers.
+	if err := log.HijackGlobals(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

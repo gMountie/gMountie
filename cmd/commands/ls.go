@@ -76,6 +76,9 @@ func runLs(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to parse config: %w", err)
 	}
+	if err := applyClientLogConfig(cfg); err != nil {
+		return err
+	}
 	addr := net.JoinHostPort(cfg.Server.Address, fmt.Sprintf("%d", cfg.Server.Port))
 
 	// List over a PRE-SESSION VolumeService.List call (no session handshake) so
