@@ -286,12 +286,17 @@ func (b *BackendClient) Readlink(ctx context.Context, path string) (string, fuse
 // — the new session's idempotency cache is empty and a replay could surface
 // a spurious EEXIST/ENOENT. Returns statusFromRPCError's errno mapping on a
 // gRPC error, otherwise fuse.Status as returned by statusOf.
+// logFields carries the per-op correlation fields (path(s)) into the error
+// log, alongside the request_id — without them a user-facing errno from
+// Mkdir/Unlink/Chmod/... could not be tied to a file or to the server-side
+// idempotency record.
 func mutatePath[Rep any](
 	b *BackendClient,
 	ctx context.Context,
 	op string,
 	fn func(ctx context.Context, requestID string) (Rep, error),
 	statusOf func(Rep) int32,
+	logFields ...zap.Field,
 ) fuse.Status {
 	requestID := uuid.NewString() // outside retryOp: stable across attempts for idempotency
 	res, err := retryOp(b.client, ctx, op, classPathMutation, b.client.MetaTimeout(),
@@ -299,7 +304,8 @@ func mutatePath[Rep any](
 			return fn(ctx, requestID)
 		})
 	if err != nil {
-		log.Log.Error("error in call: "+op, zap.Error(err))
+		fields := append([]zap.Field{zap.String("request_id", requestID), zap.Error(err)}, logFields...)
+		log.Log.Error("error in call: "+op, fields...)
 		return statusFromRPCError(err)
 	}
 	return fuse.Status(statusOf(res))
@@ -320,6 +326,7 @@ func (b *BackendClient) Symlink(ctx context.Context, target, linkPath string) fu
 			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.SymlinkReply) int32 { return r.Status },
+		zap.String("target", target), zap.String("link_path", linkPath),
 	)
 }
 
@@ -378,6 +385,7 @@ func (b *BackendClient) SetXAttr(ctx context.Context, path, attr string, data []
 			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.SetXAttrReply) int32 { return r.Status },
+		zap.String("path", path),
 	)
 }
 
@@ -395,6 +403,7 @@ func (b *BackendClient) RemoveXAttr(ctx context.Context, path, attr string) fuse
 			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.RemoveXAttrReply) int32 { return r.Status },
+		zap.String("path", path),
 	)
 }
 
@@ -427,6 +436,7 @@ func (b *BackendClient) Mkdir(ctx context.Context, path string, mode uint32) fus
 			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.MkdirReply) int32 { return r.Status },
+		zap.String("path", path),
 	)
 }
 
@@ -443,6 +453,7 @@ func (b *BackendClient) Rmdir(ctx context.Context, path string) fuse.Status {
 			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.RmdirReply) int32 { return r.Status },
+		zap.String("path", path),
 	)
 }
 
@@ -459,6 +470,7 @@ func (b *BackendClient) Unlink(ctx context.Context, path string) fuse.Status {
 			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.UnlinkReply) int32 { return r.Status },
+		zap.String("path", path),
 	)
 }
 
@@ -476,6 +488,7 @@ func (b *BackendClient) Rename(ctx context.Context, oldPath, newPath string) fus
 			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.RenameReply) int32 { return r.Status },
+		zap.String("old_path", oldPath), zap.String("new_path", newPath),
 	)
 }
 
@@ -493,6 +506,7 @@ func (b *BackendClient) Truncate(ctx context.Context, path string, size uint64) 
 			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.TruncateReply) int32 { return r.Status },
+		zap.String("path", path),
 	)
 }
 
@@ -510,6 +524,7 @@ func (b *BackendClient) Chmod(ctx context.Context, path string, mode uint32) fus
 			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.ChmodReply) int32 { return r.Status },
+		zap.String("path", path),
 	)
 }
 
@@ -528,6 +543,7 @@ func (b *BackendClient) Chown(ctx context.Context, path string, uid, gid uint32)
 			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.ChownReply) int32 { return r.Status },
+		zap.String("path", path),
 	)
 }
 
@@ -556,6 +572,7 @@ func (b *BackendClient) Utimens(ctx context.Context, path string, atime, mtime *
 			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.UtimensReply) int32 { return r.Status },
+		zap.String("path", path),
 	)
 }
 
@@ -826,9 +843,15 @@ func (b *BackendClient) Write(ctx context.Context, fh FileHandle, off int64, dat
 	if h == nil {
 		return 0, fuse.EBADF
 	}
-	// Mark dirty so the next Flush emits a WriteAndFlush. Safe to set before
-	// buffering: FUSE serializes ops per open fd, so Write and Flush on this
-	// handle never race.
+	// Mark dirty so the next Flush emits a WriteAndFlush. The kernel does NOT
+	// guarantee that FUSE ops on one fd are serialized; the safety argument is:
+	// h.dirty is an atomic bool and the coalescer locks internally, so nothing
+	// tears. Setting dirty BEFORE buffering preserves the invariant "bytes in
+	// the coalescer ⇒ dirty is true" — a Flush racing this Write can at worst
+	// observe dirty=true with the bytes not yet appended and issue an empty
+	// WriteAndFlush; those bytes then reach durability on the next
+	// Flush/Fsync/Release (an application racing write(2) against close(2) has
+	// no ordering guarantee to lose).
 	h.dirty.Store(true)
 	// Coalescing disabled: pass through to the streaming Write directly.
 	if h.coalescer == nil {
