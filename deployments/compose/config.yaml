@@ -1,17 +1,29 @@
 server:
   address: 0.0.0.0
   port: 9449
-  metrics: true
+  # The ops HTTP endpoint (/metrics, /healthz, /readyz) keeps its default
+  # loopback bind (server.ops.addr: 127.0.0.1:9090) — reachable from inside
+  # the container only (the image HEALTHCHECK uses it):
+  #
+  #   docker compose exec server wget -qO- http://127.0.0.1:9090/healthz
+  #
+  # Binding it non-loopback requires server.ops.auth (and TLS for basic auth
+  # off loopback) — see docs/design/observability notes before exposing it.
 
 auth:
   type: basic
   users:
-    # !!! DEMO ONLY — CHANGE before exposing this server to any network !!!
-    # gMountie has no env-var override for basic-auth users, so edit this file
-    # (or mount your own config) before deploying. Passwords are compared in
-    # plaintext today (see Phase 7 — security hardening).
-    - username: admin
-      password: CHANGE_ME_BEFORE_DEPLOY
+    # !!! DEMO ONLY — CHANGE THIS BEFORE EXPOSING THE SERVER TO ANY NETWORK !!!
+    # The hash below is the PUBLISHED argon2id hash of the password "demo"
+    # (the same demo credential the Helm chart ships). Anyone who can reach
+    # the port can log in with demo/demo until you replace it.
+    #
+    # Generate your own hash with `gmountie genpass` and paste it here.
+    # `password_hash` must be a $argon2id$ PHC string — the server REJECTS
+    # plaintext passwords at startup. There is no env-var override for the
+    # auth.users list, so edit this file (or mount your own config).
+    - username: demo
+      password_hash: '$argon2id$v=19$m=65536,t=3,p=4$Zu3uhLZjJNWQzIBQNevo3w$iqBrNtSWBuE6I7dCzQNRHZtPd/zUA8tTG3KnpyQAnew'
 
 volumes:
   - name: data
