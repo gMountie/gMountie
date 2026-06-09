@@ -26,9 +26,13 @@ spec:
       # server refuses cleartext on a non-loopback bind, so that's rare).
       appProtocol: {{ . }}
       {{- end }}
+    {{- if include "gmountie-server.opsExposed" . }}
+    # Only rendered when config.server.ops.addr binds non-loopback; the
+    # default loopback ops endpoint is unreachable through a Service.
     - port: {{ .Values.service.metricsPort }}
       targetPort: metrics
       protocol: TCP
       name: metrics
+    {{- end }}
   selector:
     {{- include "gmountie-server.selectorLabels" . | nindent 4 }}

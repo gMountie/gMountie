@@ -60,3 +60,47 @@ Create the name of the service account to use
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{/*
+Effective server.ops.addr (falls back to the server default).
+*/}}
+{{- define "gmountie-server.opsAddr" -}}
+{{- dig "server" "ops" "addr" "127.0.0.1:9090" .Values.config -}}
+{{- end }}
+
+{{/*
+Non-empty ("true") when the ops endpoint binds a non-loopback address —
+only then is there anything for a containerPort / Service port to route to.
+*/}}
+{{- define "gmountie-server.opsExposed" -}}
+{{- $addr := include "gmountie-server.opsAddr" . -}}
+{{- if not (or (hasPrefix "127." $addr) (hasPrefix "localhost" $addr) (hasPrefix "[::1]" $addr)) -}}
+true
+{{- end -}}
+{{- end }}
+
+{{/*
+Port component of server.ops.addr.
+*/}}
+{{- define "gmountie-server.opsPort" -}}
+{{- include "gmountie-server.opsAddr" . | splitList ":" | last -}}
+{{- end }}
+
+{{/*
+Name of the Secret carrying the auth config block.
+*/}}
+{{- define "gmountie-server.authSecretName" -}}
+{{- if .Values.auth.existingSecret }}
+{{- .Values.auth.existingSecret }}
+{{- else }}
+{{- include "gmountie-server.fullname" . }}-auth
+{{- end }}
+{{- end }}
+
+{{/*
+The PUBLISHED argon2id hash of the demo password ("demo") that values.yaml
+ships. Installs that expose the server externally must not keep it.
+*/}}
+{{- define "gmountie-server.demoHash" -}}
+$argon2id$v=19$m=65536,t=3,p=4$Zu3uhLZjJNWQzIBQNevo3w$iqBrNtSWBuE6I7dCzQNRHZtPd/zUA8tTG3KnpyQAnew
+{{- end }}

@@ -2,12 +2,14 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ include "gmountie-server.fullname" . }}-config
-  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "gmountie-server.labels" . | nindent 4 }}
 data:
   # Rendered from .Values.config — see values.yaml for the source of
   # truth. We dump the sub-tree as-is so adding a new server-side
-  # config key needs only a values edit, not a template change.
+  # config key needs only a values edit, not a template change. The
+  # `auth` block is deliberately omitted: credentials live in the auth
+  # Secret (templates/secret.yaml) and are concatenated at container
+  # start.
   config.yaml: |-
-{{ toYaml .Values.config | indent 4 }}
+{{ omit .Values.config "auth" | toYaml | indent 4 }}

@@ -14,9 +14,9 @@ COPY $TARGETPLATFORM/gmountie /opt/gmountie/gmountie
 
 USER gmountie
 
-# Liveness for `docker run` / compose. Hits the Phase 2 ops HTTP server on the
-# metrics port. NOTE: 9090 is hardcoded; a deploy that overrides
-# server.metrics_addr makes this stale (k8s probes read the port from the
+# Liveness for `docker run` / compose. Hits the ops HTTP server on its default
+# loopback bind. NOTE: 9090 is hardcoded; a deploy that overrides
+# server.ops.addr makes this stale (k8s probes read the port from the
 # chart's values, so they stay correct).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget -q -O- http://127.0.0.1:9090/healthz || exit 1
