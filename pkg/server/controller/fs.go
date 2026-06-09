@@ -307,8 +307,9 @@ func (r *RpcServerImpl) Utimens(ctx context.Context, request *proto.UtimensReque
 // (1=MODE 2=UID 4=GID 8=SIZE 16=ATIME 32=MTIME), so the fuse constants are
 // used directly. Fields apply size→mode→owner→times; the first non-OK status
 // aborts the rest and travels in-band in Status like the per-field handlers.
-// On success the reply carries the final attrs, so the client needs no
-// trailing GetAttr — and that same stat seeds the mutation event.
+// On success the reply carries the final attrs (populated when the trailing
+// stat succeeds, nil otherwise; Status stays OK either way), so the client
+// needs no trailing GetAttr — and that same stat seeds the mutation event.
 func (r *RpcServerImpl) SetAttr(ctx context.Context, request *proto.SetAttrRequest) (*proto.SetAttrReply, error) {
 	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {

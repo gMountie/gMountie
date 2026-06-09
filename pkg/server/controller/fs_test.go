@@ -673,6 +673,44 @@ func (s *RpcServerTestSuite) TestSetAttr_FirstStepFailureEmitsNothing() {
 		s.FailNowf("unexpected event", "no mutation happened, got %+v", ev)
 	default:
 	}
+	mockFs.AssertExpectations(s.T())
+}
+
+// TestSetAttr_NoBitsIsReadOnly asserts the Valid=0 contract: when no FATTR_*
+// bits are set, the handler is a pure read — it calls GetAttr once for the
+// reply attrs, returns fuse.OK, and calls no mutation methods (Truncate,
+// Chmod, Chown, Utimens) and emits no event (nothing mutated).
+func (s *RpcServerTestSuite) TestSetAttr_NoBitsIsReadOnly() {
+	// Subscribe first so any spurious event would be caught.
+	events, cancel := s.bus.Subscribe("testVolume")
+	defer cancel()
+
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
+	attr := &fuse.Attr{Ino: 42, Size: 256, Mode: 0o644, Nlink: 1, Mtime: 1700000000}
+	// Exactly one GetAttr call for the reply attrs — no mutation expectations
+	// registered, so the strict mock will fail if any are made.
+	mockFs.EXPECT().GetAttr("/f", mock.Anything).Return(attr, fuse.OK).Once()
+
+	reply, err := s.server.SetAttr(testAuthedCtx("test-user"), &proto.SetAttrRequest{
+		Volume: "testVolume", Path: "/f",
+		Valid:     0, // no bits set
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID, RequestId: "req-setattr-nobits",
+	})
+	s.Require().NoError(err)
+	s.Require().Equal(int32(fuse.OK), reply.Status)
+	s.Require().NotNil(reply.Attributes)
+	s.Equal(uint64(42), reply.Attributes.Ino)
+	s.Equal(uint64(256), reply.Attributes.Size)
+
+	// No mutation event may fire — nothing was changed.
+	select {
+	case ev := <-events:
+		s.FailNowf("unexpected event", "Valid=0 must not emit any event, got %+v", ev)
+	default:
+	}
+	mockFs.AssertExpectations(s.T()) // absence proof: no Truncate/Chmod/Chown/Utimens called
 }
 
 func (s *RpcServerTestSuite) TestSetAttr_UidOnlyResolvesGidFromStat() {
