@@ -26,7 +26,7 @@ import (
 
 // readResult is the accumulated outcome of a single streaming Read attempt:
 // how many bytes landed in dest and the terminal FUSE status reported by the
-// server. The two are tracked together so retryableCall can replace them
+// server. The two are tracked together so retryOp can replace them
 // wholesale on each attempt without partial-state bleed-through.
 type readResult struct {
 	written int
@@ -117,30 +117,20 @@ func joinPath(parent, name string) string {
 	return parent + "/" + name
 }
 
-// metaCtx bounds an idempotent metadata RPC with the meta timeout AND detaches
-// it from the caller's cancellation. The caller is the go-fuse request context,
-// which the kernel cancels on FUSE_INTERRUPT — fired constantly by Go's
-// async-preemption SIGURG landing on a long-running op. Propagating that
-// cancellation aborts the in-flight RPC (gRPC Canceled) and surfaces a spurious
-// EIO on an otherwise-healthy readdir/stat (confirmed: the failures vanish under
+// ioCtx bounds an fd-level RPC with the per-handle I/O timeout AND detaches it
+// from the caller's cancellation: a FUSE_INTERRUPT from Go's async-preemption
+// SIGURG (which the kernel fires on a long-running op) must not abort an
+// in-flight RPC with a spurious EIO (confirmed: the failures vanish under
 // GODEBUG=asyncpreemptoff=1). context.WithoutCancel keeps the caller's values
-// (the kernel uid/gid/pid the server resolves into an identity) while ignoring its
-// cancellation, so the RPC runs to completion or its own timeout. Used by every
-// path-level metadata op (reads + mutations + Open/Create); ioCtx is the
-// fd-level sibling. The blocking lock wait (SetLkw) intentionally keeps the
-// cancellable context so a signal can still interrupt it.
-func (b *BackendClient) metaCtx(ctx context.Context) (context.Context, context.CancelFunc) {
-	return withTimeout(context.WithoutCancel(ctx), b.client.MetaTimeout())
-}
-
-// ioCtx is metaCtx's sibling for fd-level RPCs: it bounds the call with the
-// per-handle I/O timeout AND detaches it from the caller's cancellation, for
-// the same reason (a FUSE_INTERRUPT from Go's async-preemption SIGURG must not
-// abort an in-flight Read/close/etc. with a spurious EIO). Applied to the
-// idempotent / fd-lifecycle ops (Read, Release, Flush, Fsync, Allocate, GetLk,
-// SetLk). NOT used by SetLkw — a blocking lock wait must stay interruptible —
-// nor by prefetch / streamingWrite, which already run off h.lifeCtx /
-// context.Background() rather than the FUSE op ctx.
+// (the kernel uid/gid/pid the server resolves into an identity) while ignoring
+// its cancellation, so the RPC runs to completion or its own timeout.
+//
+// retryOp now provides this same detach-and-bound behaviour for every retried
+// op (reads, mutations, fd-ops, Open/Create). ioCtx survives only for
+// CopyFileRange, which is deliberately NOT retried (a partially-applied copy
+// that lost its reply must not be replayed). The blocking lock wait (SetLkw)
+// keeps a cancellable context (via withTimeout) so a signal can still interrupt
+// it; the readahead prefetch path bounds h.lifeCtx the same way.
 func ioCtx(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
 	return withTimeout(context.WithoutCancel(parent), timeout)
 }
@@ -544,19 +534,22 @@ func (b *BackendClient) Utimens(ctx context.Context, path string, atime, mtime *
 // Open opens an existing file. The returned FileHandle is a
 // *grpcFileHandle holding fd + session + per-file knobs.
 func (b *BackendClient) Open(ctx context.Context, path string, flags uint32) (FileHandle, fuse.Status) {
-	ctx2, cancel := b.metaCtx(ctx)
-	defer cancel()
+	// classFdOp: Open establishes an fd. On a session-id change that fd would be
+	// dead/leaked on the (new) server session, so retryOp stops retrying. The
+	// request_id is allocated OUTSIDE retryOp so same-session retries dedup
+	// against the server's Open idempotency cache. Path-level timeout (MetaTimeout).
 	requestID := uuid.NewString()
-	res, err := retryableCall(ctx2, "Open", func(ctx context.Context) (*proto.OpenReply, error) {
-		return b.client.File().Open(ctx, &proto.OpenRequest{
-			Volume:    b.volume,
-			Caller:    callerFromCtx(ctx),
-			Path:      path,
-			Flags:     flags,
-			SessionId: b.client.SessionID(),
-			RequestId: requestID,
+	res, err := retryOp(b.client, ctx, "Open", classFdOp, b.client.MetaTimeout(),
+		func(ctx context.Context) (*proto.OpenReply, error) {
+			return b.client.File().Open(ctx, &proto.OpenRequest{
+				Volume:    b.volume,
+				Caller:    callerFromCtx(ctx),
+				Path:      path,
+				Flags:     flags,
+				SessionId: b.client.SessionID(),
+				RequestId: requestID,
+			}, grpc.WaitForReady(true))
 		})
-	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Open", zap.String("path", path), zap.Error(err))
 		return nil, fuse.EIO
@@ -565,7 +558,7 @@ func (b *BackendClient) Open(ctx context.Context, path string, flags uint32) (Fi
 		return nil, fuse.Status(res.Status)
 	}
 	return newGrpcFileHandle(
-		b.client.File(), b.volume, path, res.Fd,
+		b.client, b.volume, path, res.Fd,
 		b.client.IOTimeout(), b.client.SessionID(),
 		b.client.PerFileConfig(),
 	), fuse.OK
@@ -577,20 +570,24 @@ func (b *BackendClient) Open(ctx context.Context, path string, flags uint32) (Fi
 // Attributes (older servers); in that case the node adapter falls back to Stat.
 func (b *BackendClient) Create(ctx context.Context, parent, name string, flags, mode uint32) (FileHandle, *Attr, fuse.Status) {
 	path := joinPath(parent, name)
-	ctx2, cancel := b.metaCtx(ctx)
-	defer cancel()
+	// classPathMutation: Create mutates the namespace, so a session-id change
+	// makes a replay unsafe (the new session's idempotency cache is empty —
+	// replay could surface a spurious EEXIST). The request_id is allocated
+	// OUTSIDE retryOp so same-session retries dedup against the server cache
+	// (like mutatePath). Path-level timeout (MetaTimeout).
 	requestID := uuid.NewString()
-	res, err := retryableCall(ctx2, "Create", func(ctx context.Context) (*proto.CreateReply, error) {
-		return b.client.File().Create(ctx, &proto.CreateRequest{
-			Volume:    b.volume,
-			Caller:    callerFromCtx(ctx),
-			Path:      path,
-			Flags:     flags,
-			Mode:      mode,
-			SessionId: b.client.SessionID(),
-			RequestId: requestID,
+	res, err := retryOp(b.client, ctx, "Create", classPathMutation, b.client.MetaTimeout(),
+		func(ctx context.Context) (*proto.CreateReply, error) {
+			return b.client.File().Create(ctx, &proto.CreateRequest{
+				Volume:    b.volume,
+				Caller:    callerFromCtx(ctx),
+				Path:      path,
+				Flags:     flags,
+				Mode:      mode,
+				SessionId: b.client.SessionID(),
+				RequestId: requestID,
+			}, grpc.WaitForReady(true))
 		})
-	})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Create", zap.String("path", path), zap.Error(err))
 		return nil, nil, fuse.EIO
@@ -599,7 +596,7 @@ func (b *BackendClient) Create(ctx context.Context, parent, name string, flags, 
 		return nil, nil, fuse.Status(res.Status)
 	}
 	h := newGrpcFileHandle(
-		b.client.File(), b.volume, path, res.Fd,
+		b.client, b.volume, path, res.Fd,
 		b.client.IOTimeout(), b.client.SessionID(),
 		b.client.PerFileConfig(),
 	)
@@ -624,9 +621,9 @@ func (b *BackendClient) Read(ctx context.Context, fh FileHandle, off int64, dest
 			return n, fuse.OK
 		}
 	}
-	ctx2, cancel := ioCtx(ctx, h.ioTimeout)
-	defer cancel()
-	res, err := retryableCall(ctx2, "Read", func(ctx context.Context) (readResult, error) {
+	// classFdOp: server-streaming Read. No WaitForReady (streaming op). On a
+	// session change the fd is dead, so retryOp stops retrying.
+	res, err := retryOp(h.client, ctx, "Read", classFdOp, h.ioTimeout, func(ctx context.Context) (readResult, error) {
 		stream, err := h.fileClient.Read(ctx, &proto.ReadRequest{
 			Volume:    h.volume,
 			Fd:        h.fd,
@@ -740,40 +737,45 @@ func (b *BackendClient) doPrefetch(h *grpcFileHandle, off int64) {
 // offset) plus the first writeFrameSizeBytes of data. Subsequent frames
 // carry only the data slice.
 func (b *BackendClient) streamingWrite(h *grpcFileHandle, data []byte, off int64, requestID string) (uint32, fuse.Status) {
-	ctx, cancel := withTimeout(context.Background(), h.ioTimeout)
-	defer cancel()
-	res, err := retryableCall(ctx, "Write", func(ctx context.Context) (*proto.WriteReply, error) {
-		stream, err := h.fileClient.Write(ctx)
-		if err != nil {
-			return nil, err
-		}
-		first := writeFrameSizeBytes
-		if first > len(data) {
-			first = len(data)
-		}
-		header := &proto.WriteFrame{
-			Volume:    h.volume,
-			Fd:        h.fd,
-			SessionId: h.sessionID,
-			RequestId: requestID,
-			Offset:    off,
-			Data:      data[:first],
-		}
-		if sendErr := stream.Send(header); sendErr != nil {
-			return nil, sendErr
-		}
-		for sent := first; sent < len(data); {
-			end := sent + writeFrameSizeBytes
-			if end > len(data) {
-				end = len(data)
+	// classFdOp: client-streaming Write. requestID is allocated by the caller
+	// (outside this retry) so every attempt replays the same id and the server's
+	// idempotency LRU short-circuits the duplicate — the load-bearing Phase-1d
+	// guard. This path runs off context.Background() (detached from the FUSE op
+	// ctx), passed to retryOp as the fuseCtx arg; retryOp derives each attempt's
+	// own deadline + lifetime cancellation from it. No WaitForReady (streaming).
+	res, err := retryOp(h.client, context.Background(), "Write", classFdOp, h.ioTimeout,
+		func(ctx context.Context) (*proto.WriteReply, error) {
+			stream, err := h.fileClient.Write(ctx)
+			if err != nil {
+				return nil, err
 			}
-			if sendErr := stream.Send(&proto.WriteFrame{Data: data[sent:end]}); sendErr != nil {
+			first := writeFrameSizeBytes
+			if first > len(data) {
+				first = len(data)
+			}
+			header := &proto.WriteFrame{
+				Volume:    h.volume,
+				Fd:        h.fd,
+				SessionId: h.sessionID,
+				RequestId: requestID,
+				Offset:    off,
+				Data:      data[:first],
+			}
+			if sendErr := stream.Send(header); sendErr != nil {
 				return nil, sendErr
 			}
-			sent = end
-		}
-		return stream.CloseAndRecv()
-	})
+			for sent := first; sent < len(data); {
+				end := sent + writeFrameSizeBytes
+				if end > len(data) {
+					end = len(data)
+				}
+				if sendErr := stream.Send(&proto.WriteFrame{Data: data[sent:end]}); sendErr != nil {
+					return nil, sendErr
+				}
+				sent = end
+			}
+			return stream.CloseAndRecv()
+		})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Write", zap.String("path", h.path), zap.Error(err))
 		return 0, fuse.EIO
@@ -856,13 +858,17 @@ func (b *BackendClient) Release(ctx context.Context, fh FileHandle) fuse.Status 
 		log.Log.Error("error draining coalescer on Release",
 			zap.String("path", h.path), zap.Stringer("status", st))
 	}
-	ctx2, cancel := ioCtx(ctx, h.ioTimeout)
-	defer cancel()
-	_, err := h.fileClient.Release(ctx2, &proto.ReleaseRequest{
-		Volume:    h.volume,
-		Fd:        h.fd,
-		SessionId: h.sessionID,
-	})
+	// classFdOp: a duplicate Release of an already-closed fd is benign, so
+	// transient errors retry within the session; a session change makes the fd
+	// (and its server-side resources) gone already, so retryOp stops.
+	_, err := retryOp(h.client, ctx, "Release", classFdOp, h.ioTimeout,
+		func(ctx context.Context) (*proto.ReleaseReply, error) {
+			return h.fileClient.Release(ctx, &proto.ReleaseRequest{
+				Volume:    h.volume,
+				Fd:        h.fd,
+				SessionId: h.sessionID,
+			}, grpc.WaitForReady(true))
+		})
 	if err != nil {
 		log.Log.Error("error in call: Release", zap.String("path", h.path), zap.Error(err))
 		return fuse.EIO
@@ -875,7 +881,7 @@ func (b *BackendClient) Release(ctx context.Context, fh FileHandle) fuse.Status 
 // previous two: streaming Write + Flush). If the handle is clean (nothing
 // written since the last successful Flush) the RPC is skipped entirely.
 //
-// Idempotent — wrapped in retryableCall so transient gRPC failures
+// Idempotent — routed through retryOp (classFdOp) so transient gRPC failures
 // (Unavailable, DeadlineExceeded) don't surface to userspace as EIO.
 // Re-running WriteAndFlush with the same (fd, offset, data) is safe
 // server-side. No request_id needed: the server-side flush is idempotent.
@@ -903,17 +909,19 @@ func (b *BackendClient) Flush(ctx context.Context, fh FileHandle) fuse.Status {
 			data = pending.Data
 		}
 	}
-	ctx2, cancel := ioCtx(ctx, h.ioTimeout)
-	defer cancel()
-	res, err := retryableCall(ctx2, "WriteAndFlush", func(ctx context.Context) (*proto.WriteAndFlushReply, error) {
-		return h.fileClient.WriteAndFlush(ctx, &proto.WriteAndFlushRequest{
-			Volume:    h.volume,
-			Fd:        h.fd,
-			SessionId: h.sessionID,
-			Offset:    offset,
-			Data:      data,
+	// classFdOp: WriteAndFlush is idempotent (same fd/offset/data replayed) so
+	// transient errors retry within the session; a session change kills the fd
+	// and stops the retry.
+	res, err := retryOp(h.client, ctx, "WriteAndFlush", classFdOp, h.ioTimeout,
+		func(ctx context.Context) (*proto.WriteAndFlushReply, error) {
+			return h.fileClient.WriteAndFlush(ctx, &proto.WriteAndFlushRequest{
+				Volume:    h.volume,
+				Fd:        h.fd,
+				SessionId: h.sessionID,
+				Offset:    offset,
+				Data:      data,
+			}, grpc.WaitForReady(true))
 		})
-	})
 	if err != nil {
 		log.Log.Error("error in call: WriteAndFlush", zap.String("path", h.path), zap.Error(err))
 		return fuse.EIO
@@ -926,7 +934,7 @@ func (b *BackendClient) Flush(ctx context.Context, fh FileHandle) fuse.Status {
 }
 
 // Fsync drains coalesced writes then issues the server-side Fsync RPC.
-// Idempotent — wrapped in retryableCall for the same reason as Flush
+// Idempotent — routed through retryOp (classFdOp) for the same reason as Flush
 // (a second Fsync against an already-synced fd is a no-op).
 func (b *BackendClient) Fsync(ctx context.Context, fh FileHandle, flags int64) fuse.Status {
 	h := resolveHandle(fh)
@@ -936,16 +944,17 @@ func (b *BackendClient) Fsync(ctx context.Context, fh FileHandle, flags int64) f
 	if st := b.drainCoalescer(h); !st.Ok() {
 		return st
 	}
-	ctx2, cancel := ioCtx(ctx, h.ioTimeout)
-	defer cancel()
-	res, err := retryableCall(ctx2, "Fsync", func(ctx context.Context) (*proto.FsyncReply, error) {
-		return h.fileClient.Fsync(ctx, &proto.FsyncRequest{
-			Volume:    h.volume,
-			Fd:        h.fd,
-			Flags:     flags,
-			SessionId: h.sessionID,
+	// classFdOp: a second Fsync against an already-synced fd is a no-op, so
+	// transient errors retry within the session; a session change kills the fd.
+	res, err := retryOp(h.client, ctx, "Fsync", classFdOp, h.ioTimeout,
+		func(ctx context.Context) (*proto.FsyncReply, error) {
+			return h.fileClient.Fsync(ctx, &proto.FsyncRequest{
+				Volume:    h.volume,
+				Fd:        h.fd,
+				Flags:     flags,
+				SessionId: h.sessionID,
+			}, grpc.WaitForReady(true))
 		})
-	})
 	if err != nil {
 		log.Log.Error("error in call: Fsync", zap.String("path", h.path), zap.Error(err))
 		return fuse.EIO
@@ -957,27 +966,28 @@ func (b *BackendClient) Fsync(ctx context.Context, fh FileHandle, flags int64) f
 	return st
 }
 
-// Allocate proxies fallocate(2) to the server. Mutating but not retried
-// — fallocate's idempotency is fuzzy across keep-size vs. extend modes,
-// and the legacy code never retried it either. No request_id stamp for
-// the same reason.
+// Allocate proxies fallocate(2) to the server. classFdOp: within a session a
+// replayed fallocate with identical (fd, off, size, mode) is a no-op, so a
+// transient error retries; on a session change the fd is dead and retryOp
+// stops. No request_id stamp — same-args replay is naturally idempotent.
 func (b *BackendClient) Allocate(ctx context.Context, fh FileHandle, off, size uint64, mode uint32) fuse.Status {
 	h := resolveHandle(fh)
 	if h == nil {
 		return fuse.EBADF
 	}
-	ctx2, cancel := ioCtx(ctx, h.ioTimeout)
-	defer cancel()
-	res, err := h.fileClient.Allocate(ctx2, &proto.AllocateRequest{
-		Volume:    h.volume,
-		Caller:    callerFromCtx(ctx),
-		Fd:        h.fd,
-		Path:      h.path,
-		Off:       off,
-		Size:      size,
-		Mode:      mode,
-		SessionId: h.sessionID,
-	})
+	res, err := retryOp(h.client, ctx, "Allocate", classFdOp, h.ioTimeout,
+		func(ctx context.Context) (*proto.AllocateReply, error) {
+			return h.fileClient.Allocate(ctx, &proto.AllocateRequest{
+				Volume:    h.volume,
+				Caller:    callerFromCtx(ctx),
+				Fd:        h.fd,
+				Path:      h.path,
+				Off:       off,
+				Size:      size,
+				Mode:      mode,
+				SessionId: h.sessionID,
+			}, grpc.WaitForReady(true))
+		})
 	if err != nil {
 		log.Log.Error("error in call: Allocate", zap.String("path", h.path), zap.Error(err))
 		return fuse.EIO
@@ -988,8 +998,9 @@ func (b *BackendClient) Allocate(ctx context.Context, fh FileHandle, off, size u
 // CopyFileRange asks the server to copy length bytes from fhIn@offIn to
 // fhOut@offOut entirely server-side. Pending coalesced writes on BOTH
 // handles are drained first (same reason Fsync drains: the server must
-// see current bytes). No retry, mirroring Allocate — replay semantics of
-// a partially-applied copy are murky and the kernel reissues anyway.
+// see current bytes). Not routed through retryOp — a partially-applied copy
+// that lost its reply must not be replayed (it returns a bytes-copied count),
+// and the kernel reissues on a short copy anyway.
 func (b *BackendClient) CopyFileRange(ctx context.Context, fhIn FileHandle, offIn uint64, fhOut FileHandle, offOut uint64, length, flags uint64) (uint64, fuse.Status) {
 	src := resolveHandle(fhIn)
 	dst := resolveHandle(fhOut)
@@ -1038,19 +1049,20 @@ func (b *BackendClient) Lseek(ctx context.Context, fh FileHandle, offset uint64,
 	if st := b.drainCoalescer(h); !st.Ok() {
 		return 0, st
 	}
-	ctx2, cancel := ioCtx(ctx, h.ioTimeout)
-	defer cancel()
-	res, err := retryableCall(ctx2, "Lseek", func(ctx context.Context) (*proto.LseekReply, error) {
-		return h.fileClient.Lseek(ctx, &proto.LseekRequest{
-			Volume:    h.volume,
-			Caller:    callerFromCtx(ctx),
-			Fd:        h.fd,
-			Path:      h.path,
-			Offset:    offset,
-			Whence:    whence,
-			SessionId: h.sessionID,
+	// classFdOp: Lseek is a pure hole-geometry probe (idempotent), so transient
+	// errors retry within the session; a session change kills the fd.
+	res, err := retryOp(h.client, ctx, "Lseek", classFdOp, h.ioTimeout,
+		func(ctx context.Context) (*proto.LseekReply, error) {
+			return h.fileClient.Lseek(ctx, &proto.LseekRequest{
+				Volume:    h.volume,
+				Caller:    callerFromCtx(ctx),
+				Fd:        h.fd,
+				Path:      h.path,
+				Offset:    offset,
+				Whence:    whence,
+				SessionId: h.sessionID,
+			}, grpc.WaitForReady(true))
 		})
-	})
 	if err != nil {
 		log.Log.Error("error in call: Lseek", zap.String("path", h.path), zap.Error(err))
 		return 0, fuse.EIO
@@ -1058,24 +1070,26 @@ func (b *BackendClient) Lseek(ctx context.Context, fh FileHandle, offset uint64,
 	return res.Offset, fuse.Status(res.Status)
 }
 
-// GetLk queries the lock state for a region of the file. No retry —
-// lock semantics get weird under replay (a server-side success the
-// client missed would leave us holding a phantom lock).
+// GetLk queries the lock state for a region of the file. classFdOp: a lock-state
+// query is a pure read, idempotent within the session, so a transient error
+// retries; on a session change the fd (and its locks) are gone and retryOp stops
+// — so a missed reply can't leave us reasoning about a phantom lock on a dead fd.
 func (b *BackendClient) GetLk(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) fuse.Status {
 	h := resolveHandle(fh)
 	if h == nil {
 		return fuse.EBADF
 	}
-	ctx2, cancel := ioCtx(ctx, h.ioTimeout)
-	defer cancel()
-	res, err := h.fileClient.GetLk(ctx2, &proto.GetLkRequest{
-		Volume:    h.volume,
-		Fd:        h.fd,
-		Owner:     owner,
-		Flags:     flags,
-		Lk:        &proto.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid},
-		SessionId: h.sessionID,
-	})
+	res, err := retryOp(h.client, ctx, "GetLk", classFdOp, h.ioTimeout,
+		func(ctx context.Context) (*proto.GetLkReply, error) {
+			return h.fileClient.GetLk(ctx, &proto.GetLkRequest{
+				Volume:    h.volume,
+				Fd:        h.fd,
+				Owner:     owner,
+				Flags:     flags,
+				Lk:        &proto.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid},
+				SessionId: h.sessionID,
+			}, grpc.WaitForReady(true))
+		})
 	if err != nil {
 		log.Log.Error("error in call: GetLk", zap.String("path", h.path), zap.Error(err))
 		return fuse.EIO
@@ -1086,23 +1100,26 @@ func (b *BackendClient) GetLk(ctx context.Context, fh FileHandle, owner uint64, 
 	return fuse.Status(res.Status)
 }
 
-// SetLk attempts a non-blocking lock acquisition (fcntl(F_SETLK)). No
-// retry — see GetLk.
+// SetLk attempts a non-blocking lock acquisition (fcntl(F_SETLK)). classFdOp:
+// re-applying the same (owner, region, type) lock on the same fd within the
+// session is idempotent, so a transient error retries; a session change kills
+// the fd (and any locks it held) and retryOp stops — see GetLk.
 func (b *BackendClient) SetLk(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status {
 	h := resolveHandle(fh)
 	if h == nil {
 		return fuse.EBADF
 	}
-	ctx2, cancel := ioCtx(ctx, h.ioTimeout)
-	defer cancel()
-	res, err := h.fileClient.SetLk(ctx2, &proto.SetLkRequest{
-		Volume:    h.volume,
-		Fd:        h.fd,
-		Owner:     owner,
-		Flags:     flags,
-		Lk:        &proto.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid},
-		SessionId: h.sessionID,
-	})
+	res, err := retryOp(h.client, ctx, "SetLk", classFdOp, h.ioTimeout,
+		func(ctx context.Context) (*proto.SetLkReply, error) {
+			return h.fileClient.SetLk(ctx, &proto.SetLkRequest{
+				Volume:    h.volume,
+				Fd:        h.fd,
+				Owner:     owner,
+				Flags:     flags,
+				Lk:        &proto.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid},
+				SessionId: h.sessionID,
+			}, grpc.WaitForReady(true))
+		})
 	if err != nil {
 		log.Log.Error("error in call: SetLk", zap.String("path", h.path), zap.Error(err))
 		return fuse.EIO
@@ -1110,8 +1127,9 @@ func (b *BackendClient) SetLk(ctx context.Context, fh FileHandle, owner uint64, 
 	return fuse.Status(res.Status)
 }
 
-// SetLkw attempts a blocking lock acquisition (fcntl(F_SETLKW)). No
-// retry — see GetLk.
+// SetLkw attempts a blocking lock acquisition (fcntl(F_SETLKW)). Not routed
+// through retryOp: the blocking wait must stay cancellable (see the inline note
+// below) rather than be detached and retried.
 func (b *BackendClient) SetLkw(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status {
 	h := resolveHandle(fh)
 	if h == nil {
@@ -1140,6 +1158,13 @@ func (b *BackendClient) SetLkw(ctx context.Context, fh FileHandle, owner uint64,
 // the legacy GrpcFile minus the nodefs.File embedding — the FUSE adapter
 // for the new go-fuse v2 fs.* node interface lives in node.go (Task 3).
 type grpcFileHandle struct {
+	// client is the live gRPC client the fd was opened against. fd-ops route
+	// their retryable unary calls through retryOp(h.client, ...): the handle
+	// needs the live client (not just the proto.RpcFileClient) so retryOp can
+	// read the current SessionID()/RetryWindow()/Lifetime() — the session-change
+	// guard that makes classFdOp retries safe. fileClient is retained as a
+	// convenience accessor (== client.File()).
+	client     grpcclient.Client
 	fileClient proto.RpcFileClient
 	volume     string
 	path       string
@@ -1195,13 +1220,15 @@ func resolveHandle(fh FileHandle) *grpcFileHandle {
 }
 
 // newGrpcFileHandle constructs a grpcFileHandle bound to fd on the named
-// volume. cfg bundles the per-file knobs: ReadaheadChunkBytes of 0
+// volume. client is the live gRPC client (the handle derives fileClient from
+// client.File() and routes fd-op retries through it). cfg bundles the per-file
+// knobs: ReadaheadChunkBytes of 0
 // disables the readahead path entirely; otherwise prefetches arm after
 // ReadaheadThreshold strictly-sequential reads. WriteCoalesceBytes of 0
 // disables per-fd write coalescing; otherwise small contiguous writes
 // accumulate up to that threshold before flushing.
 func newGrpcFileHandle(
-	fileClient proto.RpcFileClient,
+	client grpcclient.Client,
 	volume, path string,
 	fd uint64,
 	ioTimeout time.Duration,
@@ -1210,7 +1237,8 @@ func newGrpcFileHandle(
 ) *grpcFileHandle {
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &grpcFileHandle{
-		fileClient:        fileClient,
+		client:            client,
+		fileClient:        client.File(),
 		volume:            volume,
 		path:              path,
 		fd:                fd,

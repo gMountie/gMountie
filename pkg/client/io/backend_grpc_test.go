@@ -125,7 +125,7 @@ func (s *BackendClientTestSuite) SetupTest() {
 // the fd-level RPCs (Read/Write/Flush/Release/Fsync). The handle is
 // otherwise identical to one returned by Open/Create.
 func (s *BackendClientTestSuite) newHandle(cfg grpcclient.PerFileConfig) *grpcFileHandle {
-	return newGrpcFileHandle(s.fileClient, "testVolume", "/test/path", 1, 30*time.Second, "test-session", cfg)
+	return newGrpcFileHandle(s.client, "testVolume", "/test/path", 1, 30*time.Second, "test-session", cfg)
 }
 
 // --- path-level ops ---
@@ -232,8 +232,9 @@ func (s *BackendClientTestSuite) TestStatFs_CancelledParentDoesNotAbortRPC() {
 	s.Require().NotNil(res)
 }
 
-// The detach also covers the fd-returning / fd-lifecycle ops: Open (via metaCtx)
-// and the close path (Release, via ioCtx). A cancelled parent must not abort an
+// The detach also covers the fd-returning / fd-lifecycle ops: Open and the
+// close path (Release) — both now route through retryOp, which derives each
+// attempt's ctx via context.WithoutCancel. A cancelled parent must not abort an
 // in-flight open/close with a spurious EIO.
 func (s *BackendClientTestSuite) TestOpen_CancelledParentDoesNotAbortRPC() {
 	parent, cancel := context.WithCancel(context.Background())
@@ -241,6 +242,7 @@ func (s *BackendClientTestSuite) TestOpen_CancelledParentDoesNotAbortRPC() {
 
 	s.fileClient.EXPECT().Open(
 		mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() == nil }),
+		mock.Anything,
 		mock.Anything,
 	).Return(&proto.OpenReply{Status: int32(fuse.OK), Fd: 1}, nil)
 
@@ -478,7 +480,7 @@ func (s *BackendClientTestSuite) TestOpenReturnsHandle() {
 	s.fileClient.EXPECT().Open(mock.Anything, mock.MatchedBy(func(req *proto.OpenRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/test" && req.Flags == 0 &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	})).Return(&proto.OpenReply{
+	}), mock.Anything).Return(&proto.OpenReply{
 		Status: int32(fuse.OK),
 		Fd:     1,
 	}, nil)
@@ -491,7 +493,7 @@ func (s *BackendClientTestSuite) TestOpenReturnsHandle() {
 }
 
 func (s *BackendClientTestSuite) TestOpen_Error() {
-	s.fileClient.EXPECT().Open(mock.Anything, mock.Anything).
+	s.fileClient.EXPECT().Open(mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, context.DeadlineExceeded)
 
 	fh, st := s.backend.Open(context.Background(), "/test", 0)
@@ -506,7 +508,7 @@ func (s *BackendClientTestSuite) TestCreateReturnsHandle() {
 	s.fileClient.EXPECT().Create(mock.Anything, mock.MatchedBy(func(req *proto.CreateRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/dir/file" && req.Flags == 0 && req.Mode == 0644 &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	})).Return(&proto.CreateReply{
+	}), mock.Anything).Return(&proto.CreateReply{
 		Status: int32(fuse.OK),
 		Fd:     7,
 	}, nil)
@@ -522,7 +524,7 @@ func (s *BackendClientTestSuite) TestCreateReturnsHandle() {
 // Attributes field the backend returns it as a populated *Attr instead of nil.
 // The strict mock ensures no stray GetAttr/Stat call is issued by the backend.
 func (s *BackendClientTestSuite) TestCreateReturnsAttrFromReply() {
-	s.fileClient.EXPECT().Create(mock.Anything, mock.Anything).Return(&proto.CreateReply{
+	s.fileClient.EXPECT().Create(mock.Anything, mock.Anything, mock.Anything).Return(&proto.CreateReply{
 		Status:     int32(fuse.OK),
 		Fd:         7,
 		Attributes: &proto.Attr{Ino: 42, Mode: 0o100644},
@@ -575,7 +577,6 @@ func (s *BackendClientTestSuite) TestRead_ErrorReturnsEIO() {
 // TestRead_RetriesOnUnavailable verifies that Read survives a single
 // transient Unavailable. Each retry opens a fresh stream.
 func (s *BackendClientTestSuite) TestRead_RetriesOnUnavailable() {
-	s.T().Skip("retry moved to retryOp; re-enable when this call site routes through retryOp (Tasks 5-7)")
 	s.fileClient.EXPECT().Read(mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, status.Error(codes.Unavailable, "down")).Once()
 	streamOK := newBackendReadStreamStub(s.T(),
@@ -659,7 +660,6 @@ func (s *BackendClientTestSuite) TestWrite_LargePayloadChunks() {
 }
 
 func (s *BackendClientTestSuite) TestWrite_RetriesOnUnavailable() {
-	s.T().Skip("retry moved to retryOp; re-enable when this call site routes through retryOp (Tasks 5-7)")
 	s.fileClient.EXPECT().Write(mock.Anything, mock.Anything).
 		Return(nil, status.Error(codes.Unavailable, "transient")).Once()
 	stub := newBackendWriteStreamStub(s.T(), &proto.WriteReply{Written: 5, Status: 0}, nil)
@@ -678,7 +678,6 @@ func (s *BackendClientTestSuite) TestWrite_RetriesOnUnavailable() {
 // outside the retry closure so the server's idempotency LRU can
 // short-circuit the replay on the second attempt.
 func (s *BackendClientTestSuite) TestWrite_RetryReusesRequestID() {
-	s.T().Skip("retry moved to retryOp; re-enable when this call site routes through retryOp (Tasks 5-7)")
 	attempt1 := newBackendWriteStreamStub(s.T(), nil, status.Error(codes.Unavailable, "transient"))
 	s.fileClient.EXPECT().Write(mock.Anything, mock.Anything).Return(attempt1, nil).Once()
 	attempt2 := newBackendWriteStreamStub(s.T(), &proto.WriteReply{Written: 5, Status: 0}, nil)
@@ -808,7 +807,6 @@ func (s *BackendClientTestSuite) TestFsync() {
 // EIO. WriteAndFlush is idempotent (same fd/offset/data replayed), so
 // retrying is safe.
 func (s *BackendClientTestSuite) TestFlush_RetriesOnUnavailable() {
-	s.T().Skip("retry moved to retryOp; re-enable when this call site routes through retryOp (Tasks 5-7)")
 	h := s.newHandle(grpcclient.PerFileConfig{WriteCoalesceBytes: 4096})
 	_, wst := s.backend.Write(context.Background(), h, 0, []byte("retry"))
 	s.Require().Equal(fuse.OK, wst)
@@ -827,7 +825,6 @@ func (s *BackendClientTestSuite) TestFlush_RetriesOnUnavailable() {
 // TestFsync_RetriesOnUnavailable mirrors the Flush retry test for the
 // Fsync path. Same idempotency argument.
 func (s *BackendClientTestSuite) TestFsync_RetriesOnUnavailable() {
-	s.T().Skip("retry moved to retryOp; re-enable when this call site routes through retryOp (Tasks 5-7)")
 	s.fileClient.EXPECT().Fsync(mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, status.Error(codes.Unavailable, "down")).Once()
 	s.fileClient.EXPECT().Fsync(mock.Anything, mock.Anything, mock.Anything).
@@ -855,7 +852,7 @@ func (s *BackendClientTestSuite) TestAllocate() {
 		return req.Volume == "testVolume" && req.Fd == 1 && req.Path == "/test/path" &&
 			req.Off == 100 && req.Size == 4096 && req.Mode == 0 &&
 			req.SessionId == "test-session"
-	})).Return(&proto.AllocateReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.AllocateReply{Status: int32(fuse.OK)}, nil)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	st := s.backend.Allocate(context.Background(), h, 100, 4096, 0)
@@ -863,7 +860,7 @@ func (s *BackendClientTestSuite) TestAllocate() {
 }
 
 func (s *BackendClientTestSuite) TestAllocate_Error() {
-	s.fileClient.EXPECT().Allocate(mock.Anything, mock.Anything).
+	s.fileClient.EXPECT().Allocate(mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, context.DeadlineExceeded)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
@@ -884,7 +881,7 @@ func (s *BackendClientTestSuite) TestGetLk() {
 		return req.Volume == "testVolume" && req.Fd == 1 && req.Owner == 42 && req.Flags == 0 &&
 			req.SessionId == "test-session" && req.Lk != nil &&
 			req.Lk.Start == 0 && req.Lk.End == 16 && req.Lk.Typ == 1 && req.Lk.Pid == 99
-	})).Return(&proto.GetLkReply{
+	}), mock.Anything).Return(&proto.GetLkReply{
 		Status: int32(fuse.OK),
 		Lk:     &proto.FileLock{Start: 0, End: 16, Typ: 2, Pid: 1234},
 	}, nil)
@@ -900,7 +897,7 @@ func (s *BackendClientTestSuite) TestGetLk() {
 }
 
 func (s *BackendClientTestSuite) TestGetLk_Error() {
-	s.fileClient.EXPECT().GetLk(mock.Anything, mock.Anything).
+	s.fileClient.EXPECT().GetLk(mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, context.DeadlineExceeded)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
@@ -921,7 +918,7 @@ func (s *BackendClientTestSuite) TestSetLk() {
 		return req.Volume == "testVolume" && req.Fd == 1 && req.Owner == 7 && req.Flags == 0 &&
 			req.SessionId == "test-session" && req.Lk != nil &&
 			req.Lk.Start == 10 && req.Lk.End == 20 && req.Lk.Typ == 1 && req.Lk.Pid == 5
-	})).Return(&proto.SetLkReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.SetLkReply{Status: int32(fuse.OK)}, nil)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	st := s.backend.SetLk(context.Background(), h, 7, lk, 0)
@@ -929,7 +926,7 @@ func (s *BackendClientTestSuite) TestSetLk() {
 }
 
 func (s *BackendClientTestSuite) TestSetLk_Error() {
-	s.fileClient.EXPECT().SetLk(mock.Anything, mock.Anything).
+	s.fileClient.EXPECT().SetLk(mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, context.DeadlineExceeded)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
@@ -1151,7 +1148,7 @@ func (s *BackendClientTestSuite) TestUtimens_CancelledParentDoesNotAbortRPC() {
 // newHandleAt is like newHandle but lets the caller choose path and fd so
 // CopyFileRange tests can construct distinct source and destination handles.
 func (s *BackendClientTestSuite) newHandleAt(path string, fd uint64, cfg grpcclient.PerFileConfig) *grpcFileHandle {
-	return newGrpcFileHandle(s.fileClient, "testVolume", path, fd, 30*time.Second, "test-session", cfg)
+	return newGrpcFileHandle(s.client, "testVolume", path, fd, 30*time.Second, "test-session", cfg)
 }
 
 // --- CopyFileRange ---
@@ -1291,7 +1288,6 @@ func (s *BackendClientTestSuite) TestLseek_HappyPath() {
 // first call returns Unavailable, second succeeds. The retried result must
 // come through cleanly — pinning the idempotent-retry contract for Lseek.
 func (s *BackendClientTestSuite) TestLseek_RetryReusesResult() {
-	s.T().Skip("retry moved to retryOp; re-enable when this call site routes through retryOp (Tasks 5-7)")
 	s.fileClient.EXPECT().Lseek(mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, status.Error(codes.Unavailable, "down")).Once()
 	s.fileClient.EXPECT().Lseek(mock.Anything, mock.Anything, mock.Anything).
