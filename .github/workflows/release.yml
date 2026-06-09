@@ -104,7 +104,7 @@ jobs:
       if: ${{  github.event.inputs.type == 'snapshot' }}
       # --skip=sign: don't keyless-sign throwaway snapshot artifacts (docker
       # signing already no-ops since snapshots aren't pushed).
-      run: echo "flags=--snapshot --skip=sign" >> $GITHUB_ENV
+      run: echo "flags=--snapshot --skip=sign" >> "$GITHUB_ENV"
 
     - name: Run GoReleaser
       uses: goreleaser/goreleaser-action@v7
