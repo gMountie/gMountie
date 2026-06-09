@@ -165,18 +165,24 @@ access-time ordering is not yet wired; that is future work.
 ### 4.1 The version token
 
 Every `Attr` carries a `version uint64` (field 18 in `fs.proto`). The server
-populates it via:
+populates it via `VersionFromAttr` in `pkg/server/io/version.go`:
 
 ```
-VersionFromAttr(mtime_ns, size, ctime_ns) = mtime_ns ^ (size << 16) ^ ctime_ns
+version = mtime_ns * p1 + ctime_ns * p2 + size * p3   (mod 2⁶⁴)
 ```
+
+where `p1`, `p2`, `p3` are three distinct large odd primes (FNV-adjacent
+constants). Multiplying by distinct primes rather than XOR-ing prevents
+equal-field cancellation: with XOR, `mtime_ns == ctime_ns` after a write
+collapses the version to `size << 16`, making otherwise-distinguishable attrs
+alias. The prime-multiply mix avoids that class of collision entirely. A result
+of zero is mapped to one so the sentinel `version = 0` (nil attr or older
+server that doesn't set the field) is never aliased by a real attr. Clients
+receiving `version = 0` always trigger a revalidation rather than serving from
+cache.
 
 The formula captures every observable change: content changes mtime and
-usually size; permission or ownership changes ctime. The single source of
-truth is `pkg/server/io/version.go`. Clients that talk to an older server
-that doesn't set the field receive `version = 0`, which is treated as
-"unknown version" and always triggers a revalidation rather than a
-served-from-cache hit.
+usually size; permission or ownership changes ctime.
 
 ### 4.2 Verified and unverified states
 
@@ -243,9 +249,9 @@ and keeps it open in a background goroutine (`subscribeConsumer`).
 
 | Kind | Triggered by | Cache effect |
 |---|---|---|
-| `MUTATED` | Write, Truncate, Chmod, Chown, Allocate, Create, Mkdir | Invalidate attr + all data chunks for `path`; invalidate dir for `parent(path)` |
-| `DELETED` | Unlink, Rmdir | Invalidate attr + all data chunks for `path`; invalidate dir for `parent(path)`; add negative attr for `path` |
-| `RENAMED` | Rename | Invalidate attr + data for both old and new paths; invalidate dirs for both parents; add negative attr for `old` |
+| `MUTATED` | Write, Truncate, Chmod, Chown, Allocate, Create, Mkdir | Invalidate attr + all data chunks for `path`; invalidate dir + attr for `parent(path)` |
+| `DELETED` | Unlink, Rmdir | Invalidate attr + all data chunks for `path`; invalidate dir + attr for `parent(path)`; add negative attr for `path` |
+| `RENAMED` | Rename | Invalidate attr + data for both old and new paths; invalidate dirs + attrs for both parents; add negative attr for `old` |
 | `HEARTBEAT` | Per-volume ticker (server-side, every 10 s by default) | No path; no cache change. After the first HEARTBEAT on a new stream, flip the validity tracker to Verified |
 
 The HEARTBEAT has two roles: connection keepalive and "you have seen all
