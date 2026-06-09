@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -326,7 +327,12 @@ func (s *SessionManagerTestSuite) TestConcurrentOpsNeverRaceWithRelease() {
 				if !entry.Acquire() {
 					return // entry fully released; no new ops may begin
 				}
+				// Hold the in-flight window open across a scheduling point so
+				// a close-under-live-ref has a real chance to be observed.
+				// The detector is still best-effort — the load-bearing
+				// assertion is releases == 1.
 				inFlight.Add(1)
+				runtime.Gosched()
 				inFlight.Add(-1)
 				entry.ReleaseRef()
 			}
