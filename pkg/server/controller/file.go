@@ -17,6 +17,22 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// RpcFileServerImpl serves the fd-based RPC surface. Its handlers use three
+// volume/file lookup seams with DIFFERENT trust levels — pick deliberately:
+//
+//   - VolumeService.BindIdentity (Open/Create): full trust path. Checks the
+//     principal's ACL AND returns an identity-bound filesystem, so the op runs
+//     with the caller's resolved credentials. REQUIRED whenever a path is
+//     opened/created or attrs flow back to the client from a path lookup.
+//
+//   - sessionFile (all fd ops): authorization-by-possession. The fd was
+//     authorized at Open/Create time under BindIdentity; sessionFile verifies
+//     the caller owns the session AND that the fd belongs to request.Volume.
+//     No re-bind: the fd carries its access rights (POSIX semantics).
+//
+//   - VolumeService.GetVolumeFileSystem (versionAfterPath only): RAW seam —
+//     no ACL, no identity binding, runs as the server's own user. Safe ONLY
+//     for the event-bus version probe, never for data returned to a client.
 type RpcFileServerImpl struct {
 	fsService service.VolumeService
 	sessions  service.SessionManager
@@ -68,6 +84,22 @@ func (r *RpcFileServerImpl) versionAfterPath(ctx context.Context, volume, path s
 	return versionAfter(ctx, fs, path, caller)
 }
 
+// emitMutatedFd emits the cache-invalidation event for a successful fd-based
+// mutation (Write/Allocate/CopyFileRange), seeding the version with a fresh
+// stat via versionAfterPath. Part of the controller-wide policy documented in
+// emit.go: mutating handlers never call bus.Emit by hand.
+func (r *RpcFileServerImpl) emitMutatedFd(ctx context.Context, volume, path string, caller *proto.Caller) {
+	r.bus.Emit(volume, path, r.versionAfterPath(ctx, volume, path, caller), serverio.KindMutated)
+}
+
+// emitMutatedAttr is emitMutatedFd for handlers that already hold a fresh
+// post-op attr (Create/WriteAndFlush stat the path for their replies anyway —
+// re-statting would waste a syscall). A nil attr yields version 0; clients
+// fall back to GetAttrIfChanged.
+func (r *RpcFileServerImpl) emitMutatedAttr(volume, path string, attr *fuse.Attr) {
+	r.bus.Emit(volume, path, serverio.VersionFromAttr(attr), serverio.KindMutated)
+}
+
 // sessionFile looks up fd in sess and enforces the fd↔volume binding recorded
 // at Open/Create: an fd is only usable with the volume it was opened on. A
 // mismatched volume is treated exactly like an unknown fd, so a caller cannot
@@ -117,9 +149,9 @@ func (r *RpcFileServerImpl) Create(ctx context.Context, request *proto.CreateReq
 			reply.Fd = sess.RegisterFile(request.Volume, request.Path, file)
 			if attr, gst := fs.GetAttr(request.Path, createContext(ctx, request.Caller)); gst.Ok() {
 				reply.Attributes = toProtoAttr(attr, &id)
-				r.bus.Emit(request.Volume, request.Path, serverio.VersionFromAttr(attr), serverio.KindMutated)
+				r.emitMutatedAttr(request.Volume, request.Path, attr)
 			} else {
-				r.bus.Emit(request.Volume, request.Path, 0, serverio.KindMutated)
+				r.emitMutatedAttr(request.Volume, request.Path, nil)
 			}
 		}
 		return reply, nil
@@ -230,8 +262,7 @@ func (r *RpcFileServerImpl) Write(stream proto.RpcFile_WriteServer) error {
 	}
 
 	if applied && fuse.Status(reply.Status) == fuse.OK && entryPath != "" {
-		ver := r.versionAfterPath(stream.Context(), first.Volume, entryPath, nil)
-		r.bus.Emit(first.Volume, entryPath, ver, serverio.KindMutated)
+		r.emitMutatedFd(stream.Context(), first.Volume, entryPath, nil)
 	}
 
 	return stream.SendAndClose(reply)
@@ -443,10 +474,10 @@ func (r *RpcFileServerImpl) WriteAndFlush(ctx context.Context, req *proto.WriteA
 		// consumes the names will need a Caller field on the request.
 		reply.FinalAttr = toProtoAttr(attr, nil)
 		if st == fuse.OK {
-			r.bus.Emit(req.Volume, entry.Path, serverio.VersionFromAttr(attr), serverio.KindMutated)
+			r.emitMutatedAttr(req.Volume, entry.Path, attr)
 		}
 	} else if st == fuse.OK {
-		r.bus.Emit(req.Volume, entry.Path, 0, serverio.KindMutated)
+		r.emitMutatedAttr(req.Volume, entry.Path, nil)
 	}
 	return reply, nil
 }
@@ -466,8 +497,7 @@ func (r *RpcFileServerImpl) Allocate(ctx context.Context, request *proto.Allocat
 		if path == "" {
 			path = request.Path
 		}
-		ver := r.versionAfterPath(ctx, request.Volume, path, request.Caller)
-		r.bus.Emit(request.Volume, path, ver, serverio.KindMutated)
+		r.emitMutatedFd(ctx, request.Volume, path, request.Caller)
 	}
 	return &proto.AllocateReply{Status: int32(s)}, nil
 }
@@ -505,8 +535,7 @@ func (r *RpcFileServerImpl) CopyFileRange(ctx context.Context, request *proto.Co
 		if path == "" {
 			path = request.PathOut
 		}
-		ver := r.versionAfterPath(ctx, request.Volume, path, request.Caller)
-		r.bus.Emit(request.Volume, path, ver, serverio.KindMutated)
+		r.emitMutatedFd(ctx, request.Volume, path, request.Caller)
 	}
 	return &proto.CopyFileRangeReply{BytesCopied: copied, Status: int32(st)}, nil
 }
