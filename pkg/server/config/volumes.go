@@ -1,6 +1,9 @@
 package config
 
-import "github.com/spf13/viper"
+import (
+	"github.com/pkg/errors"
+	"github.com/spf13/viper"
+)
 
 type MappingMode string
 
@@ -50,11 +53,17 @@ type VolumeConfig struct {
 }
 
 // NewVolumeConfig creates a new VolumeConfig with defaults. An absent or empty
-// `mapping` block defaults to squash (the safe default).
-func NewVolumeConfig(v *viper.Viper) *VolumeConfig {
+// `mapping` block defaults to squash (the safe default). A mapping block that
+// fails to unmarshal is a hard error: this is the identity-enforcement config
+// — a partially-decoded block (type-mismatched uid, mis-indented users table)
+// could otherwise validate and serve the volume with silently-wrong identity
+// mapping.
+func NewVolumeConfig(v *viper.Viper) (*VolumeConfig, error) {
 	m := MappingConfig{Mode: MappingModeSquash}
 	if sub := v.Sub("mapping"); sub != nil {
-		_ = sub.Unmarshal(&m)
+		if err := sub.Unmarshal(&m); err != nil {
+			return nil, errors.Wrap(err, "parse mapping block")
+		}
 		if m.Mode == "" {
 			m.Mode = MappingModeSquash
 		}
@@ -63,5 +72,5 @@ func NewVolumeConfig(v *viper.Viper) *VolumeConfig {
 		Name:    v.GetString("name"),
 		Path:    v.GetString("path"),
 		Mapping: m,
-	}
+	}, nil
 }

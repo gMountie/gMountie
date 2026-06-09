@@ -41,22 +41,18 @@ The `server` section configures the core server settings:
 |---------------------------------|----------|--------------|----------------------------------------------------------------------------------------------|
 | address                         | string   | "0\.0\.0\.0" | IP address the server listens on                                                             |
 | port                            | integer  | 9449         | Port number for the gRPC server                                                              |
-| metrics                         | boolean  | true         | Enable/disable the ops HTTP server (`/metrics`, `/healthz`, `/readyz`, …)                    |
-| metrics\_addr                   | string   | ":9090"      | **Deprecated** — use `server.ops.addr`. Legacy address for the ops HTTP server.              |
-| max\_message\_bytes             | integer  | 16777216     | Cap on inbound/outbound gRPC message size (16 MiB default)                                    |
+| metrics                         | boolean  | true         | Enable/disable the gRPC Prometheus interceptors (`grpc_server_*` series)                     |
 | frame\_size\_bytes              | integer  | 1048576      | Chunk size for server-streamed reads (1 MiB). Range [4096, 16777216].                        |
 | compound\_max\_parallel         | integer  | 8            | Max concurrent sub-ops in flight for a single Compound RPC. Range [1, 256].                  |
 | pprof                           | boolean  | false        | Expose `/debug/pprof/*` on the ops HTTP server                                               |
 | subscribe\_buffer\_size         | integer  | 256          | Per-subscriber channel depth in the event bus. Minimum 1.                                    |
 | subscribe\_heartbeat\_interval  | duration | 10s          | How often the event bus emits a HEARTBEAT to each live subscriber                            |
 
-`max_message_bytes` is validated to the range [65536, 67108864] (64 KiB to
-64 MiB). The default sits well above the streaming `frame_size_bytes` so a
-single Read/Write frame plus header overhead always fits.
-
-`metrics_addr` is **deprecated**: it is the legacy single address for the ops
-HTTP server. New configs should use the [`server.ops`](#ops-endpoints) block
-(`server.ops.addr`), which also carries the ops-listener auth and TLS settings.
+The inbound message-size cap lives under
+[`server.grpc.limits.max_recv_message_size`](#grpc-behavior-and-limits)
+(default 16 MiB) — the legacy top-level `max_message_bytes` and the
+deprecated `metrics_addr` keys were removed. The ops HTTP server address is
+[`server.ops.addr`](#ops-endpoints).
 
 Example:
 
@@ -64,8 +60,7 @@ Example:
 server:
   address: 192.168.1.100 # Listen on specific interface
   port: 8080 # Custom port
-  metrics: false # Disable metrics
-  max_message_bytes: 33554432 # 32 MiB
+  metrics: false # Disable gRPC Prometheus interceptors
 ```
 
 ### Keepalive
@@ -181,7 +176,7 @@ The `server.ops` block controls the operational HTTP listener that serves
 via a sidecar / port-forward. Binding to a **non-loopback** address requires
 `ops.auth.type` to be something other than `none` (enforced at startup).
 
-This block replaces the deprecated `server.metrics_addr` key.
+
 
 | Option                  | Type   | Default            | Description                                                          |
 |-------------------------|--------|--------------------|----------------------------------------------------------------------|

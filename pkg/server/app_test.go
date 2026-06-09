@@ -42,10 +42,9 @@ func (s *ServerAppTestSuite) TestStart_ContextCancellationShutsDownGracefully() 
 
 	cfg := &config.Config{
 		Server: &config.ServerConfig{
-			Address:         "127.0.0.1",
-			Port:            port,
-			Metrics:         false,
-			MaxMessageBytes: config.DefaultMaxMessageBytes,
+			Address: "127.0.0.1",
+			Port:    port,
+			Metrics: false,
 			Keepalive: config.ServerKeepaliveConfig{
 				Time:                config.DefaultKeepaliveTime,
 				Timeout:             config.DefaultKeepaliveTimeout,

@@ -218,64 +218,8 @@ volumes:
 	s.Require().Error(err)
 }
 
-func (s *ConfigTestSuite) TestMetricsAddrDefault() {
-	cfg, err := LoadConfigFromString(`
-server:
-  address: "0.0.0.0"
-  port: 9449
-auth:
-  type: basic
-  users:
-  - username: admin
-    password_hash: ` + testAdminPHC + `
-volumes:
-  - name: test
-    path: /tmp
-`)
-	s.Require().NoError(err)
-	s.Assert().Equal(":9090", cfg.Server.MetricsAddr)
-}
-
-func (s *ConfigTestSuite) TestMetricsAddrEnvOverride() {
-	s.T().Setenv("GMOUNTIE_SERVER_METRICS_ADDR", ":19999")
-	cfg, err := LoadConfigFromString(`
-server:
-  address: "0.0.0.0"
-  port: 9449
-auth:
-  type: basic
-  users:
-  - username: admin
-    password_hash: ` + testAdminPHC + `
-volumes:
-  - name: test
-    path: /tmp
-`)
-	s.Require().NoError(err)
-	s.Assert().Equal(":19999", cfg.Server.MetricsAddr)
-}
-
-func (s *ConfigTestSuite) TestMetricsAddrExplicitOverride() {
-	cfg, err := LoadConfigFromString(`
-server:
-  address: "0.0.0.0"
-  port: 9449
-  metrics_addr: "127.0.0.1:9091"
-auth:
-  type: basic
-  users:
-  - username: admin
-    password_hash: ` + testAdminPHC + `
-volumes:
-  - name: test
-    path: /tmp
-`)
-	s.Require().NoError(err)
-	s.Assert().Equal("127.0.0.1:9091", cfg.Server.MetricsAddr)
-}
-
 // Test Runner
-func (s *ConfigTestSuite) TestMaxMessageBytesAndKeepaliveDefaults() {
+func (s *ConfigTestSuite) TestKeepaliveDefaults() {
 	cfg, err := LoadConfigFromString(`
 server:
   address: "0.0.0.0"
@@ -290,7 +234,6 @@ volumes:
     path: /tmp
 `)
 	s.Require().NoError(err)
-	s.Assert().Equal(DefaultMaxMessageBytes, cfg.Server.MaxMessageBytes)
 	s.Assert().Equal(DefaultKeepaliveTime, cfg.Server.Keepalive.Time)
 	s.Assert().Equal(DefaultKeepaliveTimeout, cfg.Server.Keepalive.Timeout)
 	s.Assert().Equal(DefaultKeepaliveMinTime, cfg.Server.Keepalive.MinTime)
@@ -298,7 +241,6 @@ volumes:
 }
 
 func (s *ConfigTestSuite) TestKeepaliveEnvOverride() {
-	s.T().Setenv("GMOUNTIE_SERVER_MAX_MESSAGE_BYTES", "33554432")
 	s.T().Setenv("GMOUNTIE_SERVER_KEEPALIVE_TIME", "45s")
 	s.T().Setenv("GMOUNTIE_SERVER_KEEPALIVE_TIMEOUT", "15s")
 	cfg, err := LoadConfigFromString(`
@@ -315,7 +257,6 @@ volumes:
     path: /tmp
 `)
 	s.Require().NoError(err)
-	s.Assert().Equal(33554432, cfg.Server.MaxMessageBytes)
 	s.Assert().Equal(45*time.Second, cfg.Server.Keepalive.Time)
 	s.Assert().Equal(15*time.Second, cfg.Server.Keepalive.Timeout)
 }
@@ -325,7 +266,6 @@ func (s *ConfigTestSuite) TestKeepaliveExplicitYAML() {
 server:
   address: "0.0.0.0"
   port: 9449
-  max_message_bytes: 1048576
   keepalive:
     time: 1m
     timeout: 20s
@@ -341,7 +281,6 @@ volumes:
     path: /tmp
 `)
 	s.Require().NoError(err)
-	s.Assert().Equal(1048576, cfg.Server.MaxMessageBytes)
 	s.Assert().Equal(1*time.Minute, cfg.Server.Keepalive.Time)
 	s.Assert().Equal(20*time.Second, cfg.Server.Keepalive.Timeout)
 	s.Assert().Equal(5*time.Second, cfg.Server.Keepalive.MinTime)

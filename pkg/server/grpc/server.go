@@ -259,16 +259,6 @@ func (s *Server) getOptions() []grpc.ServerOption {
 				PermitWithoutStream: srv.Keepalive.PermitWithoutStream,
 			}),
 		)
-		// Legacy MaxMessageBytes still drives both directions when set; the new
-		// GRPC.Limits.MaxRecvMessageSize knob below overrides only the recv
-		// side. Skip on zero so test configs and unconfigured servers don't
-		// end up with a 0-byte cap that rejects all traffic.
-		if srv.MaxMessageBytes > 0 {
-			opts = append(opts,
-				grpc.MaxRecvMsgSize(srv.MaxMessageBytes),
-				grpc.MaxSendMsgSize(srv.MaxMessageBytes),
-			)
-		}
 		// Append per-connection DoS guards: MaxRecvMessageSize and
 		// MaxConcurrentStreams. KeepaliveParams for Idle/Age are already
 		// folded into kaParams above; limitsServerOptions skips them here.

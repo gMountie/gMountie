@@ -457,7 +457,6 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 		Metrics:                    false,
 		FrameSizeBytes:             config.DefaultFrameSizeBytes,
 		CompoundMaxParallel:        config.DefaultCompoundMaxParallel,
-		MaxMessageBytes:            config.DefaultMaxMessageBytes,
 		SubscribeBufferSize:        config.DefaultServerSubscribeBufferSize,
 		SubscribeHeartbeatInterval: config.DefaultServerSubscribeHeartbeatInterval,
 		Keepalive: config.ServerKeepaliveConfig{
@@ -465,6 +464,11 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 			Timeout:             config.DefaultKeepaliveTimeout,
 			MinTime:             config.DefaultKeepaliveMinTime,
 			PermitWithoutStream: config.DefaultKeepalivePermitWithoutStream,
+		},
+		GRPC: config.GRPCConfig{
+			Limits: config.LimitsConfig{
+				MaxRecvMessageSize: config.DefaultMaxMessageBytes,
+			},
 		},
 	}
 	// Default to the disabled-cache config; WithCache may override

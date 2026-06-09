@@ -21,7 +21,8 @@ func (s *VolumeConfigSuite) viperFrom(yaml string) *viper.Viper {
 
 func (s *VolumeConfigSuite) TestDefaultsToSquash() {
 	v := s.viperFrom("name: photos\npath: /srv/photos\n")
-	c := NewVolumeConfig(v)
+	c, err := NewVolumeConfig(v)
+	s.Require().NoError(err)
 	s.Equal("photos", c.Name)
 	s.Equal(MappingModeSquash, c.Mapping.Mode)
 }
@@ -37,7 +38,8 @@ mapping:
   groups:
     developers: 2000
 `)
-	c := NewVolumeConfig(v)
+	c, err := NewVolumeConfig(v)
+	s.Require().NoError(err)
 	s.Equal(MappingModeStatic, c.Mapping.Mode)
 	s.Equal(uint32(1001), c.Mapping.Users["alice"].Uid)
 	s.Equal([]string{"developers"}, c.Mapping.Users["alice"].Groups)
@@ -46,7 +48,8 @@ mapping:
 
 func (s *VolumeConfigSuite) TestParsesPassthroughRootSquash() {
 	v := s.viperFrom("name: lan\npath: /srv/lan\nmapping:\n  mode: passthrough\n  root_squash: false\n")
-	c := NewVolumeConfig(v)
+	c, err := NewVolumeConfig(v)
+	s.Require().NoError(err)
 	s.Equal(MappingModePassthrough, c.Mapping.Mode)
 	s.Require().NotNil(c.Mapping.RootSquash)
 	s.False(*c.Mapping.RootSquash)
@@ -62,8 +65,19 @@ mapping:
     dac_override: [wheel]
     dac_read_search: [backup]
 `)
-	c := NewVolumeConfig(v)
+	c, err := NewVolumeConfig(v)
+	s.Require().NoError(err)
 	s.Equal(MappingModeSystem, c.Mapping.Mode)
 	s.Equal([]string{"wheel"}, c.Mapping.AdminGroups["dac_override"])
 	s.Equal([]string{"backup"}, c.Mapping.AdminGroups["dac_read_search"])
+}
+
+// TestMappingUnmarshalErrorSurfaces pins CQ-4: a type-mismatched mapping
+// block must fail config parsing instead of silently part-decoding into a
+// wrong identity mapping.
+func (s *VolumeConfigSuite) TestMappingUnmarshalErrorSurfaces() {
+	v := s.viperFrom("name: bad\npath: /srv/bad\nmapping:\n  mode: squash\n  uid: alice\n")
+	_, err := NewVolumeConfig(v)
+	s.Require().Error(err, "non-numeric uid must fail the mapping unmarshal")
+	s.Contains(err.Error(), "mapping")
 }
