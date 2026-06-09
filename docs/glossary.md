@@ -117,7 +117,7 @@ One-line definitions. Cross-linked into the rest of the docs — when you hit an
 
 **Session** — Server-side context for one client connection. Holds the fd table and the idempotency cache. Reaped on disconnect.
 
-**Snappy** — Opt-in compression codec for gRPC payloads (`rpc.compression: snappy`, default `none`), registered as a custom codec at `pkg/server/grpc/snappy`. Worth enabling on slow WAN links; on fast links the compressor itself is the bottleneck — see [Performance § 2.7](./design/performance.md).
+**Snappy** — Opt-in compression codec for gRPC payloads (`rpc.compression: snappy`, default `none`), registered as a custom codec at `pkg/common/grpc/snappy`. Worth enabling on slow WAN links; on fast links the compressor itself is the bottleneck — see [Performance § 2.7](./design/performance.md).
 
 **`Squash`** — One of the four mapping modes. Every authenticated principal becomes one fixed `(uid, gid)`. NFS `all_squash` style.
 

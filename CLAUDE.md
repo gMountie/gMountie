@@ -27,7 +27,7 @@ E2E tests live in `test/e2e/` and spin up a real server + FUSE mount in-process 
 ## Architecture
 
 ### Wire protocol
-`api/proto/*.proto` (`common`, `file`, `fs`, `session`, `version`, `volume`) defines five gRPC services: `RpcFs`, `RpcFile`, `VolumeService`, `SessionService`, `VersionService`. Generated Go lives in `pkg/proto/` — regenerate with `task gen:grpc` after any `.proto` change. A Snappy codec (`pkg/server/grpc/snappy`) is available as an opt-in compressor (`rpc.compression: snappy`, default `none`).
+`api/proto/*.proto` (`common`, `file`, `fs`, `session`, `version`, `volume`) defines five gRPC services: `RpcFs`, `RpcFile`, `VolumeService`, `SessionService`, `VersionService`. Generated Go lives in `pkg/proto/` — regenerate with `task gen:grpc` after any `.proto` change. A Snappy codec (`pkg/common/grpc/snappy`) is available as an opt-in compressor (`rpc.compression: snappy`, default `none`).
 
 ### Server (`pkg/server/`)
 Layered as `controller → service → io`:

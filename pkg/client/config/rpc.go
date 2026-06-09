@@ -117,7 +117,7 @@ type RpcConfig struct {
 	Keepalive ClientKeepaliveConfig `mapstructure:"keepalive"`
 	// Compression names the gRPC compressor to apply to every RPC on this
 	// connection. "none" disables compression entirely; "snappy" uses the
-	// snappy codec registered in pkg/server/grpc/snappy. Default "none" —
+	// snappy codec registered in pkg/common/grpc/snappy. Default "none" —
 	// see DefaultCompression for the why.
 	Compression string `mapstructure:"compression" validate:"oneof=none snappy"`
 	// RetryWindow bounds how long a single FS op retries transient failures
