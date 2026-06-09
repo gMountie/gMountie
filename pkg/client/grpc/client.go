@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"go.gmountie.dev/gmountie/pkg/client/config"
@@ -99,6 +100,10 @@ type ClientImpl struct {
 	// metrics is the per-client collector set. Set via WithMetrics; nil
 	// means no in-flight interceptor is wired (the factory always provides one).
 	metrics *metrics.Metrics
+	// closed makes Close idempotent: the metrics dispatcher registration is
+	// refcounted, so a double Close must not drop another live client's
+	// reference.
+	closed atomic.Bool
 }
 
 // -------------------- ClientImpl Options --------------------
@@ -258,8 +263,18 @@ func (c *ClientImpl) Connect() error {
 	return nil
 }
 
-// Close closes the gRPC ClientImpl connection
+// Close closes the gRPC ClientImpl connection. It also unregisters this
+// client's metrics from the package-level dispatcher — without that, closed
+// clients keep receiving OnRetry/cache fan-out forever and the dispatcher
+// double-counts events once a second client registers. Idempotent: only the
+// first Close tears down.
 func (c *ClientImpl) Close() error {
+	if !c.closed.CompareAndSwap(false, true) {
+		return nil
+	}
+	if c.metrics != nil {
+		metrics.UnregisterInstance(c.metrics)
+	}
 	if c.lifeCancel != nil {
 		c.lifeCancel()
 	}
