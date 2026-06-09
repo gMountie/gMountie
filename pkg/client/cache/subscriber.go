@@ -134,32 +134,32 @@ func subscribePathParent(p string) string {
 	return d
 }
 
+// invalidatePathAndParent drops the cached attrs, data, and parent directory
+// listing for p. Any operation that modifies the directory tree — create,
+// unlink, rename — bumps the parent's mtime on the server. Over-invalidating
+// the parent attr on plain writes is cheap (one extra Stat RTT at most) and
+// safe, so we apply the same pattern uniformly across all event kinds.
+func (c *subscribeConsumer) invalidatePathAndParent(p string) {
+	parent := subscribePathParent(p)
+	c.cache.invalidateAttr(p)
+	c.cache.invalidateData(p)
+	c.cache.invalidateDir(parent)
+	c.cache.invalidateAttr(parent)
+}
+
 func (c *subscribeConsumer) handle(ev *proto.SubscribeEvent) {
 	switch ev.Kind {
 	case proto.SubscribeEvent_MUTATED:
 		metrics.SubscribeEventReceived("mutated")
-		c.cache.invalidateAttr(ev.Path)
-		c.cache.invalidateData(ev.Path)
-		c.cache.invalidateDir(subscribePathParent(ev.Path))
-		// A create/mkdir/unlink changes the parent's mtime; over-invalidating on
-		// plain writes is cheap and safe (one extra Stat RTT at most).
-		c.cache.invalidateAttr(subscribePathParent(ev.Path))
+		c.invalidatePathAndParent(ev.Path)
 	case proto.SubscribeEvent_DELETED:
 		metrics.SubscribeEventReceived("deleted")
-		c.cache.invalidateAttr(ev.Path)
-		c.cache.invalidateData(ev.Path)
-		c.cache.invalidateDir(subscribePathParent(ev.Path))
-		// Unlink/rmdir changes the parent's mtime; drop the parent's cached attr.
-		c.cache.invalidateAttr(subscribePathParent(ev.Path))
+		c.invalidatePathAndParent(ev.Path)
 		c.cache.putNegative(ev.Path)
 	case proto.SubscribeEvent_RENAMED:
 		metrics.SubscribeEventReceived("renamed")
 		for _, p := range []string{ev.Path, ev.NewPath} {
-			c.cache.invalidateAttr(p)
-			c.cache.invalidateData(p)
-			c.cache.invalidateDir(subscribePathParent(p))
-			// Rename changes the mtime of both the source and destination parents.
-			c.cache.invalidateAttr(subscribePathParent(p))
+			c.invalidatePathAndParent(p)
 		}
 		c.cache.putNegative(ev.Path)
 	case proto.SubscribeEvent_HEARTBEAT:
