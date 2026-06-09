@@ -8,8 +8,12 @@ description: gMountie network filesystem server (FUSE-over-gRPC).
 type: application
 
 # Chart version — bump on chart template edits.
-version: 0.2.2
+version: 0.3.0
 
-# appVersion is the gMountie release tag the chart's defaults target.
-# Override with `--set image.tag=<sha>` for dev / per-commit testing.
+# appVersion is the gMountie release tag the chart's defaults target. The
+# in-repo value "dev" is a placeholder that is NEVER published as an image
+# tag — installing the chart straight from a checkout therefore requires
+# `--set image.tag=<release-tag>` or the pod lands in ImagePullBackOff.
+# The OCI-published chart gets the real release tag stamped via
+# `helm package --app-version` at release time.
 appVersion: "dev"

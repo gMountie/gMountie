@@ -20,6 +20,12 @@ spec:
         # Restart the pod whenever the rendered ConfigMap changes.
         # Standard chart idiom.
         checksum/config: {{ include (print .Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if not .Values.auth.existingSecret }}
+        # Same for the chart-managed auth Secret. (A user-provided
+        # auth.existingSecret is outside the release — rotate with a
+        # manual rollout restart.)
+        checksum/auth: {{ include (print .Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
           {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -34,6 +40,10 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "gmountie-server.serviceAccountName" . }}
+      # ≥ the server's own shutdown budget: 30s in-flight drain + 5s session
+      # stop + 5s ops stop (pkg/server/app.go). The k8s default of 30s would
+      # SIGKILL right at the drain deadline on every Recreate rollout.
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       # Disable Kubernetes Docker-link Service env vars. They collide with
       # gMountie's GMOUNTIE_ config env prefix: a Service named e.g.
       # gmountie-server injects GMOUNTIE_SERVER_PORT=tcp://<ip>:9449, which
@@ -48,21 +58,28 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          # `gmountie serve` reads its config via --config (persistent
-          # root-cmd flag). Positional args are ignored.
+          # Assemble the effective config at start: the ConfigMap carries
+          # everything but `auth`; the auth Secret carries the credentials.
+          # Both have distinct top-level YAML keys, so concatenation yields
+          # a valid single config file (the server reads exactly one).
+          command: ["/bin/sh", "-ec"]
           args:
-            - "serve"
-            - "--config"
-            - "/etc/gmountie/config.yaml"
+            - >-
+              cat /etc/gmountie/base/config.yaml /etc/gmountie/auth/auth.yaml
+              > /run/gmountie/config.yaml &&
+              exec /opt/gmountie/gmountie serve --config /run/gmountie/config.yaml
           ports:
             - name: grpc
               containerPort: {{ .Values.config.server.port }}
               protocol: TCP
+            {{- if include "gmountie-server.opsExposed" . }}
             - name: metrics
-              # Phase 2 ops HTTP server binds metrics_addr; values.yaml
-              # keeps the two port numbers (Service + container) aligned.
-              containerPort: {{ .Values.service.metricsPort }}
+              # The ops HTTP server binds server.ops.addr; this port is only
+              # rendered when that addr is non-loopback (otherwise nothing
+              # in-cluster can reach it — use kubectl port-forward instead).
+              containerPort: {{ include "gmountie-server.opsPort" . }}
               protocol: TCP
+            {{- end }}
           {{- with .Values.livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}
@@ -75,8 +92,13 @@ spec:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
             - name: config
-              mountPath: /etc/gmountie
+              mountPath: /etc/gmountie/base
               readOnly: true
+            - name: auth
+              mountPath: /etc/gmountie/auth
+              readOnly: true
+            - name: rendered-config
+              mountPath: /run/gmountie
             {{- if .Values.persistence.enabled }}
             - name: data
               # Mount the PVC at the FIRST volume's configured path.
@@ -91,6 +113,12 @@ spec:
         - name: config
           configMap:
             name: {{ include "gmountie-server.fullname" . }}-config
+        - name: auth
+          secret:
+            secretName: {{ include "gmountie-server.authSecretName" . }}
+        - name: rendered-config
+          emptyDir:
+            medium: Memory
         {{- if .Values.persistence.enabled }}
         - name: data
           persistentVolumeClaim:

@@ -8,7 +8,10 @@ image:
   repository: ghcr.io/gmountie/gmountie-server
   pullPolicy: IfNotPresent
   # Override per-deploy:  --set image.tag=<commit-sha-or-tag>
-  # Empty falls back to Chart.appVersion.
+  # Empty falls back to Chart.appVersion. NOTE: the in-repo chart carries
+  # appVersion "dev", which is never published as an image tag — installing
+  # straight from a checkout therefore REQUIRES --set image.tag=<release-tag>
+  # (the OCI-published chart gets the real appVersion stamped at release).
   tag: ""
 
 imagePullSecrets: []
@@ -32,12 +35,43 @@ podLabels: {}
 # disable them by default. Only set true if you specifically need them.
 enableServiceLinks: false
 
+# Give the kubelet enough time for the server's own graceful shutdown:
+# 30s in-flight drain + 5s session-manager stop + 5s ops-server stop
+# (pkg/server/app.go). The Kubernetes default of 30s SIGKILLs right at
+# the drain deadline and cuts off session persistence on every rollout.
+terminationGracePeriodSeconds: 45
+
 # fsGroup makes the ReadWriteOnce PVC group-writable by the non-root
 # container (runAsUser 1000). Without it the volume is root-owned and the
 # server cannot write its data dir.
 podSecurityContext:
   fsGroup: 1000
 
+# Hardened default: non-root, all capabilities dropped. NOTE: this disables
+# the identity/AssumeUser feature — the system/static/passthrough volume
+# mapping modes need the server to run as root with the capability set below
+# (see docs/design/security-and-transport.md). To enable identity mapping,
+# replace this block with the commented preset:
+#
+# securityContext:
+#   runAsNonRoot: false
+#   runAsUser: 0
+#   runAsGroup: 0
+#   allowPrivilegeEscalation: false
+#   capabilities:
+#     drop: [ALL]
+#     add:
+#       - SETUID            # setfsuid per-request identity switch
+#       - SETGID            # setfsgid + setgroups per-request identity switch
+#       - CHOWN             # dac_override post-create chown to the principal
+#       - DAC_READ_SEARCH   # admin cap "dac_read_search" (read-only bypass)
+#       - DAC_OVERRIDE      # admin cap "dac_override" (full DAC bypass)
+#       - FOWNER            # owner-check bypass retained on the dac_override path
+#       - FSETID            # keep setgid bits on privileged chmod/chown
+#
+# (cap set per pkg/server/io/caps.go + bound_fs.go; SETUID/SETGID/CHOWN are
+# the minimum for the mapping modes, the DAC_*/FOWNER/FSETID caps are only
+# exercised by identities granted the corresponding admin caps.)
 securityContext:
   runAsNonRoot: true
   runAsUser: 1000
@@ -46,9 +80,8 @@ securityContext:
   capabilities:
     drop: [ALL]
 
-# Server config — every key feeds the rendered ConfigMap. Mirrors
-# pkg/server/config schema; see deployments/compose/config.yaml for
-# the legacy reference.
+# Server config — every key (except `auth`, see below) feeds the rendered
+# ConfigMap. Mirrors pkg/server/config schema.
 config:
   log:
     level: info
@@ -57,14 +90,44 @@ config:
     # bind addr inside the pod; Service exposes it externally.
     address: 0.0.0.0
     port: 9449
-    metrics_addr: "0.0.0.0:9090"
+    # Ops HTTP endpoint (/metrics, /healthz, /readyz, /version). The default
+    # loopback bind is reachable via `kubectl port-forward` (which dials
+    # inside the pod netns) but NOT via the Service — so the chart only
+    # renders the metrics containerPort/Service port when this binds
+    # non-loopback. The server requires auth on a non-loopback bind, and
+    # basic auth off loopback also needs ops TLS (operator credentials are
+    # refused over cleartext). In-cluster scrape preset:
+    #
+    # ops:
+    #   addr: "0.0.0.0:9090"
+    #   auth:
+    #     type: basic
+    #     users:
+    #       - username: ops
+    #         password_hash: "<output of `gmountie genpass`>"
+    #   tls:
+    #     # mount the keypair via .Values.volumes / .Values.volumeMounts
+    #     cert_file: /etc/gmountie-ops-tls/tls.crt
+    #     key_file: /etc/gmountie-ops-tls/tls.key
+    #
+    # CAVEAT: ops basic-auth users live under config.server (rendered into
+    # the ConfigMap), unlike the client `auth` block (Secret-backed). Prefer
+    # ops auth.type: mtls if the operator hash must not sit in a ConfigMap.
+    ops:
+      addr: "127.0.0.1:9090"
   # gMountie's config schema requires `auth`. Pick `none` for an open
   # demo or `basic` with at least one user for anything real.
+  #
+  # The auth block is rendered into a chart-managed Secret (never the
+  # ConfigMap). To keep credentials out of Helm values entirely, set
+  # auth.existingSecret below and delete/ignore this block.
   #
   # basic-auth users need an argon2id PHC hash in `password_hash` (NOT a
   # plaintext password — the server rejects that at startup). Generate one
   # with `gmountie genpass` and paste it here. The default below is the
-  # hash of the password "demo" — change it before exposing the server.
+  # PUBLISHED hash of the password "demo" — the chart REFUSES to render an
+  # externally exposed install (LoadBalancer/NodePort Service or enabled
+  # ingress) that still carries it.
   auth:
     type: basic
     users:
@@ -77,11 +140,30 @@ config:
     - name: data
       path: /data
 
+auth:
+  # Name of a pre-created Secret carrying the auth config, for keeping
+  # credentials out of Helm values/releases. The Secret must contain a key
+  # `auth.yaml` whose value is a complete top-level `auth:` block, e.g.:
+  #
+  #   auth:
+  #     type: basic
+  #     users:
+  #       - username: alice
+  #         password_hash: "$argon2id$..."
+  #
+  # When set, .Values.config.auth is ignored and the chart-managed auth
+  # Secret is not created. Rotations need a manual rollout restart (the
+  # config checksum annotation only tracks chart-managed content).
+  existingSecret: ""
+
 # Cluster-internal Service. Set type: LoadBalancer (and optionally
 # externalTrafficPolicy) to expose externally.
 service:
   type: ClusterIP
   port: 9449
+  # Service-side port for the ops/metrics endpoint. Only rendered when
+  # config.server.ops.addr binds non-loopback (see the ops preset above);
+  # with the loopback default there is nothing in-cluster to route to.
   metricsPort: 9090
   # externalTrafficPolicy: Local
   annotations: {}
@@ -135,7 +217,7 @@ resources:
     memory: 512Mi
 
 # Additional in-tree volumes/mounts beyond the volume-data PVC + the
-# config ConfigMap that the chart wires automatically.
+# config ConfigMap/auth Secret that the chart wires automatically.
 volumes: []
 volumeMounts: []
 

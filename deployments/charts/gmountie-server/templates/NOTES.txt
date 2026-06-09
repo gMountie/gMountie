@@ -26,17 +26,38 @@ gMountie server is running.
 
    gmountie mount /your/mountpoint \
      --server <endpoint> \
+{{- if .Values.auth.existingSecret }}
+     --auth-type <type from your auth Secret> \
+     --username <user from your auth Secret> \
+{{- else }}
      --auth-type {{ .Values.config.auth.type }} \
 {{- if eq .Values.config.auth.type "basic" }}
      --username {{ (index .Values.config.auth.users 0).username }} \
-     --password '<see values.yaml>' \
+     --password '<the password whose hash is in values.yaml>' \
+{{- end }}
 {{- end }}
      --volume {{ (index .Values.config.volumes 0).name }}
 
-3. Health + metrics:
+3. Health + metrics (ops HTTP endpoint):
+{{- if include "gmountie-server.opsExposed" . }}
 
+   # ops binds {{ include "gmountie-server.opsAddr" . }} (non-loopback) — reachable via the Service:
    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "gmountie-server.fullname" . }} \
      {{ .Values.service.metricsPort }}:{{ .Values.service.metricsPort }}
-   curl http://127.0.0.1:{{ .Values.service.metricsPort }}/healthz
-   curl http://127.0.0.1:{{ .Values.service.metricsPort }}/readyz
-   curl http://127.0.0.1:{{ .Values.service.metricsPort }}/metrics
+   # auth is required on a non-loopback ops bind; with basic auth + TLS:
+   curl -k -u <ops-user> https://127.0.0.1:{{ .Values.service.metricsPort }}/healthz
+   curl -k -u <ops-user> https://127.0.0.1:{{ .Values.service.metricsPort }}/metrics
+
+{{- else }}
+
+   # ops binds {{ include "gmountie-server.opsAddr" . }} (loopback inside the pod). It is NOT
+   # reachable through the Service; port-forward dials inside the pod netns:
+   kubectl -n {{ .Release.Namespace }} port-forward deploy/{{ include "gmountie-server.fullname" . }} \
+     {{ include "gmountie-server.opsPort" . }}:{{ include "gmountie-server.opsPort" . }}
+   curl http://127.0.0.1:{{ include "gmountie-server.opsPort" . }}/healthz
+   curl http://127.0.0.1:{{ include "gmountie-server.opsPort" . }}/readyz
+   curl http://127.0.0.1:{{ include "gmountie-server.opsPort" . }}/metrics
+   # To scrape in-cluster instead, see the `ops:` preset in values.yaml
+   # (non-loopback bind + auth + TLS).
+
+{{- end }}
