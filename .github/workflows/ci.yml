@@ -172,6 +172,10 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
+      # Install cosign so the installer's signature-verification branch actually
+      # runs here — otherwise that path (and the checksums.txt byte-exactness it
+      # depends on) is never exercised in CI.
+      - uses: sigstore/cosign-installer@v3
       - name: install via script
         env:
           BIN_DIR: ${{ github.workspace }}/bin
