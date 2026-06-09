@@ -217,8 +217,10 @@ func (s *Server) getOptions() []grpc.ServerOption {
 
 	streamInterceptors := append(
 		[]grpc.StreamServerInterceptor{
-			authInterceptor.Stream(), // Must be first for the user to be logged.
-			streamLog,
+			grpc2.ServerStreamRequestID(),  // 1. request_id from metadata (also injects log field).
+			grpc2.ServerStreamLogContext(), // 2. session_fp/volume holder, filled by the first message.
+			authInterceptor.Stream(),       // 3. user (already injects).
+			streamLog,                      // 4. finish-call line; reads the holder via StreamLogFields.
 		},
 		s.extraStreamInterceptors...,
 	)
@@ -283,6 +285,11 @@ func (s *Server) getOptions() []grpc.ServerOption {
 func (s *Server) getLoggingInterceptor() (grpc.UnaryServerInterceptor, grpc.StreamServerInterceptor) {
 	opts := []logging.Option{
 		logging.WithLogOnEvents(logging.FinishCall),
+		// Stream RPCs learn session_fp/volume only with their FIRST message —
+		// after this interceptor has already captured its context — so the
+		// fields travel through a mutable holder read back at log time.
+		// No-op for unary RPCs (no holder in ctx).
+		logging.WithFieldsFromContext(grpc2.StreamLogFields),
 		logging.WithLevels(func(code codes.Code) logging.Level {
 			switch code {
 			case codes.OK:
