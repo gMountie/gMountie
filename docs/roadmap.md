@@ -123,7 +123,7 @@ See [Performance](design/performance.md) for the streaming/batching optimization
 **Delivered:**
 
 1. **Streaming reads and writes** — `ReadRequest`/`WriteRequest` moved from unary to server-streaming reads / client-streaming writes, eliminating the 4 MiB gRPC ceiling. Per-frame size is tunable; session + request IDs carried through for safe retry.
-2. **Compound metadata RPCs** — NFSv4-style `Compound` RPC batches metadata ops into one round-trip; used by `Readdir`-with-stat patterns and Phase 4 cache validation.
+2. **Compound metadata RPCs** — NFSv4-style `Compound` RPC batches metadata ops into one round-trip. *(Removed in protocol v-next: no client path ever drove it; superseded by the streaming `ReadDir` with per-entry attrs.)*
 3. **Compression opt-in** — Snappy is now opt-in rather than always-on; metadata RPCs skip it by default. Frame-size negotiation between client and server.
 4. **FUSE mount-option tuning** — `MaxRead`, `MaxWrite`, `MaxBackground`, `CongestionThreshold`, and `WritebackCache` tuned; values negotiated with the server.
 5. **Client-side readahead and write coalescing** — sequential read patterns trigger pre-fetch of the next streaming chunk; small sequential writes from a single fd are coalesced into the streaming frame size. See [Performance § readahead](design/performance.md) for the `readahead_window` and `readahead_chunk_bytes` knobs.
@@ -154,9 +154,9 @@ See [Caching & Consistency](design/caching-and-consistency.md) for the design, c
 
 **Follow-on perf work (shipped after the spec was written):**
 - **Cache-fsync reduction** — batch fsync strategy to reduce the per-write fsync overhead on the persistent cache.
-- **`WriteAndFlush` compound writes** — coalesces write + flush into a single RPC to reduce WAN round-trips on write-heavy workloads.
+- **`WriteAndFlush` fused writes** — coalesces write + flush into a single RPC to reduce WAN round-trips on write-heavy workloads.
 - **WAN writeback-cache opt-in** — opt-in write-back mode for single-writer workloads over high-latency links, with documented consistency limitations.
-- **`Utimens` RPC** — added to support accurate mtime preservation on writeback paths.
+- **`Utimens` RPC** — added to support accurate mtime preservation on writeback paths. *(Later folded into the single-RPC `SetAttr` in protocol v-next.)*
 - **Continuous perf tracking via Bencher** — release-gated benchmark series running on the self-hosted VM runner; LAN and WAN (netem) profiles; alert-only. See [Performance § Bencher](design/performance.md).
 
 **Out of scope (still deferred):**

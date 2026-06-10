@@ -39,8 +39,8 @@ robustness, untested across versions.
 Each op gets its own explicit RPC following the established vertical:
 proto → controller (session resolution, identity binding, idempotency where
 mutating, event emission) → `ConfinedLoopbackFileSystem` → client backend →
-cache layer → go-fuse node interface. No generic extension RPC, no `Compound`
-changes (it stays read-only metadata).
+cache layer → go-fuse node interface. No generic extension RPC, no batch-RPC
+changes.
 
 ## Wire protocol
 
@@ -90,7 +90,7 @@ rpc ListXAttr(ListXAttrRequest) returns (ListXAttrReply);
 
 `SetXAttrRequest` adds `bytes data` + `uint32 flags`
 (`XATTR_CREATE`/`XATTR_REPLACE`) and, being mutating, `request_id` for
-`withIdempotency` dedup (like `Chmod`); `RemoveXAttrRequest` likewise.
+`withIdempotency` dedup (like the other path mutations); `RemoveXAttrRequest` likewise.
 `ListXAttrReply` carries `repeated string attributes` + `int32 status`.
 
 ## Server
@@ -123,7 +123,7 @@ Safe on shared fds: `Read`/`Write` are `pread`/`pwrite`-based, and each
 `lseek(2)` atomically returns its result — no dependence on fd offset state.
 `ENXIO` (no data/hole past offset) propagates; it is functional, not an error.
 
-**`controller/fs.go` — xattr writes:** follow `Chmod`'s shape:
+**`controller/fs.go` — xattr writes:** follow the standard mutation shape:
 `resolveSession` → namespace policy check → `BindIdentity` →
 `withIdempotency(request_id)` (Set/Remove) → the existing
 `ConfinedLoopbackFileSystem.{Set,Remove,List}XAttr` (`confined.go`) → emit the

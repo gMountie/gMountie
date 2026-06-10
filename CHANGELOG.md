@@ -4,6 +4,14 @@ All notable changes to gMountie. Format is loosely based on [Keep a Changelog](h
 
 ## Unreleased
 
+### Headline features
+
+- **Single-RPC `SETATTR`.** A kernel `SETATTR` (`chmod`, `chown`, `truncate`, `touch`, or any combination) is now one `SetAttr` RPC carrying a FUSE-style `FATTR_*` bitmask and returning the final attrs — previously it fanned out into up to 4 serial per-field RPCs plus a trailing `GetAttr` (up to 5 RPCs → 1).
+- **READDIRPLUS attr priming.** The new server-streaming `ReadDir` optionally carries per-entry attributes; the client primes its attr cache from the listing so the kernel's per-entry `LOOKUP`s are local hits. `ls -la` over N cold files: 1+N RPCs → 1.
+- **Large directories no longer fail.** Directory listings were a single unary reply subject to the 16 MiB message cap — very large directories returned `EIO`. `ReadDir` streams the listing in batches with no ceiling.
+- **Single-RTT `mkdir` and `ln -s`.** `MkdirReply` and `SymlinkReply` carry the new entry's attrs, eliminating the post-create `GetAttr`.
+- **Retryable `WriteAndFlush` and `CopyFileRange`.** Both now carry a `request_id` and flow through the server's per-session idempotency cache, so a transient failure retries safely instead of risking a double execution.
+
 ### Fixes
 
 - **fd reap race eliminated.** A grace-expiry reap, revocation, or `Release` RPC could call `File.Release()` while a `Read`/`Write`/`CopyFileRange` handler was mid-`pread`/`pwrite` on the same fd — `EBADF` at best, fd-number reuse reading the wrong file at worst. `FileEntry` now carries an atomic refcount: the fd table holds one ref, each in-flight op holds one, and the underlying file closes only when the last ref drops. Removing an entry from the table is still immediate (so the open-files metric and the fd slot are freed promptly); only the `os.File.Close` is deferred.
@@ -16,6 +24,15 @@ All notable changes to gMountie. Format is loosely based on [Keep a Changelog](h
 
 - **`server.session.idempotency_cache_size` config knob; default raised 256 → 4096.** With kernel writeback the client keeps up to 64 `WRITE`s in flight per session, each retried with a stable `request_id`. At the old size the LRU could evict an in-flight entry and cause the retry to re-execute the write. 4096 entries ≈ 400 KiB/session; raise further when sustained per-session `WRITE` concurrency approaches a few thousand. Set via `server.session.idempotency_cache_size` (env `GMOUNTIE_SERVER_SESSION_IDEMPOTENCY_CACHE_SIZE`); `0` or unset delegates to the default.
 - **`volumePeekStream` per-frame mutex fast-path.** Once a streaming RPC's volume is pinned, the per-`RecvMsg` mutex acquisition is skipped for the rest of the stream — no lock contention on the hot read path after the first frame.
+
+### ⚠ Breaking changes (wire protocol)
+
+Protocol v-next: **client and server must upgrade together** — a mixed pair fails with `Unimplemented` on the affected ops.
+
+- **Removed RPCs (and their messages):** `OpenDir`, `Truncate`, `Chmod`, `Chown`, `Utimens`, and the `Compound` batch family. Directory listing goes through `ReadDir`; attribute changes through `SetAttr`. `Compound` never had a caller — READDIRPLUS covers the directory-walk case it was built for.
+- **New RPCs:** `SetAttr` (unary, `FATTR_*` bitmask, returns final attrs) and `ReadDir` (server-streaming, optional per-entry attrs).
+- **Message changes:** `MkdirReply` and `SymlinkReply` gained `attributes`; `WriteAndFlushRequest` and `CopyFileRangeRequest` gained `request_id`.
+- **`server.compound_max_parallel` config knob removed** (the Compound dispatcher it bounded is gone).
 
 ---
 
