@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -978,6 +979,81 @@ func TestXattrWriteAllowed(t *testing.T) {
 			t.Errorf("xattrWriteAllowed(%q) = %v, want %v", attr, got, want)
 		}
 	}
+}
+
+// spyBus wraps a real EventBus and counts emits, so tests can assert the
+// no-subscriber skip (an event fired at zero subscribers is otherwise
+// unobservable — there is no channel to read it from).
+type spyBus struct {
+	serverio.EventBus
+	emits atomic.Int64
+}
+
+func (b *spyBus) Emit(volume, path string, newVersion uint64, kind serverio.EventKind) {
+	b.emits.Add(1)
+	b.EventBus.Emit(volume, path, newVersion, kind)
+}
+
+func (b *spyBus) EmitRename(volume, oldPath, newPath string, newVersion uint64) {
+	b.emits.Add(1)
+	b.EventBus.EmitRename(volume, oldPath, newPath, newVersion)
+}
+
+// TestSetXAttr_NoSubscribers_SkipsStatAndEmit: with nobody subscribed to the
+// volume, a successful SetXAttr must perform NO GetAttr at all (the strict
+// mock has no GetAttr expectation — versionAfter calling it would fail) and
+// must not emit on the bus.
+func (s *RpcServerTestSuite) TestSetXAttr_NoSubscribers_SkipsStatAndEmit() {
+	spy := &spyBus{EventBus: s.bus}
+	server := NewGrpcServer(s.fsService, s.sessionMgr, spy, nil)
+
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
+	// Deliberately NO GetAttr expectation: the mock is strict, so a
+	// versionAfter stat would fail the test.
+	mockFs.EXPECT().SetXAttr("/f", "user.k", []byte("v"), 0, mock.Anything).Return(fuse.OK).Once()
+
+	reply, err := server.SetXAttr(testAuthedCtx("test-user"), &proto.SetXAttrRequest{
+		Volume: "testVolume", Path: "/f", Attribute: "user.k", Data: []byte("v"),
+		SessionId: s.sessionID, RequestId: "req-setx-nosub",
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.OK), reply.Status)
+	s.EqualValues(0, spy.emits.Load(), "no subscribers → the emit must be skipped")
+	mockFs.AssertExpectations(s.T())
+	mockFs.AssertNotCalled(s.T(), "GetAttr", mock.Anything, mock.Anything)
+}
+
+// TestSetXAttr_WithSubscriber_StatSeedsEventVersion pins the existing
+// behavior on the subscribed path: the versionAfter stat happens exactly once
+// and the event carries the non-zero version derived from it.
+func (s *RpcServerTestSuite) TestSetXAttr_WithSubscriber_StatSeedsEventVersion() {
+	events, cancel := s.bus.Subscribe("testVolume")
+	defer cancel()
+
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
+	attr := &fuse.Attr{Ino: 7, Size: 3, Mtime: 1700000000}
+	mockFs.EXPECT().SetXAttr("/f", "user.k", []byte("v"), 0, mock.Anything).Return(fuse.OK).Once()
+	mockFs.EXPECT().GetAttr("/f", mock.Anything).Return(attr, fuse.OK).Once()
+
+	reply, err := s.server.SetXAttr(testAuthedCtx("test-user"), &proto.SetXAttrRequest{
+		Volume: "testVolume", Path: "/f", Attribute: "user.k", Data: []byte("v"),
+		SessionId: s.sessionID, RequestId: "req-setx-sub",
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.OK), reply.Status)
+
+	select {
+	case ev := <-events:
+		s.Equal(serverio.KindMutated, ev.Kind)
+		s.Equal("/f", ev.Path)
+		s.NotZero(ev.NewVersion, "subscribed path must seed the event from a fresh stat")
+		s.Equal(serverio.VersionFromAttr(attr), ev.NewVersion)
+	case <-time.After(time.Second):
+		s.FailNow("SetXAttr with a subscriber did not emit a KindMutated event within 1s")
+	}
+	mockFs.AssertExpectations(s.T()) // GetAttr .Once(): the stat still happens when someone listens
 }
 
 func TestRpcServerTestSuite(t *testing.T) {

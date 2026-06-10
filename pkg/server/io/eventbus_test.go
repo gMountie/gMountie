@@ -114,6 +114,33 @@ func (s *EventBusSuite) TestHeartbeatFires() {
 	}
 }
 
+// TestHasSubscribers pins the gate the controller's emit helpers use to skip
+// the post-mutation stat + emit: false with nobody listening, true while a
+// subscriber is registered (per volume), false again after unsubscribe.
+func (s *EventBusSuite) TestHasSubscribers() {
+	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 4})
+	defer bus.Close()
+
+	s.False(bus.HasSubscribers("v"), "fresh bus must report no subscribers")
+
+	_, cancel := bus.Subscribe("v")
+	s.True(bus.HasSubscribers("v"), "one subscriber must flip the gate")
+	s.False(bus.HasSubscribers("other"), "the gate is per-volume")
+
+	cancel()
+	s.False(bus.HasSubscribers("v"), "unsubscribe must clear the gate")
+}
+
+// TestHasSubscribersAfterClose: Close nils the subscriber map; the gate must
+// keep answering false, not panic.
+func (s *EventBusSuite) TestHasSubscribersAfterClose() {
+	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 4})
+	_, cancel := bus.Subscribe("v")
+	defer cancel()
+	bus.Close()
+	s.False(bus.HasSubscribers("v"))
+}
+
 // TestSubscribeAfterClose verifies that a Subscribe call after Close returns a
 // pre-closed channel instead of panicking or writing to a nil map.
 func (s *EventBusSuite) TestSubscribeAfterClose() {

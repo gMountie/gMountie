@@ -87,8 +87,14 @@ func (r *RpcFileServerImpl) versionAfterPath(ctx context.Context, volume, path s
 // emitMutatedFd emits the cache-invalidation event for a successful fd-based
 // mutation (Write/Allocate/CopyFileRange), seeding the version with a fresh
 // stat via versionAfterPath. Part of the controller-wide policy documented in
-// emit.go: mutating handlers never call bus.Emit by hand.
+// emit.go: mutating handlers never call bus.Emit by hand. No subscribers →
+// skip the stat and the emit entirely (see the PERF note in emit.go for the
+// race semantics — this is the hottest gated site: every Write RPC lands
+// here).
 func (r *RpcFileServerImpl) emitMutatedFd(ctx context.Context, volume, path string, caller *proto.Caller) {
+	if !r.bus.HasSubscribers(volume) {
+		return
+	}
 	r.bus.Emit(volume, path, r.versionAfterPath(ctx, volume, path, caller), serverio.KindMutated)
 }
 
@@ -97,6 +103,9 @@ func (r *RpcFileServerImpl) emitMutatedFd(ctx context.Context, volume, path stri
 // re-statting would waste a syscall). A nil attr yields version 0; clients
 // fall back to GetAttrIfChanged.
 func (r *RpcFileServerImpl) emitMutatedAttr(volume, path string, attr *fuse.Attr) {
+	if !r.bus.HasSubscribers(volume) {
+		return
+	}
 	r.bus.Emit(volume, path, serverio.VersionFromAttr(attr), serverio.KindMutated)
 }
 

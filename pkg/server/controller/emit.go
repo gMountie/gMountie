@@ -28,12 +28,23 @@ import (
 // POLICY: a new mutating RPC must route its filesystem call through one of
 // these (or, for fd-based ops in file.go, through emitMutatedFd). If none
 // fits, extend this file rather than inlining a bus.Emit in the handler.
+//
+// PERF: every helper gates on bus.HasSubscribers(volume). With nobody
+// subscribed both the version-seeding stat and the emit are pure waste —
+// every Write RPC otherwise paid an openat2+fstatat+close (with a full
+// credential switch) for an event nobody received. Stats that also serve the
+// RPC reply (statAttrsAndEmit, SetAttr/Create inlines) are NOT gated; only
+// the emit is. The gate deliberately races with Subscribe: a client attaching
+// between the check and the mutation misses that one event, which is harmless
+// — a new subscriber starts in the Unverified state and revalidates every
+// cached entry via GetAttrIfChanged before trusting it
+// (docs/design/caching-and-consistency.md §4.2).
 
 // mutateEmit runs op and, when it returns fuse.OK, emits the KindMutated
 // event for (volume, path) seeded with a fresh version from versionAfter.
 func (r *RpcServerImpl) mutateEmit(ctx context.Context, fs pathfs.FileSystem, volume, path string, caller *proto.Caller, op func() fuse.Status) fuse.Status {
 	s := op()
-	if s == fuse.OK {
+	if s == fuse.OK && r.bus.HasSubscribers(volume) {
 		r.bus.Emit(volume, path, versionAfter(ctx, fs, path, caller), serverio.KindMutated)
 	}
 	return s
@@ -44,7 +55,7 @@ func (r *RpcServerImpl) mutateEmit(ctx context.Context, fs pathfs.FileSystem, vo
 // left to stat.
 func (r *RpcServerImpl) deleteEmit(volume, path string, op func() fuse.Status) fuse.Status {
 	s := op()
-	if s == fuse.OK {
+	if s == fuse.OK && r.bus.HasSubscribers(volume) {
 		r.bus.Emit(volume, path, 0, serverio.KindDeleted)
 	}
 	return s
@@ -56,6 +67,9 @@ func (r *RpcServerImpl) deleteEmit(volume, path string, op func() fuse.Status) f
 // attr yields version 0; clients fall back to GetAttrIfChanged. Mirrors
 // RpcFileServerImpl.emitMutatedAttr in file.go.
 func (r *RpcServerImpl) emitMutatedAttr(volume, path string, attr *fuse.Attr) {
+	if !r.bus.HasSubscribers(volume) {
+		return
+	}
 	r.bus.Emit(volume, path, serverio.VersionFromAttr(attr), serverio.KindMutated)
 }
 
@@ -82,7 +96,7 @@ func (r *RpcServerImpl) statAttrsAndEmit(fs pathfs.FileSystem, volume, path stri
 // for oldName→newName with the new path's fresh version.
 func (r *RpcServerImpl) renameEmit(ctx context.Context, fs pathfs.FileSystem, volume, oldName, newName string, caller *proto.Caller, op func() fuse.Status) fuse.Status {
 	s := op()
-	if s == fuse.OK {
+	if s == fuse.OK && r.bus.HasSubscribers(volume) {
 		r.bus.EmitRename(volume, oldName, newName, versionAfter(ctx, fs, newName, caller))
 	}
 	return s

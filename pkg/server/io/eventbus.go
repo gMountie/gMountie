@@ -33,6 +33,12 @@ type Event struct {
 type EventBus interface {
 	Emit(volume, path string, newVersion uint64, kind EventKind)
 	EmitRename(volume, oldPath, newPath string, newVersion uint64)
+	// HasSubscribers reports whether volume currently has at least one
+	// subscriber. Mutating handlers consult it to skip the version-seeding
+	// stat and the emit entirely when nobody is listening — see the PERF
+	// note in pkg/server/controller/emit.go for the (deliberate) race
+	// semantics of that gate.
+	HasSubscribers(volume string) bool
 	Subscribe(volume string) (events <-chan Event, cancel func())
 	Close()
 }
@@ -106,6 +112,12 @@ func (b *localEventBus) Emit(volume, path string, newVersion uint64, kind EventK
 
 func (b *localEventBus) EmitRename(volume, oldPath, newPath string, newVersion uint64) {
 	b.fanout(volume, Event{Path: oldPath, NewPath: newPath, NewVersion: newVersion, Kind: KindRenamed})
+}
+
+func (b *localEventBus) HasSubscribers(volume string) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return len(b.subscribers[volume]) > 0
 }
 
 func (b *localEventBus) Subscribe(volume string) (<-chan Event, func()) {

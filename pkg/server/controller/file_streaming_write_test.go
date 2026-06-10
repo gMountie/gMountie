@@ -4,6 +4,7 @@ import (
 	"context"
 	stdio "io"
 	"testing"
+	"time"
 
 	nodefs2 "go.gmountie.dev/gmountie/internal/mocks/github.com/hanwen/go-fuse/v2/fuse/nodefs"
 	pathfs2 "go.gmountie.dev/gmountie/internal/mocks/github.com/hanwen/go-fuse/v2/fuse/pathfs"
@@ -316,6 +317,87 @@ func (s *StreamingWriteSuite) TestWrite_ContinuationFrameHeaderMismatchRejected(
 	// allowed. The bad frame's data must NOT have landed.
 	s.Require().Len(writer.writes, 1)
 	s.Assert().Equal([]byte("good-prefix"), writer.writes[0].data)
+}
+
+// TestWrite_NoSubscribers_SkipsVersionStatAndEmit: with nobody subscribed to
+// the volume, a successful Write must skip versionAfterPath entirely — no
+// GetVolumeFileSystem lookup, no GetAttr (each Write otherwise pays an
+// openat2+fstatat+close on the path) — and emit nothing. The fd is registered
+// by hand instead of via registerWriter so the GetVolumeFileSystem/GetAttr
+// stubs are ABSENT: the strict mocks fail on any unexpected call.
+func (s *StreamingWriteSuite) TestWrite_NoSubscribers_SkipsVersionStatAndEmit() {
+	spy := &spyBus{EventBus: s.bus}
+	server := NewRpcFileServer(s.fsService, s.sessionMgr, metrics.NewMetrics(), 1<<20, spy)
+
+	mockFile := new(nodefs2.MockFile)
+	writer := &recordingWriter{status: fuse.OK}
+	mockFile.EXPECT().
+		Write(mock.Anything, mock.AnythingOfType("int64")).
+		RunAndReturn(writer.Write).Once()
+	mockFile.EXPECT().Release().Return().Maybe()
+	sess, _ := s.sessionMgr.Get(s.sessionID)
+	fd := sess.RegisterFile("testVolume", "/test/path", mockFile)
+
+	stream := newFakeWriteStream(testAuthedCtx("test-user"), &proto.WriteFrame{
+		Volume:    "testVolume",
+		Fd:        fd,
+		SessionId: s.sessionID,
+		RequestId: "req-nosub",
+		Offset:    0,
+		Data:      []byte("payload"),
+	})
+
+	s.Require().NoError(server.Write(stream))
+	s.Require().NotNil(stream.reply)
+	s.Assert().Equal(int32(fuse.OK), stream.reply.Status)
+	s.Require().Len(writer.writes, 1, "the write itself must still land")
+	s.EqualValues(0, spy.emits.Load(), "no subscribers → no emit")
+	s.fsService.AssertNotCalled(s.T(), "GetVolumeFileSystem", mock.Anything)
+}
+
+// TestWrite_WithSubscriber_EmitsVersionFromStat pins the subscribed path: the
+// post-write versionAfterPath stat happens exactly once and the event carries
+// the non-zero version it produced.
+func (s *StreamingWriteSuite) TestWrite_WithSubscriber_EmitsVersionFromStat() {
+	events, cancel := s.bus.Subscribe("testVolume")
+	defer cancel()
+
+	mockFs := new(pathfs2.MockFileSystem)
+	mockFile := new(nodefs2.MockFile)
+	attr := &fuse.Attr{Ino: 9, Size: 7, Mtime: 1700000000}
+	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil).Once()
+	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(attr, fuse.OK).Once()
+	writer := &recordingWriter{status: fuse.OK}
+	mockFile.EXPECT().
+		Write(mock.Anything, mock.AnythingOfType("int64")).
+		RunAndReturn(writer.Write).Once()
+	mockFile.EXPECT().Release().Return().Maybe()
+	sess, _ := s.sessionMgr.Get(s.sessionID)
+	fd := sess.RegisterFile("testVolume", "/test/path", mockFile)
+
+	stream := newFakeWriteStream(testAuthedCtx("test-user"), &proto.WriteFrame{
+		Volume:    "testVolume",
+		Fd:        fd,
+		SessionId: s.sessionID,
+		RequestId: "req-sub",
+		Offset:    0,
+		Data:      []byte("payload"),
+	})
+
+	s.Require().NoError(s.server.Write(stream))
+	s.Require().NotNil(stream.reply)
+	s.Assert().Equal(int32(fuse.OK), stream.reply.Status)
+
+	select {
+	case ev := <-events:
+		s.Equal(serverio.KindMutated, ev.Kind)
+		s.Equal("/test/path", ev.Path)
+		s.NotZero(ev.NewVersion, "subscribed path must seed the event from a fresh stat")
+		s.Equal(serverio.VersionFromAttr(attr), ev.NewVersion)
+	case <-time.After(time.Second):
+		s.FailNow("Write with a subscriber did not emit a KindMutated event within 1s")
+	}
+	mockFs.AssertExpectations(s.T()) // GetAttr .Once(): the stat still happens when someone listens
 }
 
 func TestStreamingWriteSuite(t *testing.T) {
