@@ -79,3 +79,7 @@ func (r *squashResolver) Resolve(principal string) (Identity, error) {
 	id.Principal = principal
 	return id, nil
 }
+
+// ConstantIdentity: every principal squashes to the one precomputed identity,
+// frozen at construction — eligible for the executor fast path.
+func (r *squashResolver) ConstantIdentity() bool { return true }

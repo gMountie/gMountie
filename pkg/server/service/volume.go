@@ -258,7 +258,10 @@ func (s *VolumeServiceImpl) BindIdentity(ctx context.Context, volume string, cal
 
 	var boundFS pathfs.FileSystem
 	if entry.mapping.Mode == config.MappingModePassthrough {
-		// Passthrough: identity is per-RPC (wire Caller uid/gid) — never cache.
+		// Passthrough: identity is per-RPC (wire Caller uid/gid) — never cache,
+		// and never executor-route: the identity space is unbounded (arbitrary
+		// wire uids), while executor threads are pinned for the process
+		// lifetime.
 		boundFS = io.NewIdentityBoundFS(entry.fs, &io.Identity{Uid: id.Uid, Gid: id.Gid, Gids: id.Gids, Caps: id.Caps})
 	} else {
 		// Mapped modes: wrapper re-resolves via the TTL-cached resolver on every
@@ -276,12 +279,33 @@ func (s *VolumeServiceImpl) BindIdentity(ctx context.Context, volume string, cal
 				}
 				return io.Identity{Uid: id.Uid, Gid: id.Gid, Gids: id.Gids, Caps: id.Caps}, nil
 			})
-			w := io.NewResolverBoundFS(entry.fs, resolveFn, p)
+			var w pathfs.FileSystem
+			if resolverIsConstant(resolver) {
+				// Constant identity (squash/static): route ops through the
+				// process-wide pre-credentialed executor for this identity —
+				// id was just resolved through this very resolver. Executor
+				// startup failure degrades to the per-op path inside.
+				ioID := io.Identity{Uid: id.Uid, Gid: id.Gid, Gids: id.Gids, Caps: id.Caps}
+				w = io.NewConstantResolverBoundFS(entry.fs, resolveFn, p, ioID, s.executorWorkers())
+			} else {
+				// Per-principal mutable mode (system): identity must stay
+				// freshly resolved and credential-switched per op.
+				w = io.NewResolverBoundFS(entry.fs, resolveFn, p)
+			}
 			s.boundFSCache.Store(key, w)
 			boundFS = w
 		}
 	}
 	return boundFS, id, nil
+}
+
+// executorWorkers returns the configured identity-executor pool size, 0 when
+// unset (io applies its default, min(4, GOMAXPROCS)).
+func (s *VolumeServiceImpl) executorWorkers() int {
+	if s.config.Server == nil {
+		return 0
+	}
+	return s.config.Server.Identity.ExecutorWorkers
 }
 
 // ResolveIdentity resolves the request's server-side identity for a volume.

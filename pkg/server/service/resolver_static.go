@@ -6,6 +6,11 @@ type staticResolver struct{ m config.MappingConfig }
 
 func NewStaticResolver(m config.MappingConfig) IdentityResolver { return &staticResolver{m} }
 
+// ConstantIdentity: each principal's identity is frozen in the volume's
+// mapping config for the process lifetime — eligible for the executor fast
+// path.
+func (r *staticResolver) ConstantIdentity() bool { return true }
+
 func (r *staticResolver) Resolve(principal string) (Identity, error) {
 	u, ok := r.m.Users[principal]
 	if !ok {
