@@ -459,49 +459,64 @@ func (r *RpcFileServerImpl) SetLkw(ctx context.Context, request *proto.SetLkwReq
 // WriteAndFlush writes data at offset (if any) then flushes the fd, in one RPC.
 // A write error short-circuits the flush and is what close() will see. The
 // reply carries the post-op Attr so the client needn't re-stat.
+//
+// Idempotency: a non-empty request_id dedups via the session cache so a
+// retried RPC replays the cached reply (non-OK in-band statuses included —
+// Write's convention: only transport-level errors skip the cache). request_id
+// is OPTIONAL here, unlike the path-mutation RPCs: pure-flush calls carry
+// none, and withOptionalIdempotency runs those directly without touching the
+// cache. The fd ref is acquired INSIDE the closure (same shape as Write):
+// a cache-hit replay must not touch the fd table at all — after a
+// reconnect retry the fd may be long released.
 func (r *RpcFileServerImpl) WriteAndFlush(ctx context.Context, req *proto.WriteAndFlushRequest) (*proto.WriteAndFlushReply, error) {
 	sess, err := resolveSession(ctx, r.sessions, req.SessionId)
 	if err != nil {
 		return nil, err
 	}
-	entry, ok := sessionFile(sess, req.Fd, req.Volume)
-	if !ok {
-		// EBADF in-reply (not a transport error) keeps the errno visible at the
-		// FUSE layer. Covers both an unknown fd and an fd↔volume mismatch.
-		return &proto.WriteAndFlushReply{Status: int32(fuse.EBADF)}, nil
-	}
-	defer entry.ReleaseRef()
-	fs, err := r.fsService.GetVolumeFileSystem(req.Volume)
-	if err != nil {
-		return nil, err
-	}
-	reply := &proto.WriteAndFlushReply{}
-	if len(req.Data) > 0 {
-		n, st := entry.File.Write(req.Data, req.Offset)
-		if st != fuse.OK {
-			reply.Status = int32(st)
-			return reply, nil // write error: skip flush, surface at close()
+	return withOptionalIdempotency(sess, req.RequestId, func() (*proto.WriteAndFlushReply, error) {
+		entry, ok := sessionFile(sess, req.Fd, req.Volume)
+		if !ok {
+			// EBADF in-reply (not a transport error) keeps the errno visible at the
+			// FUSE layer. Covers both an unknown fd and an fd↔volume mismatch.
+			return &proto.WriteAndFlushReply{Status: int32(fuse.EBADF)}, nil
 		}
-		reply.Written = n
-	}
-	st := entry.File.Flush()
-	reply.Status = int32(st)
-	// final_attr is advisory and currently unused by the client (FUSE FLUSH
-	// returns no attrs to the kernel). The stat uses a nil caller — fine while
-	// it only feeds the bus version. A future client that consumes final_attr
-	// for a caller-scoped view would need a Caller field on WriteAndFlushRequest.
-	if attr, gst := fs.GetAttr(entry.Path, createContext(ctx, nil)); gst.Ok() {
-		// WriteAndFlushRequest carries no Caller — pass nil here, same as the
-		// stat above. final_attr is currently advisory; a future client that
-		// consumes the names will need a Caller field on the request.
-		reply.FinalAttr = toProtoAttr(attr, nil)
-		if st == fuse.OK {
-			r.emitMutatedAttr(req.Volume, entry.Path, attr)
+		// Held for the whole write+flush+stat — released when the closure returns.
+		defer entry.ReleaseRef()
+		// Resolved after the fd↔volume check so a foreign volume can't be probed
+		// with someone else's fd (SEC-1), and only on actual execution — never on
+		// a cache-hit replay.
+		fs, err := r.fsService.GetVolumeFileSystem(req.Volume)
+		if err != nil {
+			return nil, err
 		}
-	} else if st == fuse.OK {
-		r.emitMutatedAttr(req.Volume, entry.Path, nil)
-	}
-	return reply, nil
+		reply := &proto.WriteAndFlushReply{}
+		if len(req.Data) > 0 {
+			n, st := entry.File.Write(req.Data, req.Offset)
+			if st != fuse.OK {
+				reply.Status = int32(st)
+				return reply, nil // write error: skip flush, surface at close()
+			}
+			reply.Written = n
+		}
+		st := entry.File.Flush()
+		reply.Status = int32(st)
+		// final_attr is advisory and currently unused by the client (FUSE FLUSH
+		// returns no attrs to the kernel). The stat uses a nil caller — fine while
+		// it only feeds the bus version. A future client that consumes final_attr
+		// for a caller-scoped view would need a Caller field on WriteAndFlushRequest.
+		if attr, gst := fs.GetAttr(entry.Path, createContext(ctx, nil)); gst.Ok() {
+			// WriteAndFlushRequest carries no Caller — pass nil here, same as the
+			// stat above. final_attr is currently advisory; a future client that
+			// consumes the names will need a Caller field on the request.
+			reply.FinalAttr = toProtoAttr(attr, nil)
+			if st == fuse.OK {
+				r.emitMutatedAttr(req.Volume, entry.Path, attr)
+			}
+		} else if st == fuse.OK {
+			r.emitMutatedAttr(req.Volume, entry.Path, nil)
+		}
+		return reply, nil
+	})
 }
 
 func (r *RpcFileServerImpl) Allocate(ctx context.Context, request *proto.AllocateRequest) (*proto.AllocateReply, error) {
@@ -534,6 +549,13 @@ func (r *RpcFileServerImpl) Allocate(ctx context.Context, request *proto.Allocat
 // model as Read/Write/Allocate. sessionFile's ref pins BOTH entries open
 // for the whole chunk loop — a concurrent reap defers the close until the
 // copy finishes.
+//
+// Idempotency: a non-empty request_id replays the cached reply (bytes_copied
+// included) instead of redoing the copy. Both fd refs are acquired INSIDE the
+// closure, so a cache-hit replay never touches the fd table — the fds may be
+// long released by the time a reconnect retry lands. An empty request_id
+// bypasses the cache entirely (withOptionalIdempotency). The flags gate stays
+// outside the wrap: pure deterministic validation, nothing worth caching.
 func (r *RpcFileServerImpl) CopyFileRange(ctx context.Context, request *proto.CopyFileRangeRequest) (*proto.CopyFileRangeReply, error) {
 	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
@@ -542,25 +564,27 @@ func (r *RpcFileServerImpl) CopyFileRange(ctx context.Context, request *proto.Co
 	if request.Flags != 0 {
 		return &proto.CopyFileRangeReply{Status: int32(fuse.EINVAL)}, nil
 	}
-	srcEntry, ok := sessionFile(sess, request.FdIn, request.Volume)
-	if !ok {
-		return &proto.CopyFileRangeReply{Status: int32(fuse.EBADF)}, nil
-	}
-	defer srcEntry.ReleaseRef()
-	dstEntry, ok := sessionFile(sess, request.FdOut, request.Volume)
-	if !ok {
-		return &proto.CopyFileRangeReply{Status: int32(fuse.EBADF)}, nil
-	}
-	defer dstEntry.ReleaseRef()
-	copied, st := serverio.CopyFileRange(srcEntry.File, dstEntry.File, request.OffIn, request.OffOut, request.Length)
-	if st == fuse.OK && copied > 0 {
-		path := dstEntry.Path
-		if path == "" {
-			path = request.PathOut
+	return withOptionalIdempotency(sess, request.RequestId, func() (*proto.CopyFileRangeReply, error) {
+		srcEntry, ok := sessionFile(sess, request.FdIn, request.Volume)
+		if !ok {
+			return &proto.CopyFileRangeReply{Status: int32(fuse.EBADF)}, nil
 		}
-		r.emitMutatedFd(ctx, request.Volume, path, request.Caller)
-	}
-	return &proto.CopyFileRangeReply{BytesCopied: copied, Status: int32(st)}, nil
+		defer srcEntry.ReleaseRef()
+		dstEntry, ok := sessionFile(sess, request.FdOut, request.Volume)
+		if !ok {
+			return &proto.CopyFileRangeReply{Status: int32(fuse.EBADF)}, nil
+		}
+		defer dstEntry.ReleaseRef()
+		copied, st := serverio.CopyFileRange(srcEntry.File, dstEntry.File, request.OffIn, request.OffOut, request.Length)
+		if st == fuse.OK && copied > 0 {
+			path := dstEntry.Path
+			if path == "" {
+				path = request.PathOut
+			}
+			r.emitMutatedFd(ctx, request.Volume, path, request.Caller)
+		}
+		return &proto.CopyFileRangeReply{BytesCopied: copied, Status: int32(st)}, nil
+	})
 }
 
 // Lseek probes hole geometry on an open handle. Only SEEK_DATA/SEEK_HOLE

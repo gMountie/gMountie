@@ -385,6 +385,208 @@ func (s *RpcFileServerTestSuite) TestWriteAndFlushEmitsMutationEventOnSuccess() 
 	}
 }
 
+// TestWriteAndFlush_ReplaySameRequestIDExecutesOnce: a retried RPC with the
+// same request_id must replay the cached reply, not re-apply the write. The
+// .Once() pins on Write/Flush/GetAttr are the executed-exactly-once proof.
+func (s *RpcFileServerTestSuite) TestWriteAndFlush_ReplaySameRequestIDExecutesOnce() {
+	mockFs := new(pathfs2.MockFileSystem)
+	mockFile := new(nodefs2.MockFile)
+	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	sess, _ := s.sessionMgr.Get(s.sessionID)
+	fd := sess.RegisterFile("testVolume", "/waf-replay.txt", mockFile)
+
+	mockFile.EXPECT().Write([]byte("hello"), int64(0)).Return(uint32(5), fuse.OK).Once()
+	mockFile.EXPECT().Flush().Return(fuse.OK).Once()
+	mockFs.EXPECT().GetAttr("/waf-replay.txt", mock.Anything).Return(&fuse.Attr{Size: 5, Mtime: 1700000000}, fuse.OK).Once()
+	mockFile.EXPECT().Release().Return().Maybe()
+
+	req := &proto.WriteAndFlushRequest{
+		Volume: "testVolume", Fd: fd, Offset: 0, Data: []byte("hello"),
+		SessionId: s.sessionID, RequestId: "req-waf-replay",
+	}
+	r1, err := s.server.WriteAndFlush(testAuthedCtx("test-user"), req)
+	s.Require().NoError(err)
+	r2, err := s.server.WriteAndFlush(testAuthedCtx("test-user"), req)
+	s.Require().NoError(err)
+
+	s.Equal(r1.Status, r2.Status)
+	s.Equal(r1.Written, r2.Written)
+	s.Require().NotNil(r2.FinalAttr)
+	s.Equal(r1.FinalAttr.Version, r2.FinalAttr.Version, "replay must return the cached reply")
+	mockFile.AssertExpectations(s.T()) // .Once() on Write+Flush proves the replay was deduped
+	mockFs.AssertExpectations(s.T())
+}
+
+// TestWriteAndFlush_EmptyRequestIDExecutesEachCall pins the bypass guard:
+// pure-flush WriteAndFlush calls carry NO request_id, and two such calls must
+// BOTH execute. Without the empty-id bypass, "" would be one shared cache key
+// and the second flush would be silently swallowed by the first one's reply.
+func (s *RpcFileServerTestSuite) TestWriteAndFlush_EmptyRequestIDExecutesEachCall() {
+	mockFs := new(pathfs2.MockFileSystem)
+	mockFile := new(nodefs2.MockFile)
+	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	sess, _ := s.sessionMgr.Get(s.sessionID)
+	fd := sess.RegisterFile("testVolume", "/waf-noid.txt", mockFile)
+
+	mockFile.EXPECT().Flush().Return(fuse.OK).Times(2)
+	mockFs.EXPECT().GetAttr("/waf-noid.txt", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Times(2)
+	mockFile.EXPECT().Release().Return().Maybe()
+
+	req := &proto.WriteAndFlushRequest{
+		Volume: "testVolume", Fd: fd, SessionId: s.sessionID, // no Data, no RequestId
+	}
+	r1, err := s.server.WriteAndFlush(testAuthedCtx("test-user"), req)
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.OK), r1.Status)
+	r2, err := s.server.WriteAndFlush(testAuthedCtx("test-user"), req)
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.OK), r2.Status)
+	mockFile.AssertExpectations(s.T()) // Flush .Times(2): both calls really executed
+	mockFs.AssertExpectations(s.T())
+}
+
+// TestWriteAndFlush_ReplayAfterFdReleaseReturnsCachedReply documents the
+// retry-after-reconnect scenario: the first attempt's reply lands in the
+// cache, the fd is released (close raced the lost reply), and the retry must
+// still get the cached reply — NOT EBADF — because a cache hit never touches
+// the fd table.
+func (s *RpcFileServerTestSuite) TestWriteAndFlush_ReplayAfterFdReleaseReturnsCachedReply() {
+	mockFs := new(pathfs2.MockFileSystem)
+	mockFile := new(nodefs2.MockFile)
+	s.fsService.On("GetVolumeFileSystem", "testVolume").Return(mockFs, nil)
+	sess, _ := s.sessionMgr.Get(s.sessionID)
+	fd := sess.RegisterFile("testVolume", "/waf-released.txt", mockFile)
+
+	mockFile.EXPECT().Write([]byte("hi"), int64(0)).Return(uint32(2), fuse.OK).Once()
+	mockFile.EXPECT().Flush().Return(fuse.OK).Once()
+	mockFs.EXPECT().GetAttr("/waf-released.txt", mock.Anything).Return(&fuse.Attr{Size: 2}, fuse.OK).Once()
+	mockFile.EXPECT().Release().Return().Once() // the ReleaseFile below closes it
+
+	req := &proto.WriteAndFlushRequest{
+		Volume: "testVolume", Fd: fd, Offset: 0, Data: []byte("hi"),
+		SessionId: s.sessionID, RequestId: "req-waf-released",
+	}
+	r1, err := s.server.WriteAndFlush(testAuthedCtx("test-user"), req)
+	s.Require().NoError(err)
+	s.Require().Equal(int32(fuse.OK), r1.Status)
+
+	// The fd is gone before the retry lands.
+	sess.ReleaseFile(fd)
+
+	r2, err := s.server.WriteAndFlush(testAuthedCtx("test-user"), req)
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.OK), r2.Status, "cache hit must not consult the (now empty) fd table")
+	s.Equal(r1.Written, r2.Written)
+	mockFile.AssertExpectations(s.T())
+	mockFs.AssertExpectations(s.T())
+}
+
+// TestCopyFileRange_ReplaySameRequestIDExecutesOnce: same dedup contract for
+// the copy path, via the generic (interface-based) copy loop on mock files so
+// the strict .Once() pins on Read/Write prove single execution.
+func (s *RpcFileServerTestSuite) TestCopyFileRange_ReplaySameRequestIDExecutesOnce() {
+	// versionAfterPath consults GetVolumeFileSystem for the event seed; failing
+	// it just yields version 0, which is fine here.
+	s.fsService.On("GetVolumeFileSystem", mock.Anything).Return(nil, status.Error(codes.NotFound, "no fs")).Maybe()
+	src := new(nodefs2.MockFile)
+	dst := new(nodefs2.MockFile)
+	sess, _ := s.sessionMgr.Get(s.sessionID)
+	srcFd := sess.RegisterFile("testVolume", "/cfr-src", src)
+	dstFd := sess.RegisterFile("testVolume", "/cfr-dst", dst)
+
+	// Generic copy loop: one same-inode probe per file (Ino stays 0 — overlap
+	// check skipped), then one Read + one Write moving the 3 bytes.
+	src.EXPECT().GetAttr(mock.Anything).Return(fuse.OK).Once()
+	dst.EXPECT().GetAttr(mock.Anything).Return(fuse.OK).Once()
+	src.EXPECT().Read(mock.Anything, int64(0)).Return(fuse.ReadResultData([]byte("abc")), fuse.OK).Once()
+	dst.EXPECT().Write([]byte("abc"), int64(0)).Return(uint32(3), fuse.OK).Once()
+	src.EXPECT().Release().Return().Maybe()
+	dst.EXPECT().Release().Return().Maybe()
+
+	req := &proto.CopyFileRangeRequest{
+		Volume: "testVolume", FdIn: srcFd, FdOut: dstFd, Length: 3,
+		SessionId: s.sessionID, RequestId: "req-cfr-replay",
+	}
+	r1, err := s.server.CopyFileRange(testAuthedCtx("test-user"), req)
+	s.Require().NoError(err)
+	s.Require().Equal(int32(fuse.OK), r1.Status)
+	s.Equal(uint64(3), r1.BytesCopied)
+
+	r2, err := s.server.CopyFileRange(testAuthedCtx("test-user"), req)
+	s.Require().NoError(err)
+	s.Equal(r1.Status, r2.Status)
+	s.Equal(r1.BytesCopied, r2.BytesCopied, "replay must return the cached bytes_copied")
+	src.AssertExpectations(s.T()) // Read .Once(): the copy ran exactly once
+	dst.AssertExpectations(s.T())
+}
+
+// TestCopyFileRange_EmptyRequestIDExecutesEachCall: id-less copies (what
+// current clients send) must not dedup against each other.
+func (s *RpcFileServerTestSuite) TestCopyFileRange_EmptyRequestIDExecutesEachCall() {
+	s.fsService.On("GetVolumeFileSystem", mock.Anything).Return(nil, status.Error(codes.NotFound, "no fs")).Maybe()
+	src := new(nodefs2.MockFile)
+	dst := new(nodefs2.MockFile)
+	sess, _ := s.sessionMgr.Get(s.sessionID)
+	srcFd := sess.RegisterFile("testVolume", "/cfr-src2", src)
+	dstFd := sess.RegisterFile("testVolume", "/cfr-dst2", dst)
+
+	src.EXPECT().GetAttr(mock.Anything).Return(fuse.OK).Times(2)
+	dst.EXPECT().GetAttr(mock.Anything).Return(fuse.OK).Times(2)
+	src.EXPECT().Read(mock.Anything, int64(0)).Return(fuse.ReadResultData([]byte("ab")), fuse.OK).Times(2)
+	dst.EXPECT().Write([]byte("ab"), int64(0)).Return(uint32(2), fuse.OK).Times(2)
+	src.EXPECT().Release().Return().Maybe()
+	dst.EXPECT().Release().Return().Maybe()
+
+	req := &proto.CopyFileRangeRequest{
+		Volume: "testVolume", FdIn: srcFd, FdOut: dstFd, Length: 2,
+		SessionId: s.sessionID, // no RequestId
+	}
+	for i := 0; i < 2; i++ {
+		reply, err := s.server.CopyFileRange(testAuthedCtx("test-user"), req)
+		s.Require().NoError(err)
+		s.Equal(int32(fuse.OK), reply.Status)
+		s.Equal(uint64(2), reply.BytesCopied)
+	}
+	src.AssertExpectations(s.T()) // Read .Times(2): both copies really executed
+	dst.AssertExpectations(s.T())
+}
+
+// TestCopyFileRange_ReplayAfterFdReleaseReturnsCachedReply: retry after the
+// fds were released (reconnect scenario) must hit the cache, not EBADF.
+func (s *RpcFileServerTestSuite) TestCopyFileRange_ReplayAfterFdReleaseReturnsCachedReply() {
+	s.fsService.On("GetVolumeFileSystem", mock.Anything).Return(nil, status.Error(codes.NotFound, "no fs")).Maybe()
+	src := new(nodefs2.MockFile)
+	dst := new(nodefs2.MockFile)
+	sess, _ := s.sessionMgr.Get(s.sessionID)
+	srcFd := sess.RegisterFile("testVolume", "/cfr-src3", src)
+	dstFd := sess.RegisterFile("testVolume", "/cfr-dst3", dst)
+
+	src.EXPECT().GetAttr(mock.Anything).Return(fuse.OK).Once()
+	dst.EXPECT().GetAttr(mock.Anything).Return(fuse.OK).Once()
+	src.EXPECT().Read(mock.Anything, int64(0)).Return(fuse.ReadResultData([]byte("xyz")), fuse.OK).Once()
+	dst.EXPECT().Write([]byte("xyz"), int64(0)).Return(uint32(3), fuse.OK).Once()
+	src.EXPECT().Release().Return().Once() // the ReleaseFile below closes them
+	dst.EXPECT().Release().Return().Once()
+
+	req := &proto.CopyFileRangeRequest{
+		Volume: "testVolume", FdIn: srcFd, FdOut: dstFd, Length: 3,
+		SessionId: s.sessionID, RequestId: "req-cfr-released",
+	}
+	r1, err := s.server.CopyFileRange(testAuthedCtx("test-user"), req)
+	s.Require().NoError(err)
+	s.Require().Equal(int32(fuse.OK), r1.Status)
+
+	sess.ReleaseFile(srcFd)
+	sess.ReleaseFile(dstFd)
+
+	r2, err := s.server.CopyFileRange(testAuthedCtx("test-user"), req)
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.OK), r2.Status, "cache hit must not consult the (now empty) fd table")
+	s.Equal(uint64(3), r2.BytesCopied)
+	src.AssertExpectations(s.T())
+	dst.AssertExpectations(s.T())
+}
+
 // --------- Helper Functions ---------
 
 // CreateCaller creates a caller object
