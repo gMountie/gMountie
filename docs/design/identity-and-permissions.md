@@ -86,15 +86,20 @@ across volumes and principals).
 
 It ships **opt-in and off by default**
 (`server.identity.executor_workers: 0`; positive = enabled, suggested
-4) because the honest numbers don't yet justify it: on a dev box with
-stubbed credential syscalls, channel dispatch to a worker measured
-~11 µs/op while the full per-op switch it replaces measured ~8 µs/op —
-the executor may be a net regression. Those are micro-benchmarks of
-the wrong thing (stubbed syscalls, no FUSE, no contention), so the
-real verdict is deferred to the VM/Bencher release perf series. The
-flip-trigger for making it the constant-identity default is Bencher
-showing per-op credential switching as a measurable cost in the
-end-to-end series — until then, every mode pays the per-op switch.
+4) because the honest numbers don't yet justify it. The committed
+micro-benchmarks (stubbed credential syscalls, apples to apples)
+measure channel dispatch to a worker at ~11.5 µs/op against ~1.2 µs/op
+for the per-op switch machinery it replaces; ad-hoc probes put the
+nine real credential syscalls at roughly 0.5 µs each, so the genuine
+per-op cost is plausibly ~6 µs — still well below the dispatch hop.
+On these numbers the executor is a net regression for sequential
+metadata ops. What the micro-benchmarks cannot see is the systemic
+cost of per-op `LockOSThread` churn under concurrent load (locked Ms
+are discarded, not recycled), which was the original motivation — so
+the real verdict is deferred to the VM/Bencher release perf series.
+The flip-trigger for making it the constant-identity default is
+Bencher showing per-op credential switching as a measurable cost in
+the end-to-end series — until then, every mode pays the per-op switch.
 
 ## 4. Volume confinement
 
