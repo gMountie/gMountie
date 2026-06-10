@@ -124,8 +124,7 @@ func (s *IdentityExecutorSuite) TestPanicPropagatesToCallerAndPoolSurvives() {
 func (s *IdentityExecutorSuite) TestStartupFailureReturnsError() {
 	setGroupsRaw = func([]uint32) error { return errors.New("boom") }
 	e, err := newIdentityExecutor(s.testIdentity(), 4)
-	s.Require().Error(err)
-	s.ErrorContains(err, "boom")
+	s.Require().ErrorContains(err, "boom")
 	s.Nil(e)
 }
 
