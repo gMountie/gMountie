@@ -63,3 +63,16 @@ func withIdempotency[T any](sess service.Session, requestID string, do func() (T
 	}
 	return typed, nil
 }
+
+// withOptionalIdempotency is withIdempotency for RPCs whose request_id is
+// legitimately optional (WriteAndFlush pure-flush calls carry none, and
+// existing clients send none for CopyFileRange either). An empty id runs do
+// directly: it must NEVER reach the session cache, where "" would be a single
+// shared key deduping ALL id-less calls against each other (Session.DoOnce
+// itself has no empty-key guard). A non-empty id gets the standard dedup path.
+func withOptionalIdempotency[T any](sess service.Session, requestID string, do func() (T, error)) (T, error) {
+	if requestID == "" {
+		return do()
+	}
+	return withIdempotency(sess, requestID, do)
+}
