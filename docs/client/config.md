@@ -219,11 +219,13 @@ The `fuse` section tunes the FUSE-kernel-side mount knobs. The defaults
 match a 1 MiB streaming-frame profile; raise `max_write_bytes` if the
 server's `frame_size_bytes` is larger.
 
-| Option              | Type    | Default  | Description                                                      |
-|---------------------|---------|----------|------------------------------------------------------------------|
-| max\_write\_bytes   | integer | 1048576  | Ceiling for FUSE WRITE/READ size in bytes (1 MiB default)        |
-| max\_background     | integer | 64       | Max async background requests the kernel may have in flight      |
-| writeback\_cache    | boolean | false    | Enable the kernel's writeback page cache for the mount           |
+| Option              | Type     | Default  | Description                                                      |
+|---------------------|----------|----------|------------------------------------------------------------------|
+| max\_write\_bytes   | integer  | 1048576  | Ceiling for FUSE WRITE/READ size in bytes (1 MiB default)        |
+| max\_background     | integer  | 64       | Max async background requests the kernel may have in flight      |
+| writeback\_cache    | boolean  | false    | Enable the kernel's writeback page cache for the mount           |
+| attr\_timeout       | duration | 1s       | How long the kernel caches inode attributes (size, mode, timestamps) before issuing a GETATTR |
+| entry\_timeout      | duration | 1s       | How long the kernel caches dentry (name→inode) mappings before issuing a LOOKUP |
 
 `max_write_bytes` is validated to the range [4096, 16777216] (4 KiB to
 16 MiB). go-fuse sets the kernel's `max_read` equal to `MaxWrite`, so
@@ -244,6 +246,17 @@ workloads over high-latency links. The client-side cache, readahead, and
 write coalescing work independently of this kernel knob; see
 [Caching & consistency](../design/caching-and-consistency.md).
 
+`attr_timeout` and `entry_timeout` both default to 1 s, matching go-fuse's
+built-in default. Raising them cuts GETATTR / LOOKUP round-trips at the cost
+of a wider kernel-side staleness window. **Important:** the Subscribe
+push-invalidation stream cannot reach inside the kernel's dentry or attribute
+caches — only VFS operations that bypass or expire the cache will see fresh
+data. Values above ~1 s therefore explicitly trade coherence for reduced
+chatter and are safe only when this client is the sole writer, or when
+metadata staleness is acceptable (e.g. read-only analytics workloads).
+Both fields are validated to `gte=0` (0 s is accepted but effectively
+disables the kernel-side caching for that tier).
+
 Example:
 
 ```yaml
@@ -251,6 +264,8 @@ fuse:
   max_write_bytes: 2097152  # 2 MiB
   max_background: 128
   writeback_cache: false
+  attr_timeout: 5s    # raise on read-only / sole-writer mounts to cut GETATTR traffic
+  entry_timeout: 5s   # same tradeoff for dentry (name→inode) lookups
 ```
 
 ## Cache Options

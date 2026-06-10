@@ -12,6 +12,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 
+	gofs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -67,6 +68,19 @@ func createMountOptions(endpoint, volume string, cfg *config.FUSEConfig, maxWrit
 		opts.DisabledCapabilities |= fuse.CAP_WRITEBACK_CACHE
 	}
 	return opts
+}
+
+// buildFSOptions assembles the go-fuse fs.Options from a pre-built
+// fuse.MountOptions and the FUSEConfig. Extracted as a pure function so
+// it is directly testable without mounting a real FUSE filesystem.
+func buildFSOptions(mountOpts *fuse.MountOptions, cfg *config.FUSEConfig) *gofs.Options {
+	attrTimeout := cfg.AttrTimeout
+	entryTimeout := cfg.EntryTimeout
+	return &gofs.Options{
+		MountOptions: *mountOpts,
+		AttrTimeout:  &attrTimeout,
+		EntryTimeout: &entryTimeout,
+	}
 }
 
 // negotiateMaxWriteBytes asks the server for its frame ceiling via the

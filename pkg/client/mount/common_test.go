@@ -3,6 +3,7 @@ package mount
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"go.gmountie.dev/gmountie/pkg/client/config"
 	"go.gmountie.dev/gmountie/pkg/proto"
@@ -10,6 +11,7 @@ import (
 	grpcmocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/grpc"
 	protomocks "go.gmountie.dev/gmountie/internal/mocks/pkg/proto"
 
+	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
@@ -99,3 +101,50 @@ func TestLazyUnmountSuite(t *testing.T) {
 // Make sure errors stays imported now that the suite uses it nowhere
 // directly (suite already imports it via the package's other tests).
 var _ = errors.New
+
+// BuildFSOptionsSuite tests the pure buildFSOptions helper that assembles
+// gofs.Options from a fuse.MountOptions and a FUSEConfig. Testing this
+// function directly avoids needing a real FUSE mount while still verifying
+// that AttrTimeout/EntryTimeout are wired through correctly.
+type BuildFSOptionsSuite struct{ suite.Suite }
+
+func (s *BuildFSOptionsSuite) TestAttrEntryTimeoutPropagated() {
+	mountOpts := &fuse.MountOptions{Name: "test"}
+	cfg := &config.FUSEConfig{
+		MaxWriteBytes:  config.DefaultFUSEMaxWriteBytes,
+		MaxBackground:  config.DefaultFUSEMaxBackground,
+		WritebackCache: false,
+		AttrTimeout:    config.DefaultFUSEAttrTimeout,
+		EntryTimeout:   config.DefaultFUSEEntryTimeout,
+	}
+	opts := buildFSOptions(mountOpts, cfg)
+	s.Require().NotNil(opts.AttrTimeout, "AttrTimeout pointer must be non-nil")
+	s.Require().NotNil(opts.EntryTimeout, "EntryTimeout pointer must be non-nil")
+	s.Equal(config.DefaultFUSEAttrTimeout, *opts.AttrTimeout)
+	s.Equal(config.DefaultFUSEEntryTimeout, *opts.EntryTimeout)
+}
+
+func (s *BuildFSOptionsSuite) TestCustomTimeoutsPropagated() {
+	mountOpts := &fuse.MountOptions{Name: "test"}
+	cfg := &config.FUSEConfig{
+		MaxWriteBytes: config.DefaultFUSEMaxWriteBytes,
+		MaxBackground: config.DefaultFUSEMaxBackground,
+		AttrTimeout:   30 * time.Second,
+		EntryTimeout:  15 * time.Second,
+	}
+	opts := buildFSOptions(mountOpts, cfg)
+	s.Equal(30*time.Second, *opts.AttrTimeout)
+	s.Equal(15*time.Second, *opts.EntryTimeout)
+}
+
+func (s *BuildFSOptionsSuite) TestMountOptionsPassedThrough() {
+	mountOpts := &fuse.MountOptions{Name: "gMountie", MaxBackground: 64}
+	cfg := defaultTestFUSEConfig()
+	opts := buildFSOptions(mountOpts, cfg)
+	s.Equal("gMountie", opts.MountOptions.Name)
+	s.Equal(64, opts.MountOptions.MaxBackground)
+}
+
+func TestBuildFSOptionsSuite(t *testing.T) {
+	suite.Run(t, new(BuildFSOptionsSuite))
+}
