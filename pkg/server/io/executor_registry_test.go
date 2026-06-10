@@ -1,7 +1,6 @@
 package io
 
 import (
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -117,16 +116,21 @@ func (s *ExecutorRegistrySuite) TestStartupFailureCachesNil() {
 	s.EqualValues(1, s.builds.Load(), "failure must be cached, not retried (and warned once)")
 }
 
-// TestDefaultWorkers: workers <= 0 delegates to min(4, GOMAXPROCS).
-func (s *ExecutorRegistrySuite) TestDefaultWorkers() {
+// TestZeroWorkersDisabled: workers == 0 means the executor is disabled —
+// executorFor returns nil immediately without touching the registry or build.
+func (s *ExecutorRegistrySuite) TestZeroWorkersDisabled() {
+	e := s.reg.executorFor(Identity{Uid: 1, Gid: 1, Gids: []uint32{1}}, 0)
+	s.Nil(e, "workers=0 must disable the executor")
+	s.EqualValues(0, s.builds.Load(), "no build must occur when executor is disabled")
+}
+
+// TestExplicitWorkerCountPassesThrough: a positive worker count flows to build.
+func (s *ExecutorRegistrySuite) TestExplicitWorkerCountPassesThrough() {
 	var got int
 	s.reg.build = func(_ Identity, workers int) (*identityExecutor, error) {
 		got = workers
 		return &identityExecutor{}, nil
 	}
-	s.reg.executorFor(Identity{Uid: 1, Gid: 1, Gids: []uint32{1}}, 0)
-	s.Equal(min(4, runtime.GOMAXPROCS(0)), got)
-
 	s.reg.executorFor(Identity{Uid: 2, Gid: 2, Gids: []uint32{2}}, 7)
-	s.Equal(7, got, "an explicit worker count must pass through")
+	s.Equal(7, got, "an explicit worker count must pass through to build")
 }

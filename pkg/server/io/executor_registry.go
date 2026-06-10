@@ -2,7 +2,6 @@ package io
 
 import (
 	"fmt"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -48,17 +47,13 @@ var executors = newExecutorRegistry()
 // worker threads are permanently pinned and credential-switched — so entries
 // are never evicted.
 //
-// Returns nil (with a once-per-identity logged warning) when worker startup
-// fails — callers fall back to per-op switching. The failure is cached: a
-// credential switch the kernel refused once (insufficient privilege) will not
-// start succeeding later in the same process, so there is no retry.
-//
-// workers <= 0 selects the default pool size, min(4, GOMAXPROCS). The first
-// caller's worker count wins for a given identity; the knob is a single
-// process-wide config value, so callers are uniform in practice.
+// Returns nil when workers == 0 (executor disabled — caller uses per-op
+// switching) or when worker startup fails (logged once; failure is cached).
+// The first caller's worker count wins for a given identity; the knob is a
+// single process-wide config value, so callers are uniform in practice.
 func (r *executorRegistry) executorFor(id Identity, workers int) *identityExecutor {
 	if workers <= 0 {
-		workers = defaultExecutorWorkers()
+		return nil
 	}
 	entry, _ := r.entries.LoadOrCompute(executorKey(&id), func() *executorEntry {
 		return &executorEntry{}
@@ -108,11 +103,4 @@ func credModeOf(id *Identity) string {
 	default:
 		return "none"
 	}
-}
-
-// defaultExecutorWorkers is the pool size when the config knob
-// (server.identity.executor_workers) is 0/unset: enough parallelism for
-// overlapping FUSE ops without dedicating many permanently-pinned OS threads.
-func defaultExecutorWorkers() int {
-	return min(4, runtime.GOMAXPROCS(0))
 }

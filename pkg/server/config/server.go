@@ -48,21 +48,23 @@ const (
 	// delegates to the service-layer default (4096). Zero means "use the
 	// service default"; a positive value overrides it.
 	DefaultSessionIdempotencyCacheSize = 0
-	// DefaultIdentityExecutorWorkers is the config-layer sentinel that
-	// delegates to the io-layer default (min(4, GOMAXPROCS)). Zero means "use
-	// the io default"; a positive value overrides it.
+	// DefaultIdentityExecutorWorkers is the default for
+	// server.identity.executor_workers. Zero means the executor is DISABLED
+	// (ops take the per-op credential-switch path). Set to a positive value
+	// to enable the experimental pre-credentialed executor.
 	DefaultIdentityExecutorWorkers = 0
 )
 
 // IdentityConfig controls the identity-enforcement machinery shared by all
 // volumes.
 type IdentityConfig struct {
-	// ExecutorWorkers is the number of pre-credentialed OS threads dedicated
-	// to each distinct constant identity (squash/static volumes route their
-	// ops through such a pool instead of switching credentials per op). The
-	// threads are pinned for the process lifetime, so this bounds both the
-	// pool's parallelism and its permanent thread cost. 0 (or omitted)
-	// delegates to the io-layer default, min(4, GOMAXPROCS).
+	// ExecutorWorkers controls the experimental pre-credentialed executor for
+	// constant-identity volumes (squash/static). 0 (the default) disables the
+	// executor: every op takes the per-op credential-switch path (the only
+	// production-verified behavior). A positive value starts that many
+	// permanently-pinned OS threads per distinct identity tuple; suggested
+	// starting value is 4. Enable only after the release perf series
+	// (Bencher) shows per-op credential switching as a measurable bottleneck.
 	ExecutorWorkers int `mapstructure:"executor_workers" validate:"min=0"`
 }
 

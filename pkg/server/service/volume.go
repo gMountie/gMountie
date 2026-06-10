@@ -280,16 +280,19 @@ func (s *VolumeServiceImpl) BindIdentity(ctx context.Context, volume string, cal
 				return io.Identity{Uid: id.Uid, Gid: id.Gid, Gids: id.Gids, Caps: id.Caps}, nil
 			})
 			var w pathfs.FileSystem
-			if resolverIsConstant(resolver) {
-				// Constant identity (squash/static): route ops through the
-				// process-wide pre-credentialed executor for this identity —
-				// id was just resolved through this very resolver. Executor
-				// startup failure degrades to the per-op path inside.
+			if resolverIsConstant(resolver) && s.executorWorkers() > 0 {
+				// Executor mode (opt-in, experimental): route this constant
+				// identity's (squash/static) ops through the process-wide
+				// pre-credentialed executor. Only active when
+				// server.identity.executor_workers > 0; executor startup
+				// failure degrades to the per-op path inside the wrapper.
 				ioID := io.Identity{Uid: id.Uid, Gid: id.Gid, Gids: id.Gids, Caps: id.Caps}
-				w = io.NewConstantResolverBoundFS(entry.fs, resolveFn, p, ioID, s.executorWorkers())
+				w = newConstantResolverBoundFS(entry.fs, resolveFn, p, ioID, s.executorWorkers())
 			} else {
-				// Per-principal mutable mode (system): identity must stay
-				// freshly resolved and credential-switched per op.
+				// Per-op credential switching: either a per-principal mutable
+				// mode (system — identity must stay freshly resolved per op),
+				// or a constant identity with the executor disabled (the
+				// default). The cached resolver keeps resolve cheap.
 				w = io.NewResolverBoundFS(entry.fs, resolveFn, p)
 			}
 			s.boundFSCache.Store(key, w)
@@ -299,8 +302,14 @@ func (s *VolumeServiceImpl) BindIdentity(ctx context.Context, volume string, cal
 	return boundFS, id, nil
 }
 
-// executorWorkers returns the configured identity-executor pool size, 0 when
-// unset (io applies its default, min(4, GOMAXPROCS)).
+// newConstantResolverBoundFS is a seam over io.NewConstantResolverBoundFS so
+// tests can prove BindIdentity never constructs an executor-routed FS with the
+// default (executor-off) config. Production never reassigns it.
+var newConstantResolverBoundFS = io.NewConstantResolverBoundFS
+
+// executorWorkers returns the configured identity-executor pool size.
+// 0 (the default) means the executor is disabled; callers must check > 0
+// before constructing an executor-routed FS.
 func (s *VolumeServiceImpl) executorWorkers() int {
 	if s.config.Server == nil {
 		return 0

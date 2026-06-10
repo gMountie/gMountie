@@ -152,7 +152,9 @@ func NewResolverBoundFS(fs pathfs.FileSystem, fn IdentityResolveFunc, principal 
 // behavior.
 //
 // id MUST be the identity fn resolves to — callers (BindIdentity) have just
-// resolved it. workers <= 0 selects the default pool size.
+// resolved it. workers <= 0 disables the executor (nil exec, per-op path);
+// callers normally gate on the config knob and don't construct this wrapper
+// at all when the executor is off.
 func NewConstantResolverBoundFS(fs pathfs.FileSystem, fn IdentityResolveFunc, principal string, id Identity, workers int) pathfs.FileSystem {
 	return &resolverBoundFS{
 		FileSystem: fs,
