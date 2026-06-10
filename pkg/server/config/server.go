@@ -48,7 +48,23 @@ const (
 	// delegates to the service-layer default (4096). Zero means "use the
 	// service default"; a positive value overrides it.
 	DefaultSessionIdempotencyCacheSize = 0
+	// DefaultIdentityExecutorWorkers is the config-layer sentinel that
+	// delegates to the io-layer default (min(4, GOMAXPROCS)). Zero means "use
+	// the io default"; a positive value overrides it.
+	DefaultIdentityExecutorWorkers = 0
 )
+
+// IdentityConfig controls the identity-enforcement machinery shared by all
+// volumes.
+type IdentityConfig struct {
+	// ExecutorWorkers is the number of pre-credentialed OS threads dedicated
+	// to each distinct constant identity (squash/static volumes route their
+	// ops through such a pool instead of switching credentials per op). The
+	// threads are pinned for the process lifetime, so this bounds both the
+	// pool's parallelism and its permanent thread cost. 0 (or omitted)
+	// delegates to the io-layer default, min(4, GOMAXPROCS).
+	ExecutorWorkers int `mapstructure:"executor_workers" validate:"min=0"`
+}
 
 // SessionConfig controls per-client session retention.
 type SessionConfig struct {
@@ -184,6 +200,9 @@ type ServerConfig struct {
 	// a disconnected session is retained before reaping) and idempotency
 	// cache capacity (per-session LRU size for request-id deduplication).
 	Session SessionConfig `mapstructure:"session"`
+	// Identity controls the identity-enforcement machinery (executor pool
+	// size for constant-identity volumes).
+	Identity IdentityConfig `mapstructure:"identity"`
 	// SubscribeBufferSize is the per-subscriber channel depth in the
 	// event bus. Larger values tolerate bursty invalidation storms at
 	// the cost of memory; a slow subscriber that fills the buffer is
