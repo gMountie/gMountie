@@ -14,7 +14,7 @@ The protocol lives under `api/proto/`. Five application-level gRPC services shar
 
 | Service     | What it carries                                              | Examples                                         |
 | ----------- | ------------------------------------------------------------ | ------------------------------------------------ |
-| **fs**      | Metadata — directory and inode-level ops, plus push invalidations. | `GetAttr`, `OpenDir`, `Mkdir`, `Rename`, `Unlink`, `Subscribe` (push invalidations) |
+| **fs**      | Metadata — directory and inode-level ops, plus push invalidations. | `GetAttr`, `SetAttr`, `ReadDir`, `Mkdir`, `Rename`, `Unlink`, `Subscribe` (push invalidations) |
 | **file**    | File data — streaming reads and writes.                      | `Open`, `Read`, `Write`, `Release`, `Flush`      |
 | **volume**  | Discovery — what volumes does this server expose?            | `List`, `Resolve`                                |
 | **session** | Connection-level session lifecycle and liveness.            | `Create`, `Resume`, `Keepalive`                  |

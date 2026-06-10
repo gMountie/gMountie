@@ -44,7 +44,6 @@ The `server` section configures the core server settings:
 | metrics                         | boolean  | true         | Enable/disable the gRPC Prometheus interceptors (`grpc_server_*` series)                     |
 | plain\_metrics\_addr            | string   | ""           | Extra **unauthenticated** plain-HTTP listener serving only `/metrics` ([details](#plain-metrics-listener)). Empty = disabled. |
 | frame\_size\_bytes              | integer  | 1048576      | Chunk size for server-streamed reads (1 MiB). Range [4096, 16777216].                        |
-| compound\_max\_parallel         | integer  | 8            | Max concurrent sub-ops in flight for a single Compound RPC. Range [1, 256].                  |
 | pprof                           | boolean  | false        | Expose `/debug/pprof/*` on the ops HTTP server                                               |
 | subscribe\_buffer\_size         | integer  | 256          | Per-subscriber channel depth in the event bus. Minimum 1.                                    |
 | subscribe\_heartbeat\_interval  | duration | 10s          | How often the event bus emits a HEARTBEAT to each live subscriber                            |

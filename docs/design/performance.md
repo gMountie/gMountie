@@ -69,20 +69,21 @@ than one frame. Without this cap, the kernel could send a write larger than the
 server's frame size, forcing the client to split the frame below the protocol
 layer — an unnecessary extra allocation and copy.
 
-### 2.3 Compound metadata batching
+### 2.3 ReadDir with attr priming (READDIRPLUS)
 
-`RpcFs.Compound` (modelled on NFSv4 Compound) accepts a `repeated CompoundOp`
-list and returns a `repeated CompoundReply` list of the same length. Each op is
-a `oneof` over the read-only metadata operations (`GetAttr`, `OpenDir`, `Access`,
-`StatFs`, `GetXAttr`). Per-op errors do not abort the batch; the server always
-returns N replies for N ops.
+`RpcFs.ReadDir` is a server-streaming RPC that lists a directory in batches,
+optionally carrying each entry's attributes (`plus=true` — the READDIRPLUS
+pattern). The cache decorator primes its attr cache from the listing, so the
+kernel's per-entry `LOOKUP`s after a `READDIR` are local hits: an `ls -la`
+over N cold files costs **one** round-trip instead of 1+N (`OpenDir` followed
+by N `GetAttr`s). Streaming also removes the unary 16 MiB message ceiling that
+made very large directories fail with `EIO`.
 
-The purpose is to collapse an N-hop directory walk (1+N `GetAttr` calls for a
-`stat` of every entry in a directory) into a single round-trip. The client-side
-path that drives `Compound` is flag-gated so it is only engaged when the client
-explicitly batches ops.
+This supersedes the earlier `RpcFs.Compound` batch-metadata RPC (NFSv4-style
+N-ops-in / N-replies-out), which was removed unused — no client path ever
+drove it; READDIRPLUS covers the directory-walk case it was built for.
 
-### 2.4 Compound writes: `WriteAndFlush`
+### 2.4 Fused writes: `WriteAndFlush`
 
 Small-file create-write-close is the dominant WAN cost — measured at ~7
 critical-path round-trips per `echo x > file` at 100 ms RTT. The breakdown:
@@ -101,6 +102,19 @@ single RPC, eliminating one critical-path RTT on the close tail:
   no RPC and returns immediately.
 
 **Impact:** `WriteAndFlush` (one RTT) plus `CreateReply.attributes` (one RTT) remove two round-trips from the critical path, taking small-file create-write-close from ~7 to ~5 critical-path RTTs.
+
+The same reply-carries-attrs pattern now covers the other entry-creating ops
+and metadata writes:
+
+- `MkdirReply` and `SymlinkReply` carry the new entry's `Attr`, so `mkdir`
+  and `ln -s` are **one** round-trip (no post-create `GetAttr`).
+- `RpcFs.SetAttr` applies any combination of mode/owner/size/times in one RPC
+  and returns the final attrs. A kernel `SETATTR` used to fan out into up to
+  4 serial per-field RPCs (`Truncate`→`Chmod`→`Chown`→`Utimens`) plus a
+  trailing `GetAttr` — up to **5 RPCs collapsed to 1**. The per-field RPCs
+  were removed from the protocol.
+- `WriteAndFlush` and `CopyFileRange` carry a `request_id`, making them
+  safely retryable through the same idempotency cache as the other mutations.
 
 `WriteAndFlush` is unary (not streaming) because it only carries the coalesced
 tail buffer, which is bounded by `write_coalesce_bytes` (default 1 MiB, well
@@ -536,10 +550,6 @@ The performance-relevant knobs, their defaults, and where they live:
 - **`WriteAndFlush`** — a unary RPC on `RpcFile` that fuses the coalesced write
   buffer drain and the FUSE FLUSH into a single network round-trip. The close-tail
   win for small-file WAN workloads.
-
-- **Compound** — `RpcFs.Compound`, a batch metadata RPC modelled on NFSv4
-  Compound. Accepts N read-only metadata ops and returns N replies. Per-op errors
-  do not abort the batch.
 
 - **Writeback cache** — FUSE `CAP_WRITEBACK_CACHE`. When enabled, the kernel
   buffers writes and issues them asynchronously. Enabled by `fuse.writeback_cache:

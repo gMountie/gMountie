@@ -108,8 +108,8 @@ covering `[off, off+len)`.
   persistence is enabled).
 - **Invalidation:** on writes, truncates, and other mutations affecting content
   (see §5). Invalidation is range-aware for `Write` and `Allocate` (only
-  chunks overlapping the modified range are dropped); `Truncate` conservatively
-  drops all chunks for the path.
+  chunks overlapping the modified range are dropped); a `SetAttr` carrying a
+  size change conservatively drops all chunks for the path.
 - **Persistence:** yes — chunk bytes stored content-addressed in `chunks/`
   tree; index entries in `data_idx` bbolt bucket (see §6).
 
@@ -253,7 +253,7 @@ and keeps it open in a background goroutine (`subscribeConsumer`).
 
 | Kind | Triggered by | Cache effect |
 |---|---|---|
-| `MUTATED` | Write, Truncate, Chmod, Chown, Allocate, Create, Mkdir | Invalidate attr + all data chunks for `path`; invalidate dir + attr for `parent(path)` |
+| `MUTATED` | Write, SetAttr, SetXAttr, Allocate, Create, Mkdir | Invalidate attr + all data chunks for `path`; invalidate dir + attr for `parent(path)` |
 | `DELETED` | Unlink, Rmdir | Invalidate attr + all data chunks for `path`; invalidate dir + attr for `parent(path)`; add negative attr for `path` |
 | `RENAMED` | Rename | Invalidate attr + data for both old and new paths; invalidate dirs + attrs for both parents; add negative attr for `old` |
 | `HEARTBEAT` | Per-volume ticker (server-side, every 10 s by default) | No path; no cache change. After the first HEARTBEAT on a new stream, flip the validity tracker to Verified |
@@ -342,17 +342,14 @@ bytes are served — the Unverified gate always fires when the stream is down.
 ## 5. Invalidation: local mutations
 
 Every mutating op invalidates the exact cache slices listed below. The rule is
-"be conservative": if the right answer is ambiguous (e.g. Truncate may shrink
-or zero-extend), drop everything for that path. An extra cache miss on the next
+"be conservative": if the right answer is ambiguous (e.g. a size change may
+shrink or zero-extend), drop everything for that path. An extra cache miss on the next
 read is preferable to a stale-data bug.
 
 | Operation | Invalidates |
 |---|---|
 | `Write(fh, off, data)` | Data chunks overlapping `[off, off+len(data))` for `fh.path`; attr for `fh.path` (mtime and size may change) |
-| `Truncate(path, size)` | **All** data chunks for `path` (conservative drop); attr for `path` |
-| `Chmod(path, mode)` | Attr for `path` |
-| `Chown(path, uid, gid)` | Attr for `path` |
-| `Utimens(path, atime, mtime)` | Attr for `path` |
+| `SetAttr(path, in)` | When `in.Valid` includes a size change: **all** data chunks for `path` (conservative drop, success or failure — size applies first server-side). Attr for `path` is re-primed from the reply's final attrs on success, invalidated otherwise |
 | `Allocate(fh, off, size, mode)` | Data chunks overlapping `[off, off+size)` for `fh.path`; attr for `fh.path` (size may grow) |
 | `Create(parent, name, ...)` | Dir for `parent`; attr for `parent` (mtime changes); drops any negative attr for `joinPath(parent, name)` |
 | `Mkdir(path, mode)` | Dir for `path`'s parent; attr for parent; drops any negative attr for `path` |

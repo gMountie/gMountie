@@ -104,7 +104,7 @@ partition the surface:
 | `SessionService` | Connection-level session lifecycle. | `Create`, `Resume`, `Keepalive`, `WhoAmI` |
 | `VolumeService` | Discovery — what volumes does this server expose? | `List`, `Resolve` |
 | `VersionService` | Protocol version negotiation. | `Get` (negotiates parameters like `frame_size_bytes`) |
-| `RpcFs` | Path-keyed filesystem operations, plus the server-push invalidation stream. | `GetAttr`, `OpenDir`, `Mkdir`, `Rename`, `Unlink`, `Truncate`, `Chmod`, `Chown`, `StatFs`, `GetXAttr`, `Access`, `Subscribe` |
+| `RpcFs` | Path-keyed filesystem operations, plus the server-push invalidation stream. | `GetAttr`, `SetAttr`, `ReadDir`, `Mkdir`, `Rename`, `Unlink`, `StatFs`, `GetXAttr`, `Access`, `Subscribe` |
 | `RpcFile` | Fd-keyed file operations. | `Open`, `Create`, `Read`, `Write`, `Release`, `Flush`, `Fsync`, `GetLk`/`SetLk`/`SetLkw`, `Allocate` |
 
 The split between `RpcFs` and `RpcFile` is meaningful: `RpcFs` operates
@@ -114,10 +114,12 @@ tracks per session.
 
 Several RPCs stream on the wire. `RpcFile.Read` is server-streaming and
 `RpcFile.Write` is client-streaming, so a single RPC frames many
-in-flight chunks without per-chunk round-trips. `RpcFs.Subscribe` is a
-server-stream the client holds open to receive push invalidations.
-`SessionService.Keepalive` is a server-stream the client holds open as a
-liveness signal and carries no payload.
+in-flight chunks without per-chunk round-trips. `RpcFs.ReadDir` is
+server-streaming so a directory listing of any size never hits the unary
+message cap. `RpcFs.Subscribe` is a server-stream the client holds open
+to receive push invalidations. `SessionService.Keepalive` is a
+server-stream the client holds open as a liveness signal and carries no
+payload.
 
 ## 4. Sessions
 
@@ -211,7 +213,7 @@ and the server honours:
 ### 6.1 Per-call timeouts
 
 Every RPC the client makes runs under a context with a deadline:
-- **Metadata** ops (GetAttr, OpenDir, Mkdir, Rename, etc.): 5 s default.
+- **Metadata** ops (GetAttr, ReadDir, Mkdir, Rename, etc.): 5 s default.
 - **I/O** ops (Read, Write, Allocate): 30 s default.
 
 Both are config-driven. A stalled server fails the RPC instead of
@@ -233,8 +235,9 @@ mutations stop immediately because their state is gone.
 
 ### 6.3 Idempotency on the server
 
-Mutating RPCs (`Open`, `Create`, `Write`, `Mkdir`, `Rmdir`, `Rename`,
-`Unlink`, `Truncate`, `Chmod`, `Chown`) carry a `request_id`. The
+Mutating RPCs (`Open`, `Create`, `Write`, `WriteAndFlush`,
+`CopyFileRange`, `Mkdir`, `Rmdir`, `Rename`, `Symlink`, `Unlink`,
+`SetAttr`, `SetXAttr`, `RemoveXAttr`) carry a `request_id`. The
 server's per-session 256-entry LRU caches the successful reply keyed by
 that id. If the same id arrives again, the server returns the cached
 reply without re-executing the operation. Concurrent duplicates collapse
