@@ -124,6 +124,22 @@ func (s *BuildFSOptionsSuite) TestAttrEntryTimeoutPropagated() {
 	s.Equal(config.DefaultFUSEEntryTimeout, *opts.EntryTimeout)
 }
 
+// TestZeroValuedConfigGetsDefaults pins the landmine fix: a zero-valued
+// FUSEConfig (struct-building library consumers, the e2e harness) must get
+// the 1s production defaults, NOT non-nil zero durations — go-fuse treats
+// a non-nil zero as kernel-cache-off, which amplifies every kernel op into
+// a fresh GETATTR/LOOKUP round-trip and wedged the e2e fs suite.
+func (s *BuildFSOptionsSuite) TestZeroValuedConfigGetsDefaults() {
+	mountOpts := &fuse.MountOptions{Name: "test"}
+	opts := buildFSOptions(mountOpts, &config.FUSEConfig{})
+	s.Require().NotNil(opts.AttrTimeout)
+	s.Require().NotNil(opts.EntryTimeout)
+	s.Equal(config.DefaultFUSEAttrTimeout, *opts.AttrTimeout,
+		"zero AttrTimeout must mean default, never cache-off")
+	s.Equal(config.DefaultFUSEEntryTimeout, *opts.EntryTimeout,
+		"zero EntryTimeout must mean default, never cache-off")
+}
+
 func (s *BuildFSOptionsSuite) TestCustomTimeoutsPropagated() {
 	mountOpts := &fuse.MountOptions{Name: "test"}
 	cfg := &config.FUSEConfig{

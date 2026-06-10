@@ -73,9 +73,24 @@ func createMountOptions(endpoint, volume string, cfg *config.FUSEConfig, maxWrit
 // buildFSOptions assembles the go-fuse fs.Options from a pre-built
 // fuse.MountOptions and the FUSEConfig. Extracted as a pure function so
 // it is directly testable without mounting a real FUSE filesystem.
+//
+// Zero timeouts mean "unset → default", NOT "disable kernel caching":
+// go-fuse treats a non-nil zero duration as cache-off, which turns every
+// kernel op into a fresh GETATTR/LOOKUP round-trip (~1000× metadata
+// amplification — a zero-valued FUSEConfig literal in the e2e harness
+// wedged the fs suite this way). Struct-building library consumers must
+// get production defaults, the same rule as NewClient's readahead
+// defaults. Sub-second values (e.g. 1ms) approximate cache-off for
+// callers who genuinely want it.
 func buildFSOptions(mountOpts *fuse.MountOptions, cfg *config.FUSEConfig) *gofs.Options {
 	attrTimeout := cfg.AttrTimeout
+	if attrTimeout == 0 {
+		attrTimeout = config.DefaultFUSEAttrTimeout
+	}
 	entryTimeout := cfg.EntryTimeout
+	if entryTimeout == 0 {
+		entryTimeout = config.DefaultFUSEEntryTimeout
+	}
 	return &gofs.Options{
 		MountOptions: *mountOpts,
 		AttrTimeout:  &attrTimeout,

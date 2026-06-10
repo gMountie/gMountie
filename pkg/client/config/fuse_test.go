@@ -47,8 +47,10 @@ func (s *FUSEConfigSuite) TestAttrEntryTimeoutOverride() {
 	s.Equal(10*time.Second, cfg.EntryTimeout)
 }
 
-// TestAttrEntryTimeoutZeroAllowed verifies that 0s is accepted (valid per the
-// gte=0 constraint).
+// TestAttrEntryTimeoutZeroAllowed verifies that 0s parses and validates
+// (gte=0). Semantics: zero means "use the default" — buildFSOptions maps it
+// to the 1s defaults at mount time, never to kernel-cache-off (see
+// mount/common.go).
 func (s *FUSEConfigSuite) TestAttrEntryTimeoutZeroAllowed() {
 	v := viper.New()
 	v.Set("attr_timeout", "0s")

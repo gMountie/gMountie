@@ -254,8 +254,10 @@ caches — only VFS operations that bypass or expire the cache will see fresh
 data. Values above ~1 s therefore explicitly trade coherence for reduced
 chatter and are safe only when this client is the sole writer, or when
 metadata staleness is acceptable (e.g. read-only analytics workloads).
-Both fields are validated to `gte=0` (0 s is accepted but effectively
-disables the kernel-side caching for that tier).
+Both fields are validated to `gte=0`; `0` (or unset) means **use the
+default**, never cache-off — a non-nil zero would turn every kernel op
+into a fresh round-trip (~1000× metadata amplification). To approximate
+disabling a tier, set a tiny value such as `1ms`.
 
 Example:
 
