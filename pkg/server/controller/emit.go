@@ -31,8 +31,10 @@ import (
 //
 // PERF: every helper gates on bus.HasSubscribers(volume). With nobody
 // subscribed both the version-seeding stat and the emit are pure waste —
-// every Write RPC otherwise paid an openat2+fstatat+close (with a full
-// credential switch) for an event nobody received. Stats that also serve the
+// every Write RPC otherwise paid an openat2+fstatat+close (under server
+// credentials via the raw filesystem; the bound-fs paths in mutateEmit/
+// renameEmit additionally paid a credential switch) for an event nobody
+// received. Stats that also serve the
 // RPC reply (statAttrsAndEmit, SetAttr/Create inlines) are NOT gated; only
 // the emit is. The gate deliberately races with Subscribe: a client attaching
 // between the check and the mutation misses that one event, which is harmless
