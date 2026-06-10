@@ -47,6 +47,7 @@ func (s *IdentityExecutorSuite) SetupTest() {
 	setfsgid = func(int) error { s.setfsgidCalls.Add(1); return nil }
 	setfsuid = func(int) error { s.setfsuidCalls.Add(1); return nil }
 	getgroups = func() ([]uint32, error) { s.getgroupsCalls.Add(1); return []uint32{0}, nil }
+	resetBaselineGroups() // the stubbed getgroups must be re-read per test
 }
 
 // TearDownTest restores the seams. Safe even though worker goroutines may
@@ -57,6 +58,7 @@ func (s *IdentityExecutorSuite) SetupTest() {
 func (s *IdentityExecutorSuite) TearDownTest() {
 	setfsuid, setfsgid = s.origSetfsuid, s.origSetfsgid
 	setGroupsRaw, getgroups = s.origSetGroupsRaw, s.origGetgroups
+	resetBaselineGroups() // don't leak the stub's groups to later suites
 }
 
 func (s *IdentityExecutorSuite) testIdentity() Identity {

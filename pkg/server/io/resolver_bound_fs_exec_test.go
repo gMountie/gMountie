@@ -57,12 +57,14 @@ func (s *ResolverBoundFSExecSuite) SetupTest() {
 	getgroups = func() ([]uint32, error) { s.getgroupsCalls.Add(1); return []uint32{0}, nil }
 	lockOSThread = func() { s.lockCalls.Add(1) }
 	unlockOSThread = func() {}
+	resetBaselineGroups() // the stubbed getgroups must be re-read per test
 }
 
 func (s *ResolverBoundFSExecSuite) TearDownTest() {
 	setfsuid, setfsgid = s.origSetfsuid, s.origSetfsgid
 	setGroupsRaw, getgroups = s.origSetGroupsRaw, s.origGetgroups
 	lockOSThread, unlockOSThread = s.origLock, s.origUnlock
+	resetBaselineGroups() // don't leak the stub's groups to later suites
 }
 
 func (s *ResolverBoundFSExecSuite) countingResolve(id Identity) IdentityResolveFunc {
@@ -151,6 +153,7 @@ func (s *ResolverBoundFSExecSuite) TestNilExecUsesPerOpPath() {
 	_, st = r.GetAttr("", nil)
 	s.Require().True(st.Ok())
 	s.EqualValues(2, s.resolveCalls.Load(), "every op resolves afresh")
+	s.EqualValues(1, s.getgroupsCalls.Load(), "baseline groups are cached — no second read")
 }
 
 // TestNilExecResolveFailureFailsClosed: a resolve failure on the per-op path

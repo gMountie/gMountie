@@ -214,12 +214,14 @@ func (s *BoundReadDirPlusSuite) SetupTest() {
 	getgroups = func() ([]uint32, error) { return []uint32{0}, nil }
 	lockOSThread = func() {}
 	unlockOSThread = func() {}
+	resetBaselineGroups() // the stubbed getgroups must be re-read per test
 }
 
 func (s *BoundReadDirPlusSuite) TearDownTest() {
 	setfsuid, setfsgid = s.origSetfsuid, s.origSetfsgid
 	setGroupsRaw, getgroups = s.origSetGroupsRaw, s.origGetgroups
 	lockOSThread, unlockOSThread = s.origLock, s.origUnlock
+	resetBaselineGroups() // don't leak the stub's groups to later suites
 }
 
 func (s *BoundReadDirPlusSuite) identity() Identity {
