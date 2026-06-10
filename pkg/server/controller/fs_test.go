@@ -843,6 +843,145 @@ func (s *RpcServerTestSuite) TestSymlink() {
 	s.Equal(int32(fuse.OK), reply.Status)
 }
 
+// TestMkdir_ReplyAttrsFromSingleTrailingStat pins the create-style contract:
+// ONE GetAttr serves both reply.Attributes and the MUTATED event seed. The
+// .Once() on GetAttr is the no-double-stat proof — the old mutateEmit path
+// would stat a second time via versionAfter and fail the strict mock.
+func (s *RpcServerTestSuite) TestMkdir_ReplyAttrsFromSingleTrailingStat() {
+	events, cancel := s.bus.Subscribe("testVolume")
+	defer cancel()
+
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
+	attr := &fuse.Attr{Ino: 21, Mode: fuse.S_IFDIR | 0o755, Nlink: 2, Mtime: 1700000000}
+	mockFs.EXPECT().Mkdir("/d", uint32(0o755), mock.Anything).Return(fuse.OK).Once()
+	mockFs.EXPECT().GetAttr("/d", mock.Anything).Return(attr, fuse.OK).Once()
+
+	reply, err := s.server.Mkdir(testAuthedCtx("test-user"), &proto.MkdirRequest{
+		Volume: "testVolume", Path: "/d", Mode: 0o755,
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID, RequestId: "req-mkdir-attrs",
+	})
+	s.Require().NoError(err)
+	s.Require().Equal(int32(fuse.OK), reply.Status)
+	// Reply attrs must match what a trailing GetAttr would have returned —
+	// the client uses them instead of issuing its own stat.
+	s.Require().NotNil(reply.Attributes)
+	s.Equal(uint64(21), reply.Attributes.Ino)
+	s.Equal(fuse.S_IFDIR|uint32(0o755), reply.Attributes.Mode)
+	s.Equal(serverio.VersionFromAttr(attr), reply.Attributes.Version)
+
+	// The event must be seeded from the SAME stat.
+	select {
+	case ev := <-events:
+		s.Equal(serverio.KindMutated, ev.Kind)
+		s.Equal("/d", ev.Path)
+		s.Equal(serverio.VersionFromAttr(attr), ev.NewVersion)
+	case <-time.After(time.Second):
+		s.FailNow("Mkdir did not emit a KindMutated event within 1s")
+	}
+	mockFs.AssertExpectations(s.T()) // GetAttr .Once(): no second stat
+}
+
+// TestMkdir_TrailingStatFailureStillOK: the mkdir succeeded, so a failed
+// trailing stat must NOT fail the RPC — Status stays OK, Attributes stay nil
+// and the event carries version 0 so clients revalidate via GetAttrIfChanged.
+func (s *RpcServerTestSuite) TestMkdir_TrailingStatFailureStillOK() {
+	events, cancel := s.bus.Subscribe("testVolume")
+	defer cancel()
+
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
+	mockFs.EXPECT().Mkdir("/d", uint32(0o700), mock.Anything).Return(fuse.OK).Once()
+	mockFs.EXPECT().GetAttr("/d", mock.Anything).Return(nil, fuse.EIO).Once()
+
+	reply, err := s.server.Mkdir(testAuthedCtx("test-user"), &proto.MkdirRequest{
+		Volume: "testVolume", Path: "/d", Mode: 0o700,
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID, RequestId: "req-mkdir-statfail",
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.OK), reply.Status, "mkdir succeeded; the stat failure must not surface")
+	s.Nil(reply.Attributes)
+
+	select {
+	case ev := <-events:
+		s.Equal(serverio.KindMutated, ev.Kind)
+		s.Equal("/d", ev.Path)
+		s.Equal(uint64(0), ev.NewVersion, "no fresh attr in hand — version 0 forces revalidation")
+	case <-time.After(time.Second):
+		s.FailNow("Mkdir with failed trailing stat must still emit a KindMutated event")
+	}
+	mockFs.AssertExpectations(s.T())
+}
+
+// TestSymlink_ReplyAttrsFromSingleTrailingStat: same single-stat contract as
+// Mkdir, on the LINK's own path (lstat semantics — the confined FS does not
+// follow the target).
+func (s *RpcServerTestSuite) TestSymlink_ReplyAttrsFromSingleTrailingStat() {
+	events, cancel := s.bus.Subscribe("testVolume")
+	defer cancel()
+
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
+	attr := &fuse.Attr{Ino: 33, Mode: fuse.S_IFLNK | 0o777, Nlink: 1, Size: 9, Mtime: 1700000001}
+	mockFs.EXPECT().Symlink("../target", "/link", mock.Anything).Return(fuse.OK).Once()
+	mockFs.EXPECT().GetAttr("/link", mock.Anything).Return(attr, fuse.OK).Once()
+
+	reply, err := s.server.Symlink(testAuthedCtx("test-user"), &proto.SymlinkRequest{
+		Volume: "testVolume", Target: "../target", LinkPath: "/link",
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID, RequestId: "req-symlink-attrs",
+	})
+	s.Require().NoError(err)
+	s.Require().Equal(int32(fuse.OK), reply.Status)
+	s.Require().NotNil(reply.Attributes)
+	s.Equal(uint64(33), reply.Attributes.Ino)
+	s.Equal(fuse.S_IFLNK|uint32(0o777), reply.Attributes.Mode)
+	s.Equal(serverio.VersionFromAttr(attr), reply.Attributes.Version)
+
+	select {
+	case ev := <-events:
+		s.Equal(serverio.KindMutated, ev.Kind)
+		s.Equal("/link", ev.Path)
+		s.Equal(serverio.VersionFromAttr(attr), ev.NewVersion)
+	case <-time.After(time.Second):
+		s.FailNow("Symlink did not emit a KindMutated event within 1s")
+	}
+	mockFs.AssertExpectations(s.T()) // GetAttr .Once(): no second stat
+}
+
+// TestSymlink_TrailingStatFailureStillOK mirrors the Mkdir partial-failure
+// contract: OK status, nil attrs, version-0 event.
+func (s *RpcServerTestSuite) TestSymlink_TrailingStatFailureStillOK() {
+	events, cancel := s.bus.Subscribe("testVolume")
+	defer cancel()
+
+	mockFs := new(pathfs2.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
+	mockFs.EXPECT().Symlink("t", "/link", mock.Anything).Return(fuse.OK).Once()
+	mockFs.EXPECT().GetAttr("/link", mock.Anything).Return(nil, fuse.EIO).Once()
+
+	reply, err := s.server.Symlink(testAuthedCtx("test-user"), &proto.SymlinkRequest{
+		Volume: "testVolume", Target: "t", LinkPath: "/link",
+		Caller:    CreateCaller(0, 0, 0),
+		SessionId: s.sessionID, RequestId: "req-symlink-statfail",
+	})
+	s.Require().NoError(err)
+	s.Equal(int32(fuse.OK), reply.Status)
+	s.Nil(reply.Attributes)
+
+	select {
+	case ev := <-events:
+		s.Equal(serverio.KindMutated, ev.Kind)
+		s.Equal("/link", ev.Path)
+		s.Equal(uint64(0), ev.NewVersion)
+	case <-time.After(time.Second):
+		s.FailNow("Symlink with failed trailing stat must still emit a KindMutated event")
+	}
+	mockFs.AssertExpectations(s.T())
+}
+
 func (s *RpcServerTestSuite) TestSetXAttr_Happy() {
 	mockFs := new(pathfs2.MockFileSystem)
 	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)

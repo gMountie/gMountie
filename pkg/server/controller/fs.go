@@ -67,20 +67,36 @@ func (r *RpcServerImpl) GetAttr(ctx context.Context, request *proto.GetAttrReque
 	return reply, nil
 }
 
+// Mkdir creates the directory and, on success, returns its attrs in the reply
+// (create-style, like Create/SetAttr) so the client needs no trailing GetAttr.
 func (r *RpcServerImpl) Mkdir(ctx context.Context, request *proto.MkdirRequest) (*proto.MkdirReply, error) {
 	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
 	}
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.MkdirReply, error) {
-		s := r.mutateEmit(ctx, fs, request.Volume, request.Path, request.Caller, func() fuse.Status {
-			return fs.Mkdir(request.Path, request.Mode, createContext(ctx, request.Caller))
-		})
-		return &proto.MkdirReply{Status: int32(s)}, nil
+		fctx := createContext(ctx, request.Caller)
+		if s := fs.Mkdir(request.Path, request.Mode, fctx); s != fuse.OK {
+			return &proto.MkdirReply{Status: int32(s)}, nil
+		}
+		reply := &proto.MkdirReply{Status: int32(fuse.OK)}
+		// ONE trailing stat serves both the reply attrs and the event seed
+		// (SetAttr's pattern) — emitMutatedAttr replaces mutateEmit, whose
+		// versionAfter would stat the path a second time. If the stat fails,
+		// the mkdir still succeeded: Status stays OK, Attributes stay nil and
+		// the event carries version 0 so clients revalidate via
+		// GetAttrIfChanged (cache safety over version precision).
+		if attr, gst := fs.GetAttr(request.Path, fctx); gst.Ok() {
+			reply.Attributes = toProtoAttr(attr, &id)
+			r.emitMutatedAttr(request.Volume, request.Path, attr)
+		} else {
+			r.emitMutatedAttr(request.Volume, request.Path, nil)
+		}
+		return reply, nil
 	})
 }
 
@@ -130,20 +146,33 @@ func (r *RpcServerImpl) Readlink(ctx context.Context, request *proto.ReadlinkReq
 	return &proto.ReadlinkReply{Target: target, Status: int32(st)}, nil
 }
 
+// Symlink creates the link and, on success, returns the LINK's own attrs in
+// the reply (lstat semantics — the confined FS does not follow the target),
+// same create-style contract and partial-failure rules as Mkdir above.
 func (r *RpcServerImpl) Symlink(ctx context.Context, request *proto.SymlinkRequest) (*proto.SymlinkReply, error) {
 	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
 	if err != nil {
 		return nil, err
 	}
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.SymlinkReply, error) {
-		s := r.mutateEmit(ctx, fs, request.Volume, request.LinkPath, request.Caller, func() fuse.Status {
-			return fs.Symlink(request.Target, request.LinkPath, createContext(ctx, request.Caller))
-		})
-		return &proto.SymlinkReply{Status: int32(s)}, nil
+		fctx := createContext(ctx, request.Caller)
+		if s := fs.Symlink(request.Target, request.LinkPath, fctx); s != fuse.OK {
+			return &proto.SymlinkReply{Status: int32(s)}, nil
+		}
+		reply := &proto.SymlinkReply{Status: int32(fuse.OK)}
+		// ONE trailing stat for both reply attrs and event seed; stat failure
+		// keeps Status OK with nil attrs + version-0 event (see Mkdir).
+		if attr, gst := fs.GetAttr(request.LinkPath, fctx); gst.Ok() {
+			reply.Attributes = toProtoAttr(attr, &id)
+			r.emitMutatedAttr(request.Volume, request.LinkPath, attr)
+		} else {
+			r.emitMutatedAttr(request.Volume, request.LinkPath, nil)
+		}
+		return reply, nil
 	})
 }
 
