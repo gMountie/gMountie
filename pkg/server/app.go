@@ -109,7 +109,7 @@ func revokedSerialsFromConfig(cfg *config.Config) []string {
 // GetGrpcServices returns the gRPC services.
 func (c *AppContext) GetGrpcServices() []grpc.ServiceRegistrar {
 	return []grpc.ServiceRegistrar{
-		controller.NewGrpcServer(c.VolumeService, c.SessionManager, c.Config.Server.CompoundMaxParallel, c.Bus, c.Metrics),
+		controller.NewGrpcServer(c.VolumeService, c.SessionManager, c.Bus, c.Metrics),
 		controller.NewRpcFileServer(c.VolumeService, c.SessionManager, c.Metrics, c.Config.Server.FrameSizeBytes, c.Bus),
 		controller.NewVolumeService(c.VolumeService),
 		controller.NewSessionController(c.SessionManager, c.VolumeService),

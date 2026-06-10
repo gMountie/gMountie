@@ -43,7 +43,7 @@ type opClass int
 const (
 	classIdempotentRead opClass = iota // GetAttr/Access/*XAttr get/ReadDir/Readlink/StatFs — safe across a new session
 	classFdOp                          // Read/Write/Flush/Fsync/Release/Allocate/locks — fd dies on a new session
-	classPathMutation                  // Mkdir/Rmdir/Rename/Symlink/Link/Unlink/Chmod/Chown/Utimens/SetXAttr/path-Truncate — replay-unsafe on a new session
+	classPathMutation                  // Mkdir/Rmdir/Rename/Symlink/Link/Unlink/SetAttr/SetXAttr — replay-unsafe on a new session
 )
 
 // retryClient is the slice of the gRPC Client that retryOp depends on.

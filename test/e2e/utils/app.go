@@ -457,7 +457,6 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 	appCtx.cfg.Server = &config.ServerConfig{
 		Metrics:                    false,
 		FrameSizeBytes:             config.DefaultFrameSizeBytes,
-		CompoundMaxParallel:        config.DefaultCompoundMaxParallel,
 		SubscribeBufferSize:        config.DefaultServerSubscribeBufferSize,
 		SubscribeHeartbeatInterval: config.DefaultServerSubscribeHeartbeatInterval,
 		Keepalive: config.ServerKeepaliveConfig{

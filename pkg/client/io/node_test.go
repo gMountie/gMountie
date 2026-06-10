@@ -298,9 +298,9 @@ func (s *NodeAdapterTestSuite) TestRootSetattr_BackendErrorPropagates() {
 // (no contract bits — FATTR_FH is a kernel-internal flag that go-fuse
 // propagates to the node but our adapter strips via setAttrValidMask) flows
 // through Setattr as a backend.SetAttr call with Valid==0. The reply attrs
-// are returned into out.Attr and no error is produced. No per-field Get*
-// call (Stat, Truncate, Chmod, etc.) is expected — the strict mock enforces
-// the absence proof.
+// are returned into out.Attr and no error is produced. No other backend
+// call (Stat etc.) is expected — the strict mock enforces the absence
+// proof.
 func (s *NodeAdapterTestSuite) TestRootSetattr_Valid0_FHOnly() {
 	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.MatchedBy(func(in clientio.SetAttrIn) bool {
 		return in.Valid == 0 // all contract bits were masked out

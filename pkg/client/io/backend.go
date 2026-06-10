@@ -184,22 +184,12 @@ type FileSystemBackend interface {
 	// resolve time, not at create time. Returns the new link's attrs like
 	// Mkdir (nil with fuse.OK when the server's trailing stat failed).
 	Symlink(ctx context.Context, target, linkPath string) (*Attr, fuse.Status)
-	// Truncate changes a file's length.
-	Truncate(ctx context.Context, path string, size uint64) fuse.Status
-	// Chmod changes file permissions.
-	Chmod(ctx context.Context, path string, mode uint32) fuse.Status
-	// Chown changes ownership.
-	Chown(ctx context.Context, path string, uid, gid uint32) fuse.Status
-	// Utimens sets atime and/or mtime. A nil pointer leaves that timestamp
-	// unchanged (UTIME_OMIT semantics).
-	Utimens(ctx context.Context, path string, atime, mtime *time.Time) fuse.Status
 	// SetAttr applies the fields named by in.Valid in one RPC and returns the
 	// resulting attrs (no trailing Stat needed). The server applies
 	// size→mode→owner→times and stops at the first failure, so a non-OK
 	// status may mean earlier fields were already applied. Mutating: retried
-	// with a stable request_id. Replaces the Truncate/Chmod/Chown/Utimens
-	// fan-out for FUSE SETATTR; the per-field methods stay until Task 18
-	// removes their wire RPCs.
+	// with a stable request_id. Replaced the removed per-field Truncate/
+	// Chmod/Chown/Utimens fan-out for FUSE SETATTR.
 	SetAttr(ctx context.Context, path string, in SetAttrIn) (*Attr, fuse.Status)
 
 	// Close releases resources held by the backend. For the gRPC backend

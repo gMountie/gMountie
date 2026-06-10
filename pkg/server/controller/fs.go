@@ -20,7 +20,6 @@ import (
 type RpcServerImpl struct {
 	fsService service.VolumeService
 	sessions  service.SessionManager
-	compound  *service.CompoundDispatcher
 	bus       serverio.EventBus
 	metrics   *metrics.Metrics
 	proto.UnimplementedRpcFsServer
@@ -29,19 +28,15 @@ type RpcServerImpl struct {
 // Verify that RpcServerImpl implements proto.RpcFsServer
 var _ proto.RpcFsServer = (*RpcServerImpl)(nil)
 
-// NewGrpcServer creates a new gRPC server. The CompoundDispatcher is built
-// here so it can reference the RpcServerImpl as its FsHandlers — avoids
-// exposing a post-construction setter just for the back-reference.
+// NewGrpcServer creates a new gRPC server.
 // m may be nil; subscribe metrics are no-ops when unset.
-func NewGrpcServer(fsService service.VolumeService, sessions service.SessionManager, compoundMaxParallel int, bus serverio.EventBus, m *metrics.Metrics) *RpcServerImpl {
-	srv := &RpcServerImpl{
+func NewGrpcServer(fsService service.VolumeService, sessions service.SessionManager, bus serverio.EventBus, m *metrics.Metrics) *RpcServerImpl {
+	return &RpcServerImpl{
 		fsService: fsService,
 		sessions:  sessions,
 		bus:       bus,
 		metrics:   m,
 	}
-	srv.compound = service.NewCompoundDispatcher(srv, compoundMaxParallel)
-	return srv
 }
 
 // Register registers the gRPC server
@@ -166,29 +161,6 @@ func (r *RpcServerImpl) Symlink(ctx context.Context, request *proto.SymlinkReque
 	})
 }
 
-func (r *RpcServerImpl) OpenDir(ctx context.Context, request *proto.OpenDirRequest) (*proto.OpenDirReply, error) {
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
-	if err != nil {
-		return nil, err
-	}
-	dirs, s := fs.OpenDir(request.Path, createContext(ctx, request.Caller))
-	// convert to proto.DirEntry
-	entries := make([]*proto.DirEntry, len(dirs))
-	for i, dir := range dirs {
-		entries[i] = &proto.DirEntry{
-			Mode: dir.Mode,
-			Name: dir.Name,
-			Ino:  dir.Ino,
-			Off:  dir.Off,
-		}
-	}
-	reply := &proto.OpenDirReply{
-		Entries: entries,
-		Status:  int32(s),
-	}
-	return reply, nil
-}
-
 // readDirBatchSize bounds a single ReadDirBatch message. 512 entries keeps a
 // worst-case batch (long names + full attrs) comfortably under the default
 // 4 MiB gRPC message limit while large directories still need few messages.
@@ -196,9 +168,9 @@ const readDirBatchSize = 512
 
 // ReadDir streams a directory listing in batches, optionally with per-entry
 // attributes (READDIRPLUS). Read-only — no session/request_id, mirroring
-// OpenDir/GetAttr. The fuse status travels in-band: on a filesystem failure
-// the stream carries ONE terminal batch with the status and the RPC itself
-// succeeds; only bind errors surface as gRPC errors (matching OpenDir).
+// GetAttr. The fuse status travels in-band: on a filesystem failure the
+// stream carries ONE terminal batch with the status and the RPC itself
+// succeeds; only bind errors surface as gRPC errors (matching GetAttr).
 func (r *RpcServerImpl) ReadDir(req *proto.ReadDirRequest, stream proto.RpcFs_ReadDirServer) error {
 	fs, id, err := r.fsService.BindIdentity(stream.Context(), req.Volume, req.Caller)
 	if err != nil {
@@ -300,57 +272,6 @@ func (r *RpcServerImpl) Access(ctx context.Context, request *proto.AccessRequest
 	return &proto.AccessReply{Status: int32(status)}, nil
 }
 
-func (r *RpcServerImpl) Truncate(ctx context.Context, request *proto.TruncateRequest) (*proto.TruncateReply, error) {
-	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
-	if err != nil {
-		return nil, err
-	}
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
-	if err != nil {
-		return nil, err
-	}
-	return withIdempotency(sess, request.RequestId, func() (*proto.TruncateReply, error) {
-		s := r.mutateEmit(ctx, fs, request.Volume, request.Path, request.Caller, func() fuse.Status {
-			return fs.Truncate(request.Path, request.Size, createContext(ctx, request.Caller))
-		})
-		return &proto.TruncateReply{Status: int32(s)}, nil
-	})
-}
-
-func (r *RpcServerImpl) Chmod(ctx context.Context, request *proto.ChmodRequest) (*proto.ChmodReply, error) {
-	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
-	if err != nil {
-		return nil, err
-	}
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
-	if err != nil {
-		return nil, err
-	}
-	return withIdempotency(sess, request.RequestId, func() (*proto.ChmodReply, error) {
-		s := r.mutateEmit(ctx, fs, request.Volume, request.Path, request.Caller, func() fuse.Status {
-			return fs.Chmod(request.Path, request.Mode, createContext(ctx, request.Caller))
-		})
-		return &proto.ChmodReply{Status: int32(s)}, nil
-	})
-}
-
-func (r *RpcServerImpl) Chown(ctx context.Context, request *proto.ChownRequest) (*proto.ChownReply, error) {
-	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
-	if err != nil {
-		return nil, err
-	}
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
-	if err != nil {
-		return nil, err
-	}
-	return withIdempotency(sess, request.RequestId, func() (*proto.ChownReply, error) {
-		s := r.mutateEmit(ctx, fs, request.Volume, request.Path, request.Caller, func() fuse.Status {
-			return fs.Chown(request.Path, request.Uid, request.Gid, createContext(ctx, request.Caller))
-		})
-		return &proto.ChownReply{Status: int32(s)}, nil
-	})
-}
-
 // fileTimeToTime maps a wire FileTime to a Go time pointer. A nil input yields
 // nil (UTIME_OMIT — leave that timestamp unchanged).
 func fileTimeToTime(ft *proto.FileTime) *time.Time {
@@ -361,32 +282,13 @@ func fileTimeToTime(ft *proto.FileTime) *time.Time {
 	return &t
 }
 
-func (r *RpcServerImpl) Utimens(ctx context.Context, request *proto.UtimensRequest) (*proto.UtimensReply, error) {
-	sess, err := resolveSession(ctx, r.sessions, request.SessionId)
-	if err != nil {
-		return nil, err
-	}
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
-	if err != nil {
-		return nil, err
-	}
-	return withIdempotency(sess, request.RequestId, func() (*proto.UtimensReply, error) {
-		atime := fileTimeToTime(request.Atime)
-		mtime := fileTimeToTime(request.Mtime)
-		s := r.mutateEmit(ctx, fs, request.Volume, request.Path, request.Caller, func() fuse.Status {
-			return fs.Utimens(request.Path, atime, mtime, createContext(ctx, request.Caller))
-		})
-		return &proto.UtimensReply{Status: int32(s)}, nil
-	})
-}
-
 // SetAttr applies any combination of settable attributes in ONE RPC,
-// replacing the per-field Truncate/Chmod/Chown/Utimens round-trips (those
-// handlers stay until the client migrates). request.Valid mirrors FUSE
+// replacing the removed per-field Truncate/Chmod/Chown/Utimens
+// round-trips. request.Valid mirrors FUSE
 // FATTR_* — the wire contract pins the exact values go-fuse exports
 // (1=MODE 2=UID 4=GID 8=SIZE 16=ATIME 32=MTIME), so the fuse constants are
 // used directly. Fields apply size→mode→owner→times; the first non-OK status
-// aborts the rest and travels in-band in Status like the per-field handlers.
+// aborts the rest and travels in-band in Status.
 // On success the reply carries the final attrs (populated when the trailing
 // stat succeeds, nil otherwise; Status stays OK either way), so the client
 // needs no trailing GetAttr — and that same stat seeds the mutation event.
@@ -472,7 +374,7 @@ func applySetAttr(fs pathfs.FileSystem, request *proto.SetAttrRequest, fctx *fus
 	}
 	if request.Valid&(fuse.FATTR_ATIME|fuse.FATTR_MTIME) != 0 {
 		// Only timestamps whose valid bit is set are touched; the rest pass
-		// as nil (UTIME_OMIT), matching the Utimens handler's nil contract.
+		// as nil (UTIME_OMIT), matching fileTimeToTime's nil contract.
 		var atime, mtime *time.Time
 		if request.Valid&fuse.FATTR_ATIME != 0 {
 			atime = fileTimeToTime(request.Atime)
@@ -560,16 +462,6 @@ func (r *RpcServerImpl) ListXAttr(ctx context.Context, request *proto.ListXAttrR
 	}
 	attrs, st := fs.ListXAttr(request.Path, createContext(ctx, request.Caller))
 	return &proto.ListXAttrReply{Attributes: attrs, Status: int32(st)}, nil
-}
-
-// Compound runs a batched read-only metadata request via the
-// CompoundDispatcher. Per-op errors are surfaced inside the reply slot — the
-// outer RPC only returns a Go error if the dispatcher itself panics, which
-// it doesn't. The handler is intentionally thin: all logic lives in the
-// dispatcher.
-func (r *RpcServerImpl) Compound(ctx context.Context, request *proto.CompoundRequest) (*proto.CompoundBatch, error) {
-	replies := r.compound.Dispatch(ctx, request.GetOps())
-	return &proto.CompoundBatch{Replies: replies}, nil
 }
 
 func (r *RpcServerImpl) GetAttrIfChanged(ctx context.Context, request *proto.GetAttrIfChangedRequest) (*proto.GetAttrIfChangedReply, error) {

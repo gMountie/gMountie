@@ -529,69 +529,6 @@ func (s *CachedBackendTestSuite) TestRenameInvalidatesNewParentAttr() {
 	s.Assert().False(newParentHit, "new parent attr must be invalidated on Rename")
 }
 
-func (s *CachedBackendTestSuite) TestTruncateInvalidatesAllChunks() {
-	s.b.data.put("/f", 0, make([]byte, 1024))
-	s.b.data.put("/f", 1, make([]byte, 1024))
-	s.b.attr.putPositive("/f", &io.Attr{Size: 2048})
-	s.inner.EXPECT().Truncate(mock.Anything, "/f", uint64(100)).Return(fuse.OK).Once()
-	st := s.b.Truncate(context.Background(), "/f", 100)
-	s.Require().Equal(fuse.OK, st)
-	s.Assert().Nil(s.b.data.get("/f", 0))
-	s.Assert().Nil(s.b.data.get("/f", 1))
-	_, hit, _ := s.b.attr.get("/f")
-	s.Assert().False(hit)
-}
-
-func (s *CachedBackendTestSuite) TestChmodInvalidatesAttrOnly() {
-	s.b.attr.putPositive("/f", &io.Attr{Mode: 0o644})
-	s.b.data.put("/f", 0, []byte("DATA"))
-	s.inner.EXPECT().Chmod(mock.Anything, "/f", uint32(0o600)).Return(fuse.OK).Once()
-	st := s.b.Chmod(context.Background(), "/f", 0o600)
-	s.Require().Equal(fuse.OK, st)
-	_, hit, _ := s.b.attr.get("/f")
-	s.Assert().False(hit)
-	s.Assert().NotNil(s.b.data.get("/f", 0)) // data untouched
-}
-
-func (s *CachedBackendTestSuite) TestChownInvalidatesAttrOnly() {
-	s.b.attr.putPositive("/f", &io.Attr{Uid: 0, Gid: 0})
-	s.b.data.put("/f", 0, []byte("DATA"))
-	s.inner.EXPECT().Chown(mock.Anything, "/f", uint32(1000), uint32(1000)).
-		Return(fuse.OK).Once()
-	st := s.b.Chown(context.Background(), "/f", 1000, 1000)
-	s.Require().Equal(fuse.OK, st)
-	_, hit, _ := s.b.attr.get("/f")
-	s.Assert().False(hit)
-	s.Assert().NotNil(s.b.data.get("/f", 0))
-}
-
-func (s *CachedBackendTestSuite) TestUtimensInvalidatesAttrOnly() {
-	mtime := time.Unix(1577836800, 0)
-	s.b.attr.putPositive("/f", &io.Attr{Mtime: 1})
-	s.b.data.put("/f", 0, []byte("DATA"))
-	s.inner.EXPECT().Utimens(mock.Anything, "/f", (*time.Time)(nil), &mtime).
-		Return(fuse.OK).Once()
-
-	st := s.b.Utimens(context.Background(), "/f", nil, &mtime)
-	s.Require().Equal(fuse.OK, st)
-
-	_, hit, _ := s.b.attr.get("/f")
-	s.Assert().False(hit)                    // attr invalidated
-	s.Assert().NotNil(s.b.data.get("/f", 0)) // data untouched
-}
-
-func (s *CachedBackendTestSuite) TestUtimensFailureDoesNotInvalidate() {
-	s.b.attr.putPositive("/f", &io.Attr{Mtime: 1})
-	s.inner.EXPECT().Utimens(mock.Anything, "/f", mock.Anything, mock.Anything).
-		Return(fuse.EPERM).Once()
-
-	st := s.b.Utimens(context.Background(), "/f", nil, nil)
-	s.Require().Equal(fuse.EPERM, st)
-
-	_, hit, _ := s.b.attr.get("/f")
-	s.Assert().True(hit) // not invalidated on failure
-}
-
 // TestSetAttrWithSizeInvalidatesDataAndPrimesAttr: FATTR_SIZE means truncate
 // — every cached chunk's relationship to the new length is suspect (same
 // conservatism as Truncate), and the attr cache is re-primed from the
@@ -739,10 +676,11 @@ func (s *CachedBackendTestSuite) TestLockOpsPassthroughNoCacheMutations() {
 
 func (s *CachedBackendTestSuite) TestMutationFailureDoesNotInvalidate() {
 	// If the inner backend rejects the mutation we must NOT invalidate
-	// the cache — invalidation is conditional on inner success.
+	// the cache — invalidation is conditional on inner success. (SetAttr is
+	// the deliberate exception: see TestSetAttrFailureStillInvalidates.)
 	s.b.attr.putPositive("/f", &io.Attr{Ino: 1})
-	s.inner.EXPECT().Chmod(mock.Anything, "/f", uint32(0o600)).Return(fuse.EACCES).Once()
-	st := s.b.Chmod(context.Background(), "/f", 0o600)
+	s.inner.EXPECT().Unlink(mock.Anything, "/f").Return(fuse.EACCES).Once()
+	st := s.b.Unlink(context.Background(), "/f")
 	s.Require().Equal(fuse.EACCES, st)
 	// Cache still has the old attr.
 	_, hit, pos := s.b.attr.get("/f")

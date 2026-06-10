@@ -21,13 +21,8 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	RpcFs_GetAttr_FullMethodName          = "/gmountie.RpcFs/GetAttr"
 	RpcFs_StatFs_FullMethodName           = "/gmountie.RpcFs/StatFs"
-	RpcFs_OpenDir_FullMethodName          = "/gmountie.RpcFs/OpenDir"
 	RpcFs_Unlink_FullMethodName           = "/gmountie.RpcFs/Unlink"
 	RpcFs_Access_FullMethodName           = "/gmountie.RpcFs/Access"
-	RpcFs_Truncate_FullMethodName         = "/gmountie.RpcFs/Truncate"
-	RpcFs_Chown_FullMethodName            = "/gmountie.RpcFs/Chown"
-	RpcFs_Chmod_FullMethodName            = "/gmountie.RpcFs/Chmod"
-	RpcFs_Utimens_FullMethodName          = "/gmountie.RpcFs/Utimens"
 	RpcFs_Mkdir_FullMethodName            = "/gmountie.RpcFs/Mkdir"
 	RpcFs_Rmdir_FullMethodName            = "/gmountie.RpcFs/Rmdir"
 	RpcFs_Rename_FullMethodName           = "/gmountie.RpcFs/Rename"
@@ -37,7 +32,6 @@ const (
 	RpcFs_SetXAttr_FullMethodName         = "/gmountie.RpcFs/SetXAttr"
 	RpcFs_RemoveXAttr_FullMethodName      = "/gmountie.RpcFs/RemoveXAttr"
 	RpcFs_ListXAttr_FullMethodName        = "/gmountie.RpcFs/ListXAttr"
-	RpcFs_Compound_FullMethodName         = "/gmountie.RpcFs/Compound"
 	RpcFs_GetAttrIfChanged_FullMethodName = "/gmountie.RpcFs/GetAttrIfChanged"
 	RpcFs_Subscribe_FullMethodName        = "/gmountie.RpcFs/Subscribe"
 	RpcFs_SetAttr_FullMethodName          = "/gmountie.RpcFs/SetAttr"
@@ -47,16 +41,16 @@ const (
 // RpcFsClient is the client API for RpcFs service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Protocol v-next BREAKING CHANGE: the OpenDir, Truncate, Chmod, Chown,
+// Utimens and Compound RPCs (and their messages) were removed — directory
+// listing goes through the streaming ReadDir, attribute changes through the
+// single-RPC SetAttr. Clients and servers must upgrade together.
 type RpcFsClient interface {
 	GetAttr(ctx context.Context, in *GetAttrRequest, opts ...grpc.CallOption) (*GetAttrReply, error)
 	StatFs(ctx context.Context, in *StatFsRequest, opts ...grpc.CallOption) (*StatFsReply, error)
-	OpenDir(ctx context.Context, in *OpenDirRequest, opts ...grpc.CallOption) (*OpenDirReply, error)
 	Unlink(ctx context.Context, in *UnlinkRequest, opts ...grpc.CallOption) (*UnlinkReply, error)
 	Access(ctx context.Context, in *AccessRequest, opts ...grpc.CallOption) (*AccessReply, error)
-	Truncate(ctx context.Context, in *TruncateRequest, opts ...grpc.CallOption) (*TruncateReply, error)
-	Chown(ctx context.Context, in *ChownRequest, opts ...grpc.CallOption) (*ChownReply, error)
-	Chmod(ctx context.Context, in *ChmodRequest, opts ...grpc.CallOption) (*ChmodReply, error)
-	Utimens(ctx context.Context, in *UtimensRequest, opts ...grpc.CallOption) (*UtimensReply, error)
 	Mkdir(ctx context.Context, in *MkdirRequest, opts ...grpc.CallOption) (*MkdirReply, error)
 	Rmdir(ctx context.Context, in *RmdirRequest, opts ...grpc.CallOption) (*RmdirReply, error)
 	Rename(ctx context.Context, in *RenameRequest, opts ...grpc.CallOption) (*RenameReply, error)
@@ -66,7 +60,6 @@ type RpcFsClient interface {
 	SetXAttr(ctx context.Context, in *SetXAttrRequest, opts ...grpc.CallOption) (*SetXAttrReply, error)
 	RemoveXAttr(ctx context.Context, in *RemoveXAttrRequest, opts ...grpc.CallOption) (*RemoveXAttrReply, error)
 	ListXAttr(ctx context.Context, in *ListXAttrRequest, opts ...grpc.CallOption) (*ListXAttrReply, error)
-	Compound(ctx context.Context, in *CompoundRequest, opts ...grpc.CallOption) (*CompoundBatch, error)
 	GetAttrIfChanged(ctx context.Context, in *GetAttrIfChangedRequest, opts ...grpc.CallOption) (*GetAttrIfChangedReply, error)
 	Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SubscribeEvent], error)
 	SetAttr(ctx context.Context, in *SetAttrRequest, opts ...grpc.CallOption) (*SetAttrReply, error)
@@ -101,16 +94,6 @@ func (c *rpcFsClient) StatFs(ctx context.Context, in *StatFsRequest, opts ...grp
 	return out, nil
 }
 
-func (c *rpcFsClient) OpenDir(ctx context.Context, in *OpenDirRequest, opts ...grpc.CallOption) (*OpenDirReply, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(OpenDirReply)
-	err := c.cc.Invoke(ctx, RpcFs_OpenDir_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *rpcFsClient) Unlink(ctx context.Context, in *UnlinkRequest, opts ...grpc.CallOption) (*UnlinkReply, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(UnlinkReply)
@@ -125,46 +108,6 @@ func (c *rpcFsClient) Access(ctx context.Context, in *AccessRequest, opts ...grp
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AccessReply)
 	err := c.cc.Invoke(ctx, RpcFs_Access_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *rpcFsClient) Truncate(ctx context.Context, in *TruncateRequest, opts ...grpc.CallOption) (*TruncateReply, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(TruncateReply)
-	err := c.cc.Invoke(ctx, RpcFs_Truncate_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *rpcFsClient) Chown(ctx context.Context, in *ChownRequest, opts ...grpc.CallOption) (*ChownReply, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ChownReply)
-	err := c.cc.Invoke(ctx, RpcFs_Chown_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *rpcFsClient) Chmod(ctx context.Context, in *ChmodRequest, opts ...grpc.CallOption) (*ChmodReply, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ChmodReply)
-	err := c.cc.Invoke(ctx, RpcFs_Chmod_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *rpcFsClient) Utimens(ctx context.Context, in *UtimensRequest, opts ...grpc.CallOption) (*UtimensReply, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(UtimensReply)
-	err := c.cc.Invoke(ctx, RpcFs_Utimens_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -261,16 +204,6 @@ func (c *rpcFsClient) ListXAttr(ctx context.Context, in *ListXAttrRequest, opts 
 	return out, nil
 }
 
-func (c *rpcFsClient) Compound(ctx context.Context, in *CompoundRequest, opts ...grpc.CallOption) (*CompoundBatch, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(CompoundBatch)
-	err := c.cc.Invoke(ctx, RpcFs_Compound_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *rpcFsClient) GetAttrIfChanged(ctx context.Context, in *GetAttrIfChangedRequest, opts ...grpc.CallOption) (*GetAttrIfChangedReply, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetAttrIfChangedReply)
@@ -332,16 +265,16 @@ type RpcFs_ReadDirClient = grpc.ServerStreamingClient[ReadDirBatch]
 // RpcFsServer is the server API for RpcFs service.
 // All implementations must embed UnimplementedRpcFsServer
 // for forward compatibility.
+//
+// Protocol v-next BREAKING CHANGE: the OpenDir, Truncate, Chmod, Chown,
+// Utimens and Compound RPCs (and their messages) were removed — directory
+// listing goes through the streaming ReadDir, attribute changes through the
+// single-RPC SetAttr. Clients and servers must upgrade together.
 type RpcFsServer interface {
 	GetAttr(context.Context, *GetAttrRequest) (*GetAttrReply, error)
 	StatFs(context.Context, *StatFsRequest) (*StatFsReply, error)
-	OpenDir(context.Context, *OpenDirRequest) (*OpenDirReply, error)
 	Unlink(context.Context, *UnlinkRequest) (*UnlinkReply, error)
 	Access(context.Context, *AccessRequest) (*AccessReply, error)
-	Truncate(context.Context, *TruncateRequest) (*TruncateReply, error)
-	Chown(context.Context, *ChownRequest) (*ChownReply, error)
-	Chmod(context.Context, *ChmodRequest) (*ChmodReply, error)
-	Utimens(context.Context, *UtimensRequest) (*UtimensReply, error)
 	Mkdir(context.Context, *MkdirRequest) (*MkdirReply, error)
 	Rmdir(context.Context, *RmdirRequest) (*RmdirReply, error)
 	Rename(context.Context, *RenameRequest) (*RenameReply, error)
@@ -351,7 +284,6 @@ type RpcFsServer interface {
 	SetXAttr(context.Context, *SetXAttrRequest) (*SetXAttrReply, error)
 	RemoveXAttr(context.Context, *RemoveXAttrRequest) (*RemoveXAttrReply, error)
 	ListXAttr(context.Context, *ListXAttrRequest) (*ListXAttrReply, error)
-	Compound(context.Context, *CompoundRequest) (*CompoundBatch, error)
 	GetAttrIfChanged(context.Context, *GetAttrIfChangedRequest) (*GetAttrIfChangedReply, error)
 	Subscribe(*SubscribeRequest, grpc.ServerStreamingServer[SubscribeEvent]) error
 	SetAttr(context.Context, *SetAttrRequest) (*SetAttrReply, error)
@@ -372,26 +304,11 @@ func (UnimplementedRpcFsServer) GetAttr(context.Context, *GetAttrRequest) (*GetA
 func (UnimplementedRpcFsServer) StatFs(context.Context, *StatFsRequest) (*StatFsReply, error) {
 	return nil, status.Error(codes.Unimplemented, "method StatFs not implemented")
 }
-func (UnimplementedRpcFsServer) OpenDir(context.Context, *OpenDirRequest) (*OpenDirReply, error) {
-	return nil, status.Error(codes.Unimplemented, "method OpenDir not implemented")
-}
 func (UnimplementedRpcFsServer) Unlink(context.Context, *UnlinkRequest) (*UnlinkReply, error) {
 	return nil, status.Error(codes.Unimplemented, "method Unlink not implemented")
 }
 func (UnimplementedRpcFsServer) Access(context.Context, *AccessRequest) (*AccessReply, error) {
 	return nil, status.Error(codes.Unimplemented, "method Access not implemented")
-}
-func (UnimplementedRpcFsServer) Truncate(context.Context, *TruncateRequest) (*TruncateReply, error) {
-	return nil, status.Error(codes.Unimplemented, "method Truncate not implemented")
-}
-func (UnimplementedRpcFsServer) Chown(context.Context, *ChownRequest) (*ChownReply, error) {
-	return nil, status.Error(codes.Unimplemented, "method Chown not implemented")
-}
-func (UnimplementedRpcFsServer) Chmod(context.Context, *ChmodRequest) (*ChmodReply, error) {
-	return nil, status.Error(codes.Unimplemented, "method Chmod not implemented")
-}
-func (UnimplementedRpcFsServer) Utimens(context.Context, *UtimensRequest) (*UtimensReply, error) {
-	return nil, status.Error(codes.Unimplemented, "method Utimens not implemented")
 }
 func (UnimplementedRpcFsServer) Mkdir(context.Context, *MkdirRequest) (*MkdirReply, error) {
 	return nil, status.Error(codes.Unimplemented, "method Mkdir not implemented")
@@ -419,9 +336,6 @@ func (UnimplementedRpcFsServer) RemoveXAttr(context.Context, *RemoveXAttrRequest
 }
 func (UnimplementedRpcFsServer) ListXAttr(context.Context, *ListXAttrRequest) (*ListXAttrReply, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListXAttr not implemented")
-}
-func (UnimplementedRpcFsServer) Compound(context.Context, *CompoundRequest) (*CompoundBatch, error) {
-	return nil, status.Error(codes.Unimplemented, "method Compound not implemented")
 }
 func (UnimplementedRpcFsServer) GetAttrIfChanged(context.Context, *GetAttrIfChangedRequest) (*GetAttrIfChangedReply, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetAttrIfChanged not implemented")
@@ -492,24 +406,6 @@ func _RpcFs_StatFs_Handler(srv interface{}, ctx context.Context, dec func(interf
 	return interceptor(ctx, in, info, handler)
 }
 
-func _RpcFs_OpenDir_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(OpenDirRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(RpcFsServer).OpenDir(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: RpcFs_OpenDir_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RpcFsServer).OpenDir(ctx, req.(*OpenDirRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _RpcFs_Unlink_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(UnlinkRequest)
 	if err := dec(in); err != nil {
@@ -542,78 +438,6 @@ func _RpcFs_Access_Handler(srv interface{}, ctx context.Context, dec func(interf
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RpcFsServer).Access(ctx, req.(*AccessRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _RpcFs_Truncate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TruncateRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(RpcFsServer).Truncate(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: RpcFs_Truncate_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RpcFsServer).Truncate(ctx, req.(*TruncateRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _RpcFs_Chown_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ChownRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(RpcFsServer).Chown(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: RpcFs_Chown_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RpcFsServer).Chown(ctx, req.(*ChownRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _RpcFs_Chmod_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ChmodRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(RpcFsServer).Chmod(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: RpcFs_Chmod_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RpcFsServer).Chmod(ctx, req.(*ChmodRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _RpcFs_Utimens_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(UtimensRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(RpcFsServer).Utimens(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: RpcFs_Utimens_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RpcFsServer).Utimens(ctx, req.(*UtimensRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -780,24 +604,6 @@ func _RpcFs_ListXAttr_Handler(srv interface{}, ctx context.Context, dec func(int
 	return interceptor(ctx, in, info, handler)
 }
 
-func _RpcFs_Compound_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CompoundRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(RpcFsServer).Compound(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: RpcFs_Compound_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RpcFsServer).Compound(ctx, req.(*CompoundRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _RpcFs_GetAttrIfChanged_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetAttrIfChangedRequest)
 	if err := dec(in); err != nil {
@@ -872,32 +678,12 @@ var RpcFs_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _RpcFs_StatFs_Handler,
 		},
 		{
-			MethodName: "OpenDir",
-			Handler:    _RpcFs_OpenDir_Handler,
-		},
-		{
 			MethodName: "Unlink",
 			Handler:    _RpcFs_Unlink_Handler,
 		},
 		{
 			MethodName: "Access",
 			Handler:    _RpcFs_Access_Handler,
-		},
-		{
-			MethodName: "Truncate",
-			Handler:    _RpcFs_Truncate_Handler,
-		},
-		{
-			MethodName: "Chown",
-			Handler:    _RpcFs_Chown_Handler,
-		},
-		{
-			MethodName: "Chmod",
-			Handler:    _RpcFs_Chmod_Handler,
-		},
-		{
-			MethodName: "Utimens",
-			Handler:    _RpcFs_Utimens_Handler,
 		},
 		{
 			MethodName: "Mkdir",
@@ -934,10 +720,6 @@ var RpcFs_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListXAttr",
 			Handler:    _RpcFs_ListXAttr_Handler,
-		},
-		{
-			MethodName: "Compound",
-			Handler:    _RpcFs_Compound_Handler,
 		},
 		{
 			MethodName: "GetAttrIfChanged",

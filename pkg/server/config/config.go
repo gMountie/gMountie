@@ -56,7 +56,6 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		"server.metrics",
 		"server.plain_metrics_addr",
 		"server.frame_size_bytes",
-		"server.compound_max_parallel",
 		"server.keepalive.time",
 		"server.keepalive.timeout",
 		"server.keepalive.min_time",
@@ -88,7 +87,6 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	v.SetDefault("server.port", config.DefaultPort)
 	v.SetDefault("server.metrics", true)
 	v.SetDefault("server.frame_size_bytes", DefaultFrameSizeBytes)
-	v.SetDefault("server.compound_max_parallel", DefaultCompoundMaxParallel)
 	v.SetDefault("server.keepalive.time", DefaultKeepaliveTime)
 	v.SetDefault("server.keepalive.timeout", DefaultKeepaliveTimeout)
 	v.SetDefault("server.keepalive.min_time", DefaultKeepaliveMinTime)
@@ -106,13 +104,12 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	v.SetDefault("server.grpc.limits.max_connection_idle", "5m")
 	v.SetDefault("server.grpc.limits.max_connection_age", 0)
 	result.Server = &ServerConfig{
-		Address:             v.GetString("server.address"),
-		Port:                v.GetUint("server.port"),
-		Metrics:             v.GetBool("server.metrics"),
-		PlainMetricsAddr:    v.GetString("server.plain_metrics_addr"),
-		Pprof:               v.GetBool("server.pprof"),
-		FrameSizeBytes:      v.GetInt("server.frame_size_bytes"),
-		CompoundMaxParallel: v.GetInt("server.compound_max_parallel"),
+		Address:          v.GetString("server.address"),
+		Port:             v.GetUint("server.port"),
+		Metrics:          v.GetBool("server.metrics"),
+		PlainMetricsAddr: v.GetString("server.plain_metrics_addr"),
+		Pprof:            v.GetBool("server.pprof"),
+		FrameSizeBytes:   v.GetInt("server.frame_size_bytes"),
 		Keepalive: ServerKeepaliveConfig{
 			Time:                v.GetDuration("server.keepalive.time"),
 			Timeout:             v.GetDuration("server.keepalive.timeout"),

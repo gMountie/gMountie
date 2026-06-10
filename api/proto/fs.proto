@@ -96,7 +96,7 @@ message SubscribeRequest {
 message SubscribeEvent {
   enum Kind {
     KIND_UNSPECIFIED = 0;
-    MUTATED = 1;             // Write / Truncate / Chmod / Chown / Allocate / Create / Mkdir
+    MUTATED = 1;             // Write / SetAttr / SetXAttr / Allocate / Create / Mkdir
     DELETED = 2;             // Unlink / Rmdir
     RENAMED = 3;             // Rename — new_path populated
     HEARTBEAT = 4;           // periodic, no path
@@ -105,17 +105,6 @@ message SubscribeEvent {
   string path = 2;
   string new_path = 3;       // RENAMED only
   uint64 new_version = 4;    // 0 for DELETED / HEARTBEAT
-}
-
-message OpenDirRequest {
-  string volume = 1;
-  Caller caller = 2;
-  string path = 3;
-}
-
-message OpenDirReply {
-  repeated DirEntry entries = 1;
-  int32 status = 2;
 }
 
 message UnlinkRequest {
@@ -154,66 +143,12 @@ message ReadlinkReply {
   int32 status = 2;
 }
 
-message TruncateRequest {
-  string volume = 1;
-  Caller caller = 2;
-  string path = 3;
-  uint64 size = 4;
-  string request_id = 5;
-  string session_id = 6;
-}
-
-message TruncateReply {
-  int32 status = 1;
-}
-
-message ChownRequest {
-  string volume = 1;
-  Caller caller = 2;
-  string path = 3;
-  uint32 uid = 4;
-  uint32 gid = 5;
-  string request_id = 6;
-  string session_id = 7;
-}
-
-message ChownReply {
-  int32 status = 1;
-}
-
-message ChmodRequest {
-  string volume = 1;
-  Caller caller = 2;
-  string path = 3;
-  uint32 mode = 4;
-  string request_id = 5;
-  string session_id = 6;
-}
-
-message ChmodReply {
-  int32 status = 1;
-}
-
-message UtimensRequest {
-  string   volume     = 1;
-  Caller   caller     = 2;
-  string   path       = 3;
-  FileTime atime      = 4;   // nil => leave atime unchanged (UTIME_OMIT)
-  FileTime mtime      = 5;   // nil => leave mtime unchanged (UTIME_OMIT)
-  string   request_id = 6;
-  string   session_id = 7;
-}
-
-message UtimensReply {
-  int32 status = 1;
-}
-
 // SetAttrRequest applies any combination of settable attributes in ONE RPC.
 // `valid` is a bitmask mirroring FUSE FATTR_*: 1=MODE 2=UID 4=GID 8=SIZE
 // 16=ATIME 32=MTIME. The server applies size→mode→owner→times in order and
-// stops at the first failure. Replaces the per-field Truncate/Chmod/Chown/
+// stops at the first failure. Replaced the per-field Truncate/Chmod/Chown/
 // Utimens RPCs (a FUSE SETATTR used to fan out into up to 4 serial RPCs +
-// a trailing GetAttr); those RPCs are removed once the client migrates.
+// a trailing GetAttr); those RPCs were removed from the protocol.
 message SetAttrRequest {
   string   volume     = 1;
   Caller   caller     = 2;
@@ -363,54 +298,15 @@ message ListXAttrReply {
   int32 status = 2;
 }
 
-// CompoundOp carries a single read-only metadata op inside a Compound batch.
-// The set is intentionally limited to ops with no idempotency / session
-// requirements (no request_id / session_id fields). Per NFSv4 Compound
-// semantics, per-op errors do NOT abort the batch — see CompoundReply.
-message CompoundOp {
-  oneof op {
-    GetAttrRequest get_attr = 1;
-    StatFsRequest stat_fs = 2;
-    OpenDirRequest open_dir = 3;
-    AccessRequest access = 4;
-    GetXAttrRequest get_xattr = 5;
-  }
-}
-
-// CompoundReply is the per-op result inside a CompoundBatch. The variant
-// matches the request op when it produced a typed reply; on a transport-class
-// failure (e.g. unknown volume) the slot carries `status` (an int32 fuse
-// status, errno-equivalent) so the batch shape stays N-in / N-out regardless
-// of which sub-ops failed.
-message CompoundReply {
-  oneof reply {
-    GetAttrReply get_attr = 1;
-    StatFsReply stat_fs = 2;
-    OpenDirReply open_dir = 3;
-    AccessReply access = 4;
-    GetXAttrReply get_xattr = 5;
-    int32 status = 6;
-  }
-}
-
-message CompoundRequest {
-  repeated CompoundOp ops = 1;
-}
-
-message CompoundBatch {
-  repeated CompoundReply replies = 1;
-}
-
+// Protocol v-next BREAKING CHANGE: the OpenDir, Truncate, Chmod, Chown,
+// Utimens and Compound RPCs (and their messages) were removed — directory
+// listing goes through the streaming ReadDir, attribute changes through the
+// single-RPC SetAttr. Clients and servers must upgrade together.
 service RpcFs {
   rpc GetAttr (GetAttrRequest) returns (GetAttrReply);
   rpc StatFs (StatFsRequest) returns (StatFsReply);
-  rpc OpenDir (OpenDirRequest) returns (OpenDirReply);
   rpc Unlink (UnlinkRequest) returns (UnlinkReply);
   rpc Access (AccessRequest) returns (AccessReply);
-  rpc Truncate (TruncateRequest) returns (TruncateReply);
-  rpc Chown (ChownRequest) returns (ChownReply);
-  rpc Chmod (ChmodRequest) returns (ChmodReply);
-  rpc Utimens (UtimensRequest) returns (UtimensReply);
   rpc Mkdir (MkdirRequest) returns (MkdirReply);
   rpc Rmdir (RmdirRequest) returns (RmdirReply);
   rpc Rename (RenameRequest) returns (RenameReply);
@@ -420,7 +316,6 @@ service RpcFs {
   rpc SetXAttr (SetXAttrRequest) returns (SetXAttrReply);
   rpc RemoveXAttr (RemoveXAttrRequest) returns (RemoveXAttrReply);
   rpc ListXAttr (ListXAttrRequest) returns (ListXAttrReply);
-  rpc Compound (CompoundRequest) returns (CompoundBatch);
   rpc GetAttrIfChanged (GetAttrIfChangedRequest) returns (GetAttrIfChangedReply);
   rpc Subscribe (SubscribeRequest) returns (stream SubscribeEvent);
   rpc SetAttr (SetAttrRequest) returns (SetAttrReply);
