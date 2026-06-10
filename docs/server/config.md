@@ -127,23 +127,28 @@ server:
 ### Identity
 
 The `server.identity` block tunes the identity-enforcement machinery shared
-by all volumes. Volumes whose mapping resolves to a *constant* identity
-(`squash`, `static`) route filesystem ops through a small pool of OS threads
-whose credentials were switched once at startup, instead of paying the
-per-operation credential switch. One pool exists per distinct identity
-(uid/gid/groups/capability mode), shared across volumes and principals.
+by all volumes. It currently holds one **experimental, default-off** knob:
+volumes whose mapping resolves to a *constant* identity (`squash`, `static`)
+can route filesystem ops through a small pool of OS threads whose credentials
+were switched once at startup, instead of paying the per-operation credential
+switch. One pool exists per distinct identity (uid/gid/groups/capability
+mode), shared across volumes and principals.
 
-| Option              | Type | Default | Description                                                                                                                                                                               |
-|---------------------|------|---------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| executor\_workers   | int  | 0       | Threads per constant-identity pool. 0 uses the default, `min(4, GOMAXPROCS)`. Threads are pinned for the process lifetime, so this bounds both pool parallelism and permanent thread cost.   |
+| Option              | Type | Default | Description                                                                                                                                                                                                                                                         |
+|---------------------|------|---------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| executor\_workers   | int  | 0       | **Experimental.** 0 (default) disables the executor: every op switches credentials in place. A positive value (suggested: 4) enables it with that many threads per constant-identity pool, pinned for the process lifetime. Pending perf-series measurement.   |
 
 Example:
 
 ```yaml
 server:
   identity:
-    executor_workers: 8   # more overlap for highly concurrent mounts
+    executor_workers: 4   # opt in to the experimental pre-credentialed executor
 ```
+
+Micro-benchmarks suggest the executor's dispatch overhead may exceed the
+per-op credential switch it replaces; leave it off unless the perf series
+shows per-op switching as a bottleneck for your workload.
 
 ### TLS
 

@@ -6,8 +6,10 @@ import (
 
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/server/io"
 	"go.gmountie.dev/gmountie/pkg/server/principal"
 
+	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -195,13 +197,64 @@ func (s *BindIdentitySuite) TestResolverConstancyByMode() {
 }
 
 // TestExecutorWorkersFromConfig: the knob flows from server.identity config;
-// a nil Server (minimal test configs) means 0 = io-layer default.
+// a nil Server (minimal test configs) means 0 = executor disabled (default).
 func (s *BindIdentitySuite) TestExecutorWorkersFromConfig() {
 	svc := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModeSquash, Uid: 1000, Gid: 1000})
-	s.Equal(0, svc.executorWorkers(), "nil Server config delegates to the io default")
+	s.Equal(0, svc.executorWorkers(), "nil Server config yields 0 = executor disabled")
 
 	svc.config.Server = &config.ServerConfig{Identity: config.IdentityConfig{ExecutorWorkers: 8}}
 	s.Equal(8, svc.executorWorkers())
+}
+
+// TestDefaultConfigNeverRoutesExecutor is the mutation check for the opt-in
+// default: with the default config (executor_workers unset = 0), BindIdentity
+// must NEVER construct an executor-routed FS — io.NewConstantResolverBoundFS
+// (and through it executorFor) is never invoked, even for a constant-identity
+// (squash) volume. Deleting the `s.executorWorkers() > 0` gate in BindIdentity
+// makes this fail.
+func (s *BindIdentitySuite) TestDefaultConfigNeverRoutesExecutor() {
+	origEnforceable, origCtor := identityEnforceable, newConstantResolverBoundFS
+	defer func() { identityEnforceable, newConstantResolverBoundFS = origEnforceable, origCtor }()
+	identityEnforceable = func() bool { return true }
+	calls := 0
+	newConstantResolverBoundFS = func(fs pathfs.FileSystem, fn io.IdentityResolveFunc, p string, id io.Identity, workers int) pathfs.FileSystem {
+		calls++
+		return origCtor(fs, fn, p, id, workers)
+	}
+
+	svc := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModeSquash, Uid: 1000, Gid: 1000})
+	ctx := principal.WithPrincipal(context.Background(), "alice")
+	bound, _, err := svc.BindIdentity(ctx, "v", nil)
+	s.Require().NoError(err)
+	s.Require().NotNil(bound)
+	s.Equal(0, calls, "default config (executor_workers=0) must never invoke the executor constructor")
+}
+
+// TestExplicitWorkersRoutesExecutor: executor_workers=4 ⇒ BindIdentity routes
+// a constant-identity volume through the executor constructor with the
+// configured pool size. (That the constructor actually builds and wires the
+// pool is proven at the io level — TestConstantConstructorWiresExecutor; the
+// stub below avoids the process-wide registry, whose real worker startup
+// needs root.)
+func (s *BindIdentitySuite) TestExplicitWorkersRoutesExecutor() {
+	origEnforceable, origCtor := identityEnforceable, newConstantResolverBoundFS
+	defer func() { identityEnforceable, newConstantResolverBoundFS = origEnforceable, origCtor }()
+	identityEnforceable = func() bool { return true }
+	calls, gotWorkers := 0, 0
+	newConstantResolverBoundFS = func(fs pathfs.FileSystem, fn io.IdentityResolveFunc, p string, id io.Identity, workers int) pathfs.FileSystem {
+		calls++
+		gotWorkers = workers
+		return io.NewResolverBoundFS(fs, fn, p)
+	}
+
+	svc := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModeSquash, Uid: 1000, Gid: 1000})
+	svc.config.Server = &config.ServerConfig{Identity: config.IdentityConfig{ExecutorWorkers: 4}}
+	ctx := principal.WithPrincipal(context.Background(), "alice")
+	bound, _, err := svc.BindIdentity(ctx, "v", nil)
+	s.Require().NoError(err)
+	s.Require().NotNil(bound)
+	s.Equal(1, calls, "executor_workers=4 must route construction through the executor constructor")
+	s.Equal(4, gotWorkers, "the configured pool size must pass through")
 }
 
 func (s *BindIdentitySuite) TestBindIdentityStaticCapsCarriedThrough() {

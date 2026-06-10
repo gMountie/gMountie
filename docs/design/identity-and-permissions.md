@@ -74,6 +74,28 @@ Capability levels live on the resolved `Identity.Caps`:
 Both cap paths require the **server to run as root**. Non-root servers
 silently ignore caps and run every principal unprivileged.
 
+### Executor mode (experimental)
+
+For volumes whose mapping resolves to a *constant* identity (`squash`,
+`static`), the per-op switch above is in principle redundant: the
+credentials never change, so a pool of OS threads switched **once** at
+startup could run every op with zero per-op credential syscalls
+(`pkg/server/io/identity_executor.go`, registry in
+`executor_registry.go`; one pool per distinct identity tuple, shared
+across volumes and principals).
+
+It ships **opt-in and off by default**
+(`server.identity.executor_workers: 0`; positive = enabled, suggested
+4) because the honest numbers don't yet justify it: on a dev box with
+stubbed credential syscalls, channel dispatch to a worker measured
+~11 µs/op while the full per-op switch it replaces measured ~8 µs/op —
+the executor may be a net regression. Those are micro-benchmarks of
+the wrong thing (stubbed syscalls, no FUSE, no contention), so the
+real verdict is deferred to the VM/Bencher release perf series. The
+flip-trigger for making it the constant-identity default is Bencher
+showing per-op credential switching as a measurable cost in the
+end-to-end series — until then, every mode pays the per-op switch.
+
 ## 4. Volume confinement
 
 `pkg/server/io/confined.go` replaces the unconfined go-fuse loopback.

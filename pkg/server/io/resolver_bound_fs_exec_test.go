@@ -1,6 +1,8 @@
 package io
 
 import (
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -9,6 +11,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/suite"
+	"golang.org/x/sys/unix"
 )
 
 // ResolverBoundFSExecSuite proves the executor fast path of resolverBoundFS:
@@ -219,6 +222,92 @@ func (s *ResolverBoundFSExecSuite) TestConstantConstructorWiresExecutor() {
 	r2 := NewConstantResolverBoundFS(base, s.countingResolve(id), "bob", id, 1).(*resolverBoundFS)
 	s.Require().NotNil(r1.exec)
 	s.Same(r1.exec, r2.exec, "same identity tuple must share one process-wide executor")
+}
+
+// TestConstructorZeroWorkersDisablesExecutor: the io-level half of the
+// default-off guarantee — even if a caller reaches the constant constructor
+// with workers=0, the registry's build seam never fires and the wrapper comes
+// back with a nil exec (per-op path), so no pinned threads are ever started.
+// (The service-level half — BindIdentity not constructing an executor-routed
+// FS at all under the default config — lives in volume_bind_test.go.)
+func (s *ResolverBoundFSExecSuite) TestConstructorZeroWorkersDisablesExecutor() {
+	origBuild := executors.build
+	defer func() { executors.build = origBuild }()
+	invoked := false
+	executors.build = func(id Identity, workers int) (*identityExecutor, error) {
+		invoked = true
+		return origBuild(id, workers)
+	}
+
+	id := Identity{Uid: 606060, Gid: 606060, Gids: []uint32{606060}}
+	base := pathfs.NewLoopbackFileSystem(s.T().TempDir())
+	r := NewConstantResolverBoundFS(base, s.countingResolve(id), "zero", id, 0).(*resolverBoundFS)
+	s.False(invoked, "workers=0 must not invoke the registry build seam")
+	s.Nil(r.exec, "workers=0 must yield a nil executor (per-op fallback)")
+}
+
+// TestExecPathReadDirPlusForwardsToPlusser: with an executor, ReadDirPlus
+// routes through exec.do, calls zero changeIdentity seams, and — when the
+// inner FS implements ReadDirPlusser — forwards to it and returns its entries
+// with non-nil attrs.
+func (s *ResolverBoundFSExecSuite) TestExecPathReadDirPlusForwardsToPlusser() {
+	id := Identity{Uid: 1000, Gid: 1000, Gids: []uint32{1000}}
+	dir := s.T().TempDir()
+	// ConfinedLoopbackFileSystem implements ReadDirPlusser.
+	inner, err := NewConfinedLoopbackFileSystem(dir)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = unix.Close(inner.rootFd) })
+
+	_, isPlusser := pathfs.FileSystem(inner).(ReadDirPlusser)
+	s.Require().True(isPlusser, "fixture must implement ReadDirPlus")
+
+	e, execErr := newIdentityExecutor(id, 2)
+	s.Require().NoError(execErr)
+	s.T().Cleanup(e.shutdown)
+	r := &resolverBoundFS{FileSystem: inner, resolve: s.countingResolve(id), principal: "alice", exec: e, execID: id}
+	s.resetCounters()
+
+	// Create one entry via the confined FS so ReadDirPlus returns something
+	// observable. Use the real inner FS directly (no credential switch needed
+	// for the setup itself).
+	s.Require().True(inner.Mkdir("hello", 0o755, nil).Ok())
+	s.resetCounters()
+
+	entries, st := r.ReadDirPlus("", nil)
+	s.Require().True(st.Ok())
+	s.Require().Len(entries, 1)
+	s.Equal("hello", entries[0].Entry.Name)
+	s.Require().NotNil(entries[0].Attr, "inner ReadDirPlusser must supply attrs")
+	s.assertNoPerOpMachinery()
+}
+
+// TestExecPathReadDirPlusFallbackWhenInnerLacksCapability: with an executor,
+// ReadDirPlus routes through exec.do for an inner FS that does NOT implement
+// ReadDirPlusser — falls back to OpenDir with nil attrs, zero per-op
+// credential machinery.
+func (s *ResolverBoundFSExecSuite) TestExecPathReadDirPlusFallbackWhenInnerLacksCapability() {
+	id := Identity{Uid: 1000, Gid: 1000, Gids: []uint32{1000}}
+	dir := s.T().TempDir()
+	// pathfs.NewLoopbackFileSystem does NOT implement ReadDirPlusser.
+	inner := pathfs.NewLoopbackFileSystem(dir)
+	_, isPlusser := inner.(ReadDirPlusser)
+	s.Require().False(isPlusser, "fixture must NOT implement ReadDirPlus")
+
+	e, err := newIdentityExecutor(id, 2)
+	s.Require().NoError(err)
+	s.T().Cleanup(e.shutdown)
+	r := &resolverBoundFS{FileSystem: inner, resolve: s.countingResolve(id), principal: "alice", exec: e, execID: id}
+
+	// Create one entry so the fallback OpenDir returns it.
+	s.Require().NoError(os.WriteFile(filepath.Join(dir, "item.txt"), []byte("x"), 0o644))
+	s.resetCounters()
+
+	entries, st := r.ReadDirPlus("", nil)
+	s.Require().True(st.Ok())
+	s.Require().Len(entries, 1)
+	s.Equal("item.txt", entries[0].Entry.Name)
+	s.Nil(entries[0].Attr, "fallback must not invent attributes")
+	s.assertNoPerOpMachinery()
 }
 
 // recordingFS counts inner-FS invocations and records the last Chown, so
