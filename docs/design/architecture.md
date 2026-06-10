@@ -171,7 +171,7 @@ The client treats the keepalive stream as its disconnect detector. If
   Read/Write/Release/etc. look up the fd via `(session_id, fd_number)`.
   `Release` removes the entry. Session reap releases every remaining
   entry.
-- **An idempotency cache.** A 256-entry LRU keyed by `request_id` (UUID
+- **An idempotency cache.** A per-session LRU (default 4096 entries, `server.session.idempotency_cache_size`) keyed by `request_id` (UUID
   v4) per session. Used by mutating RPCs — see §6.
 - **No file content.** All bytes are read from / written to the
   loopback filesystem; the server holds no file buffers between calls.
@@ -238,7 +238,7 @@ mutations stop immediately because their state is gone.
 Mutating RPCs (`Open`, `Create`, `Write`, `WriteAndFlush`,
 `CopyFileRange`, `Mkdir`, `Rmdir`, `Rename`, `Symlink`, `Unlink`,
 `SetAttr`, `SetXAttr`, `RemoveXAttr`) carry a `request_id`. The
-server's per-session 256-entry LRU caches the successful reply keyed by
+server's per-session LRU (default 4096 entries) caches the successful reply keyed by
 that id. If the same id arrives again, the server returns the cached
 reply without re-executing the operation. Concurrent duplicates collapse
 via singleflight so the underlying filesystem is touched at most once

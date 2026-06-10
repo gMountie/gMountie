@@ -961,9 +961,9 @@ func (x *FlushReply) GetStatus() int32 {
 // WriteAndFlush fuses the deferred coalesced write and the flush into one RPC
 // at FUSE FLUSH time (the errno reaches the app's close()). data may be empty
 // (a pure flush). Unary: only used for buffers <= WriteCoalesceBytes.
-// request_id makes the write half idempotent: the client stamps it once per
-// logical flush so retries dedup server-side. Empty = pure flush, no dedup
-// needed.
+// request_id makes the write half idempotent: the client stamps one id per
+// logical flush (pure flushes included) and reuses it across retries so the
+// server dedups the replay. An empty id bypasses dedup server-side.
 type WriteAndFlushRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Volume        string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
