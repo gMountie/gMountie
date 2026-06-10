@@ -637,15 +637,15 @@ func (b *cachedBackend) Rename(ctx context.Context, oldPath, newPath string) fus
 // conservatively rather than assuming nothing changed.
 func (b *cachedBackend) SetAttr(ctx context.Context, p string, in io.SetAttrIn) (*io.Attr, fuse.Status) {
 	a, st := b.inner.SetAttr(ctx, p, in)
-	if st != fuse.OK {
-		b.attr.invalidate(p)
-		if in.Valid&fuse.FATTR_SIZE != 0 {
-			b.data.invalidatePath(p)
-		}
-		return nil, st
-	}
+	// A requested size change makes every cached chunk suspect on success
+	// AND on failure: size applies first server-side, so even a failed call
+	// may already have truncated the file.
 	if in.Valid&fuse.FATTR_SIZE != 0 {
 		b.data.invalidatePath(p)
+	}
+	if st != fuse.OK {
+		b.attr.invalidate(p)
+		return nil, st
 	}
 	if a != nil {
 		b.attr.putPositive(p, a)
