@@ -191,64 +191,71 @@ func (s *NodeAdapterTestSuite) TestRootGetattr_DelegatesToStat() {
 
 // --- Setattr ---
 
-func (s *NodeAdapterTestSuite) TestRootSetattr_TruncateAndChmod() {
-	s.backend.EXPECT().Truncate(mock.Anything, "", uint64(512)).Return(fuse.OK)
-	s.backend.EXPECT().Chmod(mock.Anything, "", uint32(0o600)).Return(fuse.OK)
-	s.backend.EXPECT().Stat(mock.Anything, "").Return(
-		&clientio.Attr{Ino: 1, Size: 512, Mode: fuse.S_IFREG | 0o600}, fuse.OK,
-	)
+// TestRootSetattr_SingleRPC_ModeSizeMtime is the core RTT-win pin: a SETATTR
+// touching mode+size+mtime issues exactly ONE backend.SetAttr (the old path
+// fanned out Truncate+Chmod+Utimens+trailing Stat). out.Attr is filled from
+// the reply — no Stat expectation is registered, so any trailing Stat fails
+// the test (absence proof).
+func (s *NodeAdapterTestSuite) TestRootSetattr_SingleRPC_ModeSizeMtime() {
+	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.MatchedBy(func(in clientio.SetAttrIn) bool {
+		return in.Valid == fuse.FATTR_SIZE|fuse.FATTR_MODE|fuse.FATTR_MTIME &&
+			in.Size == 512 && in.Mode == 0o600 &&
+			in.Atime == nil &&
+			in.Mtime != nil && in.Mtime.Unix() == 1577836800
+	})).Return(&clientio.Attr{Ino: 1, Size: 512, Mode: fuse.S_IFREG | 0o600, Mtime: 1577836800}, fuse.OK).Once()
 	in := &fuse.SetAttrIn{}
-	in.Valid = fuse.FATTR_SIZE | fuse.FATTR_MODE
+	in.Valid = fuse.FATTR_SIZE | fuse.FATTR_MODE | fuse.FATTR_MTIME
 	in.Size = 512
 	in.Mode = 0o600
+	in.Mtime = 1577836800
 	out := &fuse.AttrOut{}
 	errno := rootAs[fs.NodeSetattrer](s).Setattr(context.Background(), nil, in, out)
 	s.Require().Equal(syscall.Errno(0), errno)
 	s.Assert().Equal(uint64(512), out.Size)
+	s.Assert().Equal(uint32(fuse.S_IFREG|0o600), out.Mode)
+	s.Assert().Equal(uint64(1577836800), out.Mtime)
 }
 
-func (s *NodeAdapterTestSuite) TestRootSetattr_ChownPartial_StatsForUnset() {
-	// Only GID is set; setattrAt must Stat first to fill UID, then call
-	// Chown with the read UID. Two Stats happen: once for the fill-in,
-	// once for the final out.
-	s.backend.EXPECT().Stat(mock.Anything, "").Return(
-		&clientio.Attr{Ino: 1, Uid: 1000, Gid: 1000, Mode: fuse.S_IFREG | 0o644}, fuse.OK,
-	).Twice()
-	s.backend.EXPECT().Chown(mock.Anything, "", uint32(1000), uint32(2000)).Return(fuse.OK)
+// TestRootSetattr_NowBitResolvesToConcreteTime pins the _NOW contract: the
+// server does NOT interpret FATTR_MTIME_NOW, so the client must resolve
+// "now" before the wire. go-fuse's GetMTime() folds the _NOW bit into
+// time.Now(); the wire SetAttrIn must carry plain FATTR_MTIME with that
+// concrete timestamp and must NOT forward the _NOW bit.
+func (s *NodeAdapterTestSuite) TestRootSetattr_NowBitResolvesToConcreteTime() {
+	before := time.Now().Add(-time.Minute)
+	after := time.Now().Add(time.Minute)
+	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.MatchedBy(func(in clientio.SetAttrIn) bool {
+		return in.Valid == uint32(fuse.FATTR_MTIME) && // _NOW bit stripped
+			in.Mtime != nil && in.Mtime.After(before) && in.Mtime.Before(after)
+	})).Return(&clientio.Attr{Ino: 1}, fuse.OK).Once()
 	in := &fuse.SetAttrIn{}
-	in.Valid = fuse.FATTR_GID
-	in.Owner = fuse.Owner{Gid: 2000}
+	in.Valid = fuse.FATTR_MTIME | fuse.FATTR_MTIME_NOW
+	in.Mtime = 0 // kernel sends no meaningful timestamp with _NOW
 	out := &fuse.AttrOut{}
 	errno := rootAs[fs.NodeSetattrer](s).Setattr(context.Background(), nil, in, out)
 	s.Require().Equal(syscall.Errno(0), errno)
 }
 
-func (s *NodeAdapterTestSuite) TestRootSetattr_MtimeOnly() {
-	// FATTR_MTIME set, FATTR_ATIME unset => Utimens(nil atime, mtime set).
-	s.backend.EXPECT().Utimens(
-		mock.Anything, "",
-		(*time.Time)(nil),
-		mock.MatchedBy(func(t *time.Time) bool { return t != nil && t.Unix() == 1577836800 }),
-	).Return(fuse.OK)
-	s.backend.EXPECT().Stat(mock.Anything, "").Return(
-		&clientio.Attr{Ino: 1, Mtime: 1577836800}, fuse.OK,
-	)
+func (s *NodeAdapterTestSuite) TestRootSetattr_SizeOnly() {
+	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.MatchedBy(func(in clientio.SetAttrIn) bool {
+		return in.Valid == uint32(fuse.FATTR_SIZE) && in.Size == 4096 &&
+			in.Atime == nil && in.Mtime == nil
+	})).Return(&clientio.Attr{Ino: 1, Size: 4096}, fuse.OK).Once()
 	in := &fuse.SetAttrIn{}
-	in.Valid = fuse.FATTR_MTIME
-	in.Mtime = 1577836800
-	in.Mtimensec = 0
+	in.Valid = fuse.FATTR_SIZE
+	in.Size = 4096
 	out := &fuse.AttrOut{}
 	errno := rootAs[fs.NodeSetattrer](s).Setattr(context.Background(), nil, in, out)
 	s.Require().Equal(syscall.Errno(0), errno)
+	s.Assert().Equal(uint64(4096), out.Size)
 }
 
-func (s *NodeAdapterTestSuite) TestRootSetattr_AtimeAndMtime() {
-	s.backend.EXPECT().Utimens(
-		mock.Anything, "",
-		mock.MatchedBy(func(t *time.Time) bool { return t != nil && t.Unix() == 100 }),
-		mock.MatchedBy(func(t *time.Time) bool { return t != nil && t.Unix() == 200 }),
-	).Return(fuse.OK)
-	s.backend.EXPECT().Stat(mock.Anything, "").Return(&clientio.Attr{Ino: 1}, fuse.OK)
+func (s *NodeAdapterTestSuite) TestRootSetattr_TimesOnly() {
+	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.MatchedBy(func(in clientio.SetAttrIn) bool {
+		return in.Valid == fuse.FATTR_ATIME|fuse.FATTR_MTIME &&
+			in.Atime != nil && in.Atime.Unix() == 100 &&
+			in.Mtime != nil && in.Mtime.Unix() == 200
+	})).Return(&clientio.Attr{Ino: 1, Atime: 100, Mtime: 200}, fuse.OK).Once()
 	in := &fuse.SetAttrIn{}
 	in.Valid = fuse.FATTR_ATIME | fuse.FATTR_MTIME
 	in.Atime = 100
@@ -256,21 +263,52 @@ func (s *NodeAdapterTestSuite) TestRootSetattr_AtimeAndMtime() {
 	out := &fuse.AttrOut{}
 	errno := rootAs[fs.NodeSetattrer](s).Setattr(context.Background(), nil, in, out)
 	s.Require().Equal(syscall.Errno(0), errno)
+	s.Assert().Equal(uint64(100), out.Atime)
+	s.Assert().Equal(uint64(200), out.Mtime)
 }
 
-func (s *NodeAdapterTestSuite) TestRootSetattr_NoTimeBitsNoUtimens() {
-	// Only mode set => Utimens must NOT be called (no EXPECT() => mockery fails
-	// the test if it is called).
-	s.backend.EXPECT().Chmod(mock.Anything, "", uint32(0o600)).Return(fuse.OK)
+// TestRootSetattr_GidOnly_ForwardsBitNoStat replaces the old client-side
+// half-fill: with only FATTR_GID set, the client used to Stat first to read
+// the unset uid. The server resolves the unset half now (Task 12), so the
+// client just forwards the GID bit — no Stat expectation is registered.
+func (s *NodeAdapterTestSuite) TestRootSetattr_GidOnly_ForwardsBitNoStat() {
+	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.MatchedBy(func(in clientio.SetAttrIn) bool {
+		return in.Valid == uint32(fuse.FATTR_GID) && in.Gid == 2000
+	})).Return(&clientio.Attr{Ino: 1, Uid: 1000, Gid: 2000}, fuse.OK).Once()
+	in := &fuse.SetAttrIn{}
+	in.Valid = fuse.FATTR_GID
+	in.Owner = fuse.Owner{Gid: 2000}
+	out := &fuse.AttrOut{}
+	errno := rootAs[fs.NodeSetattrer](s).Setattr(context.Background(), nil, in, out)
+	s.Require().Equal(syscall.Errno(0), errno)
+	s.Assert().Equal(uint32(2000), out.Gid)
+}
+
+func (s *NodeAdapterTestSuite) TestRootSetattr_BackendErrorPropagates() {
+	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.Anything).Return(nil, fuse.EPERM).Once()
+	in := &fuse.SetAttrIn{}
+	in.Valid = fuse.FATTR_MODE
+	in.Mode = 0o600
+	out := &fuse.AttrOut{}
+	errno := rootAs[fs.NodeSetattrer](s).Setattr(context.Background(), nil, in, out)
+	s.Assert().Equal(syscall.Errno(fuse.EPERM), errno)
+}
+
+// TestRootSetattr_NilAttrsFallsBackToStat: a server whose post-apply stat
+// failed replies OK with no attrs; the node must Stat rather than hand the
+// kernel a zero fuse.Attr (cache-poisoning concern, mirrors Create).
+func (s *NodeAdapterTestSuite) TestRootSetattr_NilAttrsFallsBackToStat() {
+	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.Anything).Return(nil, fuse.OK).Once()
 	s.backend.EXPECT().Stat(mock.Anything, "").Return(
 		&clientio.Attr{Ino: 1, Mode: fuse.S_IFREG | 0o600}, fuse.OK,
-	)
+	).Once()
 	in := &fuse.SetAttrIn{}
 	in.Valid = fuse.FATTR_MODE
 	in.Mode = 0o600
 	out := &fuse.AttrOut{}
 	errno := rootAs[fs.NodeSetattrer](s).Setattr(context.Background(), nil, in, out)
 	s.Require().Equal(syscall.Errno(0), errno)
+	s.Assert().Equal(uint32(fuse.S_IFREG|0o600), out.Mode)
 }
 
 // --- Mkdir ---

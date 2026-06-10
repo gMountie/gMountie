@@ -69,16 +69,18 @@ func (s *NodeIDRewriteSuite) TestGetattr_OtherUser_MapsToNobody() {
 }
 
 // TestSetattr_OutboundChownRewrite verifies that when the caller sets owner to
-// local uid/gid (500/500), the node adapter calls backend.Chown with the
-// corresponding server ids (1001/1001).
+// local uid/gid (500/500), the node adapter sends the single-RPC SetAttr with
+// the corresponding server ids (1001/1001) — and that the inbound rewrite
+// fires on the attrs returned in the reply (no trailing Stat anymore).
 func (s *NodeIDRewriteSuite) TestSetattr_OutboundChownRewrite() {
-	// Both uid and gid are set — no intermediate Stat needed to fill the unset side.
-	s.backend.EXPECT().Chown(mock.Anything, "", uint32(1001), uint32(1001)).Return(fuse.OK)
-	// Trailing Stat for the returned AttrOut — return server ids so we can also
-	// verify the inbound rewrite fires on the way out.
-	s.backend.EXPECT().Stat(mock.Anything, "").Return(
+	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.MatchedBy(func(in clientio.SetAttrIn) bool {
+		return in.Valid == fuse.FATTR_UID|fuse.FATTR_GID &&
+			in.Uid == 1001 && in.Gid == 1001
+	})).Return(
+		// Reply carries server ids so we can also verify the inbound rewrite
+		// fires on the way out.
 		&clientio.Attr{Ino: 1, Mode: fuse.S_IFREG | 0o644, Uid: 1001, Gid: 1001}, fuse.OK,
-	)
+	).Once()
 
 	in := &fuse.SetAttrIn{}
 	in.Valid = fuse.FATTR_UID | fuse.FATTR_GID
@@ -87,7 +89,7 @@ func (s *NodeIDRewriteSuite) TestSetattr_OutboundChownRewrite() {
 	out := &fuse.AttrOut{}
 	errno := rootAsIDRW[fs.NodeSetattrer](s).Setattr(context.Background(), nil, in, out)
 	s.Require().Equal(syscall.Errno(0), errno)
-	// Inbound rewrite also fires on the trailing Stat, confirming the full path.
+	// Inbound rewrite fires on the reply attrs, confirming the full path.
 	s.Assert().Equal(uint32(500), out.Uid, "returned uid should be local after inbound rewrite")
 	s.Assert().Equal(uint32(500), out.Gid, "returned gid should be local after inbound rewrite")
 }

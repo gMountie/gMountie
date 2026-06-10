@@ -16,7 +16,6 @@ import (
 	"math"
 	"path"
 	"syscall"
-	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -175,64 +174,67 @@ func (n *gMountieNode) Getattr(ctx context.Context, _ fs.FileHandle, out *fuse.A
 
 // --- Setattr ---
 
-// Setattr dispatches on SetAttrIn.Valid flags: size -> Truncate, mode ->
-// Chmod, uid/gid -> Chown, atime/mtime -> Utimens. For Chown with only one of
-// uid/gid set, we Stat first to read the unset side so we don't overwrite it.
-// in.GetATime()/GetMTime() return the resolved concrete time (UTIME_NOW is
-// already resolved to time.Now() by go-fuse); a false ok means the bit was
-// unset (UTIME_OMIT), so that timestamp is passed as nil and left unchanged.
-// rw.Outbound is applied to the local uid/gid before calling Chown so the
-// server receives the server-namespace ids; rw.Inbound is applied by
-// setAttrFromBackend on the final Stat result.
+// Setattr folds the whole kernel SETATTR into ONE backend.SetAttr call
+// (previously a serial Truncate→Chmod→Chown→Utimens fan-out plus a trailing
+// Stat — up to 5 RTTs). The reply carries the final attrs, so no trailing
+// Stat is issued.
+//
+// Bit mapping: MODE/UID/GID/SIZE/ATIME/MTIME pass through 1:1 via go-fuse's
+// Get* helpers. ATIME_NOW/MTIME_NOW are resolved HERE: the server does not
+// interpret the _NOW bits, and GetATime()/GetMTime() already fold them into
+// time.Now() — the wire carries plain FATTR_ATIME/MTIME with the concrete
+// timestamp. A single-half chown forwards just the set bit; the server
+// resolves the unset half (no client-side Stat-to-fill). rw.Outbound maps
+// local→server ids before the wire; rw.Inbound is applied by
+// setAttrFromBackend on the returned attrs. The fs.FileHandle argument is
+// ignored, as before — the wire SetAttr is path-based.
 func (n *gMountieNode) Setattr(ctx context.Context, _ fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
 	p := n.path()
+	var req SetAttrIn
 	if sz, ok := in.GetSize(); ok {
-		if st := n.backend.Truncate(ctx, p, sz); !st.Ok() {
-			return syscall.Errno(st)
-		}
+		req.Valid |= fuse.FATTR_SIZE
+		req.Size = sz
 	}
 	if mode, ok := in.GetMode(); ok {
-		if st := n.backend.Chmod(ctx, p, mode); !st.Ok() {
-			return syscall.Errno(st)
-		}
+		req.Valid |= fuse.FATTR_MODE
+		req.Mode = mode
 	}
 	uid, uidOK := in.GetUID()
 	gid, gidOK := in.GetGID()
 	if uidOK || gidOK {
-		if uidOK != gidOK {
-			a, sst := n.backend.Stat(ctx, p)
-			if !sst.Ok() {
-				return syscall.Errno(sst)
-			}
-			if !uidOK {
-				uid = a.Uid
-			}
-			if !gidOK {
-				gid = a.Gid
-			}
-		}
+		// Outbound rewrites uid and gid independently, so rewriting a half
+		// whose bit is unset is harmless — that half never reaches the wire.
 		uid, gid = n.rewriter.Outbound(uid, gid)
-		if st := n.backend.Chown(ctx, p, uid, gid); !st.Ok() {
-			return syscall.Errno(st)
+		if uidOK {
+			req.Valid |= fuse.FATTR_UID
+			req.Uid = uid
+		}
+		if gidOK {
+			req.Valid |= fuse.FATTR_GID
+			req.Gid = gid
 		}
 	}
-	atime, aok := in.GetATime()
-	mtime, mok := in.GetMTime()
-	if aok || mok {
-		var ap, mp *time.Time
-		if aok {
-			ap = &atime
-		}
-		if mok {
-			mp = &mtime
-		}
-		if st := n.backend.Utimens(ctx, p, ap, mp); !st.Ok() {
-			return syscall.Errno(st)
-		}
+	if atime, ok := in.GetATime(); ok {
+		req.Valid |= fuse.FATTR_ATIME
+		req.Atime = &atime
 	}
-	a, st := n.backend.Stat(ctx, p)
+	if mtime, ok := in.GetMTime(); ok {
+		req.Valid |= fuse.FATTR_MTIME
+		req.Mtime = &mtime
+	}
+	a, st := n.backend.SetAttr(ctx, p, req)
 	if !st.Ok() {
 		return syscall.Errno(st)
+	}
+	// The server omits attrs only when its post-apply stat failed. Fall back
+	// to Stat rather than handing the kernel a zero fuse.Attr — the kernel
+	// would cache the zero (Mode=0, Size=0) for AttrTimeout (same poisoning
+	// concern as Create's fallback).
+	if a == nil {
+		a, st = n.backend.Stat(ctx, p)
+		if !st.Ok() {
+			return syscall.Errno(st)
+		}
 	}
 	setAttrFromBackend(&out.Attr, a, n.rewriter)
 	return 0

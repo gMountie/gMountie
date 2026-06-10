@@ -491,6 +491,67 @@ func (s *CachedBackendTestSuite) TestUtimensFailureDoesNotInvalidate() {
 	s.Assert().True(hit) // not invalidated on failure
 }
 
+// TestSetAttrWithSizeInvalidatesDataAndPrimesAttr: FATTR_SIZE means truncate
+// — every cached chunk's relationship to the new length is suspect (same
+// conservatism as Truncate), and the attr cache is re-primed from the
+// reply's final attrs (no extra Stat RTT to refill).
+func (s *CachedBackendTestSuite) TestSetAttrWithSizeInvalidatesDataAndPrimesAttr() {
+	s.b.data.put("/f", 0, make([]byte, 1024))
+	s.b.data.put("/f", 1, make([]byte, 1024))
+	s.b.attr.putPositive("/f", &io.Attr{Size: 2048, Mode: 0o644})
+	in := io.SetAttrIn{Valid: fuse.FATTR_SIZE | fuse.FATTR_MODE, Size: 100, Mode: 0o600}
+	final := &io.Attr{Ino: 9, Size: 100, Mode: 0o600}
+	s.inner.EXPECT().SetAttr(mock.Anything, "/f", in).Return(final, fuse.OK).Once()
+
+	a, st := s.b.SetAttr(context.Background(), "/f", in)
+	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(final, a)
+	// Data chunks dropped (truncate changes content).
+	s.Assert().Nil(s.b.data.get("/f", 0))
+	s.Assert().Nil(s.b.data.get("/f", 1))
+	// Attr primed from the reply, not invalidated.
+	cached, hit, pos := s.b.attr.get("/f")
+	s.Require().True(hit)
+	s.Require().True(pos)
+	s.Assert().Equal(uint64(100), cached.Size)
+	s.Assert().Equal(uint32(0o600), cached.Mode)
+}
+
+// TestSetAttrWithoutSizeKeepsDataAndPrimesAttr: a chmod/utimes-shaped
+// SetAttr doesn't touch file content — data chunks must survive.
+func (s *CachedBackendTestSuite) TestSetAttrWithoutSizeKeepsDataAndPrimesAttr() {
+	s.b.data.put("/f", 0, []byte("DATA"))
+	s.b.attr.putPositive("/f", &io.Attr{Mode: 0o644})
+	in := io.SetAttrIn{Valid: fuse.FATTR_MODE, Mode: 0o600}
+	s.inner.EXPECT().SetAttr(mock.Anything, "/f", in).
+		Return(&io.Attr{Mode: 0o600}, fuse.OK).Once()
+
+	_, st := s.b.SetAttr(context.Background(), "/f", in)
+	s.Require().Equal(fuse.OK, st)
+	s.Assert().NotNil(s.b.data.get("/f", 0)) // data untouched
+	cached, hit, pos := s.b.attr.get("/f")
+	s.Require().True(hit)
+	s.Require().True(pos)
+	s.Assert().Equal(uint32(0o600), cached.Mode)
+}
+
+// TestSetAttrFailureStillInvalidates: unlike the per-field wrappers, a
+// failed SetAttr may have applied EARLIER fields before stopping
+// (size→mode→owner→times server order), so caches are dropped even on a
+// non-OK status.
+func (s *CachedBackendTestSuite) TestSetAttrFailureStillInvalidates() {
+	s.b.data.put("/f", 0, []byte("DATA"))
+	s.b.attr.putPositive("/f", &io.Attr{Size: 4, Mode: 0o644})
+	in := io.SetAttrIn{Valid: fuse.FATTR_SIZE | fuse.FATTR_MODE, Size: 0, Mode: 0o600}
+	s.inner.EXPECT().SetAttr(mock.Anything, "/f", in).Return(nil, fuse.EPERM).Once()
+
+	_, st := s.b.SetAttr(context.Background(), "/f", in)
+	s.Require().Equal(fuse.EPERM, st)
+	s.Assert().Nil(s.b.data.get("/f", 0)) // SIZE was requested; truncate may have applied
+	_, hit, _ := s.b.attr.get("/f")
+	s.Assert().False(hit)
+}
+
 func (s *CachedBackendTestSuite) TestAllocateInvalidatesDataRangeAndAttr() {
 	// Pre-populate 3 chunks. Allocate covers only chunks 0 and 1.
 	s.b.data.put("/f", 0, make([]byte, 1024))

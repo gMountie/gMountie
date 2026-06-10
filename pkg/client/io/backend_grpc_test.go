@@ -456,6 +456,91 @@ func (s *BackendClientTestSuite) TestChown() {
 	s.Assert().Equal(fuse.OK, st)
 }
 
+// TestSetAttr verifies the full wire mapping of the single-RPC SetAttr:
+// FATTR bits pass through 1:1, value fields land in their proto slots, the
+// omitted *time.Time maps to a nil FileTime (UTIME_OMIT) while the set one
+// carries Sec/Nsec, session_id + request_id are stamped, and the reply's
+// final attrs come back mapped — no follow-up GetAttr.
+func (s *BackendClientTestSuite) TestSetAttr() {
+	mtime := time.Unix(1577836800, 42)
+	s.fsClient.EXPECT().SetAttr(mock.Anything, mock.MatchedBy(func(req *proto.SetAttrRequest) bool {
+		return req.Volume == "testVolume" && req.Path == "/test" &&
+			req.Valid == fuse.FATTR_SIZE|fuse.FATTR_MODE|fuse.FATTR_MTIME &&
+			req.Size == 1024 && req.Mode == 0o600 &&
+			req.Atime == nil && // omitted timestamp ⇒ nil FileTime
+			req.Mtime != nil && req.Mtime.Sec == 1577836800 && req.Mtime.Nsec == 42 &&
+			req.SessionId == "test-session" && req.RequestId != ""
+	}), mock.Anything).Return(&proto.SetAttrReply{
+		Status: int32(fuse.OK),
+		Attributes: &proto.Attr{
+			Ino: 7, Size: 1024, Mode: 0o600, Mtime: 1577836800, Mtimensec: 42,
+			Owner: &proto.Owner{Uid: 1000, Gid: 1000},
+		},
+	}, nil).Once()
+
+	attr, st := s.backend.SetAttr(context.Background(), "/test", SetAttrIn{
+		Valid: fuse.FATTR_SIZE | fuse.FATTR_MODE | fuse.FATTR_MTIME,
+		Size:  1024,
+		Mode:  0o600,
+		Mtime: &mtime,
+	})
+	s.Require().Equal(fuse.OK, st)
+	s.Require().NotNil(attr)
+	s.Assert().Equal(uint64(7), attr.Ino)
+	s.Assert().Equal(uint64(1024), attr.Size)
+	s.Assert().Equal(uint32(1000), attr.Uid)
+}
+
+// TestSetAttr_MasksNonWireValidBits: only the six contract bits may reach
+// the wire. Kernel-only bits (e.g. FATTR_MTIME_NOW, FATTR_FH) passed in
+// Valid are stripped, never forwarded to a server that doesn't apply them.
+func (s *BackendClientTestSuite) TestSetAttr_MasksNonWireValidBits() {
+	mtime := time.Unix(100, 0)
+	s.fsClient.EXPECT().SetAttr(mock.Anything, mock.MatchedBy(func(req *proto.SetAttrRequest) bool {
+		return req.Valid == uint32(fuse.FATTR_MTIME)
+	}), mock.Anything).Return(&proto.SetAttrReply{Status: int32(fuse.OK)}, nil).Once()
+
+	_, st := s.backend.SetAttr(context.Background(), "/test", SetAttrIn{
+		Valid: fuse.FATTR_MTIME | fuse.FATTR_MTIME_NOW | fuse.FATTR_FH,
+		Mtime: &mtime,
+	})
+	s.Assert().Equal(fuse.OK, st)
+}
+
+// TestSetAttr_RetryReusesRequestID — same Phase 1d idempotency property the
+// Write/Mkdir suites pin: the request_id is allocated once outside the
+// retry loop so the server's dedup cache short-circuits the replay.
+func (s *BackendClientTestSuite) TestSetAttr_RetryReusesRequestID() {
+	var firstID string
+	s.fsClient.EXPECT().SetAttr(mock.Anything, mock.MatchedBy(func(req *proto.SetAttrRequest) bool {
+		firstID = req.RequestId
+		return req.RequestId != ""
+	}), mock.Anything).Return(nil, status.Error(codes.Unavailable, "transient")).Once()
+
+	s.fsClient.EXPECT().SetAttr(mock.Anything, mock.MatchedBy(func(req *proto.SetAttrRequest) bool {
+		return req.RequestId == firstID
+	}), mock.Anything).Return(&proto.SetAttrReply{
+		Status:     int32(fuse.OK),
+		Attributes: &proto.Attr{Ino: 1, Owner: &proto.Owner{}},
+	}, nil).Once()
+
+	attr, st := s.backend.SetAttr(context.Background(), "/f", SetAttrIn{Valid: fuse.FATTR_SIZE, Size: 0})
+	s.Assert().Equal(fuse.OK, st)
+	s.Assert().NotNil(attr)
+	s.Assert().NotEmpty(firstID)
+}
+
+// TestSetAttr_InBandErrorReturnsStatus: a non-OK in-band Status travels back
+// as the fuse.Status with nil attrs (the server stopped mid-sequence).
+func (s *BackendClientTestSuite) TestSetAttr_InBandErrorReturnsStatus() {
+	s.fsClient.EXPECT().SetAttr(mock.Anything, mock.Anything, mock.Anything).
+		Return(&proto.SetAttrReply{Status: int32(fuse.EACCES)}, nil).Once()
+
+	attr, st := s.backend.SetAttr(context.Background(), "/f", SetAttrIn{Valid: fuse.FATTR_MODE, Mode: 0o600})
+	s.Assert().Equal(fuse.EACCES, st)
+	s.Assert().Nil(attr)
+}
+
 // TestMkdir_RetryReusesRequestID is the load-bearing Phase 1d assertion
 // for path-level mutating ops: the same request_id must be reused across
 // retries so the server's dedup cache can short-circuit the duplicate.
