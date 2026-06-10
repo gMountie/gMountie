@@ -1398,6 +1398,151 @@ func (s *BackendClientTestSuite) TestReadFillsPrefetchWindow() {
 	}, time.Second, 10*time.Millisecond, "expected at least 4 Read RPCs (1 sync + 3 prefetch)")
 }
 
+// TestRead_PartialPrefixFetchesOnlyTail: a FUSE read whose first half is
+// covered by a warm prefetch chunk and whose second half is not gets the
+// prefix from cache and issues exactly ONE live Read RPC, for exactly the
+// uncovered tail range. The combined buffer is byte-correct.
+func (s *BackendClientTestSuite) TestRead_PartialPrefixFetchesOnlyTail() {
+	const chunkBytes = 1024
+	cfg := grpcclient.PerFileConfig{
+		ReadaheadChunkBytes: chunkBytes,
+		ReadaheadThreshold:  1,
+		ReadaheadWindow:     2,
+	}
+	h := s.newHandle(cfg)
+
+	prefix := make([]byte, chunkBytes)
+	tail := make([]byte, chunkBytes)
+	for i := range prefix {
+		prefix[i] = byte(i % 251)
+		tail[i] = byte((i + 13) % 251)
+	}
+	// Warm the window: arm the slots ahead of cursor 1024 and store the chunk
+	// at 1024. The slot at 2048 stays in flight, so a 2048-byte read at 1024
+	// is exactly half covered.
+	h.readahead.Observe(0, chunkBytes)
+	h.readahead.Store(chunkBytes, prefix)
+
+	var mu sync.Mutex
+	var reqs []*proto.ReadRequest
+	s.fileClient.EXPECT().Read(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, req *proto.ReadRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[proto.ReadFrame], error) {
+			mu.Lock()
+			reqs = append(reqs, req)
+			mu.Unlock()
+			if req.Offset == 2*chunkBytes {
+				return newBackendReadStreamStubOptional(s.T(),
+					&proto.ReadFrame{Data: tail, Status: int32(fuse.OK)},
+					&proto.ReadFrame{Status: int32(fuse.OK)},
+				), nil
+			}
+			// Async window-refill prefetches (offsets >= 3072); content is
+			// irrelevant to this test.
+			return newBackendReadStreamStubOptional(s.T(),
+				&proto.ReadFrame{Data: make([]byte, chunkBytes), Status: int32(fuse.OK)},
+				&proto.ReadFrame{Status: int32(fuse.OK)},
+			), nil
+		}).Maybe()
+
+	dest := make([]byte, 2*chunkBytes)
+	n, st := s.backend.Read(context.Background(), h, chunkBytes, dest)
+	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(2*chunkBytes, n)
+	s.Assert().Equal(prefix, dest[:chunkBytes], "first half must come from the warm chunk")
+	s.Assert().Equal(tail, dest[chunkBytes:], "second half must come from the live tail RPC")
+
+	// Exactly one synchronous RPC, for exactly the uncovered tail. Prefetch
+	// goroutines re-filling the window target offsets >= 3072 and are the
+	// only other allowed requests.
+	mu.Lock()
+	defer mu.Unlock()
+	tailReqs := 0
+	for _, req := range reqs {
+		if req.Offset >= int64(3*chunkBytes) {
+			continue // window-refill prefetch
+		}
+		s.Require().Equal(int64(2*chunkBytes), req.Offset, "no RPC may touch the cache-covered prefix")
+		s.Require().Equal(uint32(chunkBytes), req.Size, "the live RPC must request exactly the tail")
+		tailReqs++
+	}
+	s.Assert().Equal(1, tailReqs, "exactly one live RPC for the tail range")
+}
+
+// TestRead_PartialPrefixTailErrorNoShortRead: if the live tail fetch after a
+// cache-served prefix fails, Read surfaces the error with n=0 — the kernel
+// must never see a short/garbled read.
+func (s *BackendClientTestSuite) TestRead_PartialPrefixTailErrorNoShortRead() {
+	const chunkBytes = 1024
+	cfg := grpcclient.PerFileConfig{
+		ReadaheadChunkBytes: chunkBytes,
+		ReadaheadThreshold:  1,
+		ReadaheadWindow:     2,
+	}
+	h := s.newHandle(cfg)
+	h.readahead.Observe(0, chunkBytes)
+	h.readahead.Store(chunkBytes, make([]byte, chunkBytes))
+
+	// The only RPC allowed is the tail fetch; it fails in-band with EIO.
+	// The error path returns before Observe, so no prefetch goroutines spawn.
+	s.fileClient.EXPECT().Read(mock.Anything, mock.MatchedBy(func(req *proto.ReadRequest) bool {
+		return req.Offset == 2*chunkBytes && req.Size == chunkBytes
+	}), mock.Anything).RunAndReturn(
+		func(_ context.Context, _ *proto.ReadRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[proto.ReadFrame], error) {
+			return newBackendReadStreamStub(s.T(),
+				&proto.ReadFrame{Status: int32(fuse.EIO)},
+			), nil
+		}).Once()
+
+	dest := make([]byte, 2*chunkBytes)
+	n, st := s.backend.Read(context.Background(), h, chunkBytes, dest)
+	s.Require().Equal(fuse.EIO, st)
+	s.Assert().Zero(n, "a failed tail fetch must not surface a short read")
+}
+
+// TestRead_PartialPrefixShortTailAtEOF: a tail stream that ends cleanly
+// before filling the request signals EOF; the combined prefix+tail count is
+// returned with OK — short is legitimate at EOF.
+func (s *BackendClientTestSuite) TestRead_PartialPrefixShortTailAtEOF() {
+	const chunkBytes = 1024
+	const tailBytes = 500 // EOF lands mid-tail
+	cfg := grpcclient.PerFileConfig{
+		ReadaheadChunkBytes: chunkBytes,
+		ReadaheadThreshold:  1,
+		ReadaheadWindow:     2,
+	}
+	h := s.newHandle(cfg)
+
+	prefix := make([]byte, chunkBytes)
+	tail := make([]byte, tailBytes)
+	for i := range prefix {
+		prefix[i] = byte(i % 251)
+	}
+	for i := range tail {
+		tail[i] = byte((i + 13) % 251)
+	}
+	h.readahead.Observe(0, chunkBytes)
+	h.readahead.Store(chunkBytes, prefix)
+
+	s.fileClient.EXPECT().Read(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, req *proto.ReadRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[proto.ReadFrame], error) {
+			if req.Offset == 2*chunkBytes {
+				return newBackendReadStreamStubOptional(s.T(),
+					&proto.ReadFrame{Data: tail, Status: int32(fuse.OK)},
+					&proto.ReadFrame{Status: int32(fuse.OK)},
+				), nil
+			}
+			// Window-refill prefetch: empty stream, never stored.
+			return newBackendReadStreamStubOptional(s.T()), nil
+		}).Maybe()
+
+	dest := make([]byte, 2*chunkBytes)
+	n, st := s.backend.Read(context.Background(), h, chunkBytes, dest)
+	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(chunkBytes+tailBytes, n, "combined cache prefix + short live tail at EOF")
+	s.Assert().Equal(prefix, dest[:chunkBytes])
+	s.Assert().Equal(tail, dest[chunkBytes:n])
+}
+
 // TestSetAttr_BothTimes: when both timestamps are requested, both FileTime
 // messages carry their Sec/Nsec (no nil/UTIME_OMIT slot). Migrated from the
 // removed per-field Utimens wire test.

@@ -79,20 +79,21 @@ func (s *ReadaheadTestSuite) TestServe_OutOfRangeMisses() {
 
 	// Offset below the ring.
 	dest := make([]byte, 1024)
-	n, hit := r.Serve(dest, 8192)
-	s.Require().False(hit)
+	n, full := r.Serve(dest, 8192)
+	s.Require().False(full)
 	s.Assert().Equal(0, n)
 
 	// Offset above the ring.
-	n, hit = r.Serve(dest, 20000)
-	s.Require().False(hit)
+	n, full = r.Serve(dest, 20000)
+	s.Require().False(full)
 	s.Assert().Equal(0, n)
 
-	// Overflows the ring — let the network handle it.
+	// Overflows the ring: the covered prefix (the whole 4096-byte chunk)
+	// is served; the caller fetches the remaining 4096 live.
 	big := make([]byte, 8192)
-	n, hit = r.Serve(big, 12288)
-	s.Require().False(hit)
-	s.Assert().Equal(0, n)
+	n, full = r.Serve(big, 12288)
+	s.Require().False(full)
+	s.Assert().Equal(4096, n)
 }
 
 func (s *ReadaheadTestSuite) TestObserve_NonSequentialDropsRing() {
@@ -146,15 +147,17 @@ func (s *ReadaheadTestSuite) TestNonSequentialDropsWindow() {
 	s.Assert().False(hit)
 }
 
-func (s *ReadaheadTestSuite) TestServeMissWhenDestLargerThanChunk() {
+func (s *ReadaheadTestSuite) TestServePartialWhenDestLargerThanChunk() {
 	// window=1: only one chunk ever armed, so a 150-byte read across a 100-byte
-	// chunk boundary has no second chunk available and must miss.
+	// chunk boundary serves the 100-byte covered prefix and leaves the tail to
+	// the caller's live fetch.
 	r := NewReadahead(100, 1, 1)
 	for _, off := range r.Observe(0, 100) {
 		r.Store(off, make([]byte, 100))
 	}
-	_, hit := r.Serve(make([]byte, 150), 100)
-	s.Assert().False(hit)
+	n, full := r.Serve(make([]byte, 150), 100)
+	s.Require().False(full)
+	s.Assert().Equal(100, n)
 }
 
 func (s *ReadaheadTestSuite) TestDoesNotReArmInflight() {
@@ -220,17 +223,106 @@ func (s *ReadaheadTestSuite) TestServe_CrossChunkHitSpansContiguousChunks() {
 	s.Assert().Equal(c1[:2048], dest[2048:])
 }
 
-func (s *ReadaheadTestSuite) TestServe_MissWhenNextChunkNotReady() {
+func (s *ReadaheadTestSuite) TestServe_PrefixStopsAtInFlightChunk() {
+	// The chunk at 4096 is ready; the chunk at 8192 is armed but still in
+	// flight. A read spanning both gets the covered 4096-byte prefix without
+	// blocking on the in-flight fetch; the ready chunk is fully consumed.
 	r := NewReadahead(4096, 1, 4)
+	stored := make([]byte, 4096)
+	for i := range stored {
+		stored[i] = byte(i % 251)
+	}
 	r.Observe(0, 4096)
-	r.Store(4096, make([]byte, 4096))
+	r.Store(4096, stored)
+
 	dest := make([]byte, 4096+10)
-	n, hit := r.Serve(dest, 4096)
-	s.Assert().False(hit)
-	s.Assert().Equal(0, n)
-	d2 := make([]byte, 4096)
-	_, hit = r.Serve(d2, 4096)
-	s.Assert().True(hit, "a miss must leave the ready chunk intact")
+	n, full := r.Serve(dest, 4096)
+	s.Require().False(full)
+	s.Require().Equal(4096, n, "prefix must stop at the in-flight chunk boundary")
+	s.Assert().Equal(stored, dest[:4096])
+
+	// The served chunk is drained; the in-flight slot is untouched and can
+	// still complete and serve later.
+	_, full = r.Serve(make([]byte, 1), 4096)
+	s.Require().False(full, "drained chunk must be gone")
+	r.Store(8192, make([]byte, 4096))
+	n, full = r.Serve(make([]byte, 4096), 8192)
+	s.Require().True(full, "in-flight chunk must survive a partial serve and serve once stored")
+	s.Assert().Equal(4096, n)
+}
+
+func (s *ReadaheadTestSuite) TestServe_PartialPrefixThreeOfFourChunks() {
+	// Three of four armed chunks are ready: a read of the full window gets a
+	// 75% prefix, and only the consumed (ready) chunks advance — the in-flight
+	// slot is untouched.
+	r := NewReadahead(1024, 1, 4)
+	arm := r.Observe(0, 1024)
+	s.Require().Equal([]int64{1024, 2048, 3072, 4096}, arm)
+	want := make([]byte, 3072)
+	for i := range want {
+		want[i] = byte(i % 249)
+	}
+	r.Store(1024, want[0:1024])
+	r.Store(2048, want[1024:2048])
+	r.Store(3072, want[2048:3072])
+	// Chunk at 4096 remains in flight.
+
+	dest := make([]byte, 4096)
+	n, full := r.Serve(dest, 1024)
+	s.Require().False(full)
+	s.Require().Equal(3072, n, "prefix must cover exactly the three ready chunks")
+	s.Assert().Equal(want, dest[:3072])
+
+	// The three consumed chunks are drained; only the in-flight slot remains.
+	s.Require().Len(r.chunks, 1)
+	s.Assert().Equal(int64(4096), r.chunks[0].off)
+	s.Assert().Nil(r.chunks[0].data)
+}
+
+func (s *ReadaheadTestSuite) TestServe_ZeroCoverageNoSideEffects() {
+	r := NewReadahead(1024, 1, 4)
+	r.Observe(0, 1024)
+	r.Store(1024, make([]byte, 1024))
+	// Half-consume the ready chunk so the consumed cursor is non-trivial.
+	_, full := r.Serve(make([]byte, 512), 1024)
+	s.Require().True(full)
+	before := append([]raChunk(nil), r.chunks...)
+
+	// No ready byte at offset 0 (behind the window) nor at 2048 (in flight).
+	n, full := r.Serve(make([]byte, 512), 0)
+	s.Require().False(full)
+	s.Require().Equal(0, n)
+	n, full = r.Serve(make([]byte, 512), 2048)
+	s.Require().False(full)
+	s.Require().Equal(0, n)
+
+	s.Assert().Equal(before, r.chunks, "a zero-coverage miss must leave cursors and chunks untouched")
+}
+
+func (s *ReadaheadTestSuite) TestServe_PartialServeHitsRetainedChunkTail() {
+	// A full hit half-drains the chunk at 4096 (retained). The next
+	// sequential read overshoots the ready data: it gets the retained tail
+	// as a partial prefix, fully draining the chunk.
+	r := NewReadahead(4096, 1, 4)
+	stored := make([]byte, 4096)
+	for i := range stored {
+		stored[i] = byte(i % 247)
+	}
+	r.Observe(0, 4096)
+	r.Store(4096, stored)
+
+	n, full := r.Serve(make([]byte, 2048), 4096)
+	s.Require().True(full)
+	s.Require().Equal(2048, n)
+
+	dest := make([]byte, 4096)
+	n, full = r.Serve(dest, 6144)
+	s.Require().False(full)
+	s.Require().Equal(2048, n, "partial serve must drain exactly the retained tail")
+	s.Assert().Equal(stored[2048:], dest[:2048])
+
+	_, full = r.Serve(make([]byte, 1), 4096)
+	s.Assert().False(full, "fully drained chunk must be gone")
 }
 
 func TestReadaheadSuite(t *testing.T) {
