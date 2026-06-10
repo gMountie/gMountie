@@ -16,3 +16,17 @@ func defaultTestCacheConfig() config.CacheConfig {
 		NegativeTTL:    config.DefaultCacheNegativeTTL,
 	}
 }
+
+// defaultTestFUSEConfig returns a FUSEConfig populated with all defaults
+// for use in mount-layer tests. Constructing it explicitly (rather than
+// relying on zero values) ensures new fields are exercised at their
+// documented defaults rather than silently zero.
+func defaultTestFUSEConfig() *config.FUSEConfig {
+	return &config.FUSEConfig{
+		MaxWriteBytes:  config.DefaultFUSEMaxWriteBytes,
+		MaxBackground:  config.DefaultFUSEMaxBackground,
+		WritebackCache: config.DefaultFUSEWritebackCache,
+		AttrTimeout:    config.DefaultFUSEAttrTimeout,
+		EntryTimeout:   config.DefaultFUSEEntryTimeout,
+	}
+}

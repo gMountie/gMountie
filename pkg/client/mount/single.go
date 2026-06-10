@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"time"
 
 	"go.gmountie.dev/gmountie/pkg/client/cache"
 	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
@@ -130,13 +129,7 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 
 	root := io.NewMountieRoot(backend, rewriter)
 	mountOpts := createMountOptions(m.client.GetEndpoint(), volume, m.fuse, maxWrite)
-	entryTimeout := time.Second
-	attrTimeout := time.Second
-	fsOpts := &gofs.Options{
-		MountOptions: *mountOpts,
-		EntryTimeout: &entryTimeout,
-		AttrTimeout:  &attrTimeout,
-	}
+	fsOpts := buildFSOptions(mountOpts, m.fuse)
 	// gofs.Mount is self-contained: it constructs the raw FS via
 	// NewNodeFS, spawns the Serve goroutine, and blocks on WaitMount
 	// before returning. No explicit go server.Serve()/WaitMount needed.

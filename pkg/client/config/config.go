@@ -162,8 +162,17 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		return nil, err
 	}
 
-	// Parse fuse config (defaults if absent)
-	if cfg, err := NewFUSEConfig(v.Sub("fuse")); err == nil {
+	// Parse fuse config (defaults if absent). mirrorEnvToSub wires env-var
+	// overrides (e.g. GMOUNTIE_FUSE_ATTR_TIMEOUT) into the sub-tree so
+	// AutomaticEnv propagates through viper.Sub as it does for cache/server.
+	fuseSub := mirrorEnvToSub(v, "fuse", []string{
+		"max_write_bytes",
+		"max_background",
+		"writeback_cache",
+		"attr_timeout",
+		"entry_timeout",
+	})
+	if cfg, err := NewFUSEConfig(fuseSub); err == nil {
 		result.FUSE = cfg
 	} else {
 		return nil, err

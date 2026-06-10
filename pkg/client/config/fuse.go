@@ -1,6 +1,8 @@
 package config
 
 import (
+	"time"
+
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 )
@@ -23,6 +25,28 @@ const (
 	// high-RTT link instead of one synchronous WRITE per round-trip. Wired
 	// through ExtraCapabilities (CAP_WRITEBACK_CACHE) at mount time when true.
 	DefaultFUSEWritebackCache = false
+	// DefaultFUSEAttrTimeout is the default kernel dentry-attribute cache
+	// lifetime. 1 s matches go-fuse's built-in default and is a safe
+	// starting point: it cuts per-op GETATTR chatter while keeping the
+	// kernel-side staleness window short enough that attribute changes (e.g.
+	// size after a remote write) become visible within a second.
+	//
+	// Raising this value reduces kernel GETATTR traffic at the cost of a
+	// wider staleness window. Note that the Subscribe push-invalidation
+	// stream CANNOT reach inside the kernel's attribute cache — only VFS
+	// operations that bypass or expire the cache will see fresh data — so
+	// values above ~1 s explicitly trade coherence for chatter reduction.
+	DefaultFUSEAttrTimeout = 1 * time.Second
+	// DefaultFUSEEntryTimeout is the default kernel dentry (name→inode)
+	// cache lifetime. The same coherence tradeoff as AttrTimeout applies:
+	// raising it cuts LOOKUP round-trips on repeated path traversals but
+	// widens the window for stale name→inode mappings (e.g. a file renamed
+	// or unlinked by another client).
+	//
+	// The Subscribe push-invalidation stream CANNOT reach inside the
+	// kernel's dentry cache, so values above ~1 s trade coherence for
+	// fewer LOOKUP RPCs.
+	DefaultFUSEEntryTimeout = 1 * time.Second
 )
 
 // FUSEConfig holds the FUSE-kernel-side tuning knobs surfaced through
@@ -47,6 +71,22 @@ type FUSEConfig struct {
 	// async writeback for WAN throughput — write errors then surface at
 	// flush/close, and write visibility to other clients is close-to-open.
 	WritebackCache bool `mapstructure:"writeback_cache"`
+	// AttrTimeout controls how long the kernel caches inode attributes
+	// (size, mode, timestamps) before issuing a GETATTR. Raising this value
+	// cuts GETATTR round-trips on attribute-heavy workloads (e.g. repeated
+	// stat calls on the same path) at the cost of a wider kernel-side
+	// staleness window. The Subscribe push-invalidation stream CANNOT reach
+	// inside the kernel's attribute cache, so values above ~1 s explicitly
+	// trade coherence for reduced chatter.
+	AttrTimeout time.Duration `validate:"gte=0" mapstructure:"attr_timeout"`
+	// EntryTimeout controls how long the kernel caches dentry (name→inode)
+	// mappings before issuing a LOOKUP. Raising this value reduces LOOKUP
+	// RPCs on repeated path traversals at the cost of stale name→inode
+	// mappings being visible longer (e.g. a file renamed or unlinked by
+	// another client). The Subscribe push-invalidation stream CANNOT reach
+	// inside the kernel's dentry cache, so values above ~1 s trade
+	// coherence for fewer LOOKUP RPCs.
+	EntryTimeout time.Duration `validate:"gte=0" mapstructure:"entry_timeout"`
 }
 
 // NewFUSEConfig parses a FUSEConfig from a viper sub-tree. A nil v
@@ -57,6 +97,8 @@ func NewFUSEConfig(v *viper.Viper) (*FUSEConfig, error) {
 		MaxWriteBytes:  DefaultFUSEMaxWriteBytes,
 		MaxBackground:  DefaultFUSEMaxBackground,
 		WritebackCache: DefaultFUSEWritebackCache,
+		AttrTimeout:    DefaultFUSEAttrTimeout,
+		EntryTimeout:   DefaultFUSEEntryTimeout,
 	}
 	if v == nil {
 		return cfg, nil
@@ -64,6 +106,8 @@ func NewFUSEConfig(v *viper.Viper) (*FUSEConfig, error) {
 	v.SetDefault("max_write_bytes", DefaultFUSEMaxWriteBytes)
 	v.SetDefault("max_background", DefaultFUSEMaxBackground)
 	v.SetDefault("writeback_cache", DefaultFUSEWritebackCache)
+	v.SetDefault("attr_timeout", DefaultFUSEAttrTimeout)
+	v.SetDefault("entry_timeout", DefaultFUSEEntryTimeout)
 	if err := v.UnmarshalExact(cfg, viper.DecodeHook(mapstructure.StringToTimeDurationHookFunc())); err != nil {
 		return nil, err
 	}

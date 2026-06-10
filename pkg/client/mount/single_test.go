@@ -30,11 +30,7 @@ type SingleVolumeMounterTestSuite struct {
 
 func (s *SingleVolumeMounterTestSuite) SetupTest() {
 	s.client = grpc.NewMockClient(s.T())
-	s.mounter = NewSingleVolumeMounter(s.client, &config.FUSEConfig{
-		MaxWriteBytes:  config.DefaultFUSEMaxWriteBytes,
-		MaxBackground:  config.DefaultFUSEMaxBackground,
-		WritebackCache: config.DefaultFUSEWritebackCache,
-	}, defaultTestCacheConfig(), false)
+	s.mounter = NewSingleVolumeMounter(s.client, defaultTestFUSEConfig(), defaultTestCacheConfig(), false)
 
 	var err error
 	s.tempDir, err = os.MkdirTemp("", "gmountie-test-*")
@@ -177,11 +173,7 @@ func (s *SingleVolumeMounterTestSuite) TestMountFailsWithLockedCacheDir() {
 		DirTTL:         time.Second,
 		NegativeTTL:    time.Second,
 	}
-	m := NewSingleVolumeMounter(s.client, &config.FUSEConfig{
-		MaxWriteBytes:  config.DefaultFUSEMaxWriteBytes,
-		MaxBackground:  config.DefaultFUSEMaxBackground,
-		WritebackCache: config.DefaultFUSEWritebackCache,
-	}, cacheCfg, false)
+	m := NewSingleVolumeMounter(s.client, defaultTestFUSEConfig(), cacheCfg, false)
 	err = m.Mount(volume, s.T().TempDir())
 	s.Require().Error(err)
 	s.Assert().ErrorIs(err, persist.ErrCacheLocked)
@@ -205,11 +197,7 @@ func (s *SingleVolumeMounterTestSuite) TestMountFailureReleasesStateAndAllowsRet
 		DirTTL:         time.Second,
 		NegativeTTL:    time.Second,
 	}
-	m := NewSingleVolumeMounter(s.client, &config.FUSEConfig{
-		MaxWriteBytes:  config.DefaultFUSEMaxWriteBytes,
-		MaxBackground:  config.DefaultFUSEMaxBackground,
-		WritebackCache: config.DefaultFUSEWritebackCache,
-	}, cacheCfg, false)
+	m := NewSingleVolumeMounter(s.client, defaultTestFUSEConfig(), cacheCfg, false)
 	defer func() { s.Require().NoError(m.Close()) }()
 
 	// First attempt: nonexistent mountpoint → gofs.Mount fails after the
