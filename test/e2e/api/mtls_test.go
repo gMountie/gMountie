@@ -28,6 +28,8 @@ import (
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/test/e2e/utils"
 
+	"github.com/hanwen/go-fuse/v2/fuse"
+
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -168,15 +170,17 @@ func (s *MTLSSuite) TestMalloryCannotUseAliceSession() {
 	s.Assert().Equal("session does not belong to the caller", st.Message(),
 		"error message must identify the session-ownership chokepoint")
 
-	// Step 3b: truncate op (another session-consuming handler) — same expectation.
-	_, err = mallory.Fs().Truncate(ctx, &proto.TruncateRequest{
+	// Step 3b: SetAttr op (another session-consuming handler) — same expectation.
+	_, err = mallory.Fs().SetAttr(ctx, &proto.SetAttrRequest{
 		Volume:    s.volName,
 		Path:      "/any-file",
-		RequestId: "mallory-forge-truncate",
+		Valid:     fuse.FATTR_SIZE,
+		Size:      0,
+		RequestId: "mallory-forge-setattr",
 		SessionId: aliceSessionID,
 		Caller:    caller,
 	})
-	s.Require().Error(err, "mallory must not be able to use alice's session_id for Truncate")
+	s.Require().Error(err, "mallory must not be able to use alice's session_id for SetAttr")
 	st, ok = status.FromError(err)
 	s.Require().True(ok)
 	s.Assert().Equal(codes.PermissionDenied, st.Code())

@@ -352,7 +352,7 @@ func (b *BackendClient) Readlink(ctx context.Context, path string) (string, fuse
 // only after checking the status).
 // logFields carries the per-op correlation fields (path(s)) into the error
 // log, alongside the request_id — without them a user-facing errno from
-// Mkdir/Unlink/Chmod/... could not be tied to a file or to the server-side
+// Mkdir/Unlink/SetXAttr/... could not be tied to a file or to the server-side
 // idempotency record.
 func mutatePath[Rep any](
 	b *BackendClient,
@@ -439,7 +439,7 @@ func (b *BackendClient) GetXAttr(ctx context.Context, path, attr string) ([]byte
 }
 
 // SetXAttr stores an extended attribute. Mutating — request_id stamped
-// outside retry for idempotency, like Chmod.
+// outside retry for idempotency, like Rename.
 func (b *BackendClient) SetXAttr(ctx context.Context, path, attr string, data []byte, flags uint32) fuse.Status {
 	_, st := mutatePath(b, ctx, "SetXAttr",
 		func(ctx context.Context, requestID string) (*proto.SetXAttrReply, error) {
@@ -574,64 +574,6 @@ func (b *BackendClient) Rename(ctx context.Context, oldPath, newPath string) fus
 	return st
 }
 
-// Truncate changes a file's length.
-func (b *BackendClient) Truncate(ctx context.Context, path string, size uint64) fuse.Status {
-	_, st := mutatePath(b, ctx, "Truncate",
-		func(ctx context.Context, requestID string) (*proto.TruncateReply, error) {
-			return b.client.Fs().Truncate(ctx, &proto.TruncateRequest{
-				Volume:    b.volume,
-				Caller:    callerFromCtx(ctx),
-				Path:      path,
-				Size:      size,
-				SessionId: b.client.SessionID(),
-				RequestId: requestID,
-			}, grpc.WaitForReady(true))
-		},
-		func(r *proto.TruncateReply) int32 { return r.Status },
-		zap.String("path", path),
-	)
-	return st
-}
-
-// Chmod changes file permissions.
-func (b *BackendClient) Chmod(ctx context.Context, path string, mode uint32) fuse.Status {
-	_, st := mutatePath(b, ctx, "Chmod",
-		func(ctx context.Context, requestID string) (*proto.ChmodReply, error) {
-			return b.client.Fs().Chmod(ctx, &proto.ChmodRequest{
-				Volume:    b.volume,
-				Caller:    callerFromCtx(ctx),
-				Path:      path,
-				Mode:      mode,
-				SessionId: b.client.SessionID(),
-				RequestId: requestID,
-			}, grpc.WaitForReady(true))
-		},
-		func(r *proto.ChmodReply) int32 { return r.Status },
-		zap.String("path", path),
-	)
-	return st
-}
-
-// Chown changes ownership.
-func (b *BackendClient) Chown(ctx context.Context, path string, uid, gid uint32) fuse.Status {
-	_, st := mutatePath(b, ctx, "Chown",
-		func(ctx context.Context, requestID string) (*proto.ChownReply, error) {
-			return b.client.Fs().Chown(ctx, &proto.ChownRequest{
-				Volume:    b.volume,
-				Caller:    callerFromCtx(ctx),
-				Path:      path,
-				Uid:       uid,
-				Gid:       gid,
-				SessionId: b.client.SessionID(),
-				RequestId: requestID,
-			}, grpc.WaitForReady(true))
-		},
-		func(r *proto.ChownReply) int32 { return r.Status },
-		zap.String("path", path),
-	)
-	return st
-}
-
 // timeToFileTime maps a Go time to the wire FileTime. A nil input yields a
 // nil FileTime — UTIME_OMIT (leave that timestamp unchanged).
 func timeToFileTime(t *time.Time) *proto.FileTime {
@@ -639,27 +581,6 @@ func timeToFileTime(t *time.Time) *proto.FileTime {
 		return nil
 	}
 	return &proto.FileTime{Sec: uint64(t.Unix()), Nsec: uint32(t.Nanosecond())}
-}
-
-// Utimens sets atime and/or mtime. A nil pointer leaves that timestamp
-// unchanged (UTIME_OMIT).
-func (b *BackendClient) Utimens(ctx context.Context, path string, atime, mtime *time.Time) fuse.Status {
-	_, st := mutatePath(b, ctx, "Utimens",
-		func(ctx context.Context, requestID string) (*proto.UtimensReply, error) {
-			return b.client.Fs().Utimens(ctx, &proto.UtimensRequest{
-				Volume:    b.volume,
-				Caller:    callerFromCtx(ctx),
-				Path:      path,
-				Atime:     timeToFileTime(atime),
-				Mtime:     timeToFileTime(mtime),
-				SessionId: b.client.SessionID(),
-				RequestId: requestID,
-			}, grpc.WaitForReady(true))
-		},
-		func(r *proto.UtimensReply) int32 { return r.Status },
-		zap.String("path", path),
-	)
-	return st
 }
 
 // setAttrValidMask is the set of FATTR_* bits the SetAttr wire contract
@@ -671,8 +592,8 @@ const setAttrValidMask = fuse.FATTR_MODE | fuse.FATTR_UID | fuse.FATTR_GID |
 	fuse.FATTR_SIZE | fuse.FATTR_ATIME | fuse.FATTR_MTIME
 
 // SetAttr applies the fields named by in.Valid in one RPC, replacing the
-// Truncate/Chmod/Chown/Utimens fan-out (up to 4 serial RPCs + a trailing
-// GetAttr → 1 RPC). Mutating — the request_id is allocated ONCE outside
+// removed Truncate/Chmod/Chown/Utimens fan-out (up to 4 serial RPCs + a
+// trailing GetAttr → 1 RPC). Mutating — the request_id is allocated ONCE outside
 // retryOp so all attempts within the same session hit the server's
 // idempotency cache; classPathMutation stops the retry on a session change.
 // On success the reply's final attrs are returned, so callers skip the
@@ -691,7 +612,7 @@ func (b *BackendClient) SetAttr(ctx context.Context, path string, in SetAttrIn) 
 				Uid:       in.Uid,
 				Gid:       in.Gid,
 				Size:      in.Size,
-				Atime:     timeToFileTime(in.Atime), // nil ⇒ omitted, like Utimens
+				Atime:     timeToFileTime(in.Atime), // nil ⇒ omitted (UTIME_OMIT)
 				Mtime:     timeToFileTime(in.Mtime),
 				SessionId: b.client.SessionID(),
 				RequestId: requestID,

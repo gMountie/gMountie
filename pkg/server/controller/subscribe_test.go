@@ -56,7 +56,7 @@ func newRpcServerWithBus(t *testing.T, bus serverio.EventBus) *RpcServerImpl {
 	// Access always OK — this helper is for tests that don't care about filtering.
 	mockFs.EXPECT().Access(mock.Anything, mock.Anything, mock.Anything).Return(fuse.OK).Maybe()
 	sessionMgr := service.NewSessionManager(service.SessionManagerOptions{})
-	return NewGrpcServer(fsService, sessionMgr, 0, bus, nil)
+	return NewGrpcServer(fsService, sessionMgr, bus, nil)
 }
 
 type SubscribeStreamSuite struct {
@@ -150,7 +150,7 @@ func newRpcServerWithAccessFilter(t *testing.T, bus serverio.EventBus, allowedPa
 	mockFs.EXPECT().Access(mock.MatchedBy(func(p string) bool { return !allowedPaths[p] }),
 		mock.Anything, mock.Anything).Return(fuse.EACCES).Maybe()
 	sessionMgr := service.NewSessionManager(service.SessionManagerOptions{})
-	return NewGrpcServer(fsService, sessionMgr, 0, bus, nil)
+	return NewGrpcServer(fsService, sessionMgr, bus, nil)
 }
 
 // snapshotSent returns the events the stub received without racing the

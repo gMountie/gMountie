@@ -41,7 +41,7 @@ func (s *RpcServerTestSuite) SetupTest() {
 	s.Require().NoError(err)
 	s.sessionID = sid
 	s.bus = serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
-	s.server = NewGrpcServer(s.fsService, s.sessionMgr, 0, s.bus, nil)
+	s.server = NewGrpcServer(s.fsService, s.sessionMgr, s.bus, nil)
 }
 
 func (s *RpcServerTestSuite) TearDownTest() {
@@ -127,23 +127,6 @@ func (s *RpcServerTestSuite) TestRename() {
 		RequestId: "test-req-rename",
 	}
 	reply, err := s.server.Rename(ctx, request)
-
-	// Verify.
-	s.Require().NoError(err)
-	s.Assert().NotNil(reply)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
-}
-
-func (s *RpcServerTestSuite) TestOpenDir() {
-	// Setup.
-	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
-	ctx := context.Background()
-	mockFs.EXPECT().OpenDir("/test/path", mock.Anything).Return([]fuse.DirEntry{}, fuse.OK)
-
-	// Test.
-	request := &proto.OpenDirRequest{Volume: "testVolume", Path: "/test/path", Caller: CreateCaller(0, 0, 0)}
-	reply, err := s.server.OpenDir(ctx, request)
 
 	// Verify.
 	s.Require().NoError(err)
@@ -247,75 +230,6 @@ func (s *RpcServerTestSuite) TestGetAttrBindsRequestIdentity() {
 	s.Assert().Equal("testVolume", gotVolume)
 	s.Require().NotNil(gotCaller)
 	s.Assert().Equal(caller, gotCaller)
-}
-
-func (s *RpcServerTestSuite) TestTruncate() {
-	// Setup.
-	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
-	ctx := testAuthedCtx("test-user")
-	mockFs.EXPECT().Truncate("/test/path", uint64(0), mock.Anything).Return(fuse.OK)
-	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
-
-	// Test.
-	request := &proto.TruncateRequest{
-		Volume: "testVolume", Path: "/test/path", Size: 0,
-		Caller:    CreateCaller(0, 0, 0),
-		SessionId: s.sessionID,
-		RequestId: "test-req-truncate",
-	}
-	reply, err := s.server.Truncate(ctx, request)
-
-	// Verify.
-	s.Require().NoError(err)
-	s.Assert().NotNil(reply)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
-}
-
-func (s *RpcServerTestSuite) TestChmod() {
-	// Setup.
-	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
-	ctx := testAuthedCtx("test-user")
-	mockFs.EXPECT().Chmod("/test/path", uint32(0), mock.Anything).Return(fuse.OK)
-	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
-
-	// Test.
-	request := &proto.ChmodRequest{
-		Volume: "testVolume", Path: "/test/path", Mode: 0,
-		Caller:    CreateCaller(0, 0, 0),
-		SessionId: s.sessionID,
-		RequestId: "test-req-chmod",
-	}
-	reply, err := s.server.Chmod(ctx, request)
-
-	// Verify.
-	s.Require().NoError(err)
-	s.Assert().NotNil(reply)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
-}
-
-func (s *RpcServerTestSuite) TestChown() {
-	// Setup.
-	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
-	ctx := testAuthedCtx("test-user")
-	mockFs.EXPECT().Chown("/test/path", uint32(0), uint32(0), mock.Anything).Return(fuse.OK)
-	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
-
-	// Test.
-	request := &proto.ChownRequest{
-		Volume: "testVolume", Path: "/test/path", Uid: 0, Gid: 0,
-		Caller:    CreateCaller(0, 0, 0),
-		SessionId: s.sessionID,
-		RequestId: "test-req-chown",
-	}
-	reply, err := s.server.Chown(ctx, request)
-
-	// Verify.
-	s.Require().NoError(err)
-	s.Assert().NotNil(reply)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
 }
 
 func (s *RpcServerTestSuite) TestGetXAttr() {
@@ -526,36 +440,6 @@ func (s *RpcServerTestSuite) TestGetAttrIfChanged_PassesWireCaller() {
 	})
 	s.Require().NoError(err)
 	s.fsService.AssertExpectations(s.T()) // BindIdentity was called with the wire Caller
-}
-
-func (s *RpcServerTestSuite) TestUtimens() {
-	// Setup.
-	mockFs := new(pathfs2.MockFileSystem)
-	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
-	ctx := testAuthedCtx("test-user")
-	expectedMtime := time.Unix(1577836800, 0)
-	mockFs.EXPECT().Utimens(
-		"/test/path",
-		(*time.Time)(nil), // atime omitted
-		&expectedMtime,
-		mock.Anything,
-	).Return(fuse.OK)
-	mockFs.EXPECT().GetAttr("/test/path", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
-
-	// Test.
-	request := &proto.UtimensRequest{
-		Volume: "testVolume", Path: "/test/path",
-		Mtime:     &proto.FileTime{Sec: 1577836800, Nsec: 0},
-		Caller:    CreateCaller(0, 0, 0),
-		SessionId: s.sessionID,
-		RequestId: "test-req-utimens",
-	}
-	reply, err := s.server.Utimens(ctx, request)
-
-	// Verify.
-	s.Require().NoError(err)
-	s.Assert().NotNil(reply)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
 }
 
 // ----- SetAttr (single-RPC attribute application) -----

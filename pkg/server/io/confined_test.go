@@ -48,7 +48,7 @@ func (s *ResolveBeneathSuite) TestRejectsDotDotEscape() {
 }
 
 // TestLeadingSlashIsRelative: gMountie's wire paths may carry a leading
-// "/" (the Compound batch does; the FUSE pathfs hook doesn't). Both forms
+// "/" (the wire RPCs do; the FUSE pathfs hook doesn't). Both forms
 // must address the same in-tree file; an absolute-looking path is NOT an
 // escape — it just anchors at the volume root.
 func (s *ResolveBeneathSuite) TestLeadingSlashIsRelative() {

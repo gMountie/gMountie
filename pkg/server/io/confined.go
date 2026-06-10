@@ -36,8 +36,8 @@ const resolveHow = unix.RESOLVE_BENEATH |
 // crossing mount points) return unix.EXDEV or unix.ELOOP — never a real fd.
 func resolveBeneath(rootFd int, name string) (parentFd int, leaf string, err error) {
 	// gMountie's wire convention treats paths as relative to the volume root,
-	// and the client may send them with or without a leading slash (e.g. the
-	// Compound batch sends "/foo/bar", FUSE pathfs sends "foo/bar"). Strip
+	// and the client may send them with or without a leading slash (the wire
+	// RPCs send "/foo/bar", the FUSE pathfs hook sends "foo/bar"). Strip
 	// the slash up front so both forms address the same in-tree file.
 	name = strings.TrimPrefix(name, "/")
 

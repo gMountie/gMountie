@@ -593,36 +593,6 @@ func (s *BackendClientTestSuite) TestRename() {
 	s.Assert().Equal(fuse.OK, st)
 }
 
-func (s *BackendClientTestSuite) TestTruncate() {
-	s.fsClient.EXPECT().Truncate(mock.Anything, mock.MatchedBy(func(req *proto.TruncateRequest) bool {
-		return req.Volume == "testVolume" && req.Path == "/test" && req.Size == 1024 &&
-			req.SessionId == "test-session" && req.RequestId != ""
-	}), mock.Anything).Return(&proto.TruncateReply{Status: int32(fuse.OK)}, nil)
-
-	st := s.backend.Truncate(context.Background(), "/test", 1024)
-	s.Assert().Equal(fuse.OK, st)
-}
-
-func (s *BackendClientTestSuite) TestChmod() {
-	s.fsClient.EXPECT().Chmod(mock.Anything, mock.MatchedBy(func(req *proto.ChmodRequest) bool {
-		return req.Volume == "testVolume" && req.Path == "/test" && req.Mode == 0644 &&
-			req.SessionId == "test-session" && req.RequestId != ""
-	}), mock.Anything).Return(&proto.ChmodReply{Status: int32(fuse.OK)}, nil)
-
-	st := s.backend.Chmod(context.Background(), "/test", 0644)
-	s.Assert().Equal(fuse.OK, st)
-}
-
-func (s *BackendClientTestSuite) TestChown() {
-	s.fsClient.EXPECT().Chown(mock.Anything, mock.MatchedBy(func(req *proto.ChownRequest) bool {
-		return req.Volume == "testVolume" && req.Path == "/test" && req.Uid == 1001 && req.Gid == 1001 &&
-			req.SessionId == "test-session" && req.RequestId != ""
-	}), mock.Anything).Return(&proto.ChownReply{Status: int32(fuse.OK)}, nil)
-
-	st := s.backend.Chown(context.Background(), "/test", 1001, 1001)
-	s.Assert().Equal(fuse.OK, st)
-}
-
 // TestSetAttr verifies the full wire mapping of the single-RPC SetAttr:
 // FATTR bits pass through 1:1, value fields land in their proto slots, the
 // omitted *time.Time maps to a nil FileTime (UTIME_OMIT) while the set one
@@ -1414,53 +1384,51 @@ func (s *BackendClientTestSuite) TestReadFillsPrefetchWindow() {
 	}, time.Second, 10*time.Millisecond, "expected at least 4 Read RPCs (1 sync + 3 prefetch)")
 }
 
-func (s *BackendClientTestSuite) TestUtimens() {
-	mtime := time.Unix(1577836800, 500) // 2020-01-01, 500ns
-	s.fsClient.EXPECT().Utimens(mock.Anything, mock.MatchedBy(func(req *proto.UtimensRequest) bool {
-		return req.Volume == "testVolume" && req.Path == "/test" &&
-			req.Atime == nil && // UTIME_OMIT
-			req.Mtime != nil && req.Mtime.Sec == 1577836800 && req.Mtime.Nsec == 500 &&
-			req.SessionId == "test-session" && req.RequestId != ""
-	}), mock.Anything).Return(&proto.UtimensReply{Status: int32(fuse.OK)}, nil)
-
-	st := s.backend.Utimens(context.Background(), "/test", nil, &mtime)
-	s.Require().Equal(fuse.OK, st)
-}
-
-func (s *BackendClientTestSuite) TestUtimens_BothTimes() {
+// TestSetAttr_BothTimes: when both timestamps are requested, both FileTime
+// messages carry their Sec/Nsec (no nil/UTIME_OMIT slot). Migrated from the
+// removed per-field Utimens wire test.
+func (s *BackendClientTestSuite) TestSetAttr_BothTimes() {
 	atime := time.Unix(100, 1)
 	mtime := time.Unix(200, 2)
-	s.fsClient.EXPECT().Utimens(mock.Anything, mock.MatchedBy(func(req *proto.UtimensRequest) bool {
-		return req.Atime != nil && req.Atime.Sec == 100 && req.Atime.Nsec == 1 &&
+	s.fsClient.EXPECT().SetAttr(mock.Anything, mock.MatchedBy(func(req *proto.SetAttrRequest) bool {
+		return req.Valid == fuse.FATTR_ATIME|fuse.FATTR_MTIME &&
+			req.Atime != nil && req.Atime.Sec == 100 && req.Atime.Nsec == 1 &&
 			req.Mtime != nil && req.Mtime.Sec == 200 && req.Mtime.Nsec == 2 &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	}), mock.Anything).Return(&proto.UtimensReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.SetAttrReply{Status: int32(fuse.OK)}, nil)
 
-	st := s.backend.Utimens(context.Background(), "/test", &atime, &mtime)
+	_, st := s.backend.SetAttr(context.Background(), "/test", SetAttrIn{
+		Valid: fuse.FATTR_ATIME | fuse.FATTR_MTIME,
+		Atime: &atime,
+		Mtime: &mtime,
+	})
 	s.Require().Equal(fuse.OK, st)
 }
 
-func (s *BackendClientTestSuite) TestUtimens_Error() {
-	s.fsClient.EXPECT().Utimens(mock.Anything, mock.Anything, mock.Anything).Return(nil, context.DeadlineExceeded)
-	st := s.backend.Utimens(context.Background(), "/test", nil, nil)
+// TestSetAttr_RPCErrorMapsToErrno: a transport-level error (no reply) maps
+// through statusFromRPCError to an errno, not a panic on the nil reply.
+func (s *BackendClientTestSuite) TestSetAttr_RPCErrorMapsToErrno() {
+	s.fsClient.EXPECT().SetAttr(mock.Anything, mock.Anything, mock.Anything).Return(nil, context.DeadlineExceeded)
+	attr, st := s.backend.SetAttr(context.Background(), "/test", SetAttrIn{Valid: fuse.FATTR_MODE, Mode: 0o600})
+	s.Assert().Nil(attr)
 	s.Assert().Equal(fuse.EIO, st)
 }
 
 // Protective property: a cancelled FUSE request ctx must NOT abort the in-flight
-// idempotent metadata RPC. Assert the RPC receives a non-cancelled ctx rather
+// metadata RPC. Assert the RPC receives a non-cancelled ctx rather
 // than a specific error value (the real cancellation error from retry-go does
 // not match a clean codes.Canceled, so an error-shape assertion would pass in a
 // mock while the real path still failed).
-func (s *BackendClientTestSuite) TestUtimens_CancelledParentDoesNotAbortRPC() {
+func (s *BackendClientTestSuite) TestSetAttr_CancelledParentDoesNotAbortRPC() {
 	parent, cancel := context.WithCancel(context.Background())
 	cancel()
-	s.fsClient.EXPECT().Utimens(
+	s.fsClient.EXPECT().SetAttr(
 		mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() == nil }),
 		mock.Anything,
 		mock.Anything,
-	).Return(&proto.UtimensReply{Status: int32(fuse.OK)}, nil)
+	).Return(&proto.SetAttrReply{Status: int32(fuse.OK)}, nil)
 
-	st := s.backend.Utimens(parent, "/test", nil, nil)
+	_, st := s.backend.SetAttr(parent, "/test", SetAttrIn{Valid: fuse.FATTR_MODE, Mode: 0o600})
 	s.Require().Equal(fuse.OK, st)
 }
 

@@ -9,7 +9,6 @@ import (
 	"context"
 	"path"
 	"strings"
-	"time"
 
 	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
 	"go.gmountie.dev/gmountie/pkg/client/io"
@@ -628,53 +627,13 @@ func (b *cachedBackend) Rename(ctx context.Context, oldPath, newPath string) fus
 	return fuse.OK
 }
 
-func (b *cachedBackend) Truncate(ctx context.Context, p string, size uint64) fuse.Status {
-	st := b.inner.Truncate(ctx, p, size)
-	if st != fuse.OK {
-		return st
-	}
-	// Conservative: drop every chunk for p. Truncate may zero-extend or
-	// shrink; either way every cached chunk's relationship to the new
-	// file length is suspect.
-	b.data.invalidatePath(p)
-	b.attr.invalidate(p)
-	return fuse.OK
-}
-
-func (b *cachedBackend) Chmod(ctx context.Context, p string, mode uint32) fuse.Status {
-	st := b.inner.Chmod(ctx, p, mode)
-	if st != fuse.OK {
-		return st
-	}
-	b.attr.invalidate(p)
-	return fuse.OK
-}
-
-func (b *cachedBackend) Chown(ctx context.Context, p string, uid, gid uint32) fuse.Status {
-	st := b.inner.Chown(ctx, p, uid, gid)
-	if st != fuse.OK {
-		return st
-	}
-	b.attr.invalidate(p)
-	return fuse.OK
-}
-
-func (b *cachedBackend) Utimens(ctx context.Context, p string, atime, mtime *time.Time) fuse.Status {
-	st := b.inner.Utimens(ctx, p, atime, mtime)
-	if st != fuse.OK {
-		return st
-	}
-	b.attr.invalidate(p)
-	return fuse.OK
-}
-
 // SetAttr forwards the single-RPC attribute application, then reconciles the
 // caches: FATTR_SIZE drops every data chunk for p (truncate changes content —
 // same conservatism as Truncate), and the attr entry is re-primed from the
 // returned final attrs (like Create primes from CreateReply). The parent is
 // untouched — setattr never changes the parent directory. On failure the
 // server may have applied EARLIER fields before stopping (size→mode→owner→
-// times), so unlike the per-field wrappers we still invalidate
+// times), so unlike the other mutation wrappers we still invalidate
 // conservatively rather than assuming nothing changed.
 func (b *cachedBackend) SetAttr(ctx context.Context, p string, in io.SetAttrIn) (*io.Attr, fuse.Status) {
 	a, st := b.inner.SetAttr(ctx, p, in)

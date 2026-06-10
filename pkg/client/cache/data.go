@@ -10,7 +10,7 @@ import (
 
 // dataCache stores file content as fixed-size chunks keyed by
 // (path, chunkIndex). No TTL: entries are valid until explicitly
-// invalidated by a Write/Truncate/Unlink/Rename on the path, or
+// invalidated by a Write/SetAttr(size)/Unlink/Rename on the path, or
 // evicted under the global byte cap.
 type dataCache struct {
 	st                  *store
@@ -59,7 +59,7 @@ func (c *dataCache) put(path string, chunkIndex int, data []byte) {
 }
 
 // invalidatePath removes every chunk cached under any chunkIndex for
-// the given path. Called by Write/Truncate/Unlink/Rename in backend.go.
+// the given path. Called by Write/SetAttr(size)/Unlink/Rename in backend.go.
 func (c *dataCache) invalidatePath(path string) {
 	prefix := path + "\x00"
 	c.st.removeMatching(func(k string) bool {
@@ -71,8 +71,8 @@ func (c *dataCache) invalidatePath(path string) {
 }
 
 // invalidateRange removes chunks overlapping [off, off+size) for path.
-// Used by Write (it only needs to invalidate chunks the write touches)
-// and Truncate (chunks past the new size).
+// Used by Write, Allocate and CopyFileRange — they only need to
+// invalidate the chunks the mutation touches.
 func (c *dataCache) invalidateRange(path string, off, size int64) {
 	if size <= 0 {
 		return

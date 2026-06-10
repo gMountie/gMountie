@@ -207,7 +207,7 @@ func (s *CachePersistentFSSuite) TestDiskCapHoldsUnderManyReads() {
 //
 // The test uses os.OpenFile + WriteAt (no O_TRUNC) to explicitly
 // exercise the invalidateRange path. os.WriteFile opens O_TRUNC which
-// routes through Truncate → invalidatePath, bypassing the bug.
+// routes through SetAttr(FATTR_SIZE) → invalidatePath, bypassing the bug.
 func (s *CachePersistentFSSuite) TestWriteThenRestartReadReturnsNewBytes() {
 	serverDataDir := s.T().TempDir()
 	const volName = "persist-write-restart"
