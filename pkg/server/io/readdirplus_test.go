@@ -12,6 +12,67 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// StatFailureSuite tests the per-entry stat-failure branch in ReadDirPlus:
+// when fstatatFn returns an error for one entry, the listing continues with
+// all entries present, the poisoned entry carries nil Attr and a d_type-derived
+// Mode, and the healthy entries carry full attrs.
+type StatFailureSuite struct {
+	suite.Suite
+	origFstatat func(dirfd int, path string, stat *unix.Stat_t, flags int) error
+}
+
+func TestStatFailureSuite(t *testing.T) { suite.Run(t, new(StatFailureSuite)) }
+
+func (s *StatFailureSuite) SetupTest() {
+	s.origFstatat = fstatatFn
+}
+
+func (s *StatFailureSuite) TearDownTest() {
+	fstatatFn = s.origFstatat
+}
+
+// TestStatFailureContinues: a 3-entry directory where the middle entry's stat
+// returns ENOENT (e.g. entry vanished between getdents and stat). The listing
+// must return ALL 3 entries; the poisoned entry has nil Attr and a
+// d_type-derived Mode; the two healthy entries have full attrs.
+func (s *StatFailureSuite) TestStatFailureContinues() {
+	dir := s.T().TempDir()
+	s.Require().NoError(os.WriteFile(filepath.Join(dir, "alpha.txt"), []byte("a"), 0o644))
+	s.Require().NoError(os.WriteFile(filepath.Join(dir, "bravo.txt"), []byte("b"), 0o644))
+	s.Require().NoError(os.WriteFile(filepath.Join(dir, "charlie.txt"), []byte("c"), 0o644))
+
+	fs, err := NewConfinedLoopbackFileSystem(dir)
+	s.Require().NoError(err)
+	defer unix.Close(fs.rootFd)
+
+	// Stub: bravo.txt's stat returns ENOENT; all others use the real syscall.
+	fstatatFn = func(dirfd int, path string, stat *unix.Stat_t, flags int) error {
+		if path == "bravo.txt" {
+			return unix.ENOENT
+		}
+		return unix.Fstatat(dirfd, path, stat, flags)
+	}
+
+	entries, st := fs.ReadDirPlus("", nil)
+	s.Require().Equal(fuse.OK, st)
+	s.Require().Len(entries, 3, "all 3 entries must be returned despite one stat failure")
+
+	byName := entriesByName(entries)
+
+	// Healthy entries must carry non-nil attrs with a sensible ino.
+	for _, name := range []string{"alpha.txt", "charlie.txt"} {
+		e := byName[name]
+		s.Require().NotNil(e.Attr, "%s must have full attrs", name)
+		s.NotZero(e.Attr.Ino, "%s ino must be set", name)
+		s.Equal(uint32(syscall.S_IFREG), e.Entry.Mode&syscall.S_IFMT, "%s entry mode", name)
+	}
+
+	// The poisoned entry must have nil Attr and its mode derived from d_type (S_IFREG).
+	poisoned := byName["bravo.txt"]
+	s.Nil(poisoned.Attr, "bravo.txt must have nil Attr after stat failure")
+	s.Equal(uint32(syscall.S_IFREG), poisoned.Entry.Mode, "bravo.txt mode must come from d_type fallback")
+}
+
 // ReadDirPlusSuite exercises ConfinedLoopbackFileSystem.ReadDirPlus with a
 // real tmpdir fixture. Plain syscalls only — no FUSE mount required, so this
 // suite runs in any environment.

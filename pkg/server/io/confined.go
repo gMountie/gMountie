@@ -425,30 +425,45 @@ func (c *ConfinedLoopbackFileSystem) Create(name string, flags, mode uint32, _ *
 	return NewRawFdFile(os.NewFile(uintptr(fd), leaf)), fuse.OK
 }
 
-// OpenDir reads directory entries beneath the volume root. Mode and Ino are
-// sourced from the underlying syscall.Stat_t, mirroring the loopback's
-// fuse.ToStatT conversion exactly.
-func (c *ConfinedLoopbackFileSystem) OpenDir(name string, _ *fuse.Context) ([]fuse.DirEntry, fuse.Status) {
+// openConfinedDir opens `name` as a confined directory via openat2 and reads
+// all its entries. It returns the still-open *os.File together with the
+// entries so callers that need the fd alive (ReadDirPlus, for per-entry
+// Fstatat) can do so. Callers that only need the entry list (OpenDir) close
+// the file immediately after the call returns. Status is fuse.OK on success;
+// the file and entries are nil on any error.
+func (c *ConfinedLoopbackFileSystem) openConfinedDir(name string) (*os.File, []os.DirEntry, fuse.Status) {
 	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
 	if err != nil {
-		return nil, errnoToStatus(err)
+		return nil, nil, errnoToStatus(err)
 	}
 	defer func() { _ = unix.Close(parentFd) }()
-	// Open the directory itself, confined via openat2.
 	fd, err := unix.Openat2(parentFd, leaf, &unix.OpenHow{
 		Flags:   unix.O_RDONLY | unix.O_DIRECTORY | unix.O_CLOEXEC,
 		Resolve: resolveHow,
 	})
 	if err != nil {
-		return nil, errnoToStatus(err)
+		return nil, nil, errnoToStatus(err)
 	}
-	// os.NewFile takes ownership of the fd; Close releases it.
+	// os.NewFile takes ownership of the fd.
 	f := os.NewFile(uintptr(fd), leaf)
-	defer func() { _ = f.Close() }()
 	entries, err := f.ReadDir(-1)
 	if err != nil {
-		return nil, errnoToStatus(err)
+		_ = f.Close()
+		return nil, nil, errnoToStatus(err)
 	}
+	return f, entries, fuse.OK
+}
+
+// OpenDir reads directory entries beneath the volume root. Mode and Ino are
+// sourced from the underlying syscall.Stat_t, mirroring the loopback's
+// fuse.ToStatT conversion exactly.
+func (c *ConfinedLoopbackFileSystem) OpenDir(name string, _ *fuse.Context) ([]fuse.DirEntry, fuse.Status) {
+	f, entries, st := c.openConfinedDir(name)
+	if st != fuse.OK {
+		return nil, st
+	}
+	// OpenDir does not need the fd beyond this point; close it now.
+	_ = f.Close()
 	out := make([]fuse.DirEntry, 0, len(entries))
 	for _, e := range entries {
 		d := fuse.DirEntry{Name: e.Name()}
