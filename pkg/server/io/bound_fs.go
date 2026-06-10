@@ -3,6 +3,7 @@ package io
 import (
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -40,6 +41,41 @@ var (
 	lockOSThread     = runtime.LockOSThread
 	unlockOSThread   = runtime.UnlockOSThread
 )
+
+// baselineGroupsCache holds the server process's own supplementary groups —
+// the restore target of every per-op credential switch. The set is constant
+// for the process lifetime (nothing calls setgroups process-wide; the per-op
+// and executor switches are thread-local), so it is read through the
+// getgroups seam once and reused, eliminating one syscall and one []uint32
+// allocation from every path op.
+//
+// An atomic pointer instead of sync.Once for two reasons: a failed first read
+// must NOT be cached (only success is stored; errors propagate and the next
+// op retries), and the seam-stubbing test suites must be able to reset the
+// cache (resetBaselineGroups). The empty-cache race is benign — concurrent
+// first ops each read the same constant value and the winners' stores agree.
+var baselineGroupsCache atomic.Pointer[[]uint32]
+
+// baselineGroups returns the cached baseline, reading it via the getgroups
+// seam on the first successful call.
+func baselineGroups() ([]uint32, error) {
+	if p := baselineGroupsCache.Load(); p != nil {
+		return *p, nil
+	}
+	g, err := getgroups()
+	if err != nil {
+		return nil, err
+	}
+	baselineGroupsCache.Store(&g)
+	return g, nil
+}
+
+// resetBaselineGroups clears the cached baseline. Test seam: every suite that
+// stubs the getgroups var MUST call this when installing AND when restoring
+// the stub — otherwise the first suite's stubbed groups stay frozen for the
+// rest of the package run (and a later root-proof suite would "restore" the
+// stub's groups to the kernel for real).
+func resetBaselineGroups() { baselineGroupsCache.Store(nil) }
 
 // rawSetfsuid issues SYS_SETFSUID on the calling thread and returns the
 // PREVIOUS fsuid. The kernel never reports an error for this syscall; calling
@@ -503,7 +539,7 @@ func (r *resolverBoundFS) Readlink(name string, context *fuse.Context) (string, 
 // halves entirely: their threads are switched once and never come back.
 func changeIdentity(id *Identity) (func(), error) {
 	lockOSThread()
-	origGroups, err := getgroups()
+	origGroups, err := baselineGroups()
 	if err != nil {
 		rollback(restoreState{}) // nothing applied; just unlock
 		return nil, err

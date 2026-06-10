@@ -60,8 +60,10 @@ func stubCredSeamsForBench() (restore func()) {
 	setfsgid = func(int) error { return nil }
 	setGroupsRaw = func([]uint32) error { return nil }
 	getgroups = func() ([]uint32, error) { return []uint32{0}, nil }
+	resetBaselineGroups() // the stubbed getgroups must be re-read by the bench
 	return func() {
 		setfsuid, setfsgid = origSetfsuid, origSetfsgid
 		setGroupsRaw, getgroups = origSetGroupsRaw, origGetgroups
+		resetBaselineGroups() // don't leak the stub's groups to later suites
 	}
 }

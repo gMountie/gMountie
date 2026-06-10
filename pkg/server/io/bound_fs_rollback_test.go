@@ -46,6 +46,7 @@ func TestBoundFSRollbackSuite(t *testing.T) { suite.Run(t, new(BoundFSRollbackSu
 func (s *BoundFSRollbackSuite) SetupTest() {
 	s.calls = nil
 	s.locks, s.unlocks = 0, 0
+	resetBaselineGroups() // the stubbed getgroups below must be re-read per test
 	s.origSetfsuid, s.origSetfsgid = setfsuid, setfsgid
 	s.origSetGroupsRaw, s.origGetgroups = setGroupsRaw, getgroups
 	s.origGetCaps, s.origSetCapsEffective = getCaps, setCapsEffective
@@ -71,6 +72,7 @@ func (s *BoundFSRollbackSuite) TearDownTest() {
 	setGroupsRaw, getgroups = s.origSetGroupsRaw, s.origGetgroups
 	getCaps, setCapsEffective = s.origGetCaps, s.origSetCapsEffective
 	lockOSThread, unlockOSThread = s.origLock, s.origUnlock
+	resetBaselineGroups() // don't leak the stub's groups to later suites
 }
 
 func (s *BoundFSRollbackSuite) record(format string, args ...any) {
@@ -152,6 +154,47 @@ func (s *BoundFSRollbackSuite) TestUnprivileged_CleanupGroupsRestoreFails_LeaksT
 	setGroupsRaw = func(gids []uint32) error { s.record("setgroups-restore-fail"); return errors.New("boom") }
 	cleanup()
 	s.Equal(0, s.unlocks, "thread must be leaked on failed groups restore")
+}
+
+// ---------- baseline-groups caching ----------
+
+// TestBaselineGroups_ReadOnceAcrossOps: the server's own supplementary groups
+// are constant for the process lifetime, so the getgroups save must hit the
+// seam exactly ONCE across N per-op switches — the cached baseline feeds every
+// later restore.
+func (s *BoundFSRollbackSuite) TestBaselineGroups_ReadOnceAcrossOps() {
+	for i := 0; i < 3; i++ {
+		cleanup, err := changeIdentity(s.noCapsID())
+		s.Require().NoError(err)
+		cleanup()
+	}
+	reads := 0
+	for _, c := range s.calls {
+		if c == "getgroups" {
+			reads++
+		}
+	}
+	s.Equal(1, reads, "baseline groups must be read once, then served from cache")
+	s.Equal(3, s.unlocks, "every op still restores and unlocks")
+}
+
+// TestBaselineGroups_ErrorNotCached: a failed baseline read must propagate
+// (changeIdentity errors, nothing applied) WITHOUT being cached — the next op
+// retries the seam and succeeds.
+func (s *BoundFSRollbackSuite) TestBaselineGroups_ErrorNotCached() {
+	goodGetgroups := getgroups
+	getgroups = func() ([]uint32, error) { s.record("getgroups-fail"); return nil, errors.New("boom") }
+	_, err := changeIdentity(s.noCapsID())
+	s.Require().Error(err)
+	s.Equal([]string{"getgroups-fail"}, s.calls, "nothing may be applied when the baseline read fails")
+	s.Equal(1, s.unlocks, "failed baseline read unwinds cleanly (nothing to restore)")
+
+	getgroups = goodGetgroups
+	s.calls = nil
+	cleanup, err := changeIdentity(s.noCapsID())
+	s.Require().NoError(err)
+	cleanup()
+	s.Contains(s.calls, "getgroups", "the error must not have been cached — the seam is retried")
 }
 
 // ---------- applyDacReadSearch ----------
