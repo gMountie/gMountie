@@ -1092,6 +1092,55 @@ func (s *BackendClientTestSuite) TestFlush_RetriesOnUnavailable() {
 	s.fileClient.AssertNumberOfCalls(s.T(), "WriteAndFlush", 2)
 }
 
+// TestFlush_RetryReusesRequestID is the load-bearing Phase 1d assertion for
+// WriteAndFlush: the request_id must be generated once outside the retry closure
+// so the server's idempotency cache can short-circuit a replay of the
+// coalesced-write half without re-executing it.
+//
+// Mutation-verify: moving uuid.NewString() inside the closure makes ids[0] !=
+// ids[1] and the assertion fails.
+func (s *BackendClientTestSuite) TestFlush_RetryReusesRequestID() {
+	h := s.newHandle(grpcclient.PerFileConfig{WriteCoalesceBytes: 4096})
+	_, wst := s.backend.Write(context.Background(), h, 0, []byte("retry-data"))
+	s.Require().Equal(fuse.OK, wst)
+
+	var ids []string
+	s.fileClient.EXPECT().WriteAndFlush(mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ context.Context, req *proto.WriteAndFlushRequest, _ ...grpc.CallOption) {
+			ids = append(ids, req.RequestId)
+		}).Return(nil, status.Error(codes.Unavailable, "transient")).Once()
+
+	s.fileClient.EXPECT().WriteAndFlush(mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ context.Context, req *proto.WriteAndFlushRequest, _ ...grpc.CallOption) {
+			ids = append(ids, req.RequestId)
+		}).Return(&proto.WriteAndFlushReply{Status: int32(fuse.OK), Written: 10}, nil).Once()
+
+	st := s.backend.Flush(context.Background(), h)
+	s.Require().Equal(fuse.OK, st)
+	s.Require().Len(ids, 2, "expected exactly two WriteAndFlush attempts")
+	s.Assert().NotEmpty(ids[0], "request_id must be non-empty")
+	s.Assert().Equal(ids[0], ids[1], "retry must reuse the same request_id for server-side dedup")
+}
+
+// TestFlush_RequestIdNonEmpty verifies that any WriteAndFlush RPC (flush with
+// data from the coalescer) carries a non-empty RequestId — required for the
+// server's idempotency cache to key on.
+func (s *BackendClientTestSuite) TestFlush_RequestIdNonEmpty() {
+	h := s.newHandle(grpcclient.PerFileConfig{WriteCoalesceBytes: 4096})
+	_, wst := s.backend.Write(context.Background(), h, 0, []byte("data"))
+	s.Require().Equal(fuse.OK, wst)
+
+	var gotID string
+	s.fileClient.EXPECT().WriteAndFlush(mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ context.Context, req *proto.WriteAndFlushRequest, _ ...grpc.CallOption) {
+			gotID = req.RequestId
+		}).Return(&proto.WriteAndFlushReply{Status: int32(fuse.OK), Written: 4}, nil).Once()
+
+	st := s.backend.Flush(context.Background(), h)
+	s.Require().Equal(fuse.OK, st)
+	s.Assert().NotEmpty(gotID, "WriteAndFlush RPC must carry a non-empty request_id")
+}
+
 // TestFsync_RetriesOnUnavailable mirrors the Flush retry test for the
 // Fsync path. Same idempotency argument.
 func (s *BackendClientTestSuite) TestFsync_RetriesOnUnavailable() {
@@ -1424,7 +1473,8 @@ func (s *BackendClientTestSuite) newHandleAt(path string, fd uint64, cfg grpccli
 // --- CopyFileRange ---
 
 // TestCopyFileRange_HappyPath verifies all wire fields in the request and
-// the correct (BytesCopied, fuse.OK) return value.
+// the correct (BytesCopied, fuse.OK) return value. RequestId must be non-empty
+// so the server's idempotency cache can key on it.
 func (s *BackendClientTestSuite) TestCopyFileRange_HappyPath() {
 	src := s.newHandleAt("/src/file", 1, grpcclient.PerFileConfig{})
 	dst := s.newHandleAt("/dst/file", 2, grpcclient.PerFileConfig{})
@@ -1434,7 +1484,7 @@ func (s *BackendClientTestSuite) TestCopyFileRange_HappyPath() {
 			req.FdIn == 1 && req.PathIn == "/src/file" && req.OffIn == 100 &&
 			req.FdOut == 2 && req.PathOut == "/dst/file" && req.OffOut == 200 &&
 			req.Length == 4096 && req.Flags == 0 &&
-			req.SessionId == "test-session"
+			req.SessionId == "test-session" && req.RequestId != ""
 	}), mock.Anything).Return(&proto.CopyFileRangeReply{BytesCopied: 4096, Status: 0}, nil).Once()
 
 	n, st := s.backend.CopyFileRange(context.Background(), src, 100, dst, 200, 4096, 0)
@@ -1443,14 +1493,14 @@ func (s *BackendClientTestSuite) TestCopyFileRange_HappyPath() {
 }
 
 // TestCopyFileRange_TransportError verifies that a non-retryable transport
-// error returns EIO and the mock is called exactly ONCE (no retry) —
-// pinning the no-retry contract.
+// error (Internal is permanent, not Unavailable/DeadlineExceeded) returns EIO
+// immediately with exactly one attempt.
 func (s *BackendClientTestSuite) TestCopyFileRange_TransportError() {
 	src := s.newHandleAt("/src/file", 1, grpcclient.PerFileConfig{})
 	dst := s.newHandleAt("/dst/file", 2, grpcclient.PerFileConfig{})
 
 	s.fileClient.EXPECT().CopyFileRange(mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, status.Error(codes.Unavailable, "down")).Once()
+		Return(nil, status.Error(codes.Internal, "fatal")).Once()
 
 	n, st := s.backend.CopyFileRange(context.Background(), src, 0, dst, 0, 512, 0)
 	s.Assert().Equal(fuse.EIO, st)
@@ -1501,6 +1551,36 @@ func (s *BackendClientTestSuite) TestCopyFileRange_DrainOrdering() {
 	n, st := s.backend.CopyFileRange(context.Background(), src, 0, dst, 0, 1024, 0)
 	s.Require().Equal(fuse.OK, st)
 	s.Assert().Equal(uint64(1024), n)
+}
+
+// TestCopyFileRange_RetryReusesRequestID is the load-bearing Phase 1d assertion
+// for CopyFileRange: the request_id must be generated once outside the retry
+// closure so the server's idempotency cache can short-circuit the replay without
+// re-executing the copy.
+//
+// Mutation-verify: moving uuid.NewString() inside the closure makes ids[0] !=
+// ids[1] and the assertion fails.
+func (s *BackendClientTestSuite) TestCopyFileRange_RetryReusesRequestID() {
+	src := s.newHandleAt("/src/file", 1, grpcclient.PerFileConfig{})
+	dst := s.newHandleAt("/dst/file", 2, grpcclient.PerFileConfig{})
+
+	var ids []string
+	s.fileClient.EXPECT().CopyFileRange(mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ context.Context, req *proto.CopyFileRangeRequest, _ ...grpc.CallOption) {
+			ids = append(ids, req.RequestId)
+		}).Return(nil, status.Error(codes.Unavailable, "transient")).Once()
+
+	s.fileClient.EXPECT().CopyFileRange(mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ context.Context, req *proto.CopyFileRangeRequest, _ ...grpc.CallOption) {
+			ids = append(ids, req.RequestId)
+		}).Return(&proto.CopyFileRangeReply{BytesCopied: 512, Status: 0}, nil).Once()
+
+	n, st := s.backend.CopyFileRange(context.Background(), src, 0, dst, 0, 512, 0)
+	s.Require().Equal(fuse.OK, st)
+	s.Assert().Equal(uint64(512), n)
+	s.Require().Len(ids, 2, "expected exactly two CopyFileRange attempts")
+	s.Assert().NotEmpty(ids[0], "request_id must be non-empty")
+	s.Assert().Equal(ids[0], ids[1], "retry must reuse the same request_id for server-side dedup")
 }
 
 // TestCopyFileRange_ZeroCopied_DirtyFlagNotSet verifies that a successful
