@@ -249,7 +249,7 @@ func (s *ResilienceSuite) TestNoDoubleApplyPastGrace() {
 	// Drive the Mkdir: attempt 1 applies server-side, the interceptor forces a
 	// session change and returns Unavailable; retryOp must then refuse to
 	// replay (classPathMutation across a session change) and surface EIO.
-	st := backend.Mkdir(context.Background(), "/newdir", 0o755)
+	_, st := backend.Mkdir(context.Background(), "/newdir", 0o755)
 
 	s.Require().True(ic.tripped.Load(), "the lost-reply interceptor must have fired on the Mkdir")
 	s.Require().NotEqual(oldID, appCtx.GetClient().SessionID(),
@@ -271,7 +271,7 @@ func (s *ResilienceSuite) TestNoDoubleApplyPastGrace() {
 	// Prove what the guard avoided: on the NEW session (empty idempotency
 	// cache) a replay of the same Mkdir WOULD surface EEXIST. That the caller
 	// got EIO above — not this EEXIST — is exactly the guard working.
-	replaySt := backend.Mkdir(context.Background(), "/newdir", 0o755)
+	_, replaySt := backend.Mkdir(context.Background(), "/newdir", 0o755)
 	s.Require().Equal(fuse.Status(syscall.EEXIST), replaySt,
 		"sanity: a fresh Mkdir of the existing dir on the new session surfaces EEXIST; "+
 			"the guard prevented exactly this spurious status from reaching the first caller")

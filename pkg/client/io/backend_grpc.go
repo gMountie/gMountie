@@ -45,11 +45,30 @@ const writeFrameSizeBytes = 1 << 20
 type BackendClient struct {
 	client grpcclient.Client
 	volume string
+	// plusListings makes ListDir request per-entry attributes (the
+	// READDIRPLUS win). Set via WithPlusListings; default false.
+	plusListings bool
+}
+
+// BackendOption customizes a BackendClient at construction.
+type BackendOption func(*BackendClient)
+
+// WithPlusListings makes ListDir request per-entry attributes alongside each
+// dirent. Only a cache decorator benefits — it primes its attr cache from
+// the listing so the kernel's READDIRPLUS-driven per-child lookups become
+// zero-RPC hits. Without a cache the extra attrs are wasted bytes, so the
+// default is false and the mount factory enables it iff the cache is on.
+func WithPlusListings(enabled bool) BackendOption {
+	return func(b *BackendClient) { b.plusListings = enabled }
 }
 
 // NewBackendClient returns a BackendClient that talks to client on volume.
-func NewBackendClient(client grpcclient.Client, volume string) *BackendClient {
-	return &BackendClient{client: client, volume: volume}
+func NewBackendClient(client grpcclient.Client, volume string, opts ...BackendOption) *BackendClient {
+	b := &BackendClient{client: client, volume: volume}
+	for _, opt := range opts {
+		opt(b)
+	}
+	return b
 }
 
 // callerFromCtx returns a proto.Caller for the request, pulled from the
@@ -221,29 +240,71 @@ func (b *BackendClient) Lookup(ctx context.Context, parent, name string) (*Attr,
 	return b.Stat(ctx, joinPath(parent, name))
 }
 
-// ListDir returns the directory entries at path. Idempotent.
-func (b *BackendClient) ListDir(ctx context.Context, path string) ([]DirEntry, fuse.Status) {
-	res, err := retryOp(b.client, ctx, "OpenDir", classIdempotentRead, b.client.MetaTimeout(),
-		func(ctx context.Context) (*proto.OpenDirReply, error) {
-			return b.client.Fs().OpenDir(ctx, &proto.OpenDirRequest{
+// listDirResult is the accumulated outcome of a single streaming ReadDir
+// attempt: the entries received and the terminal FUSE status. Tracked
+// together so retryOp can replace them wholesale on each attempt without
+// partial-state bleed-through (same shape as readResult for Read).
+type listDirResult struct {
+	entries []DirEntryPlus
+	status  fuse.Status
+}
+
+// ListDir consumes the server-streaming ReadDir RPC, accumulating
+// 512-entry batches. Idempotent: each retry attempt opens a fresh stream
+// bounded by its own MetaTimeout deadline (metadata op, not an fd-level
+// stream like Read). The plus flag asks the server for per-entry attrs;
+// attrFromProto maps them (nil when the server's per-entry stat failed).
+// An empty directory is one empty OK batch → an empty non-nil slice.
+func (b *BackendClient) ListDir(ctx context.Context, path string) ([]DirEntryPlus, fuse.Status) {
+	res, err := retryOp(b.client, ctx, "ReadDir", classIdempotentRead, b.client.MetaTimeout(),
+		func(ctx context.Context) (listDirResult, error) {
+			stream, err := b.client.Fs().ReadDir(ctx, &proto.ReadDirRequest{
 				Volume: b.volume,
 				Caller: callerFromCtx(ctx),
 				Path:   path,
+				Plus:   b.plusListings,
 			}, grpc.WaitForReady(true))
+			if err != nil {
+				return listDirResult{}, err
+			}
+			out := listDirResult{entries: []DirEntryPlus{}, status: fuse.OK}
+			for {
+				batch, recvErr := stream.Recv()
+				if errors.Is(recvErr, stdio.EOF) {
+					return out, nil
+				}
+				if recvErr != nil {
+					return listDirResult{}, recvErr
+				}
+				if st := fuse.Status(batch.GetStatus()); !st.Ok() {
+					// Terminal failure batch: the server stops the stream here.
+					out.status = st
+					return out, nil
+				}
+				for _, e := range batch.GetEntries() {
+					entry := e.GetEntry()
+					if entry == nil {
+						continue // malformed wrapper; nothing to list
+					}
+					out.entries = append(out.entries, DirEntryPlus{
+						DirEntry: DirEntry{
+							Ino:  entry.Ino,
+							Mode: entry.Mode,
+							Name: entry.Name,
+						},
+						Attr: attrFromProto(e.GetAttributes()),
+					})
+				}
+			}
 		})
-	if err != nil || res == nil {
-		log.Log.Error("error in call: OpenDir", zap.String("path", path), zap.Error(err))
+	if err != nil {
+		log.Log.Error("error in call: ReadDir", zap.String("path", path), zap.Error(err))
 		return nil, statusFromRPCError(err)
 	}
-	var entries []DirEntry
-	for _, entry := range res.Entries {
-		entries = append(entries, DirEntry{
-			Ino:  entry.Ino,
-			Mode: entry.Mode,
-			Name: entry.Name,
-		})
+	if !res.status.Ok() {
+		return nil, res.status
 	}
-	return entries, fuse.Status(res.Status)
+	return res.entries, fuse.OK
 }
 
 // Access mirrors access(2). Idempotent.
@@ -286,7 +347,9 @@ func (b *BackendClient) Readlink(ctx context.Context, path string) (string, fuse
 // session-id change (Create-fallback recovery) stops the retry immediately
 // — the new session's idempotency cache is empty and a replay could surface
 // a spurious EEXIST/ENOENT. Returns statusFromRPCError's errno mapping on a
-// gRPC error, otherwise fuse.Status as returned by statusOf.
+// gRPC error, otherwise the reply plus the fuse.Status from statusOf (the
+// reply is zero/nil on error — Mkdir/Symlink read their reply attrs from it
+// only after checking the status).
 // logFields carries the per-op correlation fields (path(s)) into the error
 // log, alongside the request_id — without them a user-facing errno from
 // Mkdir/Unlink/Chmod/... could not be tied to a file or to the server-side
@@ -298,7 +361,7 @@ func mutatePath[Rep any](
 	fn func(ctx context.Context, requestID string) (Rep, error),
 	statusOf func(Rep) int32,
 	logFields ...zap.Field,
-) fuse.Status {
+) (Rep, fuse.Status) {
 	requestID := uuid.NewString() // outside retryOp: stable across attempts for idempotency
 	res, err := retryOp(b.client, ctx, op, classPathMutation, b.client.MetaTimeout(),
 		func(ctx context.Context) (Rep, error) {
@@ -307,15 +370,17 @@ func mutatePath[Rep any](
 	if err != nil {
 		fields := append([]zap.Field{zap.String("request_id", requestID), zap.Error(err)}, logFields...)
 		log.Log.Error("error in call: "+op, fields...)
-		return statusFromRPCError(err)
+		return res, statusFromRPCError(err)
 	}
-	return fuse.Status(statusOf(res))
+	return res, fuse.Status(statusOf(res))
 }
 
 // Symlink creates a new symbolic link at linkPath pointing at target.
-// Mutating — request_id stamped outside retry for idempotency.
-func (b *BackendClient) Symlink(ctx context.Context, target, linkPath string) fuse.Status {
-	return mutatePath(b, ctx, "Symlink",
+// Mutating — request_id stamped outside retry for idempotency. The reply's
+// attrs are returned so callers skip the trailing Stat; nil with fuse.OK
+// means the server's post-create stat failed (callers fall back to Stat).
+func (b *BackendClient) Symlink(ctx context.Context, target, linkPath string) (*Attr, fuse.Status) {
+	res, st := mutatePath(b, ctx, "Symlink",
 		func(ctx context.Context, requestID string) (*proto.SymlinkReply, error) {
 			return b.client.Fs().Symlink(ctx, &proto.SymlinkRequest{
 				Volume:    b.volume,
@@ -329,6 +394,10 @@ func (b *BackendClient) Symlink(ctx context.Context, target, linkPath string) fu
 		func(r *proto.SymlinkReply) int32 { return r.Status },
 		zap.String("target", target), zap.String("link_path", linkPath),
 	)
+	if !st.Ok() {
+		return nil, st
+	}
+	return attrFromProto(res.GetAttributes()), fuse.OK
 }
 
 // StatFs returns filesystem statistics for the volume containing path.
@@ -372,7 +441,7 @@ func (b *BackendClient) GetXAttr(ctx context.Context, path, attr string) ([]byte
 // SetXAttr stores an extended attribute. Mutating — request_id stamped
 // outside retry for idempotency, like Chmod.
 func (b *BackendClient) SetXAttr(ctx context.Context, path, attr string, data []byte, flags uint32) fuse.Status {
-	return mutatePath(b, ctx, "SetXAttr",
+	_, st := mutatePath(b, ctx, "SetXAttr",
 		func(ctx context.Context, requestID string) (*proto.SetXAttrReply, error) {
 			return b.client.Fs().SetXAttr(ctx, &proto.SetXAttrRequest{
 				Volume:    b.volume,
@@ -388,11 +457,12 @@ func (b *BackendClient) SetXAttr(ctx context.Context, path, attr string, data []
 		func(r *proto.SetXAttrReply) int32 { return r.Status },
 		zap.String("path", path),
 	)
+	return st
 }
 
 // RemoveXAttr deletes an extended attribute. Mutating — see SetXAttr.
 func (b *BackendClient) RemoveXAttr(ctx context.Context, path, attr string) fuse.Status {
-	return mutatePath(b, ctx, "RemoveXAttr",
+	_, st := mutatePath(b, ctx, "RemoveXAttr",
 		func(ctx context.Context, requestID string) (*proto.RemoveXAttrReply, error) {
 			return b.client.Fs().RemoveXAttr(ctx, &proto.RemoveXAttrRequest{
 				Volume:    b.volume,
@@ -406,6 +476,7 @@ func (b *BackendClient) RemoveXAttr(ctx context.Context, path, attr string) fuse
 		func(r *proto.RemoveXAttrReply) int32 { return r.Status },
 		zap.String("path", path),
 	)
+	return st
 }
 
 // ListXAttr returns extended-attribute names. Idempotent.
@@ -424,8 +495,11 @@ func (b *BackendClient) ListXAttr(ctx context.Context, path string) ([]string, f
 }
 
 // Mkdir creates a directory. Mutating — request_id stamped outside retry.
-func (b *BackendClient) Mkdir(ctx context.Context, path string, mode uint32) fuse.Status {
-	return mutatePath(b, ctx, "Mkdir",
+// The reply's attrs are returned so callers skip the trailing Stat; nil
+// with fuse.OK means the server's post-create stat failed (callers fall
+// back to Stat).
+func (b *BackendClient) Mkdir(ctx context.Context, path string, mode uint32) (*Attr, fuse.Status) {
+	res, st := mutatePath(b, ctx, "Mkdir",
 		func(ctx context.Context, requestID string) (*proto.MkdirReply, error) {
 			return b.client.Fs().Mkdir(ctx, &proto.MkdirRequest{
 				Volume:    b.volume,
@@ -439,11 +513,15 @@ func (b *BackendClient) Mkdir(ctx context.Context, path string, mode uint32) fus
 		func(r *proto.MkdirReply) int32 { return r.Status },
 		zap.String("path", path),
 	)
+	if !st.Ok() {
+		return nil, st
+	}
+	return attrFromProto(res.GetAttributes()), fuse.OK
 }
 
 // Rmdir removes an empty directory.
 func (b *BackendClient) Rmdir(ctx context.Context, path string) fuse.Status {
-	return mutatePath(b, ctx, "Rmdir",
+	_, st := mutatePath(b, ctx, "Rmdir",
 		func(ctx context.Context, requestID string) (*proto.RmdirReply, error) {
 			return b.client.Fs().Rmdir(ctx, &proto.RmdirRequest{
 				Volume:    b.volume,
@@ -456,11 +534,12 @@ func (b *BackendClient) Rmdir(ctx context.Context, path string) fuse.Status {
 		func(r *proto.RmdirReply) int32 { return r.Status },
 		zap.String("path", path),
 	)
+	return st
 }
 
 // Unlink removes a non-directory.
 func (b *BackendClient) Unlink(ctx context.Context, path string) fuse.Status {
-	return mutatePath(b, ctx, "Unlink",
+	_, st := mutatePath(b, ctx, "Unlink",
 		func(ctx context.Context, requestID string) (*proto.UnlinkReply, error) {
 			return b.client.Fs().Unlink(ctx, &proto.UnlinkRequest{
 				Volume:    b.volume,
@@ -473,11 +552,12 @@ func (b *BackendClient) Unlink(ctx context.Context, path string) fuse.Status {
 		func(r *proto.UnlinkReply) int32 { return r.Status },
 		zap.String("path", path),
 	)
+	return st
 }
 
 // Rename moves a file/directory.
 func (b *BackendClient) Rename(ctx context.Context, oldPath, newPath string) fuse.Status {
-	return mutatePath(b, ctx, "Rename",
+	_, st := mutatePath(b, ctx, "Rename",
 		func(ctx context.Context, requestID string) (*proto.RenameReply, error) {
 			return b.client.Fs().Rename(ctx, &proto.RenameRequest{
 				Volume:    b.volume,
@@ -491,11 +571,12 @@ func (b *BackendClient) Rename(ctx context.Context, oldPath, newPath string) fus
 		func(r *proto.RenameReply) int32 { return r.Status },
 		zap.String("old_path", oldPath), zap.String("new_path", newPath),
 	)
+	return st
 }
 
 // Truncate changes a file's length.
 func (b *BackendClient) Truncate(ctx context.Context, path string, size uint64) fuse.Status {
-	return mutatePath(b, ctx, "Truncate",
+	_, st := mutatePath(b, ctx, "Truncate",
 		func(ctx context.Context, requestID string) (*proto.TruncateReply, error) {
 			return b.client.Fs().Truncate(ctx, &proto.TruncateRequest{
 				Volume:    b.volume,
@@ -509,11 +590,12 @@ func (b *BackendClient) Truncate(ctx context.Context, path string, size uint64) 
 		func(r *proto.TruncateReply) int32 { return r.Status },
 		zap.String("path", path),
 	)
+	return st
 }
 
 // Chmod changes file permissions.
 func (b *BackendClient) Chmod(ctx context.Context, path string, mode uint32) fuse.Status {
-	return mutatePath(b, ctx, "Chmod",
+	_, st := mutatePath(b, ctx, "Chmod",
 		func(ctx context.Context, requestID string) (*proto.ChmodReply, error) {
 			return b.client.Fs().Chmod(ctx, &proto.ChmodRequest{
 				Volume:    b.volume,
@@ -527,11 +609,12 @@ func (b *BackendClient) Chmod(ctx context.Context, path string, mode uint32) fus
 		func(r *proto.ChmodReply) int32 { return r.Status },
 		zap.String("path", path),
 	)
+	return st
 }
 
 // Chown changes ownership.
 func (b *BackendClient) Chown(ctx context.Context, path string, uid, gid uint32) fuse.Status {
-	return mutatePath(b, ctx, "Chown",
+	_, st := mutatePath(b, ctx, "Chown",
 		func(ctx context.Context, requestID string) (*proto.ChownReply, error) {
 			return b.client.Fs().Chown(ctx, &proto.ChownRequest{
 				Volume:    b.volume,
@@ -546,6 +629,7 @@ func (b *BackendClient) Chown(ctx context.Context, path string, uid, gid uint32)
 		func(r *proto.ChownReply) int32 { return r.Status },
 		zap.String("path", path),
 	)
+	return st
 }
 
 // timeToFileTime maps a Go time to the wire FileTime. A nil input yields a
@@ -560,7 +644,7 @@ func timeToFileTime(t *time.Time) *proto.FileTime {
 // Utimens sets atime and/or mtime. A nil pointer leaves that timestamp
 // unchanged (UTIME_OMIT).
 func (b *BackendClient) Utimens(ctx context.Context, path string, atime, mtime *time.Time) fuse.Status {
-	return mutatePath(b, ctx, "Utimens",
+	_, st := mutatePath(b, ctx, "Utimens",
 		func(ctx context.Context, requestID string) (*proto.UtimensReply, error) {
 			return b.client.Fs().Utimens(ctx, &proto.UtimensRequest{
 				Volume:    b.volume,
@@ -575,6 +659,7 @@ func (b *BackendClient) Utimens(ctx context.Context, path string, atime, mtime *
 		func(r *proto.UtimensReply) int32 { return r.Status },
 		zap.String("path", path),
 	)
+	return st
 }
 
 // setAttrValidMask is the set of FATTR_* bits the SetAttr wire contract

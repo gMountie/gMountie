@@ -94,9 +94,9 @@ func (s *NodeAdapterTestSuite) childNode(name string, ino uint64) fs.InodeEmbedd
 
 func (s *NodeAdapterTestSuite) TestRootReaddir_Happy() {
 	s.backend.EXPECT().ListDir(mock.Anything, "").Return(
-		[]clientio.DirEntry{
-			{Ino: 1, Mode: fuse.S_IFREG | 0o644, Name: "a"},
-			{Ino: 2, Mode: fuse.S_IFDIR | 0o755, Name: "b"},
+		[]clientio.DirEntryPlus{
+			{DirEntry: clientio.DirEntry{Ino: 1, Mode: fuse.S_IFREG | 0o644, Name: "a"}},
+			{DirEntry: clientio.DirEntry{Ino: 2, Mode: fuse.S_IFDIR | 0o755, Name: "b"}},
 		}, fuse.OK,
 	)
 	stream, errno := rootAs[fs.NodeReaddirer](s).Readdir(context.Background())
@@ -334,16 +334,74 @@ func (s *NodeAdapterTestSuite) TestRootSetattr_NilAttrsFallsBackToStat() {
 
 // --- Mkdir ---
 
+// TestRootMkdir_Happy: the EntryOut is filled from the reply attrs, with NO
+// trailing Stat — no Stat expectation is registered, so the strict mock
+// proves the absence (the Mkdir RTT win).
 func (s *NodeAdapterTestSuite) TestRootMkdir_Happy() {
-	s.backend.EXPECT().Mkdir(mock.Anything, "newdir", uint32(0o755)).Return(fuse.OK)
-	s.backend.EXPECT().Stat(mock.Anything, "newdir").Return(
+	s.backend.EXPECT().Mkdir(mock.Anything, "newdir", uint32(0o755)).Return(
 		&clientio.Attr{Ino: 9, Mode: fuse.S_IFDIR | 0o755}, fuse.OK,
-	)
+	).Once()
 	out := &fuse.EntryOut{}
 	inode, errno := rootAs[fs.NodeMkdirer](s).Mkdir(context.Background(), "newdir", 0o755, out)
 	s.Require().Equal(syscall.Errno(0), errno)
 	s.Require().NotNil(inode)
 	s.Assert().Equal(uint64(9), out.Ino)
+	s.Assert().Equal(uint32(fuse.S_IFDIR|0o755), out.Mode)
+}
+
+// TestRootMkdir_NilAttrsFallsBackToStat: a server whose post-create stat
+// failed replies OK with no attrs; the node must Stat ONCE rather than hand
+// the kernel a zero EntryOut (kernel-cache poisoning — same rationale as
+// the Create/Setattr fallbacks).
+func (s *NodeAdapterTestSuite) TestRootMkdir_NilAttrsFallsBackToStat() {
+	s.backend.EXPECT().Mkdir(mock.Anything, "newdir", uint32(0o755)).Return(nil, fuse.OK).Once()
+	s.backend.EXPECT().Stat(mock.Anything, "newdir").Return(
+		&clientio.Attr{Ino: 9, Mode: fuse.S_IFDIR | 0o755}, fuse.OK,
+	).Once()
+	out := &fuse.EntryOut{}
+	inode, errno := rootAs[fs.NodeMkdirer](s).Mkdir(context.Background(), "newdir", 0o755, out)
+	s.Require().Equal(syscall.Errno(0), errno)
+	s.Require().NotNil(inode)
+	s.Assert().Equal(uint64(9), out.Ino)
+}
+
+func (s *NodeAdapterTestSuite) TestRootMkdir_BackendErrorPropagates() {
+	s.backend.EXPECT().Mkdir(mock.Anything, "newdir", uint32(0o755)).Return(nil, fuse.EACCES).Once()
+	out := &fuse.EntryOut{}
+	inode, errno := rootAs[fs.NodeMkdirer](s).Mkdir(context.Background(), "newdir", 0o755, out)
+	s.Assert().Equal(syscall.Errno(fuse.EACCES), errno)
+	s.Assert().Nil(inode)
+}
+
+// --- Symlink ---
+
+// TestRootSymlink_Happy: like Mkdir, the EntryOut comes straight from the
+// reply attrs (S_IFLNK — the link itself); no Stat expectation = absence
+// proof of the trailing Stat.
+func (s *NodeAdapterTestSuite) TestRootSymlink_Happy() {
+	s.backend.EXPECT().Symlink(mock.Anything, "/elsewhere", "lnk").Return(
+		&clientio.Attr{Ino: 13, Mode: fuse.S_IFLNK | 0o777}, fuse.OK,
+	).Once()
+	out := &fuse.EntryOut{}
+	inode, errno := rootAs[fs.NodeSymlinker](s).Symlink(context.Background(), "/elsewhere", "lnk", out)
+	s.Require().Equal(syscall.Errno(0), errno)
+	s.Require().NotNil(inode)
+	s.Assert().Equal(uint64(13), out.Ino)
+	s.Assert().Equal(uint32(fuse.S_IFLNK|0o777), out.Mode)
+}
+
+// TestRootSymlink_NilAttrsFallsBackToStat mirrors the Mkdir fallback: nil
+// reply attrs → exactly one Stat, never a zero EntryOut.
+func (s *NodeAdapterTestSuite) TestRootSymlink_NilAttrsFallsBackToStat() {
+	s.backend.EXPECT().Symlink(mock.Anything, "/elsewhere", "lnk").Return(nil, fuse.OK).Once()
+	s.backend.EXPECT().Stat(mock.Anything, "lnk").Return(
+		&clientio.Attr{Ino: 13, Mode: fuse.S_IFLNK | 0o777}, fuse.OK,
+	).Once()
+	out := &fuse.EntryOut{}
+	inode, errno := rootAs[fs.NodeSymlinker](s).Symlink(context.Background(), "/elsewhere", "lnk", out)
+	s.Require().Equal(syscall.Errno(0), errno)
+	s.Require().NotNil(inode)
+	s.Assert().Equal(uint64(13), out.Ino)
 }
 
 // --- Rmdir / Unlink ---
