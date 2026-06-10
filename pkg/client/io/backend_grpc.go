@@ -1098,8 +1098,10 @@ func (b *BackendClient) Release(ctx context.Context, fh FileHandle) fuse.Status 
 //
 // Idempotent — routed through retryOp (classFdOp) so transient gRPC failures
 // (Unavailable, DeadlineExceeded) don't surface to userspace as EIO.
-// Re-running WriteAndFlush with the same (fd, offset, data) is safe
-// server-side. No request_id needed: the server-side flush is idempotent.
+// A request_id is generated once outside the retry closure and stamped on
+// every attempt: the pure-flush half is naturally idempotent, but the
+// coalesced-write half is not, so the server's idempotency cache uses the id
+// to short-circuit a replay without re-executing the write.
 //
 // reply.FinalAttr is returned by the server but unused at the client;
 // FUSE FLUSH carries no attributes back to the kernel. Available for
@@ -1124,6 +1126,10 @@ func (b *BackendClient) Flush(ctx context.Context, fh FileHandle) fuse.Status {
 			data = pending.Data
 		}
 	}
+	// requestID is generated once here, outside the closure, so every retry
+	// attempt carries the same id — the server's idempotency cache can
+	// short-circuit a replay of the coalesced-write half without re-executing.
+	requestID := uuid.NewString()
 	// classFdOp: WriteAndFlush is idempotent (same fd/offset/data replayed) so
 	// transient errors retry within the session; a session change kills the fd
 	// and stops the retry.
@@ -1133,6 +1139,7 @@ func (b *BackendClient) Flush(ctx context.Context, fh FileHandle) fuse.Status {
 				Volume:    h.volume,
 				Fd:        h.fd,
 				SessionId: h.sessionID,
+				RequestId: requestID,
 				Offset:    offset,
 				Data:      data,
 			}, grpc.WaitForReady(true))
@@ -1213,9 +1220,13 @@ func (b *BackendClient) Allocate(ctx context.Context, fh FileHandle, off, size u
 // CopyFileRange asks the server to copy length bytes from fhIn@offIn to
 // fhOut@offOut entirely server-side. Pending coalesced writes on BOTH
 // handles are drained first (same reason Fsync drains: the server must
-// see current bytes). Not routed through retryOp — a partially-applied copy
-// that lost its reply must not be replayed (it returns a bytes-copied count),
-// and the kernel reissues on a short copy anyway.
+// see current bytes).
+//
+// Routed through retryOp (classFdOp) — transient Unavailable / DeadlineExceeded
+// are safe to retry because the server caches the full reply (bytes_copied) by
+// request_id: a replay returns the cached count without re-executing the copy.
+// classFdOp stops retrying on a session change (fd is dead) — the correct class
+// for any op that holds a server-side fd.
 func (b *BackendClient) CopyFileRange(ctx context.Context, fhIn FileHandle, offIn uint64, fhOut FileHandle, offOut uint64, length, flags uint64) (uint64, fuse.Status) {
 	src := resolveHandle(fhIn)
 	dst := resolveHandle(fhOut)
@@ -1228,21 +1239,28 @@ func (b *BackendClient) CopyFileRange(ctx context.Context, fhIn FileHandle, offI
 	if st := b.drainCoalescer(dst); !st.Ok() {
 		return 0, st
 	}
-	ctx2, cancel := ioCtx(ctx, dst.ioTimeout)
-	defer cancel()
-	res, err := dst.fileClient.CopyFileRange(ctx2, &proto.CopyFileRangeRequest{
-		Volume:    dst.volume,
-		Caller:    callerFromCtx(ctx),
-		FdIn:      src.fd,
-		PathIn:    src.path,
-		OffIn:     offIn,
-		FdOut:     dst.fd,
-		PathOut:   dst.path,
-		OffOut:    offOut,
-		Length:    length,
-		Flags:     flags,
-		SessionId: dst.sessionID,
-	})
+	// requestID is generated once outside the closure so every retry attempt
+	// carries the same id; the server's idempotency cache short-circuits the
+	// replay without re-executing the copy.
+	requestID := uuid.NewString()
+	caller := callerFromCtx(ctx)
+	res, err := retryOp(dst.client, ctx, "CopyFileRange", classFdOp, dst.ioTimeout,
+		func(ctx context.Context) (*proto.CopyFileRangeReply, error) {
+			return dst.fileClient.CopyFileRange(ctx, &proto.CopyFileRangeRequest{
+				Volume:    dst.volume,
+				Caller:    caller,
+				FdIn:      src.fd,
+				PathIn:    src.path,
+				OffIn:     offIn,
+				FdOut:     dst.fd,
+				PathOut:   dst.path,
+				OffOut:    offOut,
+				Length:    length,
+				Flags:     flags,
+				SessionId: dst.sessionID,
+				RequestId: requestID,
+			}, grpc.WaitForReady(true))
+		})
 	if err != nil {
 		log.Log.Error("error in call: CopyFileRange", zap.String("path", dst.path), zap.Error(err))
 		return 0, statusFromRPCError(err)
