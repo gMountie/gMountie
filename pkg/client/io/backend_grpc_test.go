@@ -644,6 +644,20 @@ func (s *BackendClientTestSuite) TestSetAttr_MasksNonWireValidBits() {
 	s.Assert().Equal(fuse.OK, st)
 }
 
+// TestSetAttr_WireFattrContract pins the numeric FATTR_* values. The proto
+// comment on SetAttrRequest.valid PROMISES these exact numbers (1=MODE 2=UID
+// 4=GID 8=SIZE 16=ATIME 32=MTIME); the client forwards go-fuse's constants
+// untranslated, so this pins the go-fuse constants we map from — if a go-fuse
+// bump ever changed them, the wire contract would silently break without this.
+func (s *BackendClientTestSuite) TestSetAttr_WireFattrContract() {
+	s.Assert().EqualValues(1, fuse.FATTR_MODE)
+	s.Assert().EqualValues(2, fuse.FATTR_UID)
+	s.Assert().EqualValues(4, fuse.FATTR_GID)
+	s.Assert().EqualValues(8, fuse.FATTR_SIZE)
+	s.Assert().EqualValues(16, fuse.FATTR_ATIME)
+	s.Assert().EqualValues(32, fuse.FATTR_MTIME)
+}
+
 // TestSetAttr_RetryReusesRequestID — same Phase 1d idempotency property the
 // Write/Mkdir suites pin: the request_id is allocated once outside the
 // retry loop so the server's dedup cache short-circuits the replay.
