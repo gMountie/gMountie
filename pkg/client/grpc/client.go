@@ -201,14 +201,14 @@ func WithMetrics(m *metrics.Metrics) ClientOption {
 func NewClient(endpoint string, options ...ClientOption) (Client, error) {
 	c := ClientImpl{
 		endpoint:    endpoint,
-		metaTimeout: 5 * time.Second,
-		ioTimeout:   30 * time.Second,
+		metaTimeout: config.DefaultRpcTimeoutMeta,
+		ioTimeout:   config.DefaultRpcTimeoutIO,
 		retryWindow: config.DefaultRpcRetryWindow,
 		perFile: PerFileConfig{
-			ReadaheadChunkBytes: 64 << 10,
-			ReadaheadThreshold:  3,
-			ReadaheadWindow:     1,
-			WriteCoalesceBytes:  1 << 20,
+			ReadaheadChunkBytes: config.DefaultReadaheadChunkBytes,
+			ReadaheadThreshold:  config.DefaultReadaheadThreshold,
+			ReadaheadWindow:     config.DefaultReadaheadWindow,
+			WriteCoalesceBytes:  config.DefaultWriteCoalesceBytes,
 		},
 	}
 	c.lifeCtx, c.lifeCancel = context.WithCancel(context.Background())
