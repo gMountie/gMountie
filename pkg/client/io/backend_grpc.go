@@ -137,24 +137,6 @@ func joinPath(parent, name string) string {
 	return parent + "/" + name
 }
 
-// ioCtx bounds an fd-level RPC with the per-handle I/O timeout AND detaches it
-// from the caller's cancellation: a FUSE_INTERRUPT from Go's async-preemption
-// SIGURG (which the kernel fires on a long-running op) must not abort an
-// in-flight RPC with a spurious EIO (confirmed: the failures vanish under
-// GODEBUG=asyncpreemptoff=1). context.WithoutCancel keeps the caller's values
-// (the kernel uid/gid/pid the server resolves into an identity) while ignoring
-// its cancellation, so the RPC runs to completion or its own timeout.
-//
-// retryOp now provides this same detach-and-bound behaviour for every retried
-// op (reads, mutations, fd-ops, Open/Create). ioCtx survives only for
-// CopyFileRange, which is deliberately NOT retried (a partially-applied copy
-// that lost its reply must not be replayed). The blocking lock wait (SetLkw)
-// keeps a cancellable context (plain context.WithTimeout) so a signal can
-// still interrupt it; the readahead prefetch path bounds h.lifeCtx the same way.
-func ioCtx(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(parent), timeout)
-}
-
 // statusFromRPCError maps a transport-level gRPC error to the closest FUSE
 // errno, instead of the blanket EIO that loses errno fidelity. The mapping
 // mirrors what the server actually produces (controller/*.go, grpc/auth.go):
@@ -1289,8 +1271,9 @@ func (b *BackendClient) SetLkw(ctx context.Context, fh FileHandle, owner uint64,
 	if h == nil {
 		return fuse.EBADF
 	}
-	// SetLkw is a BLOCKING lock acquisition (F_SETLKW): keep it cancellable so a
-	// signal can interrupt a stuck wait, rather than detaching it via ioCtx.
+	// SetLkw is a BLOCKING lock acquisition (F_SETLKW): keep it cancellable so
+	// a signal can interrupt a stuck wait, rather than detaching it from the
+	// caller's cancellation the way retryOp does for every other op.
 	ctx2, cancel := context.WithTimeout(ctx, h.ioTimeout)
 	defer cancel()
 	res, err := h.fileClient.SetLkw(ctx2, &proto.SetLkwRequest{
