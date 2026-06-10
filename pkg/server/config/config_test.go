@@ -49,6 +49,33 @@ func (s *ConfigTestSuite) TestParse_Full_Server() {
 	s.Assert().True(result.Server.Metrics)
 }
 
+// TestParse_IdentityExecutorWorkers: defaults to the 0 sentinel (io-layer
+// default applies) and an explicit value parses through.
+func (s *ConfigTestSuite) TestParse_IdentityExecutorWorkers() {
+	result, err := LoadConfigFromString(s.fullConf)
+	s.Require().NoError(err)
+	s.Assert().Equal(0, result.Server.Identity.ExecutorWorkers)
+
+	conf := `
+server:
+  address: 0.0.0.0
+  port: 8000
+  identity:
+    executor_workers: 8
+auth:
+  type: basic
+  users:
+  - username: admin
+    password_hash: ` + testAdminPHC + `
+volumes:
+  - name: test
+    path: /tmp
+`
+	result, err = LoadConfigFromString(conf)
+	s.Require().NoError(err)
+	s.Assert().Equal(8, result.Server.Identity.ExecutorWorkers)
+}
+
 func (s *ConfigTestSuite) TestParse_Full_Volumes() {
 	// Test.
 	result, err := LoadConfigFromString(s.fullConf)
