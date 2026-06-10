@@ -100,14 +100,6 @@ jobs:
         # GitHub release API rate limit that arduino/setup-task hits
         # on busy shared runners.
         run: go install github.com/go-task/task/v3/cmd/task@v3.51.1
-      # TEMP DIAGNOSTIC (remove before merge): the fs e2e binary wedges on
-      # this branch — single-package go test streams output live, so the
-      # 5m timeout panic's goroutine dump reaches the log even if the
-      # process can't exit (FUSE self-mount wedge blocks exit_group).
-      - name: DIAG fs e2e streamed
-        timeout-minutes: 8
-        run: |
-          go test -v -count=1 -timeout 5m ./test/e2e/fs/
       - name: Run tests
         run: |
           task test:coverage
