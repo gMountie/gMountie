@@ -439,16 +439,23 @@ func (r *resolverBoundFS) Readlink(name string, context *fuse.Context) (string, 
 // during apply or during a later restore — the thread is left locked
 // (tainted) so it dies with the goroutine; see rollback for the single
 // policy implementation.
+//
+// This is the PER-OP path (save → apply → op → restore). identityExecutor
+// workers share the apply step via applyCreds but skip the save/restore
+// halves entirely: their threads are switched once and never come back.
 func changeIdentity(id *Identity) (func(), error) {
 	lockOSThread()
-	switch {
-	case id.HasCap(CapDacOverride):
-		return applyDacOverride(id)
-	case id.HasCap(CapDacReadSearch):
-		return applyDacReadSearch(id)
-	default:
-		return applyUnprivileged(id)
+	origGroups, err := getgroups()
+	if err != nil {
+		rollback(restoreState{}) // nothing applied; just unlock
+		return nil, err
 	}
+	st, err := applyCreds(id, origGroups)
+	if err != nil {
+		rollback(st) // undo exactly the levels that were applied
+		return nil, err
+	}
+	return func() { rollback(st) }, nil
 }
 
 // restoreState describes what a rollback must undo. Zero-value fields mean
@@ -496,55 +503,60 @@ func rollback(st restoreState) {
 	unlockOSThread()
 }
 
-// applyUnprivileged is the classic credential switch (setgroups + setfsgid +
-// setfsuid). The LockOSThread call lives in the dispatcher above.
-func applyUnprivileged(id *Identity) (func(), error) {
-	origGroups, err := getgroups()
-	if err != nil {
-		rollback(restoreState{}) // nothing applied; just unlock
-		return nil, err
+// applyCreds applies id's credentials to the CALLING thread — apply only: no
+// thread pinning, no original-state capture, no rollback. It returns the
+// cumulative restoreState describing exactly what WAS applied (the full set on
+// success, the partial set on mid-sequence failure) so the two callers can
+// each impose their own unwind policy:
+//
+//   - changeIdentity (per-op path) passes the saved origGroups, and feeds the
+//     returned state to rollback — both on mid-apply failure and as the post-op
+//     cleanup.
+//   - identityExecutor workers (constant-identity path) pass origGroups=nil
+//     and discard the state: their threads are switched once at startup and
+//     never restored.
+//
+// origGroups is only embedded into the returned state (restoreState.groups);
+// it does not affect what is applied.
+func applyCreds(id *Identity, origGroups []uint32) (restoreState, error) {
+	switch {
+	case id.HasCap(CapDacOverride):
+		return applyDacOverrideCreds(id, origGroups)
+	case id.HasCap(CapDacReadSearch):
+		return applyDacReadSearchCreds(id, origGroups)
+	default:
+		return applyUnprivilegedCreds(id, origGroups)
 	}
-	if err := setGroupsRaw(id.Gids); err != nil {
-		rollback(restoreState{})
-		return nil, err
-	}
-	if err := setfsgid(int(id.Gid)); err != nil {
-		rollback(restoreState{groups: origGroups})
-		return nil, err
-	}
-	if err := setfsuid(int(id.Uid)); err != nil {
-		rollback(restoreState{fsgid: true, groups: origGroups})
-		return nil, err
-	}
-	return func() {
-		rollback(restoreState{fsuid: true, fsgid: true, groups: origGroups})
-	}, nil
 }
 
-// applyDacReadSearch sets supplementary groups + fsgid, keeps fsuid=0, and
-// reduces the EFFECTIVE capability set to DAC_READ_SEARCH + SETUID + SETGID
-// only (dropping DAC_OVERRIDE/FOWNER/FSETID). PERMITTED is left intact —
-// dropping from PERMITTED is irreversible within a session; DAC enforcement
-// consults EFFECTIVE, so this is sufficient. Restore re-raises the saved
-// effective set, restores fsgid, and restores groups.
-func applyDacReadSearch(id *Identity) (func(), error) {
-	origGroups, err := getgroups()
+// applyUnprivilegedCreds is the classic credential switch (setgroups +
+// setfsgid + setfsuid) — bit-for-bit the pre-Phase-3 sequence.
+func applyUnprivilegedCreds(id *Identity, origGroups []uint32) (restoreState, error) {
+	st, err := applyDacOverrideCreds(id, origGroups) // same groups+fsgid prefix
 	if err != nil {
-		rollback(restoreState{})
-		return nil, err
+		return st, err
 	}
-	if err := setGroupsRaw(id.Gids); err != nil {
-		rollback(restoreState{})
-		return nil, err
+	if err := setfsuid(int(id.Uid)); err != nil {
+		return st, err
 	}
-	if err := setfsgid(int(id.Gid)); err != nil {
-		rollback(restoreState{groups: origGroups})
-		return nil, err
+	st.fsuid = true
+	return st, nil
+}
+
+// applyDacReadSearchCreds sets supplementary groups + fsgid, keeps fsuid=0,
+// and reduces the EFFECTIVE capability set to DAC_READ_SEARCH + SETUID +
+// SETGID only (dropping DAC_OVERRIDE/FOWNER/FSETID). PERMITTED is left
+// intact — dropping from PERMITTED is irreversible within a session; DAC
+// enforcement consults EFFECTIVE, so this is sufficient. The returned state
+// re-raises the saved effective set first, then fsgid, then groups.
+func applyDacReadSearchCreds(id *Identity, origGroups []uint32) (restoreState, error) {
+	st, err := applyDacOverrideCreds(id, origGroups)
+	if err != nil {
+		return st, err
 	}
 	origCaps, err := getCaps()
 	if err != nil {
-		rollback(restoreState{fsgid: true, groups: origGroups})
-		return nil, err
+		return st, err
 	}
 	// Keep only the bits that are already in PERMITTED (can't raise above it).
 	newEff := origCaps.permitted & dacReadSearchEffectiveMask()
@@ -553,35 +565,28 @@ func applyDacReadSearch(id *Identity) (func(), error) {
 		permitted:   origCaps.permitted,
 		inheritable: origCaps.inheritable,
 	}); err != nil {
-		rollback(restoreState{fsgid: true, groups: origGroups})
-		return nil, err
+		return st, err
 	}
-	return func() {
-		rollback(restoreState{caps: &origCaps, fsgid: true, groups: origGroups})
-	}, nil
+	st.caps = &origCaps
+	return st, nil
 }
 
-// applyDacOverride sets supplementary groups + fsgid but keeps fsuid=0 and
-// retains all capabilities. New entries created while this identity is active
-// will be owned by root until the caller performs an explicit post-create
-// fchown; see maybeChownNew and the Create/Mkdir/Symlink/Mknod/Link wrappers.
-func applyDacOverride(id *Identity) (func(), error) {
-	origGroups, err := getgroups()
-	if err != nil {
-		rollback(restoreState{})
-		return nil, err
-	}
+// applyDacOverrideCreds sets supplementary groups + fsgid but keeps fsuid=0
+// and retains all capabilities. New entries created while this identity is
+// active will be owned by root until the caller performs an explicit
+// post-create fchown; see maybeChownNew and the Create/Mkdir/Symlink/Mknod/
+// Link wrappers. Also the shared groups+fsgid prefix of the other two paths.
+func applyDacOverrideCreds(id *Identity, origGroups []uint32) (restoreState, error) {
+	st := restoreState{}
 	if err := setGroupsRaw(id.Gids); err != nil {
-		rollback(restoreState{})
-		return nil, err
+		return st, err
 	}
+	st.groups = origGroups
 	if err := setfsgid(int(id.Gid)); err != nil {
-		rollback(restoreState{groups: origGroups})
-		return nil, err
+		return st, err
 	}
-	return func() {
-		rollback(restoreState{fsgid: true, groups: origGroups})
-	}, nil
+	st.fsgid = true
+	return st, nil
 }
 
 // setGroupsRawThread sets the supplementary groups for the CURRENT OS thread
