@@ -70,6 +70,12 @@ func NewReadahead(chunkSize, threshold, window int) *Readahead {
 // evicts any chunks that no longer lie ahead of the new cursor (off+n).
 // Because a backward seek or gap places the new cursor behind previously
 // queued chunks they all fall outside the window and are dropped.
+//
+// n may span a combined cache-prefix + live-tail read (partial Serve
+// followed by a live fetch of the remainder): the eviction below drops
+// any in-flight or ready chunk the live tail fully covered (its later
+// Store becomes a no-op), while an in-flight chunk that extends past the
+// new cursor is retained — once stored, Serve reads it from mid-chunk.
 func (r *Readahead) Observe(off int64, n int) []int64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -132,13 +138,24 @@ func (r *Readahead) Store(off int64, data []byte) {
 	}
 }
 
-// Serve attempts to satisfy a Read(dest, off) entirely from ready chunks in
-// the window. It is full-or-miss: if the requested range is not fully covered
-// by contiguous ready chunks it returns (0, false) without modifying any state
-// (side-effect-free on miss). On a hit it copies the bytes, advances the
-// consumed cursor on each touched chunk, and drops any chunk that has been
-// fully consumed. Partially consumed chunks are retained for subsequent calls.
-// Cross-chunk reads are satisfied by spanning contiguous ready chunks.
+// Serve attempts to satisfy a Read(dest, off) from ready chunks in the
+// window. It returns (n, full):
+//
+//   - full coverage by contiguous ready chunks: all of dest is copied,
+//     consumed cursors advance, and it returns (len(dest), true);
+//   - a contiguous ready prefix (≥1 byte) at off: only the prefix is
+//     copied, the touched chunks' consumed cursors advance exactly as on
+//     the full path, and it returns (n, false). The CALLER must complete
+//     the read by fetching the tail live — a FUSE read must never reach
+//     the kernel short (short read == EOF to the kernel);
+//   - nothing ready at off: (0, false) with no side effects.
+//
+// Coverage extension stops (rather than missing) at the first gap or
+// in-flight chunk; in-flight chunks are never waited on, so Serve stays
+// non-blocking. On every served byte the consumed cursor on each touched
+// chunk advances and any fully-drained chunk is dropped. Partially
+// consumed chunks are retained for subsequent calls. Cross-chunk reads
+// span contiguous ready chunks.
 func (r *Readahead) Serve(dest []byte, off int64) (int, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -164,16 +181,18 @@ func (r *Readahead) Serve(dest []byte, off int64) (int, bool) {
 		return 0, false
 	}
 
+	// Extend coverage across contiguous ready chunks; stop at the first
+	// gap or in-flight chunk and serve whatever prefix is covered.
 	covEnd := r.chunks[start].off + int64(len(r.chunks[start].data))
 	last := start
 	for covEnd < end {
 		next := last + 1
 		if next >= len(r.chunks) {
-			return 0, false
+			break
 		}
 		c := r.chunks[next]
 		if c.data == nil || c.off != covEnd {
-			return 0, false
+			break
 		}
 		covEnd = c.off + int64(len(c.data))
 		last = next
@@ -205,5 +224,5 @@ func (r *Readahead) Serve(dest []byte, off int64) (int, bool) {
 		kept = append(kept, c)
 	}
 	r.chunks = kept
-	return int(written), true
+	return int(written), written == need
 }

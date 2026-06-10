@@ -683,24 +683,73 @@ func (b *BackendClient) Create(ctx context.Context, parent, name string, flags, 
 	return h, attrFromProto(res.Attributes), fuse.OK
 }
 
-// Read consumes the server-streaming Read RPC, accumulating frames into
-// dest in order. Mirrors GrpcFile.Read verbatim — the only differences
-// are the FileHandle boundary and the (int, fuse.Status) return shape.
+// Read satisfies a FUSE read from the readahead window where possible,
+// falling to the live streaming RPC for whatever the window does not
+// cover. Three shapes:
 //
-// Idempotent: each retry attempt opens a fresh stream; no request_id.
+//   - full coverage: served entirely from ready prefetch chunks;
+//   - partial prefix: the covered prefix comes from cache and ONLY the
+//     uncovered tail is fetched live, so the warm prefetch is not wasted
+//     yet the FUSE read is never short (the kernel treats a short read
+//     as EOF);
+//   - miss: the whole range is fetched live (readLive), exactly the
+//     pre-readahead path.
 func (b *BackendClient) Read(ctx context.Context, fh FileHandle, off int64, dest []byte) (int, fuse.Status) {
 	h := resolveHandle(fh)
 	if h == nil {
 		return 0, fuse.EBADF
 	}
 	if h.readahead != nil {
-		if n, hit := h.readahead.Serve(dest, off); hit {
+		n, full := h.readahead.Serve(dest, off)
+		if full {
 			for _, prefetchOff := range h.readahead.Observe(off, n) {
 				b.spawnPrefetch(h, prefetchOff)
 			}
 			return n, fuse.OK
 		}
+		if n > 0 {
+			// Prefix came from cache; fetch ONLY the tail live so the FUSE
+			// read is never short (kernel treats a short read as EOF). If
+			// the tail fetch fails the prefix is discarded — the kernel
+			// must not see a short/garbled read, and the error status maps
+			// cleanly on its own. A tail shorter than requested is fine:
+			// that only happens at EOF (the stream ends early), where a
+			// short combined result n+m truthfully signals EOF.
+			m, st := b.readLive(ctx, h, off+int64(n), dest[n:])
+			if st != fuse.OK {
+				return 0, st
+			}
+			// One Observe for the combined cache+live extent: keeps the
+			// sequential detector keyed on the true cursor and lets
+			// eviction drop any in-flight chunk the live tail covered
+			// (see Observe's doc on combined reads).
+			for _, prefetchOff := range h.readahead.Observe(off, n+m) {
+				b.spawnPrefetch(h, prefetchOff)
+			}
+			return n + m, fuse.OK
+		}
 	}
+	n, st := b.readLive(ctx, h, off, dest)
+	if st != fuse.OK {
+		return 0, st
+	}
+	if h.readahead != nil {
+		for _, prefetchOff := range h.readahead.Observe(off, n) {
+			b.spawnPrefetch(h, prefetchOff)
+		}
+	}
+	return n, fuse.OK
+}
+
+// readLive consumes the server-streaming Read RPC, accumulating frames
+// into dest in order. Shared by the readahead miss path and the
+// partial-prefix tail fetch. Mirrors GrpcFile.Read verbatim — the only
+// differences are the FileHandle boundary and the (int, fuse.Status)
+// return shape. A clean stream end before dest is full returns the short
+// count with fuse.OK (EOF); a non-OK status returns (0, status).
+//
+// Idempotent: each retry attempt opens a fresh stream; no request_id.
+func (b *BackendClient) readLive(ctx context.Context, h *grpcFileHandle, off int64, dest []byte) (int, fuse.Status) {
 	// classFdOp: server-streaming Read. WaitForReady parks the stream-open on a
 	// CONNECTING channel instead of burning retry attempts on instant
 	// Unavailable; the per-attempt deadline still bounds the wait. On a session
@@ -747,11 +796,6 @@ func (b *BackendClient) Read(ctx context.Context, fh FileHandle, off int64, dest
 	}
 	if !res.status.Ok() {
 		return 0, res.status
-	}
-	if h.readahead != nil {
-		for _, prefetchOff := range h.readahead.Observe(off, res.written) {
-			b.spawnPrefetch(h, prefetchOff)
-		}
 	}
 	return res.written, fuse.OK
 }

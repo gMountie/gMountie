@@ -132,16 +132,26 @@ a deep window pipelines away the per-fetch round-trip latency — the WAN read
 win. Defaults: `readahead_window = 4`, `readahead_chunk_bytes = 1 MiB` (one
 server frame).
 
-`Serve` is **partial-consume, cross-chunk, full-or-miss**: it satisfies a read
-of any size by copying across one or more contiguous ready chunks, advances a
-per-chunk consumed cursor, and **retains partially-consumed chunks** so the next
-sequential read hits their tail — a chunk is dropped only once fully drained. A
-read not fully covered by ready chunks misses (side-effect-free) and falls to
-the synchronous Read, so FUSE reads are never short. A non-sequential `Observe`
-evicts chunks at/behind the new cursor (respecting partial consume) and re-arms
-from the new position.
+`Serve` is **partial-consume, cross-chunk, partial-prefix**: it satisfies a
+read of any size by copying across one or more contiguous ready chunks,
+advances a per-chunk consumed cursor, and **retains partially-consumed chunks**
+so the next sequential read hits their tail — a chunk is dropped only once
+fully drained. A read only partially covered by ready chunks (coverage stops at
+the first gap or still-in-flight chunk; `Serve` never blocks on a fetch) gets
+the covered **prefix** from cache and the caller fetches **only the uncovered
+tail** with a live streaming Read, returning the combined result — so the warm
+prefetch is never wasted at a chunk boundary, and FUSE reads are never short
+(the kernel treats a short read as EOF; a short combined result occurs only
+when the live tail itself hits EOF, where it is truthful). If the tail fetch
+fails the cached prefix is discarded and only the error is returned. A read
+with nothing ready at its offset misses (side-effect-free) and falls to the
+synchronous Read for the whole range. A non-sequential `Observe` evicts chunks
+at/behind the new cursor (respecting partial consume) and re-arms from the new
+position; after a combined cache+live read the single `Observe` covers the
+combined extent, evicting any in-flight chunk the live tail already covered.
 
-This is the SP5 redesign. Previously `Serve` was whole-chunk-or-miss with
+This is the SP5 redesign (partial-prefix serving added in a follow-up; SP5
+itself was full-or-miss). Previously `Serve` was whole-chunk-or-miss with
 one-shot consume, so readahead was a no-op for any reader whose buffer differed
 from the chunk size, and deepening the window only wasted RPCs. Now a deep
 window of frame-sized fetches saturates the read pipe on a high-RTT link —
