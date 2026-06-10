@@ -118,10 +118,21 @@ type IdentityResolveFunc func(principal string) (Identity, error)
 // identity fresh via fn (backed by a TTL-cached resolver) before pinning the
 // thread and changing credentials. This makes caching the wrapper itself
 // trivially safe: freshness is fully delegated to the resolver's TTL.
+//
+// When exec is non-nil (constant-identity volumes — squash/static) ops skip
+// the per-op resolve + credential switch entirely and run on the executor's
+// pre-credentialed worker threads instead; see runAs.
 type resolverBoundFS struct {
 	pathfs.FileSystem
 	resolve   IdentityResolveFunc
 	principal string
+
+	// exec, when non-nil, is the pre-credentialed executor fast path. execID
+	// is the identity its workers carry, snapshotted at construction — only
+	// valid because the resolver is constant by contract (see
+	// NewConstantResolverBoundFS); per-principal modes leave exec nil.
+	exec   *identityExecutor
+	execID Identity
 }
 
 // NewResolverBoundFS wraps fs so every path op resolves identity via fn (which
@@ -129,6 +140,55 @@ type resolverBoundFS struct {
 // credentials. Safe to cache permanently — no identity snapshot is stored.
 func NewResolverBoundFS(fs pathfs.FileSystem, fn IdentityResolveFunc, principal string) pathfs.FileSystem {
 	return &resolverBoundFS{FileSystem: fs, resolve: fn, principal: principal}
+}
+
+// NewConstantResolverBoundFS is NewResolverBoundFS for volumes whose resolver
+// returns the same identity for this principal on every call for the process
+// lifetime (squash/static modes). Ops are routed through the process-wide
+// pre-credentialed executor for id — replacing the per-op thread pin + ~9
+// credential syscalls with a channel hop to an already-switched worker. If
+// the executor cannot start (executorFor returns nil), the wrapper degrades
+// to the per-op switching path, byte-for-byte the NewResolverBoundFS
+// behavior.
+//
+// id MUST be the identity fn resolves to — callers (BindIdentity) have just
+// resolved it. workers <= 0 selects the default pool size.
+func NewConstantResolverBoundFS(fs pathfs.FileSystem, fn IdentityResolveFunc, principal string, id Identity, workers int) pathfs.FileSystem {
+	return &resolverBoundFS{
+		FileSystem: fs,
+		resolve:    fn,
+		principal:  principal,
+		exec:       executors.executorFor(id, workers),
+		execID:     id,
+	}
+}
+
+// runAs executes op with the bound identity's credentials applied, via one of
+// two paths:
+//
+//   - exec != nil (constant-identity volumes): dispatch to the pre-
+//     credentialed executor — no per-op resolve, no credential syscalls. The
+//     identity handed to op is the construction-time snapshot, which equals
+//     what the resolver would return (constant by contract).
+//   - exec == nil: the classic per-op path — resolve the principal fresh, pin
+//     the thread, switch credentials, run op, restore.
+//
+// Returns OK when op ran (op reports its own result via captured variables)
+// and EPERM — without running op, failing closed — when the identity could
+// not be resolved or applied.
+func (r *resolverBoundFS) runAs(op func(id *Identity)) fuse.Status {
+	if r.exec != nil {
+		r.exec.do(func() { op(&r.execID) })
+		return fuse.OK
+	}
+	id, cleanup, err := r.changeIdentityFor()
+	if err != nil {
+		log.Log.Error("failed to assume user", zap.Error(err))
+		return fuse.EPERM
+	}
+	defer cleanup()
+	op(&id)
+	return fuse.OK
 }
 
 // changeIdentityFor resolves the principal once and applies its credentials,
@@ -162,218 +222,207 @@ func (r *resolverBoundFS) maybeChownNew(path string, id *Identity, context *fuse
 }
 
 func (r *resolverBoundFS) GetAttr(name string, context *fuse.Context) (*fuse.Attr, fuse.Status) {
-	_, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return nil, fuse.EPERM
+	var (
+		attr *fuse.Attr
+		st   fuse.Status
+	)
+	if rs := r.runAs(func(*Identity) { attr, st = r.FileSystem.GetAttr(name, context) }); !rs.Ok() {
+		return nil, rs
 	}
-	defer cleanup()
-	return r.FileSystem.GetAttr(name, context)
+	return attr, st
 }
 
 func (r *resolverBoundFS) Chmod(name string, mode uint32, context *fuse.Context) fuse.Status {
-	_, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return fuse.EPERM
+	var st fuse.Status
+	if rs := r.runAs(func(*Identity) { st = r.FileSystem.Chmod(name, mode, context) }); !rs.Ok() {
+		return rs
 	}
-	defer cleanup()
-	return r.FileSystem.Chmod(name, mode, context)
+	return st
 }
 
 func (r *resolverBoundFS) Chown(name string, uid uint32, gid uint32, context *fuse.Context) fuse.Status {
-	_, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return fuse.EPERM
+	var st fuse.Status
+	if rs := r.runAs(func(*Identity) { st = r.FileSystem.Chown(name, uid, gid, context) }); !rs.Ok() {
+		return rs
 	}
-	defer cleanup()
-	return r.FileSystem.Chown(name, uid, gid, context)
+	return st
 }
 
 func (r *resolverBoundFS) Utimens(name string, Atime *time.Time, Mtime *time.Time, context *fuse.Context) fuse.Status {
-	_, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return fuse.EPERM
+	var st fuse.Status
+	if rs := r.runAs(func(*Identity) { st = r.FileSystem.Utimens(name, Atime, Mtime, context) }); !rs.Ok() {
+		return rs
 	}
-	defer cleanup()
-	return r.FileSystem.Utimens(name, Atime, Mtime, context)
+	return st
 }
 
 func (r *resolverBoundFS) Truncate(name string, size uint64, context *fuse.Context) fuse.Status {
-	_, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return fuse.EPERM
+	var st fuse.Status
+	if rs := r.runAs(func(*Identity) { st = r.FileSystem.Truncate(name, size, context) }); !rs.Ok() {
+		return rs
 	}
-	defer cleanup()
-	return r.FileSystem.Truncate(name, size, context)
+	return st
 }
 
 func (r *resolverBoundFS) Access(name string, mode uint32, context *fuse.Context) fuse.Status {
-	id, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume identity", zap.Error(err))
-		return fuse.EPERM
+	var st fuse.Status
+	if rs := r.runAs(func(id *Identity) {
+		attr, gst := r.FileSystem.GetAttr(name, context)
+		if !gst.Ok() {
+			st = gst
+			return
+		}
+		// The permission check runs against the SAME identity whose credentials
+		// are applied — id is either the single resolve of this op or the
+		// executor's construction-time constant.
+		if accessAllowed(attr, id, mode) {
+			st = fuse.OK
+		} else {
+			st = fuse.EACCES
+		}
+	}); !rs.Ok() {
+		return rs
 	}
-	defer cleanup()
-	attr, st := r.FileSystem.GetAttr(name, context)
-	if !st.Ok() {
-		return st
-	}
-	// The permission check runs against the SAME identity whose credentials
-	// are applied — id came from the single resolve in changeIdentityFor.
-	if accessAllowed(attr, &id, mode) {
-		return fuse.OK
-	}
-	return fuse.EACCES
+	return st
 }
 
 func (r *resolverBoundFS) Link(oldName string, newName string, context *fuse.Context) fuse.Status {
-	id, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return fuse.EPERM
-	}
-	defer cleanup()
-	st := r.FileSystem.Link(oldName, newName, context)
-	if st.Ok() {
-		r.maybeChownNew(newName, &id, context)
+	var st fuse.Status
+	if rs := r.runAs(func(id *Identity) {
+		st = r.FileSystem.Link(oldName, newName, context)
+		if st.Ok() {
+			r.maybeChownNew(newName, id, context)
+		}
+	}); !rs.Ok() {
+		return rs
 	}
 	return st
 }
 
 func (r *resolverBoundFS) Mkdir(name string, mode uint32, context *fuse.Context) fuse.Status {
-	id, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return fuse.EPERM
-	}
-	defer cleanup()
-	st := r.FileSystem.Mkdir(name, mode, context)
-	if st.Ok() {
-		r.maybeChownNew(name, &id, context)
+	var st fuse.Status
+	if rs := r.runAs(func(id *Identity) {
+		st = r.FileSystem.Mkdir(name, mode, context)
+		if st.Ok() {
+			r.maybeChownNew(name, id, context)
+		}
+	}); !rs.Ok() {
+		return rs
 	}
 	return st
 }
 
 func (r *resolverBoundFS) Mknod(name string, mode uint32, dev uint32, context *fuse.Context) fuse.Status {
-	id, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return fuse.EPERM
-	}
-	defer cleanup()
-	st := r.FileSystem.Mknod(name, mode, dev, context)
-	if st.Ok() {
-		r.maybeChownNew(name, &id, context)
+	var st fuse.Status
+	if rs := r.runAs(func(id *Identity) {
+		st = r.FileSystem.Mknod(name, mode, dev, context)
+		if st.Ok() {
+			r.maybeChownNew(name, id, context)
+		}
+	}); !rs.Ok() {
+		return rs
 	}
 	return st
 }
 
 func (r *resolverBoundFS) Rename(oldName string, newName string, context *fuse.Context) fuse.Status {
-	_, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return fuse.EPERM
+	var st fuse.Status
+	if rs := r.runAs(func(*Identity) { st = r.FileSystem.Rename(oldName, newName, context) }); !rs.Ok() {
+		return rs
 	}
-	defer cleanup()
-	return r.FileSystem.Rename(oldName, newName, context)
+	return st
 }
 
 func (r *resolverBoundFS) Rmdir(name string, context *fuse.Context) fuse.Status {
-	_, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return fuse.EPERM
+	var st fuse.Status
+	if rs := r.runAs(func(*Identity) { st = r.FileSystem.Rmdir(name, context) }); !rs.Ok() {
+		return rs
 	}
-	defer cleanup()
-	return r.FileSystem.Rmdir(name, context)
+	return st
 }
 
 func (r *resolverBoundFS) Unlink(name string, context *fuse.Context) fuse.Status {
-	_, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return fuse.EPERM
+	var st fuse.Status
+	if rs := r.runAs(func(*Identity) { st = r.FileSystem.Unlink(name, context) }); !rs.Ok() {
+		return rs
 	}
-	defer cleanup()
-	return r.FileSystem.Unlink(name, context)
+	return st
 }
 
 func (r *resolverBoundFS) GetXAttr(name string, attribute string, context *fuse.Context) ([]byte, fuse.Status) {
-	_, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return nil, fuse.EPERM
+	var (
+		data []byte
+		st   fuse.Status
+	)
+	if rs := r.runAs(func(*Identity) { data, st = r.FileSystem.GetXAttr(name, attribute, context) }); !rs.Ok() {
+		return nil, rs
 	}
-	defer cleanup()
-	return r.FileSystem.GetXAttr(name, attribute, context)
+	return data, st
 }
 
 func (r *resolverBoundFS) ListXAttr(name string, context *fuse.Context) ([]string, fuse.Status) {
-	_, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return nil, fuse.EPERM
+	var (
+		attrs []string
+		st    fuse.Status
+	)
+	if rs := r.runAs(func(*Identity) { attrs, st = r.FileSystem.ListXAttr(name, context) }); !rs.Ok() {
+		return nil, rs
 	}
-	defer cleanup()
-	return r.FileSystem.ListXAttr(name, context)
+	return attrs, st
 }
 
 func (r *resolverBoundFS) RemoveXAttr(name string, attr string, context *fuse.Context) fuse.Status {
-	_, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return fuse.EPERM
+	var st fuse.Status
+	if rs := r.runAs(func(*Identity) { st = r.FileSystem.RemoveXAttr(name, attr, context) }); !rs.Ok() {
+		return rs
 	}
-	defer cleanup()
-	return r.FileSystem.RemoveXAttr(name, attr, context)
+	return st
 }
 
 func (r *resolverBoundFS) SetXAttr(name string, attr string, data []byte, flags int, context *fuse.Context) fuse.Status {
-	_, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return fuse.EPERM
+	var st fuse.Status
+	if rs := r.runAs(func(*Identity) { st = r.FileSystem.SetXAttr(name, attr, data, flags, context) }); !rs.Ok() {
+		return rs
 	}
-	defer cleanup()
-	return r.FileSystem.SetXAttr(name, attr, data, flags, context)
+	return st
 }
 
 func (r *resolverBoundFS) Open(name string, flags uint32, context *fuse.Context) (nodefs.File, fuse.Status) {
-	_, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return nil, fuse.EPERM
+	var (
+		f  nodefs.File
+		st fuse.Status
+	)
+	if rs := r.runAs(func(*Identity) { f, st = r.FileSystem.Open(name, flags, context) }); !rs.Ok() {
+		return nil, rs
 	}
-	defer cleanup()
-	return r.FileSystem.Open(name, flags, context)
+	return f, st
 }
 
 func (r *resolverBoundFS) Create(name string, flags uint32, mode uint32, context *fuse.Context) (nodefs.File, fuse.Status) {
-	id, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return nil, fuse.EPERM
-	}
-	defer cleanup()
-	f, st := r.FileSystem.Create(name, flags, mode, context)
-	if st.Ok() {
-		r.maybeChownNew(name, &id, context)
+	var (
+		f  nodefs.File
+		st fuse.Status
+	)
+	if rs := r.runAs(func(id *Identity) {
+		f, st = r.FileSystem.Create(name, flags, mode, context)
+		if st.Ok() {
+			r.maybeChownNew(name, id, context)
+		}
+	}); !rs.Ok() {
+		return nil, rs
 	}
 	return f, st
 }
 
 func (r *resolverBoundFS) OpenDir(name string, context *fuse.Context) ([]fuse.DirEntry, fuse.Status) {
-	_, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return nil, fuse.EPERM
+	var (
+		entries []fuse.DirEntry
+		st      fuse.Status
+	)
+	if rs := r.runAs(func(*Identity) { entries, st = r.FileSystem.OpenDir(name, context) }); !rs.Ok() {
+		return nil, rs
 	}
-	defer cleanup()
-	return r.FileSystem.OpenDir(name, context)
+	return entries, st
 }
 
 // ReadDirPlus forwards under the SAME credential switch as OpenDir — the
@@ -403,27 +452,27 @@ func (r *resolverBoundFS) ReadDirPlus(name string, context *fuse.Context) ([]Dir
 }
 
 func (r *resolverBoundFS) Symlink(value string, linkName string, context *fuse.Context) fuse.Status {
-	id, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return fuse.EPERM
-	}
-	defer cleanup()
-	st := r.FileSystem.Symlink(value, linkName, context)
-	if st.Ok() {
-		r.maybeChownNew(linkName, &id, context)
+	var st fuse.Status
+	if rs := r.runAs(func(id *Identity) {
+		st = r.FileSystem.Symlink(value, linkName, context)
+		if st.Ok() {
+			r.maybeChownNew(linkName, id, context)
+		}
+	}); !rs.Ok() {
+		return rs
 	}
 	return st
 }
 
 func (r *resolverBoundFS) Readlink(name string, context *fuse.Context) (string, fuse.Status) {
-	_, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return "", fuse.EPERM
+	var (
+		target string
+		st     fuse.Status
+	)
+	if rs := r.runAs(func(*Identity) { target, st = r.FileSystem.Readlink(name, context) }); !rs.Ok() {
+		return "", rs
 	}
-	defer cleanup()
-	return r.FileSystem.Readlink(name, context)
+	return target, st
 }
 
 // changeIdentity pins the current OS thread and applies the identity's

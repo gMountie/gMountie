@@ -26,3 +26,23 @@ var ErrPrincipalNotFound = errors.New("principal not found")
 type IdentityResolver interface {
 	Resolve(principal string) (Identity, error)
 }
+
+// ConstantIdentityResolver marks resolvers whose Resolve answer for any given
+// principal is fixed for the process lifetime (squash: one identity for
+// everyone; static: per-principal identities frozen in config). Constancy is
+// what makes a volume eligible for the pre-credentialed executor fast path —
+// the identity can be applied to worker threads once instead of per op.
+// Resolvers backed by mutable system state (system mode's getent) MUST NOT
+// report constant; wrappers (the TTL cache) forward their inner resolver's
+// answer.
+type ConstantIdentityResolver interface {
+	IdentityResolver
+	// ConstantIdentity reports whether Resolve is time-invariant.
+	ConstantIdentity() bool
+}
+
+// resolverIsConstant reports whether r promises time-invariant resolution.
+func resolverIsConstant(r IdentityResolver) bool {
+	c, ok := r.(ConstantIdentityResolver)
+	return ok && c.ConstantIdentity()
+}

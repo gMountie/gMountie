@@ -170,6 +170,40 @@ func (s *BindIdentitySuite) TestBindIdentityReturnsIdentity() {
 	s.Equal(resolved.Gid, id.Gid)
 }
 
+// TestResolverConstancyByMode pins which mapping modes are eligible for the
+// pre-credentialed executor fast path. This is the construction-level
+// guarantee that per-principal mutable modes never get an executor:
+// BindIdentity only calls the constant-FS constructor when
+// resolverIsConstant is true.
+func (s *BindIdentitySuite) TestResolverConstancyByMode() {
+	squash := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModeSquash, Uid: 1000, Gid: 1000})
+	s.True(resolverIsConstant(squash.volumes["v"].resolver),
+		"squash resolves to one frozen identity — constant")
+
+	static := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModeStatic,
+		Users: map[string]config.StaticUser{"alice": {Uid: 1001, Gid: 1001}}})
+	s.True(resolverIsConstant(static.volumes["v"].resolver),
+		"static identities are frozen in config — constant (even behind the TTL cache)")
+
+	system := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModeSystem})
+	s.False(resolverIsConstant(system.volumes["v"].resolver),
+		"system identities come from mutable getent state — must keep the per-op path")
+
+	passthrough := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModePassthrough})
+	s.Nil(passthrough.volumes["v"].resolver,
+		"passthrough has no resolver at all; identity is per-RPC wire state")
+}
+
+// TestExecutorWorkersFromConfig: the knob flows from server.identity config;
+// a nil Server (minimal test configs) means 0 = io-layer default.
+func (s *BindIdentitySuite) TestExecutorWorkersFromConfig() {
+	svc := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModeSquash, Uid: 1000, Gid: 1000})
+	s.Equal(0, svc.executorWorkers(), "nil Server config delegates to the io default")
+
+	svc.config.Server = &config.ServerConfig{Identity: config.IdentityConfig{ExecutorWorkers: 8}}
+	s.Equal(8, svc.executorWorkers())
+}
+
 func (s *BindIdentitySuite) TestBindIdentityStaticCapsCarriedThrough() {
 	orig := identityEnforceable
 	defer func() { identityEnforceable = orig }()

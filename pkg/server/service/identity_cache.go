@@ -40,6 +40,10 @@ func NewCachedResolver(inner IdentityResolver, ttl time.Duration) IdentityResolv
 	return &cachedResolver{inner: inner, ttl: ttl, store: make(map[string]cacheEntry)}
 }
 
+// ConstantIdentity forwards the inner resolver's answer: a TTL cache never
+// changes whether the underlying resolution is time-invariant.
+func (c *cachedResolver) ConstantIdentity() bool { return resolverIsConstant(c.inner) }
+
 func (c *cachedResolver) Resolve(principal string) (Identity, error) {
 	now := time.Now()
 	c.mu.Lock()
