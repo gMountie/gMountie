@@ -431,22 +431,29 @@ func (r *resolverBoundFS) OpenDir(name string, context *fuse.Context) ([]fuse.Di
 // attrs (still under the switched credentials) so the wrapper satisfies
 // ReadDirPlusser unconditionally without inventing attributes.
 func (r *resolverBoundFS) ReadDirPlus(name string, context *fuse.Context) ([]DirEntryPlus, fuse.Status) {
-	_, cleanup, err := r.changeIdentityFor()
-	if err != nil {
-		log.Log.Error("failed to assume user", zap.Error(err))
-		return nil, fuse.EPERM
-	}
-	defer cleanup()
-	if rdp, ok := r.FileSystem.(ReadDirPlusser); ok {
-		return rdp.ReadDirPlus(name, context)
-	}
-	entries, st := r.FileSystem.OpenDir(name, context)
-	if !st.Ok() {
-		return nil, st
-	}
-	out := make([]DirEntryPlus, len(entries))
-	for i, e := range entries {
-		out[i] = DirEntryPlus{Entry: e}
+	var (
+		out []DirEntryPlus
+		st  fuse.Status
+	)
+	if rs := r.runAs(func(*Identity) {
+		if rdp, ok := r.FileSystem.(ReadDirPlusser); ok {
+			out, st = rdp.ReadDirPlus(name, context)
+			return
+		}
+		// Inner FS lacks the capability: degrade to OpenDir with nil attrs
+		// (never invent attributes) under the same identity.
+		entries, ost := r.FileSystem.OpenDir(name, context)
+		if !ost.Ok() {
+			out, st = nil, ost
+			return
+		}
+		plus := make([]DirEntryPlus, len(entries))
+		for i, e := range entries {
+			plus[i] = DirEntryPlus{Entry: e}
+		}
+		out, st = plus, ost
+	}); !rs.Ok() {
+		return nil, rs
 	}
 	return out, st
 }
