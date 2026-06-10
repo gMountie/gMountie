@@ -60,6 +60,18 @@ func newBackendReadStreamStubOptional(t *testing.T, frames ...*proto.ReadFrame) 
 	return stub
 }
 
+// newReadDirStreamStub returns a MockRpcFs_ReadDirClient that yields the
+// given batches in order via Recv(), then EOF. Mirrors
+// newBackendReadStreamStub for the streaming ReadDir consumer.
+func newReadDirStreamStub(t *testing.T, batches ...*proto.ReadDirBatch) *mockProto.MockRpcFs_ReadDirClient {
+	stub := mockProto.NewMockRpcFs_ReadDirClient(t)
+	for _, b := range batches {
+		stub.EXPECT().Recv().Return(b, nil).Once()
+	}
+	stub.EXPECT().Recv().Return(nil, stdio.EOF).Maybe()
+	return stub
+}
+
 // backendWriteStreamStub captures every WriteFrame sent through the
 // streaming Write client and returns the configured WriteReply / error
 // on CloseAndRecv. Send copies the data slice since real gRPC marshals
@@ -204,14 +216,15 @@ func (s *BackendClientTestSuite) TestListDir_CancelledParentDoesNotAbortRPC() {
 	parent, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	s.fsClient.EXPECT().OpenDir(
+	stream := newReadDirStreamStub(s.T(), &proto.ReadDirBatch{
+		Status:  int32(fuse.OK),
+		Entries: []*proto.DirEntryPlus{{Entry: &proto.DirEntry{Name: "f", Mode: 0o644, Ino: 1}}},
+	})
+	s.fsClient.EXPECT().ReadDir(
 		mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() == nil }),
 		mock.Anything,
 		mock.Anything,
-	).Return(&proto.OpenDirReply{
-		Status:  int32(fuse.OK),
-		Entries: []*proto.DirEntry{{Name: "f", Mode: 0o644, Ino: 1}},
-	}, nil)
+	).Return(stream, nil)
 
 	entries, st := s.backend.ListDir(parent, "/test")
 	s.Require().Equal(fuse.OK, st)
@@ -319,17 +332,19 @@ func (s *BackendClientTestSuite) TestLookup() {
 	s.Assert().Equal(uint64(42), attr.Ino)
 }
 
+// TestListDir consumes the streaming ReadDir RPC. The default backend has
+// plus listings DISABLED, so the request must carry Plus=false.
 func (s *BackendClientTestSuite) TestListDir() {
-	entries := []*proto.DirEntry{
-		{Name: "file1", Mode: 0644, Ino: 1},
-		{Name: "file2", Mode: 0644, Ino: 2},
-	}
-	s.fsClient.EXPECT().OpenDir(mock.Anything, mock.MatchedBy(func(req *proto.OpenDirRequest) bool {
-		return req.Volume == "testVolume" && req.Path == "/test"
-	}), mock.Anything).Return(&proto.OpenDirReply{
-		Status:  int32(fuse.OK),
-		Entries: entries,
-	}, nil)
+	stream := newReadDirStreamStub(s.T(), &proto.ReadDirBatch{
+		Status: int32(fuse.OK),
+		Entries: []*proto.DirEntryPlus{
+			{Entry: &proto.DirEntry{Name: "file1", Mode: 0644, Ino: 1}},
+			{Entry: &proto.DirEntry{Name: "file2", Mode: 0644, Ino: 2}},
+		},
+	})
+	s.fsClient.EXPECT().ReadDir(mock.Anything, mock.MatchedBy(func(req *proto.ReadDirRequest) bool {
+		return req.Volume == "testVolume" && req.Path == "/test" && !req.Plus
+	}), mock.Anything).Return(stream, nil)
 
 	result, st := s.backend.ListDir(context.Background(), "/test")
 
@@ -338,6 +353,99 @@ func (s *BackendClientTestSuite) TestListDir() {
 	s.Assert().Equal("file1", result[0].Name)
 	s.Assert().Equal("file2", result[1].Name)
 	s.Assert().Equal(uint64(1), result[0].Ino)
+	s.Assert().Nil(result[0].Attr, "plus disabled: no per-entry attrs")
+}
+
+// TestListDir_MultiBatchAccumulates: a large directory streams several
+// batches; entries accumulate in order across batches.
+func (s *BackendClientTestSuite) TestListDir_MultiBatchAccumulates() {
+	stream := newReadDirStreamStub(s.T(),
+		&proto.ReadDirBatch{Status: int32(fuse.OK), Entries: []*proto.DirEntryPlus{
+			{Entry: &proto.DirEntry{Name: "a", Ino: 1}},
+			{Entry: &proto.DirEntry{Name: "b", Ino: 2}},
+		}},
+		&proto.ReadDirBatch{Status: int32(fuse.OK), Entries: []*proto.DirEntryPlus{
+			{Entry: &proto.DirEntry{Name: "c", Ino: 3}},
+		}},
+	)
+	s.fsClient.EXPECT().ReadDir(mock.Anything, mock.Anything, mock.Anything).Return(stream, nil)
+
+	result, st := s.backend.ListDir(context.Background(), "/big")
+	s.Require().Equal(fuse.OK, st)
+	s.Require().Len(result, 3)
+	s.Assert().Equal([]string{"a", "b", "c"},
+		[]string{result[0].Name, result[1].Name, result[2].Name})
+}
+
+// TestListDir_EmptyDir: the server sends one empty OK batch; the backend
+// returns an empty NON-NIL slice (a real "directory with no entries" answer,
+// distinguishable from the nil-on-error arm).
+func (s *BackendClientTestSuite) TestListDir_EmptyDir() {
+	stream := newReadDirStreamStub(s.T(), &proto.ReadDirBatch{Status: int32(fuse.OK)})
+	s.fsClient.EXPECT().ReadDir(mock.Anything, mock.Anything, mock.Anything).Return(stream, nil)
+
+	result, st := s.backend.ListDir(context.Background(), "/empty")
+	s.Require().Equal(fuse.OK, st)
+	s.Require().NotNil(result)
+	s.Assert().Empty(result)
+}
+
+// TestListDir_TerminalStatusBatch: a fuse-level failure arrives as one
+// terminal batch carrying the status; the backend surfaces it.
+func (s *BackendClientTestSuite) TestListDir_TerminalStatusBatch() {
+	stream := newReadDirStreamStub(s.T(), &proto.ReadDirBatch{Status: int32(fuse.EACCES)})
+	s.fsClient.EXPECT().ReadDir(mock.Anything, mock.Anything, mock.Anything).Return(stream, nil)
+
+	result, st := s.backend.ListDir(context.Background(), "/forbidden")
+	s.Assert().Equal(fuse.EACCES, st)
+	s.Assert().Nil(result)
+}
+
+// TestListDir_PlusFlagPropagatesAndMapsAttrs: a backend constructed with
+// WithPlusListings(true) stamps Plus on the request, and per-entry attrs map
+// through attrFromProto. An entry whose server-side stat failed (nil
+// Attributes) yields a nil Attr without dropping the dirent.
+func (s *BackendClientTestSuite) TestListDir_PlusFlagPropagatesAndMapsAttrs() {
+	plusBackend := NewBackendClient(s.client, "testVolume", WithPlusListings(true))
+	stream := newReadDirStreamStub(s.T(), &proto.ReadDirBatch{
+		Status: int32(fuse.OK),
+		Entries: []*proto.DirEntryPlus{
+			{
+				Entry:      &proto.DirEntry{Name: "f", Mode: 0o644, Ino: 9},
+				Attributes: &proto.Attr{Ino: 9, Size: 64, Mode: 0o100644, Owner: &proto.Owner{Uid: 1000, Gid: 1000}},
+			},
+			{Entry: &proto.DirEntry{Name: "statfailed", Ino: 10}},
+		},
+	})
+	s.fsClient.EXPECT().ReadDir(mock.Anything, mock.MatchedBy(func(req *proto.ReadDirRequest) bool {
+		return req.Plus && req.Path == "/test"
+	}), mock.Anything).Return(stream, nil)
+
+	result, st := plusBackend.ListDir(context.Background(), "/test")
+	s.Require().Equal(fuse.OK, st)
+	s.Require().Len(result, 2)
+	s.Require().NotNil(result[0].Attr)
+	s.Assert().Equal(uint64(64), result[0].Attr.Size)
+	s.Assert().Equal(uint32(1000), result[0].Attr.Uid)
+	s.Assert().Nil(result[1].Attr, "per-entry stat failed server-side → nil Attr, dirent kept")
+}
+
+// TestListDir_RetriesOnUnavailable: like Read, each retry attempt opens a
+// fresh ReadDir stream after a transient Unavailable.
+func (s *BackendClientTestSuite) TestListDir_RetriesOnUnavailable() {
+	s.fsClient.EXPECT().ReadDir(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, status.Error(codes.Unavailable, "down")).Once()
+	stream := newReadDirStreamStub(s.T(), &proto.ReadDirBatch{
+		Status:  int32(fuse.OK),
+		Entries: []*proto.DirEntryPlus{{Entry: &proto.DirEntry{Name: "f", Ino: 1}}},
+	})
+	s.fsClient.EXPECT().ReadDir(mock.Anything, mock.Anything, mock.Anything).
+		Return(stream, nil).Once()
+
+	result, st := s.backend.ListDir(context.Background(), "/test")
+	s.Require().Equal(fuse.OK, st)
+	s.Require().Len(result, 1)
+	s.fsClient.AssertNumberOfCalls(s.T(), "ReadDir", 2)
 }
 
 func (s *BackendClientTestSuite) TestAccess() {
@@ -392,8 +500,67 @@ func (s *BackendClientTestSuite) TestMkdir() {
 			req.SessionId == "test-session" && req.RequestId != ""
 	}), mock.Anything).Return(&proto.MkdirReply{Status: int32(fuse.OK)}, nil)
 
-	st := s.backend.Mkdir(context.Background(), "/test", 0755)
+	attr, st := s.backend.Mkdir(context.Background(), "/test", 0755)
 	s.Assert().Equal(fuse.OK, st)
+	s.Assert().Nil(attr, "no Attributes in reply → nil attr so callers fall back to Stat")
+}
+
+// TestMkdir_ReturnsAttrFromReply: MkdirReply.Attributes maps to a populated
+// *Attr — the create-style attrs that let the node skip the trailing Stat.
+// The strict mock proves no stray GetAttr is issued.
+func (s *BackendClientTestSuite) TestMkdir_ReturnsAttrFromReply() {
+	s.fsClient.EXPECT().Mkdir(mock.Anything, mock.Anything, mock.Anything).Return(&proto.MkdirReply{
+		Status:     int32(fuse.OK),
+		Attributes: &proto.Attr{Ino: 11, Mode: 0o40755, Owner: &proto.Owner{Uid: 1000, Gid: 1000}},
+	}, nil).Once()
+
+	attr, st := s.backend.Mkdir(context.Background(), "/test", 0o755)
+	s.Require().Equal(fuse.OK, st)
+	s.Require().NotNil(attr)
+	s.Assert().Equal(uint64(11), attr.Ino)
+	s.Assert().Equal(uint32(0o40755), attr.Mode)
+	s.Assert().Equal(uint32(1000), attr.Uid)
+}
+
+// TestMkdir_InBandErrorReturnsNilAttr: a non-OK status travels back with
+// nil attrs even if the reply carried some.
+func (s *BackendClientTestSuite) TestMkdir_InBandErrorReturnsNilAttr() {
+	s.fsClient.EXPECT().Mkdir(mock.Anything, mock.Anything, mock.Anything).
+		Return(&proto.MkdirReply{Status: int32(fuse.EACCES)}, nil).Once()
+
+	attr, st := s.backend.Mkdir(context.Background(), "/test", 0o755)
+	s.Assert().Equal(fuse.EACCES, st)
+	s.Assert().Nil(attr)
+}
+
+// TestSymlink_ReturnsAttrFromReply mirrors TestMkdir_ReturnsAttrFromReply
+// for the Symlink reply attrs, and pins the mutation wire shape
+// (session_id + request_id stamped, target/link verbatim).
+func (s *BackendClientTestSuite) TestSymlink_ReturnsAttrFromReply() {
+	s.fsClient.EXPECT().Symlink(mock.Anything, mock.MatchedBy(func(req *proto.SymlinkRequest) bool {
+		return req.Volume == "testVolume" && req.Target == "/target" && req.LinkPath == "/link" &&
+			req.SessionId == "test-session" && req.RequestId != ""
+	}), mock.Anything).Return(&proto.SymlinkReply{
+		Status:     int32(fuse.OK),
+		Attributes: &proto.Attr{Ino: 12, Mode: 0o120777, Owner: &proto.Owner{Uid: 1, Gid: 1}},
+	}, nil).Once()
+
+	attr, st := s.backend.Symlink(context.Background(), "/target", "/link")
+	s.Require().Equal(fuse.OK, st)
+	s.Require().NotNil(attr)
+	s.Assert().Equal(uint64(12), attr.Ino)
+	s.Assert().Equal(uint32(0o120777), attr.Mode)
+}
+
+// TestSymlink_NilAttrsInReply: server omits Attributes (its trailing stat
+// failed) → nil attr with fuse.OK so the node falls back to Stat.
+func (s *BackendClientTestSuite) TestSymlink_NilAttrsInReply() {
+	s.fsClient.EXPECT().Symlink(mock.Anything, mock.Anything, mock.Anything).
+		Return(&proto.SymlinkReply{Status: int32(fuse.OK)}, nil).Once()
+
+	attr, st := s.backend.Symlink(context.Background(), "/target", "/link")
+	s.Assert().Equal(fuse.OK, st)
+	s.Assert().Nil(attr)
 }
 
 func (s *BackendClientTestSuite) TestRmdir() {
@@ -570,7 +737,7 @@ func (s *BackendClientTestSuite) TestMkdir_RetryReusesRequestID() {
 			ids = append(ids, req.RequestId)
 		}).Return(&proto.MkdirReply{Status: int32(fuse.OK)}, nil).Once()
 
-	st := s.backend.Mkdir(context.Background(), "/d", 0755)
+	_, st := s.backend.Mkdir(context.Background(), "/d", 0755)
 	s.Assert().Equal(fuse.OK, st)
 	s.Require().Len(ids, 2, "expected exactly two Mkdir attempts")
 	s.Assert().NotEmpty(ids[0], "request_id must be non-empty")

@@ -59,6 +59,14 @@ type DirEntry struct {
 	Name string
 }
 
+// DirEntryPlus pairs a directory entry with its attrs when the backend was
+// asked for a plus listing (Attr nil otherwise, or when the per-entry stat
+// failed server-side).
+type DirEntryPlus struct {
+	DirEntry
+	Attr *Attr
+}
+
 // StatFs mirrors the per-volume statfs reply.
 type StatFs struct {
 	Blocks  uint64
@@ -106,8 +114,11 @@ type FileSystemBackend interface {
 	GetAttrIfChanged(ctx context.Context, path string, knownVersion uint64) (*Attr, bool, fuse.Status)
 	// Lookup resolves a child name under parent, returning attrs + inode.
 	Lookup(ctx context.Context, parent, name string) (*Attr, fuse.Status)
-	// ListDir returns the entries of a directory.
-	ListDir(ctx context.Context, path string) ([]DirEntry, fuse.Status)
+	// ListDir returns the entries of a directory. A backend configured for
+	// plus listings (READDIRPLUS) also carries per-entry attrs so a cache
+	// decorator can prime its attr cache from the listing; Attr is nil per
+	// entry otherwise, or when the server-side per-entry stat failed.
+	ListDir(ctx context.Context, path string) ([]DirEntryPlus, fuse.Status)
 
 	// Access mirrors the access(2) check.
 	Access(ctx context.Context, path string, mode uint32) fuse.Status
@@ -155,8 +166,11 @@ type FileSystemBackend interface {
 	// Lseek probes hole geometry (SEEK_DATA/SEEK_HOLE) on an open handle.
 	Lseek(ctx context.Context, fh FileHandle, offset uint64, whence uint32) (uint64, fuse.Status)
 
-	// Mkdir creates a directory.
-	Mkdir(ctx context.Context, path string, mode uint32) fuse.Status
+	// Mkdir creates a directory and returns its attrs from the reply so the
+	// caller skips the trailing Stat. A nil Attr with fuse.OK means the
+	// server omitted the attrs (its post-create stat failed); callers fall
+	// back to Stat.
+	Mkdir(ctx context.Context, path string, mode uint32) (*Attr, fuse.Status)
 	// Rmdir removes an empty directory.
 	Rmdir(ctx context.Context, path string) fuse.Status
 	// Unlink removes a non-directory.
@@ -167,8 +181,9 @@ type FileSystemBackend interface {
 	Readlink(ctx context.Context, path string) (string, fuse.Status)
 	// Symlink creates a new symbolic link at linkPath pointing at target.
 	// The target string is stored verbatim — confinement is enforced at
-	// resolve time, not at create time.
-	Symlink(ctx context.Context, target, linkPath string) fuse.Status
+	// resolve time, not at create time. Returns the new link's attrs like
+	// Mkdir (nil with fuse.OK when the server's trailing stat failed).
+	Symlink(ctx context.Context, target, linkPath string) (*Attr, fuse.Status)
 	// Truncate changes a file's length.
 	Truncate(ctx context.Context, path string, size uint64) fuse.Status
 	// Chmod changes file permissions.

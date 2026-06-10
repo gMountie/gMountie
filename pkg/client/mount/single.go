@@ -98,7 +98,11 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 
 	maxWrite := negotiateMaxWriteBytes(m.client, m.fuse)
 
-	var backend io.FileSystemBackend = io.NewBackendClient(m.client, volume)
+	// Plus listings (per-entry attrs on ReadDir) only pay off when the cache
+	// decorator below can prime its attr cache from them — without a cache
+	// the extra attrs are wasted bytes, so the knob tracks cache.Enabled.
+	var backend io.FileSystemBackend = io.NewBackendClient(m.client, volume,
+		io.WithPlusListings(m.cache.Enabled))
 	if m.cache.Enabled {
 		root := filepath.Join(m.cache.Path, volume)
 		p, err := persist.Open(persist.Options{Root: root, DiskMaxBytes: int64(m.cache.DiskMaxBytes)})

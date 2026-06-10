@@ -41,7 +41,7 @@ func isRetryableGrpcError(err error) bool {
 type opClass int
 
 const (
-	classIdempotentRead opClass = iota // GetAttr/Access/*XAttr get/OpenDir/Readlink/StatFs — safe across a new session
+	classIdempotentRead opClass = iota // GetAttr/Access/*XAttr get/ReadDir/Readlink/StatFs — safe across a new session
 	classFdOp                          // Read/Write/Flush/Fsync/Release/Allocate/locks — fd dies on a new session
 	classPathMutation                  // Mkdir/Rmdir/Rename/Symlink/Link/Unlink/Chmod/Chown/Utimens/SetXAttr/path-Truncate — replay-unsafe on a new session
 )

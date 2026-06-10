@@ -242,12 +242,12 @@ func (b *cachedBackend) lookupFromInner(ctx context.Context, parent, name, full 
 	return a, st
 }
 
-func (b *cachedBackend) ListDir(ctx context.Context, p string) ([]io.DirEntry, fuse.Status) {
+func (b *cachedBackend) ListDir(ctx context.Context, p string) ([]io.DirEntryPlus, fuse.Status) {
 	if entries, hit := b.dir.get(p); hit {
 		// Gate on validity: revalidate the directory's own attr to check for
 		// freshness. Use the dir path as the revalidation key.
 		if b.validity.globalState() == stateVerified || b.validity.isPathVerified(p) {
-			return entries, fuse.OK
+			return plusFromEntries(entries), fuse.OK
 		}
 		// Run revalidation on the directory itself.
 		cached, _, pos := b.attr.get(p)
@@ -262,7 +262,7 @@ func (b *cachedBackend) ListDir(ctx context.Context, p string) ([]io.DirEntry, f
 				// Directory attr unchanged; listing is still valid.
 				// Re-fetch from dir cache (revalidate may not have changed it).
 				if entries2, hit2 := b.dir.get(p); hit2 {
-					return entries2, fuse.OK
+					return plusFromEntries(entries2), fuse.OK
 				}
 				// Dir cache was evicted in the meantime; fall through to inner.
 			case r.enoent:
@@ -272,7 +272,7 @@ func (b *cachedBackend) ListDir(ctx context.Context, p string) ([]io.DirEntry, f
 				// listDirFromInner to replace the stale listing.
 			default:
 				// Fallback: revalidation RPC error; serve cached listing.
-				return entries, fuse.OK
+				return plusFromEntries(entries), fuse.OK
 			}
 		}
 		// Dir cached but attr unverified/changed: fall through to inner.
@@ -280,14 +280,43 @@ func (b *cachedBackend) ListDir(ctx context.Context, p string) ([]io.DirEntry, f
 	return b.listDirFromInner(ctx, p)
 }
 
-// listDirFromInner fetches from inner and populates the dir cache.
-func (b *cachedBackend) listDirFromInner(ctx context.Context, p string) ([]io.DirEntry, fuse.Status) {
+// listDirFromInner fetches from inner, primes the attr cache from plus
+// entries, and populates the dir cache.
+func (b *cachedBackend) listDirFromInner(ctx context.Context, p string) ([]io.DirEntryPlus, fuse.Status) {
 	metrics.CacheMiss("dir")
 	entries, st := b.inner.ListDir(ctx, p)
 	if st == fuse.OK {
-		b.dir.put(p, entries)
+		// Prime the attr cache (standard positive TTL, same as Stat) from each
+		// entry that carries attrs — this is the READDIRPLUS win: the kernel's
+		// per-child LOOKUP after a readdir is served from cache with zero
+		// backend calls. Entries with nil Attr (plus disabled, or the per-entry
+		// stat failed server-side) prime nothing.
+		stripped := make([]io.DirEntry, len(entries))
+		for i, e := range entries {
+			stripped[i] = e.DirEntry
+			if e.Attr != nil {
+				b.attr.putPositive(joinPath(p, e.Name), e.Attr)
+			}
+		}
+		// The dir cache keeps the plain dirent shape: per-path attrs live in
+		// the attr cache only (one source of truth — duplicating them in the
+		// listing would drift on per-path invalidation), and the persisted gob
+		// format stays unchanged.
+		b.dir.put(p, stripped)
 	}
 	return entries, st
+}
+
+// plusFromEntries widens a cached dirent listing to the interface's
+// []io.DirEntryPlus shape. Cached listings carry no attrs (see
+// listDirFromInner), so Attr is nil on every element — by the time a listing
+// is served from cache, its attrs were already primed into the attr cache.
+func plusFromEntries(entries []io.DirEntry) []io.DirEntryPlus {
+	out := make([]io.DirEntryPlus, len(entries))
+	for i, e := range entries {
+		out[i] = io.DirEntryPlus{DirEntry: e}
+	}
+	return out
 }
 
 func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, dest []byte) (int, fuse.Status) {
@@ -397,17 +426,22 @@ func (b *cachedBackend) Readlink(ctx context.Context, p string) (string, fuse.St
 
 // Symlink creates a new dirent (the link). Invalidates the parent dir +
 // attr caches like Mkdir, and drops any negative-cached entry for the new
-// path so a follow-up Lookup re-reads.
-func (b *cachedBackend) Symlink(ctx context.Context, target, linkPath string) fuse.Status {
-	st := b.inner.Symlink(ctx, target, linkPath)
+// path. The reply attrs prime the attr cache (like Create) so the kernel's
+// immediate Lookup on the new link is a cache hit; nil attrs (server stat
+// failed) leave the entry invalidated so the next Stat refetches.
+func (b *cachedBackend) Symlink(ctx context.Context, target, linkPath string) (*io.Attr, fuse.Status) {
+	a, st := b.inner.Symlink(ctx, target, linkPath)
 	if st != fuse.OK {
-		return st
+		return nil, st
 	}
 	parent := pathParent(linkPath)
 	b.dir.invalidate(parent)
 	b.attr.invalidate(parent)
 	b.attr.invalidate(linkPath)
-	return fuse.OK
+	if a != nil {
+		b.attr.putPositive(linkPath, a)
+	}
+	return a, fuse.OK
 }
 
 func (b *cachedBackend) StatFs(ctx context.Context, p string) (*io.StatFs, fuse.Status) {
@@ -529,16 +563,22 @@ func (b *cachedBackend) Lseek(ctx context.Context, fh io.FileHandle, offset uint
 
 // --- Path-level mutating ops ---
 
-func (b *cachedBackend) Mkdir(ctx context.Context, p string, mode uint32) fuse.Status {
-	st := b.inner.Mkdir(ctx, p, mode)
+// Mkdir invalidates the parent (new dirent bumps its mtime) and primes the
+// attr cache from the reply attrs (like Create); nil attrs (server stat
+// failed) just drop any negative-cached entry so the next Stat refetches.
+func (b *cachedBackend) Mkdir(ctx context.Context, p string, mode uint32) (*io.Attr, fuse.Status) {
+	a, st := b.inner.Mkdir(ctx, p, mode)
 	if st != fuse.OK {
-		return st
+		return nil, st
 	}
 	parent := pathParent(p)
 	b.dir.invalidate(parent)
 	b.attr.invalidate(parent)
 	b.attr.invalidate(p) // drop any negative-cached entry for the just-created path
-	return fuse.OK
+	if a != nil {
+		b.attr.putPositive(p, a)
+	}
+	return a, fuse.OK
 }
 
 func (b *cachedBackend) Rmdir(ctx context.Context, p string) fuse.Status {

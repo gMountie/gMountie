@@ -85,9 +85,13 @@ Caches the `[]io.DirEntry` result of `ListDir`. Keyed by directory path.
 - **Persistence:** yes — gob-encoded `persistedDir{Entries, ExpiresAt}` in
   the `dir` bbolt bucket.
 
-**Note:** `ListDir` replies carry partial attrs (mode + name + ino) that do
-not constitute a full `Attr`, so the attr cache is not pre-populated from
-directory listings today. Full inline attrs are a future protocol enhancement.
+**Note:** when the cache is enabled, `ListDir` requests a *plus* listing
+(streaming `ReadDir` with per-entry attrs — the READDIRPLUS pattern). Each
+entry's full `Attr` primes the attr cache at the joined child path (standard
+positive TTL), so the kernel's per-child LOOKUP after a readdir is served
+with zero RPCs. The dir cache itself still stores only the dirent shape
+(name + mode + ino); per-path attrs live exclusively in the attr cache so
+invalidation has a single source of truth.
 
 ### 2.3 Data cache
 

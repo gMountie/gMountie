@@ -105,7 +105,10 @@ func (s *CachedBackendTestSuite) TestLookupCachesNegativeOnENOENT() {
 }
 
 func (s *CachedBackendTestSuite) TestListDirHitAfterMiss() {
-	entries := []io.DirEntry{{Name: "a"}, {Name: "b"}}
+	entries := []io.DirEntryPlus{
+		{DirEntry: io.DirEntry{Name: "a"}},
+		{DirEntry: io.DirEntry{Name: "b"}},
+	}
 	s.inner.EXPECT().ListDir(mock.Anything, "/d").Return(entries, fuse.OK).Once()
 	got, st := s.b.ListDir(context.Background(), "/d")
 	s.Require().Equal(fuse.OK, st)
@@ -114,6 +117,52 @@ func (s *CachedBackendTestSuite) TestListDirHitAfterMiss() {
 	got2, st2 := s.b.ListDir(context.Background(), "/d")
 	s.Require().Equal(fuse.OK, st2)
 	s.Assert().Len(got2, 2)
+	s.Assert().Equal("a", got2[0].Name)
+}
+
+// TestListDirPlusPrimesAttrCache is THE priming property of plus listings:
+// after a ListDir whose entries carry attrs, a Stat on a listed child is
+// served from the attr cache with ZERO backend calls — that's what makes the
+// kernel's READDIRPLUS-driven per-child lookups free. The strict mock has
+// only the single .Once() ListDir expectation, so any inner Stat would fail
+// the test (absence proof).
+func (s *CachedBackendTestSuite) TestListDirPlusPrimesAttrCache() {
+	entries := []io.DirEntryPlus{
+		{
+			DirEntry: io.DirEntry{Name: "child", Ino: 7, Mode: 0o100644},
+			Attr:     &io.Attr{Ino: 7, Size: 42, Mode: 0o100644},
+		},
+	}
+	s.inner.EXPECT().ListDir(mock.Anything, "/d").Return(entries, fuse.OK).Once()
+	_, st := s.b.ListDir(context.Background(), "/d")
+	s.Require().Equal(fuse.OK, st)
+
+	a, st2 := s.b.Stat(context.Background(), "/d/child")
+	s.Require().Equal(fuse.OK, st2)
+	s.Require().NotNil(a)
+	s.Assert().Equal(uint64(7), a.Ino)
+	s.Assert().Equal(uint64(42), a.Size)
+
+	// Lookup is keyed on the same joined path — also a zero-RPC hit.
+	a2, st3 := s.b.Lookup(context.Background(), "/d", "child")
+	s.Require().Equal(fuse.OK, st3)
+	s.Assert().Equal(uint64(7), a2.Ino)
+}
+
+// TestListDirNilAttrEntriesDoNotPrime: an entry without attrs (plus
+// disabled, or the per-entry stat failed server-side) must NOT prime the
+// attr cache — a later Stat goes to the backend.
+func (s *CachedBackendTestSuite) TestListDirNilAttrEntriesDoNotPrime() {
+	entries := []io.DirEntryPlus{{DirEntry: io.DirEntry{Name: "noattr", Ino: 8}}}
+	s.inner.EXPECT().ListDir(mock.Anything, "/d").Return(entries, fuse.OK).Once()
+	_, st := s.b.ListDir(context.Background(), "/d")
+	s.Require().Equal(fuse.OK, st)
+
+	s.inner.EXPECT().Stat(mock.Anything, "/d/noattr").
+		Return(&io.Attr{Ino: 8}, fuse.OK).Once()
+	a, st2 := s.b.Stat(context.Background(), "/d/noattr")
+	s.Require().Equal(fuse.OK, st2)
+	s.Assert().Equal(uint64(8), a.Ino)
 }
 
 func (s *CachedBackendTestSuite) TestReadFromCacheChunk() {
@@ -313,15 +362,67 @@ func (s *CachedBackendTestSuite) TestMkdirInvalidatesParentAndDropsNegative() {
 	s.b.attr.putNegative("/d")
 	s.b.attr.putPositive("", &io.Attr{Ino: 1}) // parent attr cached
 	s.b.dir.put("", []io.DirEntry{})
-	s.inner.EXPECT().Mkdir(mock.Anything, "/d", mock.Anything).Return(fuse.OK).Once()
-	st := s.b.Mkdir(context.Background(), "/d", 0o755)
+	// nil reply attrs (server's post-create stat failed): nothing is primed.
+	s.inner.EXPECT().Mkdir(mock.Anything, "/d", mock.Anything).Return(nil, fuse.OK).Once()
+	a, st := s.b.Mkdir(context.Background(), "/d", 0o755)
 	s.Require().Equal(fuse.OK, st)
+	s.Assert().Nil(a)
 	_, hit, _ := s.b.attr.get("/d")
 	s.Assert().False(hit) // negative dropped
 	_, parentHit, _ := s.b.attr.get("")
 	s.Assert().False(parentHit) // parent attr invalidated
 	_, dirHit := s.b.dir.get("")
 	s.Assert().False(dirHit) // parent dir invalidated
+}
+
+// TestMkdirPrimesAttrCacheFromReply: the reply attrs prime the attr cache
+// (like Create), so the kernel's immediate Getattr on the new dir is a
+// zero-RPC hit — no inner Stat expectation registered (absence proof).
+func (s *CachedBackendTestSuite) TestMkdirPrimesAttrCacheFromReply() {
+	returned := &io.Attr{Ino: 21, Mode: 0o40755}
+	s.inner.EXPECT().Mkdir(mock.Anything, "/d", mock.Anything).Return(returned, fuse.OK).Once()
+	a, st := s.b.Mkdir(context.Background(), "/d", 0o755)
+	s.Require().Equal(fuse.OK, st)
+	s.Require().NotNil(a)
+
+	cached, st2 := s.b.Stat(context.Background(), "/d")
+	s.Require().Equal(fuse.OK, st2)
+	s.Assert().Equal(uint64(21), cached.Ino)
+}
+
+// TestSymlinkInvalidatesParentAndPrimes: parent dir+attr invalidation stays
+// (a new dirent bumps the parent's mtime) and the reply attrs prime the
+// link's attr entry — a follow-up Stat is a zero-RPC hit (absence proof via
+// the strict mock).
+func (s *CachedBackendTestSuite) TestSymlinkInvalidatesParentAndPrimes() {
+	s.b.attr.putPositive("/d", &io.Attr{Ino: 1}) // parent attr cached
+	s.b.dir.put("/d", []io.DirEntry{})
+	returned := &io.Attr{Ino: 31, Mode: 0o120777}
+	s.inner.EXPECT().Symlink(mock.Anything, "/target", "/d/lnk").Return(returned, fuse.OK).Once()
+	a, st := s.b.Symlink(context.Background(), "/target", "/d/lnk")
+	s.Require().Equal(fuse.OK, st)
+	s.Require().NotNil(a)
+
+	_, parentHit, _ := s.b.attr.get("/d")
+	s.Assert().False(parentHit) // parent attr invalidated
+	_, dirHit := s.b.dir.get("/d")
+	s.Assert().False(dirHit) // parent listing invalidated
+
+	cached, st2 := s.b.Stat(context.Background(), "/d/lnk")
+	s.Require().Equal(fuse.OK, st2)
+	s.Assert().Equal(uint64(31), cached.Ino)
+}
+
+// TestSymlinkNilAttrsJustInvalidates: nil reply attrs leave the link's attr
+// entry invalidated (any stale negative dropped), so the next Stat refetches.
+func (s *CachedBackendTestSuite) TestSymlinkNilAttrsJustInvalidates() {
+	s.b.attr.putNegative("/d/lnk") // prior failed Lookup
+	s.inner.EXPECT().Symlink(mock.Anything, "/target", "/d/lnk").Return(nil, fuse.OK).Once()
+	a, st := s.b.Symlink(context.Background(), "/target", "/d/lnk")
+	s.Require().Equal(fuse.OK, st)
+	s.Assert().Nil(a)
+	_, hit, _ := s.b.attr.get("/d/lnk")
+	s.Assert().False(hit, "negative entry dropped, nothing primed")
 }
 
 func (s *CachedBackendTestSuite) TestRmdirInvalidatesAndNegativesPath() {

@@ -150,6 +150,9 @@ func (n *gMountieNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno
 	if !st.Ok() {
 		return nil, syscall.Errno(st)
 	}
+	// Only the dirent part feeds the kernel here; per-entry attrs (plus
+	// listings) are consumed by the cache layer, which primes its attr
+	// cache before the entries reach this adapter.
 	fuseEntries := make([]fuse.DirEntry, 0, len(entries))
 	for _, e := range entries {
 		fuseEntries = append(fuseEntries, fuse.DirEntry{
@@ -281,14 +284,21 @@ func (n *gMountieNode) Create(ctx context.Context, name string, flags, mode uint
 
 func (n *gMountieNode) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	full := childPath(n.path(), name)
-	if st := n.backend.Mkdir(ctx, full, mode); !st.Ok() {
+	a, st := n.backend.Mkdir(ctx, full, mode)
+	if !st.Ok() {
 		return nil, syscall.Errno(st)
 	}
-	// Backend Mkdir doesn't return attrs; Stat for the EntryOut so the
-	// kernel can populate its dentry.
-	a, sst := n.backend.Stat(ctx, full)
-	if !sst.Ok() {
-		return nil, syscall.Errno(sst)
+	// The reply carries the new directory's attrs, so no trailing Stat. The
+	// server omits them only when its post-create stat failed; fall back to
+	// Stat rather than handing the kernel a zero EntryOut — it would cache
+	// the zero (Mode=0, Size=0) for EntryTimeout and poison subsequent stat
+	// ops (same rationale as the Create/Setattr fallbacks).
+	if a == nil {
+		var sst fuse.Status
+		a, sst = n.backend.Stat(ctx, full)
+		if !sst.Ok() {
+			return nil, syscall.Errno(sst)
+		}
 	}
 	setAttrFromBackend(&out.Attr, a, n.rewriter)
 	return n.newChild(ctx, a), 0
@@ -301,15 +311,20 @@ func (n *gMountieNode) Mkdir(ctx context.Context, name string, mode uint32, out 
 // Returns the new inode so the kernel can populate its dentry.
 func (n *gMountieNode) Symlink(ctx context.Context, target, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	full := childPath(n.path(), name)
-	if st := n.backend.Symlink(ctx, target, full); !st.Ok() {
+	a, st := n.backend.Symlink(ctx, target, full)
+	if !st.Ok() {
 		return nil, syscall.Errno(st)
 	}
-	// Backend Symlink doesn't return attrs; Stat for the EntryOut so the
-	// kernel can populate its dentry. The new entry is the link itself
-	// (S_IFLNK), not the target.
-	a, sst := n.backend.Stat(ctx, full)
-	if !sst.Ok() {
-		return nil, syscall.Errno(sst)
+	// The reply carries the new link's attrs (S_IFLNK — the link itself, not
+	// the target), so no trailing Stat. The server omits them only when its
+	// post-create stat failed; fall back to Stat rather than handing the
+	// kernel a zero EntryOut (kernel-cache poisoning, same as Mkdir/Create).
+	if a == nil {
+		var sst fuse.Status
+		a, sst = n.backend.Stat(ctx, full)
+		if !sst.Ok() {
+			return nil, syscall.Errno(sst)
+		}
 	}
 	setAttrFromBackend(&out.Attr, a, n.rewriter)
 	return n.newChild(ctx, a), 0

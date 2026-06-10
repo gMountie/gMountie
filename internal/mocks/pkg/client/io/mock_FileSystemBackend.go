@@ -900,23 +900,23 @@ func (_c *MockFileSystemBackend_GetXAttr_Call) RunAndReturn(run func(ctx context
 }
 
 // ListDir provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) ListDir(ctx context.Context, path string) ([]io.DirEntry, fuse.Status) {
+func (_mock *MockFileSystemBackend) ListDir(ctx context.Context, path string) ([]io.DirEntryPlus, fuse.Status) {
 	ret := _mock.Called(ctx, path)
 
 	if len(ret) == 0 {
 		panic("no return value specified for ListDir")
 	}
 
-	var r0 []io.DirEntry
+	var r0 []io.DirEntryPlus
 	var r1 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) ([]io.DirEntry, fuse.Status)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) ([]io.DirEntryPlus, fuse.Status)); ok {
 		return returnFunc(ctx, path)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) []io.DirEntry); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) []io.DirEntryPlus); ok {
 		r0 = returnFunc(ctx, path)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]io.DirEntry)
+			r0 = ret.Get(0).([]io.DirEntryPlus)
 		}
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, string) fuse.Status); ok {
@@ -957,12 +957,12 @@ func (_c *MockFileSystemBackend_ListDir_Call) Run(run func(ctx context.Context, 
 	return _c
 }
 
-func (_c *MockFileSystemBackend_ListDir_Call) Return(dirEntrys []io.DirEntry, status fuse.Status) *MockFileSystemBackend_ListDir_Call {
-	_c.Call.Return(dirEntrys, status)
+func (_c *MockFileSystemBackend_ListDir_Call) Return(dirEntryPluss []io.DirEntryPlus, status fuse.Status) *MockFileSystemBackend_ListDir_Call {
+	_c.Call.Return(dirEntryPluss, status)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_ListDir_Call) RunAndReturn(run func(ctx context.Context, path string) ([]io.DirEntry, fuse.Status)) *MockFileSystemBackend_ListDir_Call {
+func (_c *MockFileSystemBackend_ListDir_Call) RunAndReturn(run func(ctx context.Context, path string) ([]io.DirEntryPlus, fuse.Status)) *MockFileSystemBackend_ListDir_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -1188,20 +1188,31 @@ func (_c *MockFileSystemBackend_Lseek_Call) RunAndReturn(run func(ctx context.Co
 }
 
 // Mkdir provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) Mkdir(ctx context.Context, path string, mode uint32) fuse.Status {
+func (_mock *MockFileSystemBackend) Mkdir(ctx context.Context, path string, mode uint32) (*io.Attr, fuse.Status) {
 	ret := _mock.Called(ctx, path, mode)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Mkdir")
 	}
 
-	var r0 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uint32) fuse.Status); ok {
+	var r0 *io.Attr
+	var r1 fuse.Status
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uint32) (*io.Attr, fuse.Status)); ok {
+		return returnFunc(ctx, path, mode)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uint32) *io.Attr); ok {
 		r0 = returnFunc(ctx, path, mode)
 	} else {
-		r0 = ret.Get(0).(fuse.Status)
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*io.Attr)
+		}
 	}
-	return r0
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, uint32) fuse.Status); ok {
+		r1 = returnFunc(ctx, path, mode)
+	} else {
+		r1 = ret.Get(1).(fuse.Status)
+	}
+	return r0, r1
 }
 
 // MockFileSystemBackend_Mkdir_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Mkdir'
@@ -1240,12 +1251,12 @@ func (_c *MockFileSystemBackend_Mkdir_Call) Run(run func(ctx context.Context, pa
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Mkdir_Call) Return(status fuse.Status) *MockFileSystemBackend_Mkdir_Call {
-	_c.Call.Return(status)
+func (_c *MockFileSystemBackend_Mkdir_Call) Return(attr *io.Attr, status fuse.Status) *MockFileSystemBackend_Mkdir_Call {
+	_c.Call.Return(attr, status)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Mkdir_Call) RunAndReturn(run func(ctx context.Context, path string, mode uint32) fuse.Status) *MockFileSystemBackend_Mkdir_Call {
+func (_c *MockFileSystemBackend_Mkdir_Call) RunAndReturn(run func(ctx context.Context, path string, mode uint32) (*io.Attr, fuse.Status)) *MockFileSystemBackend_Mkdir_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -2144,20 +2155,31 @@ func (_c *MockFileSystemBackend_StatFs_Call) RunAndReturn(run func(ctx context.C
 }
 
 // Symlink provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) Symlink(ctx context.Context, target string, linkPath string) fuse.Status {
+func (_mock *MockFileSystemBackend) Symlink(ctx context.Context, target string, linkPath string) (*io.Attr, fuse.Status) {
 	ret := _mock.Called(ctx, target, linkPath)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Symlink")
 	}
 
-	var r0 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) fuse.Status); ok {
+	var r0 *io.Attr
+	var r1 fuse.Status
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (*io.Attr, fuse.Status)); ok {
+		return returnFunc(ctx, target, linkPath)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) *io.Attr); ok {
 		r0 = returnFunc(ctx, target, linkPath)
 	} else {
-		r0 = ret.Get(0).(fuse.Status)
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*io.Attr)
+		}
 	}
-	return r0
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) fuse.Status); ok {
+		r1 = returnFunc(ctx, target, linkPath)
+	} else {
+		r1 = ret.Get(1).(fuse.Status)
+	}
+	return r0, r1
 }
 
 // MockFileSystemBackend_Symlink_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Symlink'
@@ -2196,12 +2218,12 @@ func (_c *MockFileSystemBackend_Symlink_Call) Run(run func(ctx context.Context, 
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Symlink_Call) Return(status fuse.Status) *MockFileSystemBackend_Symlink_Call {
-	_c.Call.Return(status)
+func (_c *MockFileSystemBackend_Symlink_Call) Return(attr *io.Attr, status fuse.Status) *MockFileSystemBackend_Symlink_Call {
+	_c.Call.Return(attr, status)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Symlink_Call) RunAndReturn(run func(ctx context.Context, target string, linkPath string) fuse.Status) *MockFileSystemBackend_Symlink_Call {
+func (_c *MockFileSystemBackend_Symlink_Call) RunAndReturn(run func(ctx context.Context, target string, linkPath string) (*io.Attr, fuse.Status)) *MockFileSystemBackend_Symlink_Call {
 	_c.Call.Return(run)
 	return _c
 }
