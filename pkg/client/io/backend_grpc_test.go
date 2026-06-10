@@ -1929,6 +1929,62 @@ func (s *BackendClientTestSuite) TestRead_DeadFdNotFoundMapsToENOENT() {
 	s.Assert().Equal(0, n)
 }
 
+// TestRead_ReadaheadArmsAtDefaultThreshold pins the readahead arming
+// behaviour at ReadaheadThreshold=3 (the production default). Prefetch
+// RPCs must be observed only AFTER the third strictly-sequential Read —
+// not on the first or second. Equally important: each Read must call
+// Observe exactly once. A double-Observe on the miss path would count
+// two sequential hits per Read, halving the effective threshold to 2 and
+// silently disarming readahead at the production default threshold
+// (every existing integration test uses threshold 1 and cannot catch this).
+//
+// Mutation-verify: adding a second Observe call in the miss branch causes
+// the first Read to count as 2 hits and the second to arm prefetches,
+// making readCount reach ≥ 2 before the third Read — the Eventually below
+// fires and the assertion s.Zero(readCount.Load(), …) fails.
+func (s *BackendClientTestSuite) TestRead_ReadaheadArmsAtDefaultThreshold() {
+	const chunkBytes = 1 << 20 // matches config.DefaultReadaheadChunkBytes
+	cfg := grpcclient.PerFileConfig{
+		ReadaheadChunkBytes: chunkBytes,
+		ReadaheadThreshold:  3, // production default
+		ReadaheadWindow:     4,
+	}
+	h := s.newHandle(cfg)
+
+	var readCount atomic.Int64
+	s.fileClient.EXPECT().Read(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ *proto.ReadRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[proto.ReadFrame], error) {
+			readCount.Add(1)
+			data := make([]byte, chunkBytes)
+			return newBackendReadStreamStubOptional(s.T(),
+				&proto.ReadFrame{Data: data, Status: int32(fuse.OK)},
+				&proto.ReadFrame{Status: int32(fuse.OK)},
+			), nil
+		}).Maybe()
+
+	dest := make([]byte, chunkBytes)
+
+	// Read 1: seqHits = 1 — no prefetch yet; exactly one RPC (the synchronous live fetch).
+	_, st := s.backend.Read(context.Background(), h, 0, dest)
+	s.Require().Equal(fuse.OK, st)
+	s.Assert().Equal(int64(1), readCount.Load(), "Read 1: exactly one live RPC, no prefetch")
+
+	// Read 2: seqHits = 2 — still below threshold; still no prefetch.
+	_, st = s.backend.Read(context.Background(), h, int64(chunkBytes), dest)
+	s.Require().Equal(fuse.OK, st)
+	s.Assert().Equal(int64(2), readCount.Load(), "Read 2: still no prefetch RPC")
+
+	// Read 3: seqHits reaches threshold=3; prefetches must fire now.
+	_, st = s.backend.Read(context.Background(), h, int64(2*chunkBytes), dest)
+	s.Require().Equal(fuse.OK, st)
+
+	// 3 synchronous RPCs + ≥1 prefetch goroutine spawned on the third Read.
+	s.Eventually(func() bool {
+		return readCount.Load() >= 4
+	}, time.Second, 10*time.Millisecond,
+		"prefetch RPCs must start after the third sequential Read (threshold=3)")
+}
+
 // badHandle is a FileHandle implementation that is not a *grpcFileHandle,
 // used to exercise the type-assertion guard on fd-level ops. Unwrap
 // returns the receiver (leaf marker) so resolveHandle's walk terminates
