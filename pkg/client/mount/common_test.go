@@ -141,8 +141,8 @@ func (s *BuildFSOptionsSuite) TestMountOptionsPassedThrough() {
 	mountOpts := &fuse.MountOptions{Name: "gMountie", MaxBackground: 64}
 	cfg := defaultTestFUSEConfig()
 	opts := buildFSOptions(mountOpts, cfg)
-	s.Equal("gMountie", opts.MountOptions.Name)
-	s.Equal(64, opts.MountOptions.MaxBackground)
+	s.Equal("gMountie", opts.Name)
+	s.Equal(64, opts.MaxBackground)
 }
 
 func TestBuildFSOptionsSuite(t *testing.T) {
