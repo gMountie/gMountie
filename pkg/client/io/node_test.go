@@ -294,6 +294,27 @@ func (s *NodeAdapterTestSuite) TestRootSetattr_BackendErrorPropagates() {
 	s.Assert().Equal(syscall.Errno(fuse.EPERM), errno)
 }
 
+// TestRootSetattr_Valid0_FHOnly: a fuse.SetAttrIn with ONLY FATTR_FH set
+// (no contract bits — FATTR_FH is a kernel-internal flag that go-fuse
+// propagates to the node but our adapter strips via setAttrValidMask) flows
+// through Setattr as a backend.SetAttr call with Valid==0. The reply attrs
+// are returned into out.Attr and no error is produced. No per-field Get*
+// call (Stat, Truncate, Chmod, etc.) is expected — the strict mock enforces
+// the absence proof.
+func (s *NodeAdapterTestSuite) TestRootSetattr_Valid0_FHOnly() {
+	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.MatchedBy(func(in clientio.SetAttrIn) bool {
+		return in.Valid == 0 // all contract bits were masked out
+	})).Return(&clientio.Attr{Ino: 5, Mode: fuse.S_IFREG | 0o644, Size: 128}, fuse.OK).Once()
+	in := &fuse.SetAttrIn{}
+	in.Valid = fuse.FATTR_FH // kernel-only bit; no contract bit survives masking
+	out := &fuse.AttrOut{}
+	errno := rootAs[fs.NodeSetattrer](s).Setattr(context.Background(), nil, in, out)
+	s.Require().Equal(syscall.Errno(0), errno)
+	s.Assert().Equal(uint64(5), out.Ino)
+	s.Assert().Equal(uint64(128), out.Size)
+	s.Assert().Equal(uint32(fuse.S_IFREG|0o644), out.Mode)
+}
+
 // TestRootSetattr_NilAttrsFallsBackToStat: a server whose post-apply stat
 // failed replies OK with no attrs; the node must Stat rather than hand the
 // kernel a zero fuse.Attr (cache-poisoning concern, mirrors Create).
