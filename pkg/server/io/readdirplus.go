@@ -1,13 +1,16 @@
 package io
 
 import (
-	"os"
 	"syscall"
 	"unsafe"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"golang.org/x/sys/unix"
 )
+
+// fstatatFn is the syscall seam for per-entry stat in ReadDirPlus. Tests swap
+// it to inject failures for specific entry names; production never reassigns it.
+var fstatatFn = unix.Fstatat
 
 // DirEntryPlus pairs a directory entry with its attributes (READDIRPLUS).
 // Attr is nil when the caller did not ask for attributes or when the
@@ -35,42 +38,33 @@ type ReadDirPlusser interface {
 // separator, so an fd-relative fstatat of an immediate child cannot traverse
 // anywhere — one openat2 confines the whole listing, and re-running
 // resolveBeneath per entry would only add N syscall round-trips for zero
-// extra safety. AT_SYMLINK_NOFOLLOW returns the attrs of a symlink itself
-// (READDIRPLUS semantics — the client decides whether to follow).
+// extra safety. Additionally, the kernel delivers "." and ".." in the getdents
+// results but Go's os.(*File).ReadDir filters them out before returning — so
+// no dot entry ever reaches fstatatFn. AT_SYMLINK_NOFOLLOW returns the attrs
+// of a symlink itself (READDIRPLUS semantics — the client decides whether to
+// follow).
 func (c *ConfinedLoopbackFileSystem) ReadDirPlus(name string, _ *fuse.Context) ([]DirEntryPlus, fuse.Status) {
-	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
-	if err != nil {
-		return nil, errnoToStatus(err)
+	// openConfinedDir keeps the *os.File open so its fd anchors every per-entry
+	// Fstatat below; we close explicitly at the end rather than via defer in
+	// openConfinedDir.
+	f, entries, st := c.openConfinedDir(name)
+	if st != fuse.OK {
+		return nil, st
 	}
-	defer func() { _ = unix.Close(parentFd) }()
-	fd, err := unix.Openat2(parentFd, leaf, &unix.OpenHow{
-		Flags:   unix.O_RDONLY | unix.O_DIRECTORY | unix.O_CLOEXEC,
-		Resolve: resolveHow,
-	})
-	if err != nil {
-		return nil, errnoToStatus(err)
-	}
-	// os.NewFile takes ownership of the fd; Close releases it AFTER the stat
-	// loop — the open dir fd is the anchor for every per-entry Fstatat.
-	f := os.NewFile(uintptr(fd), leaf)
 	defer func() { _ = f.Close() }()
-	entries, err := f.ReadDir(-1)
-	if err != nil {
-		return nil, errnoToStatus(err)
-	}
 	dirFd := int(f.Fd())
 	out := make([]DirEntryPlus, 0, len(entries))
 	for _, e := range entries {
 		d := DirEntryPlus{Entry: fuse.DirEntry{Name: e.Name()}}
-		var st unix.Stat_t
-		if serr := unix.Fstatat(dirFd, e.Name(), &st, unix.AT_SYMLINK_NOFOLLOW); serr == nil {
+		var stat unix.Stat_t
+		if serr := fstatatFn(dirFd, e.Name(), &stat, unix.AT_SYMLINK_NOFOLLOW); serr == nil {
 			// Same conversion as GetAttr: fuse.Attr.FromStat over the raw
 			// kernel stat — entry Mode/Ino come from the same struct.
 			a := &fuse.Attr{}
-			a.FromStat((*syscall.Stat_t)(unsafe.Pointer(&st)))
+			a.FromStat((*syscall.Stat_t)(unsafe.Pointer(&stat)))
 			d.Attr = a
-			d.Entry.Mode = st.Mode
-			d.Entry.Ino = st.Ino
+			d.Entry.Mode = stat.Mode
+			d.Entry.Ino = stat.Ino
 		} else {
 			// Entry vanished (or is unstatable) between getdents and stat.
 			// Keep it with the d_type-derived mode and nil attrs — the client
