@@ -628,6 +628,36 @@ func (b *cachedBackend) Utimens(ctx context.Context, p string, atime, mtime *tim
 	return fuse.OK
 }
 
+// SetAttr forwards the single-RPC attribute application, then reconciles the
+// caches: FATTR_SIZE drops every data chunk for p (truncate changes content —
+// same conservatism as Truncate), and the attr entry is re-primed from the
+// returned final attrs (like Create primes from CreateReply). The parent is
+// untouched — setattr never changes the parent directory. On failure the
+// server may have applied EARLIER fields before stopping (size→mode→owner→
+// times), so unlike the per-field wrappers we still invalidate
+// conservatively rather than assuming nothing changed.
+func (b *cachedBackend) SetAttr(ctx context.Context, p string, in io.SetAttrIn) (*io.Attr, fuse.Status) {
+	a, st := b.inner.SetAttr(ctx, p, in)
+	if st != fuse.OK {
+		b.attr.invalidate(p)
+		if in.Valid&fuse.FATTR_SIZE != 0 {
+			b.data.invalidatePath(p)
+		}
+		return nil, st
+	}
+	if in.Valid&fuse.FATTR_SIZE != 0 {
+		b.data.invalidatePath(p)
+	}
+	if a != nil {
+		b.attr.putPositive(p, a)
+	} else {
+		// Server omitted the final attrs: drop the stale entry so the next
+		// Stat refetches.
+		b.attr.invalidate(p)
+	}
+	return a, fuse.OK
+}
+
 // --- helpers ---
 
 // unwrapHandle returns the inner io.FileHandle if fh is a *cachedHandle,

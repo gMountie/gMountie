@@ -36,6 +36,22 @@ type Attr struct {
 	Version uint64
 }
 
+// SetAttrIn mirrors the FUSE SETATTR valid-bitmask (FATTR_* MODE/UID/GID/
+// SIZE/ATIME/MTIME) so one kernel SETATTR maps to one RPC. Only the value
+// fields whose bit is set in Valid are meaningful; the rest are ignored by
+// the server. ATIME_NOW/MTIME_NOW never appear here: the node adapter
+// resolves "now" to a concrete timestamp before building a SetAttrIn (the
+// server does not interpret the _NOW bits).
+type SetAttrIn struct {
+	Valid uint32
+	Mode  uint32
+	Uid   uint32
+	Gid   uint32
+	Size  uint64
+	Atime *time.Time
+	Mtime *time.Time
+}
+
 // DirEntry mirrors a single directory listing entry.
 type DirEntry struct {
 	Ino  uint64
@@ -162,6 +178,14 @@ type FileSystemBackend interface {
 	// Utimens sets atime and/or mtime. A nil pointer leaves that timestamp
 	// unchanged (UTIME_OMIT semantics).
 	Utimens(ctx context.Context, path string, atime, mtime *time.Time) fuse.Status
+	// SetAttr applies the fields named by in.Valid in one RPC and returns the
+	// resulting attrs (no trailing Stat needed). The server applies
+	// size→mode→owner→times and stops at the first failure, so a non-OK
+	// status may mean earlier fields were already applied. Mutating: retried
+	// with a stable request_id. Replaces the Truncate/Chmod/Chown/Utimens
+	// fan-out for FUSE SETATTR; the per-field methods stay until Task 18
+	// removes their wire RPCs.
+	SetAttr(ctx context.Context, path string, in SetAttrIn) (*Attr, fuse.Status)
 
 	// Close releases resources held by the backend. For the gRPC backend
 	// this is a no-op (the connection is owned by the caller); for

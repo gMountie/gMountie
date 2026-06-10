@@ -577,6 +577,52 @@ func (b *BackendClient) Utimens(ctx context.Context, path string, atime, mtime *
 	)
 }
 
+// setAttrValidMask is the set of FATTR_* bits the SetAttr wire contract
+// carries (the server applies exactly these; see api/proto/fs.proto). The
+// proto pins the same numeric values go-fuse exports, so the bits pass
+// through untranslated — but kernel-only bits (FATTR_FH, FATTR_LOCKOWNER,
+// FATTR_*_NOW, ...) are masked out here so they can never leak onto the wire.
+const setAttrValidMask = fuse.FATTR_MODE | fuse.FATTR_UID | fuse.FATTR_GID |
+	fuse.FATTR_SIZE | fuse.FATTR_ATIME | fuse.FATTR_MTIME
+
+// SetAttr applies the fields named by in.Valid in one RPC, replacing the
+// Truncate/Chmod/Chown/Utimens fan-out (up to 4 serial RPCs + a trailing
+// GetAttr → 1 RPC). Mutating — the request_id is allocated ONCE outside
+// retryOp so all attempts within the same session hit the server's
+// idempotency cache; classPathMutation stops the retry on a session change.
+// On success the reply's final attrs are returned, so callers skip the
+// trailing Stat. A nil Attr with fuse.OK means the server omitted the
+// attrs (its post-apply stat failed); callers fall back to Stat.
+func (b *BackendClient) SetAttr(ctx context.Context, path string, in SetAttrIn) (*Attr, fuse.Status) {
+	requestID := uuid.NewString() // outside retryOp: stable across attempts for idempotency
+	res, err := retryOp(b.client, ctx, "SetAttr", classPathMutation, b.client.MetaTimeout(),
+		func(ctx context.Context) (*proto.SetAttrReply, error) {
+			return b.client.Fs().SetAttr(ctx, &proto.SetAttrRequest{
+				Volume:    b.volume,
+				Caller:    callerFromCtx(ctx),
+				Path:      path,
+				Valid:     in.Valid & setAttrValidMask,
+				Mode:      in.Mode,
+				Uid:       in.Uid,
+				Gid:       in.Gid,
+				Size:      in.Size,
+				Atime:     timeToFileTime(in.Atime), // nil ⇒ omitted, like Utimens
+				Mtime:     timeToFileTime(in.Mtime),
+				SessionId: b.client.SessionID(),
+				RequestId: requestID,
+			}, grpc.WaitForReady(true))
+		})
+	if err != nil || res == nil {
+		log.Log.Error("error in call: SetAttr",
+			zap.String("request_id", requestID), zap.String("path", path), zap.Error(err))
+		return nil, statusFromRPCError(err)
+	}
+	if st := fuse.Status(res.Status); !st.Ok() {
+		return nil, st
+	}
+	return attrFromProto(res.GetAttributes()), fuse.OK
+}
+
 // Open opens an existing file. The returned FileHandle is a
 // *grpcFileHandle holding fd + session + per-file knobs.
 func (b *BackendClient) Open(ctx context.Context, path string, flags uint32) (FileHandle, fuse.Status) {

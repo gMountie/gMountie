@@ -1708,6 +1708,80 @@ func (_c *MockFileSystemBackend_Rmdir_Call) RunAndReturn(run func(ctx context.Co
 	return _c
 }
 
+// SetAttr provides a mock function for the type MockFileSystemBackend
+func (_mock *MockFileSystemBackend) SetAttr(ctx context.Context, path string, in io.SetAttrIn) (*io.Attr, fuse.Status) {
+	ret := _mock.Called(ctx, path, in)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SetAttr")
+	}
+
+	var r0 *io.Attr
+	var r1 fuse.Status
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, io.SetAttrIn) (*io.Attr, fuse.Status)); ok {
+		return returnFunc(ctx, path, in)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, io.SetAttrIn) *io.Attr); ok {
+		r0 = returnFunc(ctx, path, in)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*io.Attr)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, io.SetAttrIn) fuse.Status); ok {
+		r1 = returnFunc(ctx, path, in)
+	} else {
+		r1 = ret.Get(1).(fuse.Status)
+	}
+	return r0, r1
+}
+
+// MockFileSystemBackend_SetAttr_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetAttr'
+type MockFileSystemBackend_SetAttr_Call struct {
+	*mock.Call
+}
+
+// SetAttr is a helper method to define mock.On call
+//   - ctx context.Context
+//   - path string
+//   - in io.SetAttrIn
+func (_e *MockFileSystemBackend_Expecter) SetAttr(ctx interface{}, path interface{}, in interface{}) *MockFileSystemBackend_SetAttr_Call {
+	return &MockFileSystemBackend_SetAttr_Call{Call: _e.mock.On("SetAttr", ctx, path, in)}
+}
+
+func (_c *MockFileSystemBackend_SetAttr_Call) Run(run func(ctx context.Context, path string, in io.SetAttrIn)) *MockFileSystemBackend_SetAttr_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 io.SetAttrIn
+		if args[2] != nil {
+			arg2 = args[2].(io.SetAttrIn)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockFileSystemBackend_SetAttr_Call) Return(attr *io.Attr, status fuse.Status) *MockFileSystemBackend_SetAttr_Call {
+	_c.Call.Return(attr, status)
+	return _c
+}
+
+func (_c *MockFileSystemBackend_SetAttr_Call) RunAndReturn(run func(ctx context.Context, path string, in io.SetAttrIn) (*io.Attr, fuse.Status)) *MockFileSystemBackend_SetAttr_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // SetLk provides a mock function for the type MockFileSystemBackend
 func (_mock *MockFileSystemBackend) SetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status {
 	ret := _mock.Called(ctx, fh, owner, lk, flags)
