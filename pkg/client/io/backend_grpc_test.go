@@ -282,7 +282,7 @@ func (s *BackendClientTestSuite) TestRelease_CancelledParentDoesNotAbortRPC() {
 // Counter-test: SetLkw is a BLOCKING lock wait (F_SETLKW) and must STAY
 // cancellable — a signal should interrupt a stuck wait. So, unlike every other
 // op, its RPC context MUST still cancel when the parent does. Guards against a
-// future "consistency" change wrongly routing SetLkw through ioCtx.
+// future "consistency" change wrongly detaching SetLkw via retryOp.
 func (s *BackendClientTestSuite) TestSetLkw_StaysCancellable() {
 	parent, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -650,12 +650,12 @@ func (s *BackendClientTestSuite) TestSetAttr_MasksNonWireValidBits() {
 // untranslated, so this pins the go-fuse constants we map from — if a go-fuse
 // bump ever changed them, the wire contract would silently break without this.
 func (s *BackendClientTestSuite) TestSetAttr_WireFattrContract() {
-	s.Assert().EqualValues(1, fuse.FATTR_MODE)
-	s.Assert().EqualValues(2, fuse.FATTR_UID)
-	s.Assert().EqualValues(4, fuse.FATTR_GID)
-	s.Assert().EqualValues(8, fuse.FATTR_SIZE)
-	s.Assert().EqualValues(16, fuse.FATTR_ATIME)
-	s.Assert().EqualValues(32, fuse.FATTR_MTIME)
+	s.Assert().Equal(1, fuse.FATTR_MODE)
+	s.Assert().Equal(2, fuse.FATTR_UID)
+	s.Assert().Equal(4, fuse.FATTR_GID)
+	s.Assert().Equal(8, fuse.FATTR_SIZE)
+	s.Assert().Equal(16, fuse.FATTR_ATIME)
+	s.Assert().Equal(32, fuse.FATTR_MTIME)
 }
 
 // TestSetAttr_RetryReusesRequestID — same Phase 1d idempotency property the
