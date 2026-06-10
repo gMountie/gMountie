@@ -49,8 +49,8 @@ func (s *ConfigTestSuite) TestParse_Full_Server() {
 	s.Assert().True(result.Server.Metrics)
 }
 
-// TestParse_IdentityExecutorWorkers: defaults to the 0 sentinel (io-layer
-// default applies) and an explicit value parses through.
+// TestParse_IdentityExecutorWorkers: defaults to 0 (executor disabled) and
+// an explicit value parses through.
 func (s *ConfigTestSuite) TestParse_IdentityExecutorWorkers() {
 	result, err := LoadConfigFromString(s.fullConf)
 	s.Require().NoError(err)
