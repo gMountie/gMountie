@@ -505,9 +505,6 @@ func (r *RpcFileServerImpl) WriteAndFlush(ctx context.Context, req *proto.WriteA
 		// it only feeds the bus version. A future client that consumes final_attr
 		// for a caller-scoped view would need a Caller field on WriteAndFlushRequest.
 		if attr, gst := fs.GetAttr(entry.Path, createContext(ctx, nil)); gst.Ok() {
-			// WriteAndFlushRequest carries no Caller — pass nil here, same as the
-			// stat above. final_attr is currently advisory; a future client that
-			// consumes the names will need a Caller field on the request.
 			reply.FinalAttr = toProtoAttr(attr, nil)
 			if st == fuse.OK {
 				r.emitMutatedAttr(req.Volume, entry.Path, attr)

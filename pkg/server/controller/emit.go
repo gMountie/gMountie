@@ -5,6 +5,7 @@ import (
 
 	"go.gmountie.dev/gmountie/pkg/proto"
 	serverio "go.gmountie.dev/gmountie/pkg/server/io"
+	"go.gmountie.dev/gmountie/pkg/server/service"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
@@ -56,6 +57,25 @@ func (r *RpcServerImpl) deleteEmit(volume, path string, op func() fuse.Status) f
 // RpcFileServerImpl.emitMutatedAttr in file.go.
 func (r *RpcServerImpl) emitMutatedAttr(volume, path string, attr *fuse.Attr) {
 	r.bus.Emit(volume, path, serverio.VersionFromAttr(attr), serverio.KindMutated)
+}
+
+// statAttrsAndEmit performs the ONE trailing stat shared by create-style
+// handlers (Mkdir, Symlink) that need both reply attrs and an event seed from
+// the same stat. On a successful stat it emits the mutation event seeded with
+// the fresh attr and returns the proto attrs; on a stat failure it emits
+// version 0 (clients revalidate via GetAttrIfChanged) and returns nil.
+//
+// SetAttr and Create are siblings that handle the same pattern but have
+// different gating (mutated guard in SetAttr, fd-receiver in Create) —
+// they inline the block directly rather than routing through this helper.
+func (r *RpcServerImpl) statAttrsAndEmit(fs pathfs.FileSystem, volume, path string, id *service.Identity, fctx *fuse.Context) *proto.Attr {
+	attr, gst := fs.GetAttr(path, fctx)
+	if gst.Ok() {
+		r.emitMutatedAttr(volume, path, attr)
+		return toProtoAttr(attr, id)
+	}
+	r.emitMutatedAttr(volume, path, nil)
+	return nil
 }
 
 // renameEmit runs op and, when it returns fuse.OK, emits the rename event

@@ -83,18 +83,11 @@ func (r *RpcServerImpl) Mkdir(ctx context.Context, request *proto.MkdirRequest) 
 		if s := fs.Mkdir(request.Path, request.Mode, fctx); s != fuse.OK {
 			return &proto.MkdirReply{Status: int32(s)}, nil
 		}
-		reply := &proto.MkdirReply{Status: int32(fuse.OK)}
-		// ONE trailing stat serves both the reply attrs and the event seed
-		// (SetAttr's pattern) — emitMutatedAttr replaces mutateEmit, whose
-		// versionAfter would stat the path a second time. If the stat fails,
-		// the mkdir still succeeded: Status stays OK, Attributes stay nil and
-		// the event carries version 0 so clients revalidate via
-		// GetAttrIfChanged (cache safety over version precision).
-		if attr, gst := fs.GetAttr(request.Path, fctx); gst.Ok() {
-			reply.Attributes = toProtoAttr(attr, &id)
-			r.emitMutatedAttr(request.Volume, request.Path, attr)
-		} else {
-			r.emitMutatedAttr(request.Volume, request.Path, nil)
+		// ONE trailing stat serves both the reply attrs and the event seed —
+		// see statAttrsAndEmit for the stat-fail partial-success contract.
+		reply := &proto.MkdirReply{
+			Status:     int32(fuse.OK),
+			Attributes: r.statAttrsAndEmit(fs, request.Volume, request.Path, &id, fctx),
 		}
 		return reply, nil
 	})
@@ -163,14 +156,11 @@ func (r *RpcServerImpl) Symlink(ctx context.Context, request *proto.SymlinkReque
 		if s := fs.Symlink(request.Target, request.LinkPath, fctx); s != fuse.OK {
 			return &proto.SymlinkReply{Status: int32(s)}, nil
 		}
-		reply := &proto.SymlinkReply{Status: int32(fuse.OK)}
-		// ONE trailing stat for both reply attrs and event seed; stat failure
-		// keeps Status OK with nil attrs + version-0 event (see Mkdir).
-		if attr, gst := fs.GetAttr(request.LinkPath, fctx); gst.Ok() {
-			reply.Attributes = toProtoAttr(attr, &id)
-			r.emitMutatedAttr(request.Volume, request.LinkPath, attr)
-		} else {
-			r.emitMutatedAttr(request.Volume, request.LinkPath, nil)
+		// ONE trailing stat for both reply attrs and event seed — see
+		// statAttrsAndEmit for the stat-fail partial-success contract.
+		reply := &proto.SymlinkReply{
+			Status:     int32(fuse.OK),
+			Attributes: r.statAttrsAndEmit(fs, request.Volume, request.LinkPath, &id, fctx),
 		}
 		return reply, nil
 	})

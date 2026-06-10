@@ -64,12 +64,21 @@ func withIdempotency[T any](sess service.Session, requestID string, do func() (T
 	return typed, nil
 }
 
-// withOptionalIdempotency is withIdempotency for RPCs whose request_id is
-// legitimately optional (WriteAndFlush pure-flush calls carry none, and
-// existing clients send none for CopyFileRange either). An empty id runs do
-// directly: it must NEVER reach the session cache, where "" would be a single
-// shared key deduping ALL id-less calls against each other (Session.DoOnce
-// itself has no empty-key guard). A non-empty id gets the standard dedup path.
+// withOptionalIdempotency is withIdempotency for fd-RPCs that do not yet
+// mandate request_id from all clients. MISUSE GUARD: path-mutation RPCs
+// (Mkdir, Symlink, SetAttr, Unlink, Rename, …) MUST keep using the strict
+// withIdempotency — request_id is mandatory there and the empty-id
+// InvalidArgument is the intended contract. This variant exists only for
+// WriteAndFlush and CopyFileRange while clients are being updated to stamp ids
+// (planned); using it on a path-mutation RPC silently removes the safety net.
+//
+// Consequence of an id-less retry: an id-less data-carrying WriteAndFlush
+// re-applies the write — there is no dedup protection. Callers that stamp
+// non-empty ids get the standard dedup path.
+//
+// An empty id runs do directly: it must NEVER reach the session cache, where
+// "" would be a single shared key deduping ALL id-less calls against each
+// other (Session.DoOnce itself has no empty-key guard).
 func withOptionalIdempotency[T any](sess service.Session, requestID string, do func() (T, error)) (T, error) {
 	if requestID == "" {
 		return do()
