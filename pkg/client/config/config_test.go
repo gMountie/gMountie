@@ -293,6 +293,24 @@ func (s *ConfigTestSuite) TestCacheEnvOverride() {
 	s.Assert().Equal(DefaultCacheNegativeTTL, result.Cache.NegativeTTL)
 }
 
+// TestFuseEnvOverride verifies GMOUNTIE_FUSE_* env vars reach cfg.FUSE.*
+// when the YAML omits the fuse: block. Confirms the mirrorEnvToSub wiring
+// that was missing before the 6d3f4c3 fix.
+func (s *ConfigTestSuite) TestFuseEnvOverride() {
+	s.T().Setenv("GMOUNTIE_FUSE_ATTR_TIMEOUT", "9s")
+	s.T().Setenv("GMOUNTIE_FUSE_WRITEBACK_CACHE", "true")
+
+	result, err := LoadConfigFromString(s.minimalConf)
+	s.Require().NoError(err)
+	s.Require().NotNil(result.FUSE)
+	s.Assert().Equal(9*time.Second, result.FUSE.AttrTimeout)
+	s.Assert().True(result.FUSE.WritebackCache)
+	// Untouched keys keep defaults.
+	s.Assert().Equal(DefaultFUSEEntryTimeout, result.FUSE.EntryTimeout)
+	s.Assert().Equal(DefaultFUSEMaxWriteBytes, result.FUSE.MaxWriteBytes)
+	s.Assert().Equal(DefaultFUSEMaxBackground, result.FUSE.MaxBackground)
+}
+
 // TestCacheExplicitYAML verifies a fully populated cache: block round-trips
 // through the duration decode hook and overrides every default.
 func (s *ConfigTestSuite) TestCacheExplicitYAML() {
