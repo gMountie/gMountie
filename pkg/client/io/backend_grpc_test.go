@@ -510,16 +510,24 @@ func (s *BackendClientTestSuite) TestSetAttr_MasksNonWireValidBits() {
 // TestSetAttr_RetryReusesRequestID — same Phase 1d idempotency property the
 // Write/Mkdir suites pin: the request_id is allocated once outside the
 // retry loop so the server's dedup cache short-circuits the replay.
+//
+// Implementation note: a side-effecting MatchedBy closure (capturing
+// firstID inside the first expectation) is re-evaluated by testify when
+// Arguments.Diff runs against exhausted .Once() expectations on the retry
+// call, overwriting firstID with the retry's own id so the equality check
+// passes trivially. Use Run() on mock.Anything expectations and collect
+// every attempt's id into a slice; assert equality after the call.
 func (s *BackendClientTestSuite) TestSetAttr_RetryReusesRequestID() {
-	var firstID string
-	s.fsClient.EXPECT().SetAttr(mock.Anything, mock.MatchedBy(func(req *proto.SetAttrRequest) bool {
-		firstID = req.RequestId
-		return req.RequestId != ""
-	}), mock.Anything).Return(nil, status.Error(codes.Unavailable, "transient")).Once()
+	var ids []string
+	s.fsClient.EXPECT().SetAttr(mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ context.Context, req *proto.SetAttrRequest, _ ...grpc.CallOption) {
+			ids = append(ids, req.RequestId)
+		}).Return(nil, status.Error(codes.Unavailable, "transient")).Once()
 
-	s.fsClient.EXPECT().SetAttr(mock.Anything, mock.MatchedBy(func(req *proto.SetAttrRequest) bool {
-		return req.RequestId == firstID
-	}), mock.Anything).Return(&proto.SetAttrReply{
+	s.fsClient.EXPECT().SetAttr(mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ context.Context, req *proto.SetAttrRequest, _ ...grpc.CallOption) {
+			ids = append(ids, req.RequestId)
+		}).Return(&proto.SetAttrReply{
 		Status:     int32(fuse.OK),
 		Attributes: &proto.Attr{Ino: 1, Owner: &proto.Owner{}},
 	}, nil).Once()
@@ -527,7 +535,9 @@ func (s *BackendClientTestSuite) TestSetAttr_RetryReusesRequestID() {
 	attr, st := s.backend.SetAttr(context.Background(), "/f", SetAttrIn{Valid: fuse.FATTR_SIZE, Size: 0})
 	s.Assert().Equal(fuse.OK, st)
 	s.Assert().NotNil(attr)
-	s.Assert().NotEmpty(firstID)
+	s.Require().Len(ids, 2, "expected exactly two SetAttr attempts")
+	s.Assert().NotEmpty(ids[0], "request_id must be non-empty")
+	s.Assert().Equal(ids[0], ids[1], "retry must reuse the same request_id for server-side dedup")
 }
 
 // TestSetAttr_InBandErrorReturnsStatus: a non-OK in-band Status travels back
@@ -544,20 +554,27 @@ func (s *BackendClientTestSuite) TestSetAttr_InBandErrorReturnsStatus() {
 // TestMkdir_RetryReusesRequestID is the load-bearing Phase 1d assertion
 // for path-level mutating ops: the same request_id must be reused across
 // retries so the server's dedup cache can short-circuit the duplicate.
+//
+// Same testify re-evaluation pitfall as TestSetAttr_RetryReusesRequestID:
+// use Run() on mock.Anything expectations to collect ids without side
+// effects in the matcher itself.
 func (s *BackendClientTestSuite) TestMkdir_RetryReusesRequestID() {
-	var firstID string
-	s.fsClient.EXPECT().Mkdir(mock.Anything, mock.MatchedBy(func(req *proto.MkdirRequest) bool {
-		firstID = req.RequestId
-		return req.RequestId != ""
-	}), mock.Anything).Return(nil, status.Error(codes.Unavailable, "transient")).Once()
+	var ids []string
+	s.fsClient.EXPECT().Mkdir(mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ context.Context, req *proto.MkdirRequest, _ ...grpc.CallOption) {
+			ids = append(ids, req.RequestId)
+		}).Return(nil, status.Error(codes.Unavailable, "transient")).Once()
 
-	s.fsClient.EXPECT().Mkdir(mock.Anything, mock.MatchedBy(func(req *proto.MkdirRequest) bool {
-		return req.RequestId == firstID
-	}), mock.Anything).Return(&proto.MkdirReply{Status: int32(fuse.OK)}, nil).Once()
+	s.fsClient.EXPECT().Mkdir(mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ context.Context, req *proto.MkdirRequest, _ ...grpc.CallOption) {
+			ids = append(ids, req.RequestId)
+		}).Return(&proto.MkdirReply{Status: int32(fuse.OK)}, nil).Once()
 
 	st := s.backend.Mkdir(context.Background(), "/d", 0755)
 	s.Assert().Equal(fuse.OK, st)
-	s.Assert().NotEmpty(firstID)
+	s.Require().Len(ids, 2, "expected exactly two Mkdir attempts")
+	s.Assert().NotEmpty(ids[0], "request_id must be non-empty")
+	s.Assert().Equal(ids[0], ids[1], "retry must reuse the same request_id for server-side dedup")
 }
 
 // --- Open / Create ---
