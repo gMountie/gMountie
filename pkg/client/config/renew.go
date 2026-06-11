@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 )
 
@@ -35,7 +36,7 @@ func NewRenewConfig(v *viper.Viper) (*RenewConfig, error) {
 		return cfg, nil
 	}
 	v.SetDefault("before", DefaultRenewBefore)
-	if err := v.Unmarshal(cfg); err != nil {
+	if err := v.UnmarshalExact(cfg, viper.DecodeHook(mapstructure.StringToTimeDurationHookFunc())); err != nil {
 		return nil, fmt.Errorf("parse renew config: %w", err)
 	}
 	if cfg.Enabled() {

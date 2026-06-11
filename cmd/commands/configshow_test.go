@@ -162,6 +162,21 @@ func (s *ConfigShowSuite) TestConfigShow_ProfileAndConfigConflict() {
 	s.Assert().Contains(err.Error(), "one of --profile or --config")
 }
 
+// TestRedactsRenewToken proves that an inline renew.token bearer secret is
+// masked by config show. token_file is a path, not a credential, and must
+// NOT be redacted — this test enforces both properties together.
+func (s *ConfigShowSuite) TestRedactsRenewToken() {
+	in := "renew:\n" +
+		"  endpoint: https://cp.example/v1/certs\n" +
+		"  token: gmpat_supersecretbearer\n" +
+		"  token_file: /etc/gmountie/token\n"
+	out := redactConfigYAML(in)
+	s.NotContains(out, "gmpat_supersecretbearer", "inline token must be redacted")
+	s.Contains(out, "token: REDACTED")
+	// token_file is a path, not a secret — must render verbatim.
+	s.Contains(out, "token_file: /etc/gmountie/token", "token_file path must not be redacted")
+}
+
 func (s *ConfigShowSuite) TestConfigShow_ProfileResolvesPath() {
 	profileName = "work"
 	defer func() { profileName = "" }()

@@ -19,12 +19,16 @@ var (
 // secretKeyLine matches a YAML assignment for a sensitive key, capturing its
 // prefix (indent plus an optional "- " sequence-item marker), key name, and
 // whatever follows the colon. `key_pem` is the inline mTLS private key;
-// `password`/`password_hash` are basic-auth secrets. Public material
-// (`ca_pem`, `cert_pem`) and file-path references are intentionally left
-// visible. Listed longest-first so `password_hash` wins over `password`. The
-// optional "- " matters because a secret that is the first key of a list item
-// (e.g. server auth.users[].password_hash) renders as `- password_hash: ...`.
-var secretKeyLine = regexp.MustCompile(`^(\s*(?:- )?)(password_hash|password|key_pem)\s*:\s*(.*)$`)
+// `password`/`password_hash` are basic-auth secrets; `token` is the inline
+// bearer token for the cert-refresher renew block. Public material
+// (`ca_pem`, `cert_pem`) and file-path references (`token_file`,
+// `password_file`) are intentionally left visible. Listed longest-first so
+// `password_hash` wins over `password`. `token` is matched as a bare key
+// (followed immediately by `\s*:`), so `token_file:` does not match — the
+// `_file` suffix prevents the `\s*:` from aligning. The optional "- " matters
+// because a secret that is the first key of a list item (e.g. server
+// auth.users[].password_hash) renders as `- password_hash: ...`.
+var secretKeyLine = regexp.MustCompile(`^(\s*(?:- )?)(password_hash|password|key_pem|token)\s*:\s*(.*)$`)
 
 // blockScalarIndicator matches a YAML block-scalar header (`|`, `>`, with an
 // optional chomping/indentation modifier and an optional trailing comment),

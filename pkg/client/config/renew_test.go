@@ -38,6 +38,32 @@ func (s *RenewConfigTestSuite) TestFullBlockParses() {
 	s.Equal(2*time.Hour, cfg.Before)
 }
 
+// TestUnknownKeyErrors proves that a typo'd key in the renew block (e.g.
+// "beore" instead of "before") is rejected rather than silently ignored,
+// matching the UnmarshalExact behaviour of sibling config constructors.
+func (s *RenewConfigTestSuite) TestUnknownKeyErrors() {
+	v := viper.New()
+	v.Set("endpoint", "https://cp.example/v1/certs")
+	v.Set("token", "tok")
+	v.Set("beore", "2h") // deliberate typo — must be caught
+	_, err := NewRenewConfig(v)
+	s.Require().Error(err)
+}
+
+// TestTokenFileOnlyPasses proves that a renew block with only token_file
+// (no inline token) is accepted — token_file is the recommended form for
+// secrets that rotate without a restart.
+func (s *RenewConfigTestSuite) TestTokenFileOnlyPasses() {
+	v := viper.New()
+	v.Set("endpoint", "https://cp.example/v1/certs")
+	v.Set("token_file", "/etc/gmountie/token")
+	cfg, err := NewRenewConfig(v)
+	s.Require().NoError(err)
+	s.True(cfg.Enabled())
+	s.Empty(cfg.Token)
+	s.Equal("/etc/gmountie/token", cfg.TokenFile)
+}
+
 func (s *RenewConfigTestSuite) TestParseConfigWiresRenewBlock() {
 	v := viper.New()
 	v.Set("server.address", "127.0.0.1")
