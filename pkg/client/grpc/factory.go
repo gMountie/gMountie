@@ -8,6 +8,7 @@ import (
 
 	"go.gmountie.dev/gmountie/pkg/client/config"
 	"go.gmountie.dev/gmountie/pkg/client/metrics"
+	"go.gmountie.dev/gmountie/pkg/client/renew"
 	clienttls "go.gmountie.dev/gmountie/pkg/client/tls"
 	commonconfig "go.gmountie.dev/gmountie/pkg/common/config"
 	"go.gmountie.dev/gmountie/pkg/common/grpc/snappy"
@@ -18,6 +19,16 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 )
+
+// newRefresherFn builds the certificate refresher; indirected through a
+// package var so token-mode integration tests can inject a refresher whose
+// HTTP client trusts a self-signed exchange server.
+var newRefresherFn = renew.New
+
+// initialExchangeTimeout budgets the synchronous initial certificate exchange.
+// It covers the two exchange requests (profile + sign), each already bounded by
+// the refresher's 30s HTTP timeout.
+const initialExchangeTimeout = time.Minute
 
 // defaultCallOptions builds the DefaultCallOptions for the gRPC dial:
 // message-size caps (always) plus an optional UseCompressor when the
@@ -67,10 +78,51 @@ func newUnconnectedClient(cfg *config.Config, endpoint string) (Client, error) {
 		opts = append(opts, WithDialOptions(dialOpts))
 	}
 
+	// Token mode: an enabled renew block replaces static client-cert material.
+	// The initial exchange runs synchronously — the first TLS handshake needs
+	// a cert — and also delivers the data CA when none is configured.
+	var certSource *clienttls.ManagedSource
+	var refresher *renew.Refresher
+	if cfg.Renew.Enabled() {
+		if cfg.Server.TLS.CertFile != "" || cfg.Server.TLS.CertPEM != "" {
+			return nil, errors.New("renew.endpoint and a static client cert are mutually exclusive")
+		}
+		certSource = &clienttls.ManagedSource{}
+		refresher = newRefresherFn(renew.Config{
+			Endpoint:  cfg.Renew.Endpoint,
+			Token:     cfg.Renew.Token,
+			TokenFile: cfg.Renew.TokenFile,
+			Before:    cfg.Renew.Before,
+		}, certSource)
+		ctx, cancel := context.WithTimeout(context.Background(), initialExchangeTimeout)
+		err := refresher.RenewNow(ctx)
+		cancel()
+		if err != nil {
+			return nil, errors.Wrap(err, "initial certificate exchange")
+		}
+	}
+	caPEM := cfg.Server.TLS.CAPEM
+	if refresher != nil && caPEM == "" && cfg.Server.TLS.CAFile == "" {
+		caPEM = refresher.CAPEM()
+	}
+
+	// Token mode with no CA anywhere: refuse to proceed when the effective verify
+	// mode does full chain verification against a CA (mode "verify"/empty, no
+	// fingerprint pin). With RootCAs unset BuildConfig would silently verify the
+	// data-plane server against the system WebPKI roots — a private CA we never
+	// trusted. Fail loudly instead. tofu/insecure/fingerprint-pinned configs do
+	// not use RootCAs, so they are unaffected.
+	if refresher != nil && caPEM == "" && cfg.Server.TLS.CAFile == "" {
+		mode := cfg.Server.TLS.Verify
+		if (mode == "" || mode == clienttls.ModeVerify) && cfg.Server.TLS.ExpectedFingerprint == "" {
+			return nil, errors.New("token mode: certificate exchange returned no ca_pem and no CA is configured")
+		}
+	}
+
 	// Build TLS transport credentials unconditionally. The verify mode
 	// defaults to "verify" (full chain check) when empty; "insecure" skips
 	// it for local dev/testing.
-	tlsCfg, err := clienttls.BuildConfig(clienttls.Config{
+	tlsInput := clienttls.Config{
 		Endpoint:            endpoint,
 		Mode:                cfg.Server.TLS.Verify,
 		CAFile:              cfg.Server.TLS.CAFile,
@@ -79,16 +131,27 @@ func newUnconnectedClient(cfg *config.Config, endpoint string) (Client, error) {
 		KnownHostsPath:      cfg.Server.TLS.KnownHostsPath,
 		CertFile:            cfg.Server.TLS.CertFile,
 		KeyFile:             cfg.Server.TLS.KeyFile,
-		CAPEM:               cfg.Server.TLS.CAPEM,
+		CAPEM:               caPEM,
 		CertPEM:             cfg.Server.TLS.CertPEM,
 		KeyPEM:              cfg.Server.TLS.KeyPEM,
-	})
+	}
+	if certSource != nil {
+		// set conditionally — a typed-nil interface would enable the callback path
+		tlsInput.ClientCertSource = certSource
+	}
+	tlsCfg, err := clienttls.BuildConfig(tlsInput)
 	if err != nil {
 		return nil, errors.Wrap(err, "build client TLS config")
 	}
 	opts = append(opts, WithDialOptions([]grpc.DialOption{
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 	}))
+
+	// In token mode, run the renewal loop on the client lifecycle so the
+	// in-memory cert is refreshed before expiry; Close cancels it.
+	if refresher != nil {
+		opts = append(opts, WithBackgroundTask(refresher.Run))
+	}
 
 	// Build and register client metrics for this factory call. Register
 	// tolerates AlreadyRegisteredError so tests building multiple clients

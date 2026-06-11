@@ -113,6 +113,9 @@ type ClientImpl struct {
 	// refcounted, so a double Close must not drop another live client's
 	// reference.
 	closed atomic.Bool
+	// backgroundTasks are launched on lifeCtx once construction succeeds (e.g.
+	// the certificate-renewal loop). Close cancels lifeCtx so each returns.
+	backgroundTasks []func(ctx context.Context)
 }
 
 // -------------------- ClientImpl Options --------------------
@@ -184,6 +187,13 @@ func WithWriteCoalesce(bytes int) ClientOption {
 	}
 }
 
+// WithBackgroundTask registers fn to run on the client's lifecycle context
+// once construction succeeds; fn must return when ctx is done. Close cancels
+// the context. Used by the factory to run the certificate-renewal loop.
+func WithBackgroundTask(fn func(ctx context.Context)) ClientOption {
+	return func(c *ClientImpl) { c.backgroundTasks = append(c.backgroundTasks, fn) }
+}
+
 // WithMetrics attaches a pre-built *metrics.Metrics to the client. The
 // factory (NewClientFromConfig) uses this to avoid overwriting the package-
 // level metric hooks when multiple clients are constructed in the same process
@@ -230,6 +240,11 @@ func NewClient(endpoint string, options ...ClientOption) (Client, error) {
 	c.version = proto.NewVersionServiceClient(conn)
 	c.session = proto.NewSessionServiceClient(conn)
 	c.handshake = NewSessionHandshake(c.session)
+	// Launch registered background tasks on the client lifecycle context.
+	// Close cancels lifeCtx, so each task returns on teardown.
+	for _, fn := range c.backgroundTasks {
+		go fn(c.lifeCtx)
+	}
 	return &c, nil
 }
 
