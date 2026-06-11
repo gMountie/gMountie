@@ -1,7 +1,7 @@
 # Security and Transport
 
-**Status:** Shipped (Phase 7, PRs #53–#55, 2026-05-29; TLS leaf live-reload added in v0.15)
-**Last updated:** 2026-06-09
+**Status:** Shipped (Phase 7, PRs #53–#55, 2026-05-29; TLS leaf live-reload added in v0.15; client cert auto-renewal + volume-scoped client certs added in v0.16)
+**Last updated:** 2026-06-12
 
 The durable record of gMountie's transport security, credential storage,
 and access-control model — what makes it deployable on a non-trusted
@@ -234,6 +234,34 @@ is empty**. The client presents its cert via `cert_file`/`key_file`
 (loaded into `tls.Config.Certificates`, orthogonal to how it verifies the
 *server*). mTLS users carry only `volumes:` (no `password_hash`). mTLS is
 incompatible with `tls.disabled`.
+
+### 6.1 Client cert auto-renewal (token mode)
+
+Static on-disk client certs are the default, but the client also supports
+**in-memory cert auto-renewal** via an opt-in `renew` config block. In token
+mode the client presents a bearer token to a token→certificate HTTP endpoint,
+mints a fresh P-256 key in process memory, and exchanges a CSR for a
+short-lived cert. The private key never leaves process memory; no cert or key is
+written to disk. The initial exchange runs synchronously at mount start; a
+background goroutine renews before expiry (`renew.before`, default 8 h). The
+renewed cert takes effect at the next TLS handshake; active RPCs are
+uninterrupted. The CA for verifying the data-plane server can be delivered by the
+exchange endpoint when no `server.tls.ca_file` is configured. See
+[`renew` block — client config](../client/config.md#certificate-auto-renewal-renew)
+for the full field reference and wire contract.
+
+### 6.2 Volume-scoped client certs
+
+A client certificate may carry URI SANs of the form
+`gmountie://vol/<volume-name>` to restrict it to specific volumes.
+`VerifiedCertVolumeScopes` (`pkg/server/service/auth.go`) extracts these from the
+verified leaf and `PrincipalCanAccess` enforces them **before** the per-user ACL,
+so a scoped-out caller cannot learn whether the volume exists. A wildcard SAN
+`gmountie://vol/*` is explicitly unrestricted. Certs with no such SANs are
+unrestricted — fully backwards compatible. Scope can only narrow ACL access,
+never widen it. There is no server config knob; scope is carried by the cert and
+enforced by the server natively. See [Volume-scoped client certs — server
+config](../server/config.md#volume-scoped-client-certs) for the SAN format table.
 
 ## 7. Per-user volume ACL
 

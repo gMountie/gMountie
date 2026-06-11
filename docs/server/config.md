@@ -332,6 +332,38 @@ auth:
       volumes: [backup]
 ```
 
+### Volume-scoped client certs
+
+A client certificate may carry URI SANs of the form
+`gmountie://vol/<volume-name>` to declare that it is **scoped** to specific
+volumes. The server enforces this scope before the per-user ACL, so a
+scope-denied caller cannot distinguish "volume does not exist" from "cert not
+scoped to this volume".
+
+The URI SAN format:
+
+| SAN value             | Meaning                                   |
+|-----------------------|-------------------------------------------|
+| `gmountie://vol/data` | Cert is restricted to volume `data`       |
+| `gmountie://vol/logs` | Cert is restricted to volume `logs`       |
+| `gmountie://vol/*`    | Explicitly unrestricted (all volumes)     |
+
+A cert may carry multiple `gmountie://vol/…` SANs; access is granted to any
+volume in the set. A cert with **no** such SANs is unrestricted — behaviour is
+identical to today and existing certs continue to work without change.
+
+There is no server config knob for volume scoping; it is driven entirely by
+the SANs embedded in the client cert by the CA. Scope can only **narrow**
+the ACL — a scoped cert still has to pass the per-user volume allowlist
+(`auth.users[].volumes`) before access is granted.
+
+```yaml
+# No server-side config needed — the cert carries the scope.
+# On the CA side, mint certs with URI SANs like:
+#   gmountie://vol/data
+#   gmountie://vol/*   (unrestricted)
+```
+
 ## Volume Configuration
 
 The `volumes` section defines shared directories. Each volume has a name, a path on the server, and (optionally) an identity-`mapping` block.

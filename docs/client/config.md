@@ -370,6 +370,115 @@ auth:
   password_file: /run/secrets/gmountie-password
 ```
 
+## Certificate Auto-Renewal (`renew`)
+
+The `renew` block opts the client into automatic client-cert renewal. When
+configured, the client exchanges a bearer token for a short-lived mTLS
+client certificate at a token→certificate endpoint, renews it before
+expiry, and holds both the key and the certificate **exclusively in process
+memory** — no cert or key is ever written to disk. In token mode you do not
+need `server.tls.cert_file`/`key_file` at all; the CA for verifying the
+data-plane server is delivered by the exchange endpoint and used
+automatically when no `server.tls.ca_file` is set.
+
+An absent `renew` block — or one with no `endpoint` — disables renewal entirely. The
+client behaves exactly as without the block; no default-on behaviour exists.
+
+| Option       | Type     | Default | Description                                                                                                   |
+|--------------|----------|---------|---------------------------------------------------------------------------------------------------------------|
+| endpoint     | string   | _(none)_ | Base URL of the exchange service. The client appends `/profile` and `/renew`; see [Wire contract](#wire-contract) below. |
+| token        | string   | _(none)_ | Inline bearer token. `token_file` wins when both are set.                                                      |
+| token\_file  | string   | _(none)_ | Path to a file whose (whitespace-trimmed) contents are the bearer token. **Re-read on every exchange** so the token can rotate without a restart. |
+| before       | duration | 8h      | Renewal lead time before cert expiry. Must be positive.                                                        |
+
+Either `token` or `token_file` is required when `endpoint` is set. The token
+can also be supplied via the `$GMOUNTIE_RENEW_TOKEN` environment variable (set
+`token_file` to a file populated by your secrets provider to avoid inline
+secrets).
+
+```yaml
+renew:
+  endpoint: https://cp.example.com/v1/certs   # GET /profile + POST /renew appended
+  token_file: /var/run/secrets/mount-token    # or token: inline / $GMOUNTIE_RENEW_TOKEN
+  before: 8h
+```
+
+### Wire contract
+
+The client makes two HTTP requests to `endpoint`:
+
+**1. `GET {endpoint}/profile`** — `Authorization: Bearer <token>`. Response
+(`application/json`):
+
+```json
+{
+  "subject": "device-xyz",
+  "sans":    ["spiffe://example.com/device/xyz"],
+  "ca_pem":  "-----BEGIN CERTIFICATE-----\n…"
+}
+```
+
+`subject` becomes the cert CN; `sans` entries that look like URIs (have a
+non-empty scheme) become URI SANs, everything else becomes DNS SANs. `ca_pem`
+is the CA to use for verifying the data-plane server when no
+`server.tls.ca_file` is configured.
+
+**2. `POST {endpoint}/renew`** — `Authorization: Bearer <token>`,
+`Content-Type: application/json`. Request body:
+
+```json
+{ "csr_pem": "-----BEGIN CERTIFICATE REQUEST-----\n…" }
+```
+
+The CSR carries a fresh in-memory P-256 key matching the profile's subject and
+SANs. Response:
+
+```json
+{
+  "cert_chain_pem": "-----BEGIN CERTIFICATE-----\n…",
+  "ca_pem":         "-----BEGIN CERTIFICATE-----\n…",
+  "not_after":      "2026-06-13T12:00:00Z"
+}
+```
+
+The client validates that the returned leaf cert matches the CSR key and subject,
+then swaps it into the in-memory cert source. `not_after` in the response is the
+leaf cert's expiry; the renewal loop uses it to schedule the next renewal
+(`not_after − before`).
+
+### Renewal lifecycle
+
+The initial exchange runs **synchronously at mount start** — the first TLS
+handshake needs a cert and CA. If the initial exchange fails, `mount` fails
+immediately. After mount, a background goroutine runs the renewal loop: it
+sleeps until `not_after − before`, attempts renewal, and retries with
+exponential backoff ([1 m, 15 m]) on failure. A failed renewal never tears down
+the mount; the existing cert continues to be used until it actually expires.
+
+The new cert takes effect at the **next TLS handshake** — the live connection is
+not re-handshaked, so active RPCs are uninterrupted. The key never leaves process
+memory.
+
+`renew.endpoint` and a static client cert (`server.tls.cert_file`/`cert_pem`)
+are mutually exclusive; the client returns an error at startup if both are set.
+
+### Token-mode credential bundle
+
+`GMOUNTIE_CREDENTIALS` bundles gain a token form that carries just the
+endpoint and a renew token — no cert or key material. The mount command
+enables token mode automatically when it decodes a token-mode bundle:
+
+```json
+{
+  "endpoint":       "resolver.example.com:443",
+  "renew_endpoint": "https://cp.example.com/v1/certs",
+  "renew_token":    "eyJ…"
+}
+```
+
+Static bundles (carrying `cert_pem`/`key_pem`/`ca_pem`) are unchanged and
+remain the default.
+
 ## Mount Configuration
 
 The `mount` section defines the volume and (optionally) a default mountpoint.

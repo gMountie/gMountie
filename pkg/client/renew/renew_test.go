@@ -33,7 +33,7 @@ type RenewTestSuite struct {
 	sans     []string
 	ttl      time.Duration
 	// per-test overrides; nil means use the default handler behaviour
-	overrideProfileCAOverride *string  // when non-nil, replaces ca_pem in /profile response
+	overrideProfileCAOverride *string                                                   // when non-nil, replaces ca_pem in /profile response
 	overrideSignFn            func(w http.ResponseWriter, csr *x509.CertificateRequest) // when non-nil, replaces the default cert-signing logic
 }
 
@@ -175,7 +175,7 @@ func (s *RenewTestSuite) TestKeyMismatchRejected() {
 			SerialNumber: big.NewInt(1),
 			Subject:      pkix.Name{CommonName: s.subject},
 			NotBefore:    time.Now().Add(-time.Minute), NotAfter: time.Now().Add(s.ttl),
-			KeyUsage:     x509.KeyUsageDigitalSignature,
+			KeyUsage: x509.KeyUsageDigitalSignature,
 		}
 		der, err := x509.CreateCertificate(rand.Reader, leaf, s.caCert, &wrongKey.PublicKey, s.caKey)
 		s.Require().NoError(err)
@@ -199,7 +199,7 @@ func (s *RenewTestSuite) TestCNMismatchRejected() {
 			SerialNumber: big.NewInt(2),
 			Subject:      pkix.Name{CommonName: "mallory"}, // wrong CN
 			NotBefore:    time.Now().Add(-time.Minute), NotAfter: time.Now().Add(s.ttl),
-			KeyUsage:     x509.KeyUsageDigitalSignature,
+			KeyUsage: x509.KeyUsageDigitalSignature,
 		}
 		der, err := x509.CreateCertificate(rand.Reader, leaf, s.caCert, csr.PublicKey, s.caKey)
 		s.Require().NoError(err)
@@ -224,7 +224,7 @@ func (s *RenewTestSuite) TestProfileCAPEMUsedWhenSignResponseOmitsIt() {
 			SerialNumber: big.NewInt(3),
 			Subject:      pkix.Name{CommonName: s.subject},
 			NotBefore:    time.Now().Add(-time.Minute), NotAfter: time.Now().Add(s.ttl),
-			KeyUsage:     x509.KeyUsageDigitalSignature,
+			KeyUsage: x509.KeyUsageDigitalSignature,
 		}
 		der, err := x509.CreateCertificate(rand.Reader, leaf, s.caCert, csr.PublicKey, s.caKey)
 		s.Require().NoError(err)
@@ -248,7 +248,7 @@ func (s *RenewTestSuite) TestMultiCertChainLeafFirst() {
 			SerialNumber: big.NewInt(4),
 			Subject:      pkix.Name{CommonName: s.subject},
 			NotBefore:    time.Now().Add(-time.Minute), NotAfter: time.Now().Add(s.ttl),
-			KeyUsage:     x509.KeyUsageDigitalSignature,
+			KeyUsage: x509.KeyUsageDigitalSignature,
 		}
 		leafDER, err := x509.CreateCertificate(rand.Reader, leaf, s.caCert, csr.PublicKey, s.caKey)
 		s.Require().NoError(err)
