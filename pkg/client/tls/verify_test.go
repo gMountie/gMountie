@@ -282,6 +282,26 @@ func (s *VerifyTestSuite) TestClientCertComposesWithTOFU() {
 	s.Len(cfg.Certificates, 1, "client cert must be present alongside TOFU")
 }
 
+func (s *VerifyTestSuite) TestClientCertSourceInstallsCallback() {
+	var src ManagedSource
+	cfg, err := BuildConfig(Config{Mode: ModeInsecure, Endpoint: "x:1", ClientCertSource: &src})
+	s.Require().NoError(err)
+	s.Require().NotNil(cfg.GetClientCertificate)
+	s.Empty(cfg.Certificates, "source mode must not also set a static cert")
+}
+
+func (s *VerifyTestSuite) TestClientCertSourceRejectsStaticCertCombo() {
+	certPEM, keyPEM, err := servertls.Generate("x")
+	s.Require().NoError(err)
+	var src ManagedSource
+	_, err = BuildConfig(Config{
+		Mode: ModeInsecure, Endpoint: "x:1",
+		ClientCertSource: &src, CertPEM: string(certPEM), KeyPEM: string(keyPEM),
+	})
+	s.Require().Error(err)
+	s.Contains(err.Error(), "mutually exclusive")
+}
+
 func TestVerifyTestSuite(t *testing.T) {
 	suite.Run(t, new(VerifyTestSuite))
 }
