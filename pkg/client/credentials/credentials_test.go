@@ -108,6 +108,46 @@ func (s *CredentialsTestSuite) TestLoad_FileMissing() {
 	s.Require().Error(err)
 }
 
+func (s *CredentialsTestSuite) TestDecodeTokenModeBundle() {
+	blob := base64.StdEncoding.EncodeToString([]byte(
+		`{"endpoint":"mount.example:443","renew_endpoint":"https://cp.example/v1/certs","renew_token":"gmpat_x"}`))
+	c, err := Decode(blob)
+	s.Require().NoError(err)
+	s.True(c.TokenMode())
+	s.Equal("https://cp.example/v1/certs", c.RenewEndpoint)
+}
+
+func (s *CredentialsTestSuite) TestTokenModeRequiresToken() {
+	blob := base64.StdEncoding.EncodeToString([]byte(
+		`{"endpoint":"mount.example:443","renew_endpoint":"https://cp.example/v1/certs"}`))
+	_, err := Decode(blob)
+	s.Require().Error(err)
+	s.Contains(err.Error(), "renew_token")
+}
+
+func (s *CredentialsTestSuite) TestStaticModeStillRequiresCertKeyCA() {
+	blob := base64.StdEncoding.EncodeToString([]byte(`{"endpoint":"mount.example:443"}`))
+	_, err := Decode(blob)
+	s.Require().Error(err)
+}
+
+func (s *CredentialsTestSuite) TestTokenModeMissingEndpointErrors() {
+	blob := base64.StdEncoding.EncodeToString([]byte(
+		`{"renew_endpoint":"https://cp.example/v1/certs","renew_token":"gmpat_x"}`))
+	_, err := Decode(blob)
+	s.Require().Error(err)
+	s.Contains(err.Error(), "endpoint")
+}
+
+func (s *CredentialsTestSuite) TestMixedModeBlobErrors() {
+	blob := base64.StdEncoding.EncodeToString([]byte(
+		`{"endpoint":"mount.example:443","renew_endpoint":"https://cp.example/v1/certs","renew_token":"gmpat_x","cert_pem":"CERT","key_pem":"KEY","ca_pem":"CA"}`))
+	_, err := Decode(blob)
+	s.Require().Error(err)
+	s.Contains(err.Error(), "renew_endpoint")
+	s.Contains(err.Error(), "cert")
+}
+
 func TestCredentialsTestSuite(t *testing.T) {
 	suite.Run(t, new(CredentialsTestSuite))
 }

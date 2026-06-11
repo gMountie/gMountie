@@ -186,6 +186,45 @@ func (s *MountCmdTestSuite) TestApplyCredentialPopulatesViper() {
 	s.Equal("mtls", v.GetString("auth.type"))
 }
 
+// TestApplyCredentialTokenModePopulatesViper proves that a token-mode credential
+// maps renew_endpoint and renew_token onto viper and does NOT set any static TLS
+// material — the cert/key/CA arrive later via the refresher's profile exchange.
+func (s *MountCmdTestSuite) TestApplyCredentialTokenModePopulatesViper() {
+	v := viper.New()
+	tokenBlob := base64.StdEncoding.EncodeToString([]byte(
+		`{"endpoint":"mount.example:443","renew_endpoint":"https://cp.example/v1/certs","renew_token":"gmpat_x"}`))
+	cred, err := credentials.Decode(tokenBlob)
+	s.Require().NoError(err)
+	s.Require().NoError(applyCredential(v, cred))
+	s.Equal("https://cp.example/v1/certs", v.GetString("renew.endpoint"))
+	s.Equal("gmpat_x", v.GetString("renew.token"))
+	// Static TLS material must NOT be set in token mode.
+	s.Empty(v.GetString("server.tls.cert_pem"))
+	s.Empty(v.GetString("server.tls.key_pem"))
+	s.Empty(v.GetString("server.tls.ca_pem"))
+	// Common fields still apply.
+	s.Equal("mount.example", v.GetString("server.address"))
+	s.Equal("443", v.GetString("server.port"))
+	s.Equal("verify", v.GetString("server.tls.verify"))
+	s.Equal("mtls", v.GetString("auth.type"))
+}
+
+// TestApplyCredentialStaticModeUnchanged proves that a static credential still
+// populates cert/key/CA (regression guard — token mode must not disturb the
+// existing static path).
+func (s *MountCmdTestSuite) TestApplyCredentialStaticModeUnchanged() {
+	v := viper.New()
+	cred, err := credentials.Decode(credBlob("data.example.com", "443"))
+	s.Require().NoError(err)
+	s.Require().NoError(applyCredential(v, cred))
+	s.Equal("CA", v.GetString("server.tls.ca_pem"))
+	s.Equal("CERT", v.GetString("server.tls.cert_pem"))
+	s.Equal("KEY", v.GetString("server.tls.key_pem"))
+	// Token fields must NOT be set in static mode.
+	s.Empty(v.GetString("renew.endpoint"))
+	s.Empty(v.GetString("renew.token"))
+}
+
 // TestMountCmd_CredentialEnv_CertOnlyAuth proves the target invocation:
 // GMOUNTIE_CREDENTIALS=<blob> gmountie mount <mp> -n <vol>, with no -u/-p and no
 // config file, authenticates by cert alone (auth.type=mtls, no username

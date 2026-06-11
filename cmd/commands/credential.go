@@ -23,12 +23,13 @@ var credentialsFile string
 // ls so both can mount/list from a single credential blob with cert-only auth.
 func addCredentialsFlag(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&credentialsFile, "credentials", "",
-		"path to a single-blob mount credential (cert/key/CA/endpoint); $GMOUNTIE_CREDENTIALS is used when unset")
+		"path to a single-blob mount credential; $GMOUNTIE_CREDENTIALS is used when unset")
 }
 
 // applyCredential maps a decoded credential blob onto the viper instance:
 // the data-plane endpoint, the inline TLS material (data CA + this device's
-// client cert/key), the verification name, and auth.type=mtls.
+// client cert/key), the verification name, and auth.type=mtls; or, in token
+// mode, the renew endpoint/token that configure the certificate refresher.
 //
 // It sits ABOVE the config file but BELOW explicit CLI flags: it runs after the
 // config-file read, and the few flags that map to the same keys (-s, -u, -t,
@@ -44,9 +45,16 @@ func applyCredential(v *viper.Viper, cred *credentials.Credentials) error {
 	if cred.ServerName != "" {
 		v.Set("server.tls.server_name", cred.ServerName)
 	}
-	v.Set("server.tls.ca_pem", cred.CAPEM)
-	v.Set("server.tls.cert_pem", cred.CertPEM)
-	v.Set("server.tls.key_pem", cred.KeyPEM)
+	if cred.TokenMode() {
+		v.Set("renew.endpoint", cred.RenewEndpoint)
+		v.Set("renew.token", cred.RenewToken)
+		// CA + cert identity arrive via the refresher's profile exchange;
+		// no static TLS material to set.
+	} else {
+		v.Set("server.tls.ca_pem", cred.CAPEM)
+		v.Set("server.tls.cert_pem", cred.CertPEM)
+		v.Set("server.tls.key_pem", cred.KeyPEM)
+	}
 	if !v.IsSet("server.tls.verify") {
 		v.Set("server.tls.verify", "verify")
 	}
