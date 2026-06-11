@@ -1,6 +1,7 @@
 package renew
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -265,6 +266,86 @@ func (s *RenewTestSuite) TestMultiCertChainLeafFirst() {
 	s.Require().NotNil(cur)
 	s.Len(cur.Certificate, 2, "both leaf and CA DER blocks must be present")
 	s.WithinDuration(time.Now().Add(s.ttl), r.NotAfter(), time.Minute, "NotAfter tracks the leaf, not the CA")
+}
+
+func (s *RenewTestSuite) TestRunRenewsBeforeExpiry() {
+	s.ttl = 500 * time.Millisecond // leaf expires fast
+	var src clienttls.ManagedSource
+	r := s.newRefresher(&src)
+	r.cfg.Before = 400 * time.Millisecond // renew when <400ms left → ~100ms cadence
+	r.retryMin, r.retryMax = 50*time.Millisecond, 200*time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.Require().NoError(r.RenewNow(ctx))
+	first := src.Current()
+
+	go r.Run(ctx)
+	s.Require().Eventually(func() bool {
+		cur := src.Current()
+		return cur != nil && cur != first
+	}, 5*time.Second, 20*time.Millisecond, "loop must mint a fresh cert before expiry")
+}
+
+func (s *RenewTestSuite) TestRunStartsWithNoCertAndMintsImmediately() {
+	var src clienttls.ManagedSource
+	r := s.newRefresher(&src)
+	r.retryMin = 20 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go r.Run(ctx) // NotAfter is zero → first iteration renews immediately
+	s.Require().Eventually(func() bool { return src.Current() != nil },
+		5*time.Second, 10*time.Millisecond)
+}
+
+func (s *RenewTestSuite) TestRunBacksOffOnFailureAndStopsOnCancel() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /profile", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(500) })
+	srv := httptest.NewTLSServer(mux)
+	defer srv.Close()
+	var src clienttls.ManagedSource
+	r := New(Config{Endpoint: srv.URL, Token: "t", Before: time.Hour}, &src)
+	r.client = srv.Client()
+	r.retryMin, r.retryMax = 10*time.Millisecond, 40*time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { r.Run(ctx); close(done) }()
+	time.Sleep(100 * time.Millisecond) // a few failing rounds
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		s.Fail("Run did not stop on context cancel")
+	}
+	s.Nil(src.Current(), "failures never swapped anything in")
+}
+
+// Overflow/saturation guard: when notAfter is ~300 years in the past,
+// time.Until saturates near MinInt64 and the naive subtraction "time.Until -
+// Before" wraps positive, sending the loop into a ~292-year sleep while
+// holding an expired cert. leadUntilRenew must return negative so Run calls
+// RenewNow immediately.
+func (s *RenewTestSuite) TestRunRenewsWhenNotAfterFarInPast() {
+	var src clienttls.ManagedSource
+	r := s.newRefresher(&src)
+	r.retryMin, r.retryMax = 20*time.Millisecond, 50*time.Millisecond
+
+	// Force notAfter to 300 years in the past under mu so the first iteration
+	// sees a long-expired cert without going through a real exchange.
+	r.mu.Lock()
+	r.notAfter = time.Now().AddDate(-300, 0, 0)
+	r.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go r.Run(ctx)
+
+	// If the saturation bug is present, lead wraps positive → sleep ~292 years.
+	// If the fix is in place, lead is negative → RenewNow fires immediately.
+	s.Require().Eventually(func() bool { return src.Current() != nil },
+		5*time.Second, 20*time.Millisecond,
+		"Run must renew immediately when notAfter is far in the past (overflow guard)")
 }
 
 // Finding 3b: server returns empty cert_chain_pem → error containing "no

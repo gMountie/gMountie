@@ -302,3 +302,66 @@ func (r *Refresher) RenewNow(ctx context.Context) error {
 
 	return nil
 }
+
+// leadUntilRenew returns how long until the renewal window opens for a cert
+// expiring at notAfter, or a negative value when renewal is due now. Computed
+// without overflow: time.Until saturates near MinInt64 for far-past times and
+// subtracting Before would wrap positive (a hostile signer controls NotAfter).
+func (r *Refresher) leadUntilRenew(notAfter time.Time) time.Duration {
+	if notAfter.IsZero() || !notAfter.After(time.Now()) {
+		return -1
+	}
+	return time.Until(notAfter) - r.cfg.Before
+}
+
+// Run renews the certificate whenever it is within cfg.Before of expiry,
+// retrying with capped exponential backoff on failure, until ctx is done.
+// A failed renewal never tears anything down: the mount keeps running on
+// the current cert until it actually expires. Intended usage:
+//
+//	go refresher.Run(clientLifecycleCtx).
+//
+// Lead-time scheduling: on each iteration the loop computes
+// lead = NotAfter() - now - cfg.Before. When lead > 0 the loop sleeps
+// for that duration (roughly 2/3 of the cert lifetime when Before is set
+// to 1/3 of the TTL). When lead ≤ 0 a renewal is attempted immediately.
+//
+// Busy-spin guard: if after a successful renewal lead is still ≤ 0 (e.g.
+// the server returned a cert whose TTL ≤ Before), the loop sleeps retryMin
+// instead of continuing to spin at full speed.
+func (r *Refresher) Run(ctx context.Context) {
+	retry := r.retryMin
+	for {
+		var wait time.Duration
+		if lead := r.leadUntilRenew(r.NotAfter()); lead > 0 {
+			// Cert has plenty of time left; sleep until the renewal window opens.
+			wait, retry = lead, r.retryMin
+		} else if err := r.RenewNow(ctx); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			log.Log.Warn("certificate renewal failed; will retry",
+				zap.Duration("backoff", retry), zap.Error(err))
+			wait = retry
+			if retry *= 2; retry > r.retryMax {
+				retry = r.retryMax
+			}
+		} else {
+			// Success: recompute lead from the fresh NotAfter.
+			// Guard against a pathological TTL ≤ Before (lead still ≤ 0):
+			// sleep retryMin instead of spinning at CPU speed.
+			if newLead := r.leadUntilRenew(r.NotAfter()); newLead > 0 {
+				wait, retry = newLead, r.retryMin
+			} else {
+				wait = r.retryMin
+			}
+		}
+		t := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return
+		case <-t.C:
+		}
+	}
+}
