@@ -6,6 +6,21 @@ All notable changes to gMountie. Format is loosely based on [Keep a Changelog](h
 
 ### Headline features
 
+- **Client certificate auto-renewal.** An opt-in `renew.*` config block (or a
+  token-mode `GMOUNTIE_CREDENTIALS` bundle carrying just an endpoint and bearer
+  token) enables automatic short-lived client certificates. On mount, the client
+  performs a profile-fetch → CSR-generation → bearer-token exchange to mint an
+  in-memory ECDSA cert; a background goroutine renews it before expiry (default
+  lead time: 8 h) with exponential backoff. The private key never leaves process
+  memory, and a failed renewal never tears down a running mount. Any HTTP service
+  that accepts a CSR and returns a signed chain works as the exchange endpoint
+  (`GET /profile`, `POST /renew`).
+- **Server: volume-scoped client certificate SANs.** The server's mTLS verifier
+  accepts `gmountie://vol/<volume-name>` and `gmountie://vol/*` URI SANs as
+  the volume-scope claim in a client certificate. Policy is default-permissive
+  (a cert with no `gmountie://vol/…` SAN may mount any volume); adding the SAN
+  narrows access to the named volume only.
+
 - **Single-RPC `SETATTR`.** A kernel `SETATTR` (`chmod`, `chown`, `truncate`, `touch`, or any combination) is now one `SetAttr` RPC carrying a FUSE-style `FATTR_*` bitmask and returning the final attrs — previously it fanned out into up to 4 serial per-field RPCs plus a trailing `GetAttr` (up to 5 RPCs → 1).
 - **READDIRPLUS attr priming.** The new server-streaming `ReadDir` optionally carries per-entry attributes; the client primes its attr cache from the listing so the kernel's per-entry `LOOKUP`s are local hits. `ls -la` over N cold files: 1+N RPCs → 1.
 - **Large directories no longer fail.** Directory listings were a single unary reply subject to the 16 MiB message cap — very large directories returned `EIO`. `ReadDir` streams the listing in batches with no ceiling.
