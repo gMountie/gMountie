@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/x509"
+	"strings"
 	"sync/atomic"
 
 	"go.gmountie.dev/gmountie/pkg/common"
@@ -213,6 +214,39 @@ func VerifiedCertSerial(ctx context.Context) (serialKey string, present bool) {
 		return "", false
 	}
 	return SerialKey(ti.State.VerifiedChains[0][0].SerialNumber), true
+}
+
+// Volume-scope URI SANs: a client certificate carrying gmountie://vol/<name>
+// SANs is restricted to those volumes (gmountie://vol/* = explicitly
+// unrestricted). Certs with no such SANs are unrestricted — fully backwards
+// compatible. This lets a CA mint per-workload certs that the server scopes
+// natively, with no per-volume server config.
+const (
+	scopeSANScheme = "gmountie"
+	scopeSANHost   = "vol"
+)
+
+// VerifiedCertVolumeScopes returns the volume names the verified client cert
+// is scoped to and whether any scope SANs are present. (nil, false) = no
+// verified cert or no scope SANs → unrestricted.
+func VerifiedCertVolumeScopes(ctx context.Context) (scopes []string, scoped bool) {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return nil, false
+	}
+	ti, ok := p.AuthInfo.(credentials.TLSInfo)
+	if !ok {
+		return nil, false
+	}
+	if len(ti.State.VerifiedChains) == 0 || len(ti.State.VerifiedChains[0]) == 0 {
+		return nil, false
+	}
+	for _, u := range ti.State.VerifiedChains[0][0].URIs {
+		if u.Scheme == scopeSANScheme && u.Host == scopeSANHost {
+			scopes = append(scopes, strings.TrimPrefix(u.Path, "/"))
+		}
+	}
+	return scopes, len(scopes) > 0
 }
 
 // principalFromVerifiedChains returns the leaf cert's CN, or its first DNS SAN

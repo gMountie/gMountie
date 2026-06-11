@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"runtime"
+	"slices"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -184,6 +185,16 @@ func (s *VolumeServiceImpl) GetVolumeFileSystem(name string) (pathfs.FileSystem,
 // enabled and the principal has an explicit volume set, membership is checked
 // in O(1); otherwise the default_allow policy applies.
 func (s *VolumeServiceImpl) PrincipalCanAccess(ctx context.Context, volume string) error {
+	// Cert-claim volume scoping runs before the ACL so a scoped-out caller
+	// can't learn whether the volume exists. No vol SANs → unrestricted.
+	// Deliberately re-evaluated per call (not cached) so cert reloads,
+	// revocation, and fresh short-lived certs take effect immediately.
+	if scopes, scoped := VerifiedCertVolumeScopes(ctx); scoped &&
+		!slices.Contains(scopes, volume) && !slices.Contains(scopes, "*") {
+		return status.Errorf(codes.PermissionDenied,
+			"client certificate is not scoped to volume %q", volume)
+	}
+
 	snap := s.acl.Load()
 	if !snap.enabled {
 		return nil
