@@ -42,6 +42,12 @@ type Config struct {
 	CAPEM   string
 	CertPEM string
 	KeyPEM  string
+
+	// ClientCertSource, when non-nil, supplies the client certificate
+	// dynamically at each TLS handshake (tls.Config.GetClientCertificate) —
+	// e.g. a renewing in-memory source. Mutually exclusive with the static
+	// CertFile/CertPEM/KeyFile/KeyPEM pair.
+	ClientCertSource CertSource
 }
 
 // resolvePEM returns the PEM bytes for an item that may be supplied inline or as
@@ -128,7 +134,12 @@ func BuildConfig(cfg Config) (*tls.Config, error) {
 	if (certPEM == nil) != (keyPEM == nil) {
 		return nil, fmt.Errorf("client mTLS requires both a client cert and key (cert set: %t, key set: %t)", certPEM != nil, keyPEM != nil)
 	}
-	if certPEM != nil {
+	if cfg.ClientCertSource != nil {
+		if certPEM != nil || keyPEM != nil {
+			return nil, fmt.Errorf("client mTLS: a cert source and a static client cert/key are mutually exclusive")
+		}
+		out.GetClientCertificate = cfg.ClientCertSource.GetClientCertificate
+	} else if certPEM != nil {
 		cert, err := tls.X509KeyPair(certPEM, keyPEM)
 		if err != nil {
 			return nil, fmt.Errorf("load client cert/key: %w", err)
