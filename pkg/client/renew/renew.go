@@ -80,6 +80,15 @@ func New(cfg Config, source *clienttls.ManagedSource) *Refresher {
 	}
 }
 
+// SetHTTPClient overrides the HTTP client used for the token→certificate
+// exchange. Primarily for tests and callers that need a custom trust root
+// (e.g. a self-signed exchange server). A nil client is ignored.
+func (r *Refresher) SetHTTPClient(c *http.Client) {
+	if c != nil {
+		r.client = c
+	}
+}
+
 // NotAfter returns the NotAfter of the most recently minted leaf certificate.
 // Returns the zero time when no certificate has been minted yet.
 func (r *Refresher) NotAfter() time.Time {
