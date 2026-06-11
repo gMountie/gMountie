@@ -30,6 +30,9 @@ type Config struct {
 	// adds an in-memory cache layer; Sub-spec C adds persistence (Path,
 	// DiskMaxBytes) and flips the default to enabled.
 	Cache *CacheConfig `validate:"required" yaml:"cache,omitempty"`
+	// Renew is the optional client-certificate refresher configuration.
+	// Absent → disabled (static certs, exactly as before).
+	Renew *RenewConfig `yaml:"renew,omitempty"`
 	// Log is the optional logger configuration. Nil keeps the
 	// init-time auto-detected defaults.
 	Log *log.LogConfig `yaml:"log,omitempty"`
@@ -192,6 +195,16 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	})
 	if cfg, err := NewCacheConfig(cacheSub); err == nil {
 		result.Cache = cfg
+	} else {
+		return nil, err
+	}
+
+	// Parse renew config (optional; absent block yields disabled defaults).
+	renewSub := mirrorEnvToSub(v, "renew", []string{
+		"endpoint", "token", "token_file", "before",
+	})
+	if cfg, err := NewRenewConfig(renewSub); err == nil {
+		result.Renew = cfg
 	} else {
 		return nil, err
 	}
