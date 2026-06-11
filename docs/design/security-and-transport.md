@@ -1,6 +1,6 @@
 # Security and Transport
 
-**Status:** Shipped (Phase 7, PRs #53–#55, 2026-05-29; TLS leaf live-reload added in v0.15; client cert auto-renewal + volume-scoped client certs added in v0.16)
+**Status:** Shipped (Phase 7, PRs #53–#55, 2026-05-29; TLS leaf live-reload added in v0.15; client cert auto-renewal + volume-scoped client certs unreleased)
 **Last updated:** 2026-06-12
 
 The durable record of gMountie's transport security, credential storage,

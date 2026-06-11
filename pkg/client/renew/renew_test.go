@@ -163,7 +163,7 @@ func (s *RenewTestSuite) TestTokenFileWinsAndIsReread() {
 	s.Equal("Bearer file-tok-2", s.lastAuth, "token re-read on every exchange")
 }
 
-// Finding 1a: server signs a DIFFERENT keypair than the CSR's key — must error,
+// Server signs a DIFFERENT keypair than the CSR's key — must error,
 // must not swap into the source.
 func (s *RenewTestSuite) TestKeyMismatchRejected() {
 	// The server signs with a freshly generated key instead of the CSR's public
@@ -192,7 +192,7 @@ func (s *RenewTestSuite) TestKeyMismatchRejected() {
 	s.Nil(src.Current(), "source must not be swapped on key mismatch")
 }
 
-// Finding 1b: server returns a leaf whose CN does not match the profile subject.
+// Server returns a leaf whose CN does not match the profile subject.
 func (s *RenewTestSuite) TestCNMismatchRejected() {
 	s.overrideSignFn = func(w http.ResponseWriter, csr *x509.CertificateRequest) {
 		leaf := &x509.Certificate{
@@ -216,8 +216,7 @@ func (s *RenewTestSuite) TestCNMismatchRejected() {
 	s.Nil(src.Current(), "source must not be swapped on CN mismatch")
 }
 
-// Finding 2: /renew response omits ca_pem entirely; CAPEM() must return the
-// profile's CA.
+// /renew response omits ca_pem entirely; CAPEM() must return the profile's CA.
 func (s *RenewTestSuite) TestProfileCAPEMUsedWhenSignResponseOmitsIt() {
 	s.overrideSignFn = func(w http.ResponseWriter, csr *x509.CertificateRequest) {
 		leaf := &x509.Certificate{
@@ -240,7 +239,7 @@ func (s *RenewTestSuite) TestProfileCAPEMUsedWhenSignResponseOmitsIt() {
 	s.Equal(s.caPEM, r.CAPEM(), "profile CA must be stored even when sign response omits ca_pem")
 }
 
-// Finding 3a: server appends the CA cert after the leaf in the chain PEM.
+// Server appends the CA cert after the leaf in the chain PEM.
 // Current().Certificate must contain both DER blocks; NotAfter tracks the leaf.
 func (s *RenewTestSuite) TestMultiCertChainLeafFirst() {
 	s.overrideSignFn = func(w http.ResponseWriter, csr *x509.CertificateRequest) {
@@ -348,8 +347,7 @@ func (s *RenewTestSuite) TestRunRenewsWhenNotAfterFarInPast() {
 		"Run must renew immediately when notAfter is far in the past (overflow guard)")
 }
 
-// Finding 3b: server returns empty cert_chain_pem → error containing "no
-// certificates", no swap.
+// Server returns empty cert_chain_pem → error containing "no certificates", no swap.
 func (s *RenewTestSuite) TestEmptyCertChainErrors() {
 	s.overrideSignFn = func(w http.ResponseWriter, _ *x509.CertificateRequest) {
 		_ = json.NewEncoder(w).Encode(map[string]any{

@@ -37,7 +37,7 @@ type Config struct {
 	Endpoint  string        // exchange base URL ({Endpoint}/profile, {Endpoint}/renew)
 	Token     string        // inline bearer token; TokenFile wins when both set
 	TokenFile string        // re-read on every exchange so the token can rotate
-	Before    time.Duration // renewal lead time (consumed by Run, Task 5)
+	Before    time.Duration // renewal lead time (consumed by Run)
 }
 
 // Profile is the server's response to GET {endpoint}/profile.
@@ -49,9 +49,8 @@ type Profile struct {
 
 // signResponse is the server's response to POST {endpoint}/renew.
 type signResponse struct {
-	CertChainPEM string    `json:"cert_chain_pem"`
-	CAPEM        string    `json:"ca_pem"`
-	NotAfter     time.Time `json:"not_after"`
+	CertChainPEM string `json:"cert_chain_pem"`
+	CAPEM        string `json:"ca_pem"`
 }
 
 // Refresher fetches a profile, generates an in-memory key, builds a CSR,
@@ -61,7 +60,7 @@ type Refresher struct {
 	source *clienttls.ManagedSource
 	client *http.Client
 
-	retryMin, retryMax time.Duration // Run's backoff bounds (Task 5); fields here so Task 5 needs no struct change
+	retryMin, retryMax time.Duration // Run's backoff bounds
 
 	mu       sync.Mutex
 	notAfter time.Time
@@ -69,7 +68,7 @@ type Refresher struct {
 }
 
 // New constructs a Refresher with a 30 s HTTP timeout and backoff bounds of
-// [1 m, 15 m] for the Run loop (Task 5).
+// [1 m, 15 m] for the Run loop.
 func New(cfg Config, source *clienttls.ManagedSource) *Refresher {
 	return &Refresher{
 		cfg:      cfg,
@@ -228,7 +227,7 @@ func pairFromChain(chainPEM string, key *ecdsa.PrivateKey, expectedSubject strin
 
 // RenewNow performs a single profile-fetch → CSR-generation → sign exchange
 // and swaps the resulting certificate into the ManagedSource. It does not
-// retry on failure; the Run loop (Task 5) owns retry policy.
+// retry on failure; the Run loop owns retry policy.
 //
 // The flow:
 //  1. GET {endpoint}/profile to learn subject and SANs.

@@ -442,9 +442,9 @@ SANs. Response:
 ```
 
 The client validates that the returned leaf cert matches the CSR key and subject,
-then swaps it into the in-memory cert source. `not_after` in the response is the
-leaf cert's expiry; the renewal loop uses it to schedule the next renewal
-(`not_after − before`).
+then swaps it into the in-memory cert source. `not_after` is informational; the
+client schedules renewal from the leaf certificate's own `NotAfter` field, not
+from the JSON field.
 
 ### Renewal lifecycle
 
