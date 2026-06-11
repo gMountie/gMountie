@@ -74,11 +74,20 @@ func (s *RenewTestSuite) SetupTest() {
 		var req struct {
 			CSRPEM string `json:"csr_pem"`
 		}
-		s.Require().NoError(json.NewDecoder(r.Body).Decode(&req))
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		block, _ := pem.Decode([]byte(req.CSRPEM))
 		csr, err := x509.ParseCertificateRequest(block.Bytes)
-		s.Require().NoError(err)
-		s.Require().NoError(csr.CheckSignature())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := csr.CheckSignature(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		if s.overrideSignFn != nil {
 			s.overrideSignFn(w, csr)
 			return
@@ -90,7 +99,10 @@ func (s *RenewTestSuite) SetupTest() {
 			KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		}
 		der, err := x509.CreateCertificate(rand.Reader, leaf, s.caCert, csr.PublicKey, s.caKey)
-		s.Require().NoError(err)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		chain := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"cert_chain_pem": chain, "ca_pem": s.caPEM, "not_after": leaf.NotAfter,
@@ -137,7 +149,7 @@ func (s *RenewTestSuite) TestSANClassification() {
 
 func (s *RenewTestSuite) TestRenewNowSurfacesHTTPError() {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /profile", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(401) })
+	mux.HandleFunc("GET /profile", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) })
 	srv := httptest.NewTLSServer(mux)
 	defer srv.Close()
 	var src clienttls.ManagedSource
@@ -299,7 +311,7 @@ func (s *RenewTestSuite) TestRunStartsWithNoCertAndMintsImmediately() {
 
 func (s *RenewTestSuite) TestRunBacksOffOnFailureAndStopsOnCancel() {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /profile", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(500) })
+	mux.HandleFunc("GET /profile", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) })
 	srv := httptest.NewTLSServer(mux)
 	defer srv.Close()
 	var src clienttls.ManagedSource

@@ -98,11 +98,20 @@ func (s *FactoryTestSuite) newRenewFixtureCA(exchangeStatus int, withCA bool) *r
 		var req struct {
 			CSRPEM string `json:"csr_pem"`
 		}
-		s.Require().NoError(json.NewDecoder(r.Body).Decode(&req))
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		block, _ := pem.Decode([]byte(req.CSRPEM))
 		csr, err := x509.ParseCertificateRequest(block.Bytes)
-		s.Require().NoError(err)
-		s.Require().NoError(csr.CheckSignature())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := csr.CheckSignature(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		leaf := &x509.Certificate{
 			SerialNumber: big.NewInt(time.Now().UnixNano()),
 			Subject:      csr.Subject, DNSNames: csr.DNSNames, URIs: csr.URIs,
@@ -110,7 +119,10 @@ func (s *FactoryTestSuite) newRenewFixtureCA(exchangeStatus int, withCA bool) *r
 			KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		}
 		leafDER, err := x509.CreateCertificate(rand.Reader, leaf, f.caCert, csr.PublicKey, f.caKey)
-		s.Require().NoError(err)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		chain := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER}))
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"cert_chain_pem": chain, "ca_pem": caInExchange, "not_after": leaf.NotAfter,

@@ -65,8 +65,8 @@ func (s *SourceTestSuite) TestConcurrentSetAndGet() {
 			defer wg.Done()
 			for j := 0; j < 200; j++ {
 				got, err := m.GetClientCertificate(nil)
-				s.Require().NoError(err)
-				s.Require().NotNil(got)
+				s.Assert().NoError(err)
+				s.Assert().NotNil(got)
 				if got != a && got != b && len(got.Certificate) != 0 {
 					s.Failf("unexpected cert", "got %p", got)
 				}

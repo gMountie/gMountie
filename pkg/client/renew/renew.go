@@ -150,7 +150,7 @@ func (r *Refresher) doJSON(ctx context.Context, method, path string, body, out a
 	if err != nil {
 		return fmt.Errorf("%s %s: %w", method, path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
