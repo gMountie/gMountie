@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.gmountie.dev/gmountie/pkg/client/config"
@@ -42,6 +44,31 @@ type renewFixture struct {
 	exchange *httptest.Server
 	grpcSrv  *grpc.Server
 	grpcAddr string
+
+	// profileHits / renewHits count exchange-endpoint requests so tests can
+	// assert exactly one profile + one renew exchange per mount, regardless of
+	// referral. Atomic: the exchange server handles requests on its own
+	// goroutines.
+	profileHits atomic.Int32
+	renewHits   atomic.Int32
+
+	// clientSerials records the leaf serial each accepted mTLS connection
+	// presented, so a referral test can assert both legs used the SAME minted
+	// cert (one exchange, one cert, shared source).
+	serialMu      sync.Mutex
+	clientSerials []string
+
+	// resolveLoc is the location the stub VolumeService/Resolve returns: empty
+	// means "served here", non-empty drives the referral re-dial. Set per test.
+	resolveLoc string
+}
+
+// seenSerials returns a copy of the client-cert serials the gRPC server has
+// observed across all connections so far.
+func (f *renewFixture) seenSerials() []string {
+	f.serialMu.Lock()
+	defer f.serialMu.Unlock()
+	return append([]string(nil), f.clientSerials...)
 }
 
 // newRenewFixture builds the CA, exchange server, and mTLS gRPC server. If
@@ -82,6 +109,7 @@ func (s *FactoryTestSuite) newRenewFixtureCA(exchangeStatus int, withCA bool) *r
 	// Token→certificate exchange server (mirrors the renew_test.go handler).
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /profile", func(w http.ResponseWriter, _ *http.Request) {
+		f.profileHits.Add(1)
 		if exchangeStatus != 0 {
 			w.WriteHeader(exchangeStatus)
 			return
@@ -91,6 +119,7 @@ func (s *FactoryTestSuite) newRenewFixtureCA(exchangeStatus int, withCA bool) *r
 		})
 	})
 	mux.HandleFunc("POST /renew", func(w http.ResponseWriter, r *http.Request) {
+		f.renewHits.Add(1)
 		if exchangeStatus != 0 {
 			w.WriteHeader(exchangeStatus)
 			return
@@ -143,6 +172,21 @@ func (s *FactoryTestSuite) newRenewFixtureCA(exchangeStatus int, withCA bool) *r
 		Certificates: []tls.Certificate{serverCert},
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		ClientCAs:    pool,
+		// Record the leaf serial each client connection presents so referral
+		// tests can assert both legs reused the SAME minted cert.
+		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			if len(rawCerts) == 0 {
+				return nil
+			}
+			leaf, err := x509.ParseCertificate(rawCerts[0])
+			if err != nil {
+				return err
+			}
+			f.serialMu.Lock()
+			f.clientSerials = append(f.clientSerials, leaf.SerialNumber.String())
+			f.serialMu.Unlock()
+			return nil
+		},
 	})
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -150,10 +194,31 @@ func (s *FactoryTestSuite) newRenewFixtureCA(exchangeStatus int, withCA bool) *r
 	srv := grpc.NewServer(grpc.Creds(creds))
 	sessMgr := service.NewSessionManager(service.SessionManagerOptions{})
 	proto.RegisterSessionServiceServer(srv, controller.NewSessionController(sessMgr, nil))
+	// A volume server so the referral test can drive Resolve over the real mTLS
+	// link. resolveLoc (set per-test) is the location it returns: empty = served
+	// here, non-empty = a referral the client re-dials.
+	proto.RegisterVolumeServiceServer(srv, &stubVolumeServer{loc: &f.resolveLoc})
 	go func() { _ = srv.Serve(lis) }()
 	f.grpcSrv = srv
 	f.grpcAddr = lis.Addr().String()
 	return f
+}
+
+// stubVolumeServer answers VolumeService/Resolve with a configurable location
+// (read through a pointer so the fixture can set it after construction) and
+// List with a single volume. Just enough to drive the referral path over a real
+// mTLS connection in the token-mode tests.
+type stubVolumeServer struct {
+	proto.UnimplementedVolumeServiceServer
+	loc *string
+}
+
+func (s *stubVolumeServer) Resolve(_ context.Context, _ *proto.VolumeResolveRequest) (*proto.VolumeResolveReply, error) {
+	return &proto.VolumeResolveReply{Location: *s.loc}, nil
+}
+
+func (s *stubVolumeServer) List(_ context.Context, _ *proto.VolumeListRequest) (*proto.VolumeListReply, error) {
+	return &proto.VolumeListReply{Volumes: []*proto.Volume{{Name: "photos"}}}, nil
 }
 
 func (f *renewFixture) close() {
@@ -176,8 +241,12 @@ func (s *FactoryTestSuite) renewConfig(f *renewFixture) *config.Config {
 			Port:    uint(port),
 			TLS:     config.TLSConfig{Verify: "insecure"},
 		},
-		Auth:  &commonconfig.AuthConfigBase{Type: commonconfig.AuthConfigTypeMTLS},
-		Renew: &config.RenewConfig{Endpoint: f.exchange.URL, Token: "tok", Before: time.Hour},
+		Auth: &commonconfig.AuthConfigBase{Type: commonconfig.AuthConfigTypeMTLS},
+		// Before is well under the fixture's 1h leaf TTL so the Run loop sleeps
+		// after the initial exchange — exchange-count assertions then observe
+		// exactly the synchronous initial exchange. Tests that want the loop to
+		// fire raise Before close to the TTL.
+		Renew: &config.RenewConfig{Endpoint: f.exchange.URL, Token: "tok", Before: time.Minute},
 	}
 }
 
@@ -215,6 +284,94 @@ func (s *FactoryTestSuite) TestTokenMode_ConnectsToMTLSServer() {
 	// accepted the in-memory client certificate.
 	s.Require().NoError(c.Connect())
 	s.NotEmpty(c.SessionID(), "session handshake must succeed over the mTLS link")
+
+	// Exactly one exchange for the single-client (non-referral) path.
+	s.Equal(int32(1), f.profileHits.Load(), "non-referral token mode must hit /profile once")
+	s.Equal(int32(1), f.renewHits.Load(), "non-referral token mode must hit /renew once")
+}
+
+// TestTokenMode_ReferralSharesOneExchange is the core #109 assertion: a
+// referral in token mode performs EXACTLY ONE profile+renew exchange for the
+// whole mount, and both legs (resolver + data plane) present the SAME minted
+// client certificate — proof they share one ManagedSource rather than each
+// minting its own.
+func (s *FactoryTestSuite) TestTokenMode_ReferralSharesOneExchange() {
+	f := s.newRenewFixture(0)
+	defer f.close()
+	// The resolver returns a referral location pointing back at the same server,
+	// so both legs dial it and present a client cert we can compare.
+	f.resolveLoc = f.grpcAddr
+	restore := s.withRefresherTrust(f)
+	defer restore()
+
+	cfg := s.renewConfig(f)
+	c, vol, err := NewClientForVolume(cfg, "photos")
+	s.Require().NoError(err)
+	defer c.Close()
+	s.Equal("photos", vol)
+	s.NotEmpty(c.SessionID(), "final client must have completed the session handshake")
+
+	// One exchange for the whole mount despite two legs.
+	s.Equal(int32(1), f.profileHits.Load(), "referral must not re-run /profile")
+	s.Equal(int32(1), f.renewHits.Load(), "referral must not re-run /renew")
+
+	// Both connections presented the same client-cert serial → one shared cert.
+	serials := f.seenSerials()
+	s.Require().GreaterOrEqual(len(serials), 2, "both legs must have connected with a client cert")
+	for _, sn := range serials {
+		s.Equal(serials[0], sn, "both referral legs must present the same minted cert")
+	}
+}
+
+// TestTokenMode_ResolverCloseDoesNotStopRenewal proves loop ownership: after a
+// referral completes and the resolver leg is closed, renewal still fires on the
+// surviving data-plane client. Compressed timing (short TTL + lead) like
+// renew.TestRunRenewsBeforeExpiry forces a renewal within the test window.
+func (s *FactoryTestSuite) TestTokenMode_ResolverCloseDoesNotStopRenewal() {
+	f := s.newRenewFixture(0)
+	defer f.close()
+	f.resolveLoc = f.grpcAddr
+	restore := s.withRefresherTrust(f)
+	defer restore()
+
+	cfg := s.renewConfig(f)
+	// Renew when there is plenty of lead so the Run loop fires promptly: the
+	// fixture mints 1h certs, so Before just under 1h means lead ≈ a few seconds
+	// → a second exchange lands quickly. The resolver is closed inside
+	// NewClientForVolume; if its (absent) loop had owned renewal, the count
+	// would stay at 1 forever.
+	cfg.Renew.Before = time.Hour - 2*time.Second
+
+	c, _, err := NewClientForVolume(cfg, "photos")
+	s.Require().NoError(err)
+	defer c.Close()
+
+	// Initial exchange already happened (1). The surviving client's loop must
+	// fire at least one more renew despite the resolver leg being closed.
+	s.Require().Eventually(func() bool {
+		return f.renewHits.Load() >= 2
+	}, 8*time.Second, 50*time.Millisecond, "renewal must continue on the surviving client after the resolver leg closes")
+}
+
+// TestTokenMode_FinalClientCloseStopsRenewal proves Close on the final client
+// stops its renewal loop: after Close, no further exchanges occur.
+func (s *FactoryTestSuite) TestTokenMode_FinalClientCloseStopsRenewal() {
+	f := s.newRenewFixture(0)
+	defer f.close()
+	f.resolveLoc = f.grpcAddr
+	restore := s.withRefresherTrust(f)
+	defer restore()
+
+	cfg := s.renewConfig(f)
+	c, _, err := NewClientForVolume(cfg, "photos")
+	s.Require().NoError(err)
+
+	// Default Before (1h) on a 1h cert keeps the loop sleeping, so the only
+	// exchange is the initial one. Close, then confirm the count is frozen.
+	s.Require().NoError(c.Close())
+	frozen := f.renewHits.Load()
+	time.Sleep(500 * time.Millisecond)
+	s.Equal(frozen, f.renewHits.Load(), "no renewal may fire after the final client is closed")
 }
 
 // TestTokenMode_MutualExclusion verifies a renew block combined with a static

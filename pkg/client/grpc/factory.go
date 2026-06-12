@@ -44,10 +44,78 @@ func defaultCallOptions(rpc *config.RpcConfig) []grpc.CallOption {
 	return opts
 }
 
-// newUnconnectedClient builds a Client dialed at endpoint but does NOT run the
-// session handshake. Split out so the referral path (NewClientForVolume) can
-// call Resolve on the connection before deciding where to complete the session.
+// renewParts is the shared token-mode certificate machinery for one mount: a
+// single ManagedSource (the in-memory client cert) and the Refresher that mints
+// into it. setupRenewer builds the pair ONCE per NewClientForVolume /
+// NewClientFromConfig call so a referral's two legs (resolver + data plane)
+// reuse the same cert and CA instead of each running its own exchange. The zero
+// value (both nil) is "no renew / static-cert mode".
+type renewParts struct {
+	source    *clienttls.ManagedSource
+	refresher *renew.Refresher
+}
+
+// enabled reports whether token-mode renewal is in effect for this mount.
+func (p renewParts) enabled() bool { return p.refresher != nil }
+
+// setupRenewer builds the shared token-mode certificate machinery for one
+// mount and performs the SYNCHRONOUS initial exchange. It contains everything
+// that must happen exactly once per mount regardless of referral: the
+// static-cert mutual-exclusion check, the ManagedSource + Refresher
+// construction (via the newRefresherFn seam), and the initial RenewNow that
+// delivers the first cert (and, when none is configured, the data CA).
+//
+// When cfg.Renew is not enabled it returns the zero renewParts and no error —
+// callers thread that straight through and the static/no-renew paths stay
+// byte-identical to before.
+func setupRenewer(cfg *config.Config) (renewParts, error) {
+	if !cfg.Renew.Enabled() {
+		return renewParts{}, nil
+	}
+	if cfg.Server.TLS.CertFile != "" || cfg.Server.TLS.CertPEM != "" {
+		return renewParts{}, errors.New("renew.endpoint and a static client cert are mutually exclusive")
+	}
+	source := &clienttls.ManagedSource{}
+	refresher := newRefresherFn(renew.Config{
+		Endpoint:  cfg.Renew.Endpoint,
+		Token:     cfg.Renew.Token,
+		TokenFile: cfg.Renew.TokenFile,
+		Before:    cfg.Renew.Before,
+	}, source)
+	ctx, cancel := context.WithTimeout(context.Background(), initialExchangeTimeout)
+	err := refresher.RenewNow(ctx)
+	cancel()
+	if err != nil {
+		return renewParts{}, errors.Wrap(err, "initial certificate exchange")
+	}
+	return renewParts{source: source, refresher: refresher}, nil
+}
+
+// newUnconnectedClient builds a single-leg client: it sets up its own renewer
+// (one exchange) and dials endpoint, running the renewal loop on the returned
+// client. The non-referral paths (NewClientFromConfig, ListVolumes) use it, as
+// do the token-mode unit tests. The referral orchestration uses
+// buildUnconnectedClient directly so it can SHARE one renewer across both legs.
 func newUnconnectedClient(cfg *config.Config, endpoint string) (Client, error) {
+	if cfg == nil || cfg.Server == nil || cfg.Auth == nil {
+		return nil, errors.New("config is empty or auth config is empty")
+	}
+	parts, err := setupRenewer(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return buildUnconnectedClient(cfg, endpoint, parts, true)
+}
+
+// buildUnconnectedClient builds a Client dialed at endpoint but does NOT run the
+// session handshake. It takes the shared renewParts (already exchanged) so the
+// referral path can thread one ManagedSource + CA through both legs, and runLoop
+// to decide whether THIS client owns the renewal loop: only the final, returned
+// client runs it, so closing a discarded resolver leg never stops renewal.
+//
+// Split out so the referral path (NewClientForVolume) can call Resolve on the
+// connection before deciding where to complete the session.
+func buildUnconnectedClient(cfg *config.Config, endpoint string, parts renewParts, runLoop bool) (Client, error) {
 	if cfg == nil || cfg.Server == nil || cfg.Auth == nil {
 		return nil, errors.New("config is empty or auth config is empty")
 	}
@@ -78,29 +146,12 @@ func newUnconnectedClient(cfg *config.Config, endpoint string) (Client, error) {
 		opts = append(opts, WithDialOptions(dialOpts))
 	}
 
-	// Token mode: an enabled renew block replaces static client-cert material.
-	// The initial exchange runs synchronously — the first TLS handshake needs
-	// a cert — and also delivers the data CA when none is configured.
-	var certSource *clienttls.ManagedSource
-	var refresher *renew.Refresher
-	if cfg.Renew.Enabled() {
-		if cfg.Server.TLS.CertFile != "" || cfg.Server.TLS.CertPEM != "" {
-			return nil, errors.New("renew.endpoint and a static client cert are mutually exclusive")
-		}
-		certSource = &clienttls.ManagedSource{}
-		refresher = newRefresherFn(renew.Config{
-			Endpoint:  cfg.Renew.Endpoint,
-			Token:     cfg.Renew.Token,
-			TokenFile: cfg.Renew.TokenFile,
-			Before:    cfg.Renew.Before,
-		}, certSource)
-		ctx, cancel := context.WithTimeout(context.Background(), initialExchangeTimeout)
-		err := refresher.RenewNow(ctx)
-		cancel()
-		if err != nil {
-			return nil, errors.Wrap(err, "initial certificate exchange")
-		}
-	}
+	// Token mode: the shared renewer (built once per mount by setupRenewer)
+	// supplies the in-memory client cert and, when none is configured, the data
+	// CA. The initial exchange already ran in setupRenewer, so the first TLS
+	// handshake on this leg has a cert ready.
+	certSource := parts.source
+	refresher := parts.refresher
 	caPEM := cfg.Server.TLS.CAPEM
 	if refresher != nil && caPEM == "" && cfg.Server.TLS.CAFile == "" {
 		caPEM = refresher.CAPEM()
@@ -148,8 +199,11 @@ func newUnconnectedClient(cfg *config.Config, endpoint string) (Client, error) {
 	}))
 
 	// In token mode, run the renewal loop on the client lifecycle so the
-	// in-memory cert is refreshed before expiry; Close cancels it.
-	if refresher != nil {
+	// in-memory cert is refreshed before expiry; Close cancels it. Only the
+	// final client (runLoop) owns the loop — a referral's discarded resolver
+	// leg gets runLoop=false, so closing it never stops renewal for the
+	// surviving client.
+	if refresher != nil && runLoop {
 		opts = append(opts, WithBackgroundTask(refresher.Run))
 	}
 
@@ -207,7 +261,11 @@ func ListVolumes(cfg *config.Config) ([]string, error) {
 	if cfg == nil || cfg.Server == nil {
 		return nil, errors.New("config is empty")
 	}
-	client, err := newUnconnectedClientFn(cfg, createEndpoint(cfg.Server))
+	parts, err := setupRenewer(cfg)
+	if err != nil {
+		return nil, err
+	}
+	client, err := newUnconnectedClientFn(cfg, createEndpoint(cfg.Server), parts, true)
 	if err != nil {
 		return nil, err
 	}
@@ -224,8 +282,10 @@ func ListVolumes(cfg *config.Config) ([]string, error) {
 const resolveTimeout = 5 * time.Second
 
 // newUnconnectedClientFn is the un-connected client builder, indirected through
-// a package var so referral orchestration tests can stub the dial.
-var newUnconnectedClientFn = newUnconnectedClient
+// a package var so referral orchestration tests can stub the dial. It carries
+// the shared renewParts (so both referral legs reuse one exchanged cert + CA)
+// and runLoop (only the final client owns the renewal loop).
+var newUnconnectedClientFn = buildUnconnectedClient
 
 // NewClientForVolume connects to wherever a volume lives. It builds an
 // un-connected client to the configured endpoint, calls Resolve (pre-session),
@@ -243,7 +303,16 @@ func NewClientForVolume(cfg *config.Config, volume string) (Client, string, erro
 	if cfg == nil || cfg.Server == nil {
 		return nil, "", errors.New("config is empty")
 	}
-	resolver, err := newUnconnectedClientFn(cfg, createEndpoint(cfg.Server))
+	// Build the shared token-mode renewer ONCE: one profile+renew exchange for
+	// the whole mount, reused by both the resolver leg and (on referral) the
+	// data-plane leg. Neither leg runs the renewal loop at construction
+	// (runLoop=false); we start it on the surviving final client below so
+	// closing the discarded resolver never stops renewal.
+	parts, err := setupRenewer(cfg)
+	if err != nil {
+		return nil, "", err
+	}
+	resolver, err := newUnconnectedClientFn(cfg, createEndpoint(cfg.Server), parts, false)
 	if err != nil {
 		return nil, "", err
 	}
@@ -284,22 +353,34 @@ func NewClientForVolume(cfg *config.Config, volume string) (Client, string, erro
 			_ = resolver.Close()
 			return nil, "", errors.Wrap(err, "session handshake failed; client unusable")
 		}
+		// Served here: the resolver IS the final client. Start the renewal loop
+		// on it (no-op in static/no-renew mode).
+		if parts.enabled() {
+			launchRenewal(resolver, parts.refresher.Run)
+		}
 		return resolver, volume, nil
 	}
 
-	// Referral: drop the resolver connection and dial the data plane.
+	// Referral: drop the resolver connection and dial the data plane, reusing
+	// the SAME renewer (no second exchange — the data leg's TLS presents the
+	// cert already minted into parts.source, and trusts the same CA).
 	_ = resolver.Close()
 	dataCfg, err := tlsConfigForReferral(cfg, location)
 	if err != nil {
 		return nil, "", err
 	}
-	data, err := newUnconnectedClientFn(dataCfg, location)
+	data, err := newUnconnectedClientFn(dataCfg, location, parts, false)
 	if err != nil {
 		return nil, "", err
 	}
 	if err := data.Connect(); err != nil {
 		_ = data.Close()
 		return nil, "", errors.Wrap(err, "session handshake failed; client unusable")
+	}
+	// The data-plane client is the final one: it owns the renewal loop, which
+	// survives the resolver Close above (the resolver never ran it).
+	if parts.enabled() {
+		launchRenewal(data, parts.refresher.Run)
 	}
 	return data, volume, nil
 }

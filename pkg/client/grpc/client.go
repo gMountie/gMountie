@@ -248,6 +248,21 @@ func NewClient(endpoint string, options ...ClientOption) (Client, error) {
 	return &c, nil
 }
 
+// launchRenewal starts fn on the client's lifecycle context after
+// construction, the same way WithBackgroundTask would at construction time.
+// The referral path uses it to start the certificate-renewal loop on whichever
+// client survives as the final, returned one — only after it knows which leg
+// that is — so a discarded resolver leg never owns the loop. Close cancels
+// lifeCtx, so fn returns on teardown.
+//
+// It is a no-op for any Client implementation that is not *ClientImpl (e.g. the
+// referral tests' in-package fake), keeping it usable through the Client seam.
+func launchRenewal(c Client, fn func(ctx context.Context)) {
+	if impl, ok := c.(*ClientImpl); ok {
+		go fn(impl.lifeCtx)
+	}
+}
+
 // ---------------------- Methods -----------------------
 
 // GetEndpoint returns the gRPC ClientImpl endpoint
