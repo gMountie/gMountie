@@ -108,9 +108,11 @@ func (s *ReferralSuite) TestTLSConfigForReferral_RejectsBadLocation() {
 }
 
 // withStubbedBuilder swaps newUnconnectedClientFn for the duration of fn,
-// routing each (cfg,endpoint) build to a caller-supplied factory so the
-// referral re-dial branch is exercised without real network dials.
-func (s *ReferralSuite) withStubbedBuilder(build func(cfg *config.Config, endpoint string) (Client, error), fn func()) {
+// routing each build to a caller-supplied factory so the referral re-dial
+// branch is exercised without real network dials. The stub receives the same
+// (cfg, endpoint, parts, runLoop) the production builder would — referral
+// (non-renew) tests ignore parts/runLoop; the renew-aware tests assert on them.
+func (s *ReferralSuite) withStubbedBuilder(build func(cfg *config.Config, endpoint string, parts renewParts, runLoop bool) (Client, error), fn func()) {
 	orig := newUnconnectedClientFn
 	newUnconnectedClientFn = build
 	defer func() { newUnconnectedClientFn = orig }()
@@ -122,7 +124,7 @@ func (s *ReferralSuite) TestNewClientForVolume_LocalConnectsConfigured() {
 	local := &fakeClient{vc: s.newVolumeClient("")} // empty location = served here
 
 	var dialed []string
-	s.withStubbedBuilder(func(_ *config.Config, endpoint string) (Client, error) {
+	s.withStubbedBuilder(func(_ *config.Config, endpoint string, _ renewParts, _ bool) (Client, error) {
 		dialed = append(dialed, endpoint)
 		return local, nil
 	}, func() {
@@ -144,7 +146,7 @@ func (s *ReferralSuite) TestNewClientForVolume_FollowsReferral() {
 	data := &fakeClient{}
 
 	var dialed []string
-	s.withStubbedBuilder(func(buildCfg *config.Config, endpoint string) (Client, error) {
+	s.withStubbedBuilder(func(buildCfg *config.Config, endpoint string, _ renewParts, _ bool) (Client, error) {
 		dialed = append(dialed, endpoint)
 		if endpoint == loc {
 			// The data-plane build must receive the retargeted TLS config, not
@@ -175,7 +177,7 @@ func (s *ReferralSuite) TestNewClientForVolume_ResolveErrorIsFatal() {
 		Return((*proto.VolumeResolveReply)(nil), errors.New("denied"))
 	resolver := &fakeClient{vc: vc}
 
-	s.withStubbedBuilder(func(_ *config.Config, _ string) (Client, error) {
+	s.withStubbedBuilder(func(_ *config.Config, _ string, _ renewParts, _ bool) (Client, error) {
 		return resolver, nil
 	}, func() {
 		_, _, err := NewClientForVolume(cfg, "photos")
@@ -210,7 +212,7 @@ func (s *ReferralSuite) TestNewClientForVolume_EmptyVolumeAutoResolvesSingle() {
 	// List returns exactly one volume; Resolve must be called with that name.
 	local := &fakeClient{vc: s.newListResolveClient([]string{"photos"}, "photos")}
 
-	s.withStubbedBuilder(func(_ *config.Config, _ string) (Client, error) {
+	s.withStubbedBuilder(func(_ *config.Config, _ string, _ renewParts, _ bool) (Client, error) {
 		return local, nil
 	}, func() {
 		got, vol, err := NewClientForVolume(cfg, "")
@@ -226,7 +228,7 @@ func (s *ReferralSuite) TestNewClientForVolume_EmptyVolumeNoVolumesIsError() {
 	cfg := baseConfig()
 	resolver := &fakeClient{vc: s.newListResolveClient([]string{}, "")}
 
-	s.withStubbedBuilder(func(_ *config.Config, _ string) (Client, error) {
+	s.withStubbedBuilder(func(_ *config.Config, _ string, _ renewParts, _ bool) (Client, error) {
 		return resolver, nil
 	}, func() {
 		_, _, err := NewClientForVolume(cfg, "")
@@ -245,7 +247,7 @@ func (s *ReferralSuite) TestListVolumes_ReturnsNamesPreSession() {
 	client := &fakeClient{vc: s.newListResolveClient([]string{"photos", "music"}, "")}
 
 	var dialed []string
-	s.withStubbedBuilder(func(_ *config.Config, endpoint string) (Client, error) {
+	s.withStubbedBuilder(func(_ *config.Config, endpoint string, _ renewParts, _ bool) (Client, error) {
 		dialed = append(dialed, endpoint)
 		return client, nil
 	}, func() {
@@ -267,7 +269,7 @@ func (s *ReferralSuite) TestListVolumes_SurfacesListError() {
 		Return((*proto.VolumeListReply)(nil), errors.New("denied"))
 	client := &fakeClient{vc: vc}
 
-	s.withStubbedBuilder(func(_ *config.Config, _ string) (Client, error) {
+	s.withStubbedBuilder(func(_ *config.Config, _ string, _ renewParts, _ bool) (Client, error) {
 		return client, nil
 	}, func() {
 		_, err := ListVolumes(cfg)
@@ -288,7 +290,7 @@ func (s *ReferralSuite) TestNewClientForVolume_EmptyVolumeMultipleIsError() {
 	cfg := baseConfig()
 	resolver := &fakeClient{vc: s.newListResolveClient([]string{"photos", "music"}, "")}
 
-	s.withStubbedBuilder(func(_ *config.Config, _ string) (Client, error) {
+	s.withStubbedBuilder(func(_ *config.Config, _ string, _ renewParts, _ bool) (Client, error) {
 		return resolver, nil
 	}, func() {
 		_, _, err := NewClientForVolume(cfg, "")
