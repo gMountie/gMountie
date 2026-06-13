@@ -127,7 +127,7 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 		}
 	}
 
-	root := io.NewMountieRoot(backend, rewriter)
+	root := io.NewMountieRoot(backend, rewriter, m.fuse.DirectIO)
 	mountOpts := createMountOptions(m.client.GetEndpoint(), volume, m.fuse, maxWrite)
 	fsOpts := buildFSOptions(mountOpts, m.fuse)
 	// gofs.Mount is self-contained: it constructs the raw FS via

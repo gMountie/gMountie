@@ -15,11 +15,21 @@ import (
 	"context"
 	"math"
 	"path"
+	"strings"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
+
+// sqliteShmSuffix is the SQLite WAL shared-memory sidecar suffix. SQLite
+// MAP_SHARED-mmaps this file to coordinate WAL access; over a FUSE mount that
+// shared writable mapping can't be backed, so the page fault dies with SIGBUS
+// (and the leftover -shm/-wal pin the DB in WAL mode, so every later open
+// SIGBUSes too — bricking it). Opening it direct-IO makes the kernel refuse
+// the mmap with a clean error, so SQLite returns SQLITE_IOERR instead of
+// crashing. See issue #111.
+const sqliteShmSuffix = "-shm"
 
 // gMountieNode is an inode of a gMountie mount (root and descendants alike).
 // Its path relative to the mount root is derived on demand from the inode
@@ -30,14 +40,20 @@ type gMountieNode struct {
 
 	backend  FileSystemBackend
 	rewriter *IDRewriter
+	// directIOAlways forces FOPEN_DIRECT_IO on every Open/Create (the
+	// fuse.direct_io escape hatch for mmap-heavy workloads). Independently,
+	// SQLite -shm sidecars always open direct-IO; see wantDirectIO.
+	directIOAlways bool
 }
 
 // NewMountieRoot constructs the root inode wrapping a FileSystemBackend.
 // rewriter translates server uid/gid ↔ local uid/gid; pass nil for
 // passthrough (raw_ids mounts or when WhoAmI returned no identity).
+// directIOAlways forces direct-IO on every handle (fuse.direct_io); even when
+// false, SQLite -shm sidecars still open direct-IO (see wantDirectIO).
 // Mount code passes the returned value to fs.Mount.
-func NewMountieRoot(backend FileSystemBackend, rewriter *IDRewriter) fs.InodeEmbedder {
-	return &gMountieNode{backend: backend, rewriter: rewriter}
+func NewMountieRoot(backend FileSystemBackend, rewriter *IDRewriter, directIOAlways bool) fs.InodeEmbedder {
+	return &gMountieNode{backend: backend, rewriter: rewriter, directIOAlways: directIOAlways}
 }
 
 // path returns the inode's path relative to the mount root, with no
@@ -51,8 +67,9 @@ func (n *gMountieNode) path() string {
 // newChild attaches a child inode sharing this node's backend/rewriter.
 func (n *gMountieNode) newChild(ctx context.Context, a *Attr) *fs.Inode {
 	return n.NewInode(ctx, &gMountieNode{
-		backend:  n.backend,
-		rewriter: n.rewriter,
+		backend:        n.backend,
+		rewriter:       n.rewriter,
+		directIOAlways: n.directIOAlways,
 	}, fs.StableAttr{
 		Mode: a.Mode,
 		Ino:  a.Ino,
@@ -245,12 +262,27 @@ func (n *gMountieNode) Setattr(ctx context.Context, _ fs.FileHandle, in *fuse.Se
 
 // --- Open ---
 
+// wantDirectIO reports whether a handle for the given path should be opened
+// with FOPEN_DIRECT_IO. Direct-IO bypasses the kernel page cache for the
+// handle and — the reason it matters here — makes the kernel refuse a shared
+// writable mmap with a clean error instead of a SIGBUS. It is returned for
+// every file when fuse.direct_io is set, and always for SQLite -shm sidecars
+// (see sqliteShmSuffix / issue #111).
+func (n *gMountieNode) wantDirectIO(relPath string) bool {
+	return n.directIOAlways || strings.HasSuffix(relPath, sqliteShmSuffix)
+}
+
 func (n *gMountieNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
-	h, st := n.backend.Open(ctx, n.path(), flags)
+	p := n.path()
+	h, st := n.backend.Open(ctx, p, flags)
 	if !st.Ok() {
 		return nil, 0, syscall.Errno(st)
 	}
-	return &gMountieFile{backend: n.backend, fh: h}, 0, 0
+	var fuseFlags uint32
+	if n.wantDirectIO(p) {
+		fuseFlags = fuse.FOPEN_DIRECT_IO
+	}
+	return &gMountieFile{backend: n.backend, fh: h}, fuseFlags, 0
 }
 
 // --- Create ---
@@ -277,7 +309,11 @@ func (n *gMountieNode) Create(ctx context.Context, name string, flags, mode uint
 		attr = a
 	}
 	setAttrFromBackend(&out.Attr, attr, n.rewriter)
-	return n.newChild(ctx, attr), &gMountieFile{backend: n.backend, fh: handle}, 0, 0
+	var fuseFlags uint32
+	if n.wantDirectIO(full) {
+		fuseFlags = fuse.FOPEN_DIRECT_IO
+	}
+	return n.newChild(ctx, attr), &gMountieFile{backend: n.backend, fh: handle}, fuseFlags, 0
 }
 
 // --- Mkdir ---

@@ -85,6 +85,28 @@ fuse:
 	s.Equal(15*time.Second, result.FUSE.EntryTimeout)
 }
 
+// TestDirectIODefaultsOff verifies the global direct-IO escape hatch is off
+// by default (ordinary files keep the kernel page cache; -shm sidecars get
+// direct-IO unconditionally in the node layer regardless of this flag).
+func (s *FUSEConfigSuite) TestDirectIODefaultsOff() {
+	cfg, err := NewFUSEConfig(nil)
+	s.Require().NoError(err)
+	s.False(cfg.DirectIO, "direct_io must default off")
+
+	cfg, err = NewFUSEConfig(viper.New())
+	s.Require().NoError(err)
+	s.False(cfg.DirectIO, "empty viper sub-tree must default direct_io off")
+}
+
+// TestDirectIOOverride verifies fuse.direct_io: true round-trips.
+func (s *FUSEConfigSuite) TestDirectIOOverride() {
+	v := viper.New()
+	v.Set("direct_io", true)
+	cfg, err := NewFUSEConfig(v)
+	s.Require().NoError(err)
+	s.True(cfg.DirectIO)
+}
+
 func TestFUSEConfigSuite(t *testing.T) {
 	suite.Run(t, new(FUSEConfigSuite))
 }
