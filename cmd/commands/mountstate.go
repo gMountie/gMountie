@@ -27,6 +27,46 @@ type mountState struct {
 	Volume     string    `json:"volume"`
 	PID        int       `json:"pid"`
 	StartedAt  time.Time `json:"started_at"`
+	// Healthy and HeartbeatAt are refreshed by the running mount process every
+	// mountHeartbeatInterval so `gmountie status` (a separate process that can't
+	// see the daemon's in-memory session state) can tell a working mount from a
+	// zombie whose session is locked out. A zero HeartbeatAt means the record
+	// predates heartbeating (treated as healthy/unknown). See mountStatus.
+	Healthy     bool      `json:"healthy,omitempty"`
+	HeartbeatAt time.Time `json:"heartbeat_at,omitempty"`
+}
+
+// mountHeartbeatInterval is how often the running mount refreshes its record's
+// health. A var so tests can shorten it.
+var mountHeartbeatInterval = 5 * time.Second
+
+// mountHeartbeatStaleWindow is how long a mount whose process is alive but no
+// longer refreshing its record can go before it's reported "stale" (the daemon
+// is wedged). A multiple of the interval so an ordinary missed tick (scheduling
+// jitter, a slow rewrite) doesn't flip the label.
+func mountHeartbeatStaleWindow() time.Duration { return 3 * mountHeartbeatInterval }
+
+// mountStatus is the health label `gmountie status` shows for a mount.
+const (
+	mountStatusActive   = "active"   // session healthy (or pre-heartbeat record)
+	mountStatusDegraded = "degraded" // process alive but session not healthy (e.g. revoked/reconnecting)
+	mountStatusStale    = "stale"    // process alive but heartbeat stopped (daemon wedged)
+)
+
+// mountStatusOf classifies a record's health at time now. A zero HeartbeatAt
+// (record written before this feature, or before the first tick) is reported
+// active rather than guessed-degraded.
+func mountStatusOf(st mountState, now time.Time) string {
+	if st.HeartbeatAt.IsZero() {
+		return mountStatusActive
+	}
+	if now.Sub(st.HeartbeatAt) > mountHeartbeatStaleWindow() {
+		return mountStatusStale
+	}
+	if !st.Healthy {
+		return mountStatusDegraded
+	}
+	return mountStatusActive
 }
 
 // processAlive reports whether a process with the given pid exists. It's a var
@@ -73,7 +113,31 @@ func writeMountState(st mountState) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(stateFilePath(st.Mountpoint), data, 0o600)
+	// Atomic write (temp + rename): the heartbeat rewrites this file every few
+	// seconds while `status`/`unmount` read it concurrently. A plain truncate
+	// + write could be observed half-written, making listMountStates skip the
+	// record (its json.Unmarshal `continue`) and the mount flicker out of the
+	// listing. Rename is atomic on the same filesystem.
+	final := stateFilePath(st.Mountpoint)
+	tmp, err := os.CreateTemp(mountStateDir(), ".mount-*.json.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, final); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 // removeMountState deletes the record for a mountpoint. A missing file is not

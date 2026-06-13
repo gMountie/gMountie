@@ -50,6 +50,12 @@ type Client interface {
 	Lifetime() context.Context
 	// SessionID returns the server-assigned session id obtained during Connect.
 	SessionID() string
+	// SessionLive reports whether the keepalive-backed session is currently
+	// healthy (a keepalive stream is open and draining). False before Connect,
+	// during recovery, and after Close. `gmountie mount` heartbeats this into
+	// its on-disk record so `gmountie status` can distinguish a working mount
+	// from one whose session is locked out (revoked/expired cert).
+	SessionLive() bool
 	// PerFileConfig returns the runtime knobs each newly-opened GrpcFile
 	// inherits from the Client. Bundling them keeps the interface from
 	// widening on every new per-file feature.

@@ -25,6 +25,15 @@ const daemonChildEnv = "GMOUNTIE_DAEMON_CHILD"
 // to once the mount is up.
 const readyFD = 3
 
+// Ready-pipe protocol. The child writes exactly one of these to readyFD and
+// closes it: daemonReadyMsg on success, or daemonErrPrefix + message on a
+// pre-ready failure, so the parent can report the real cause instead of a
+// generic timeout.
+const (
+	daemonReadyMsg  = "ready"
+	daemonErrPrefix = "err:"
+)
+
 var errReady = errors.New("daemon child exited before signalling mount ready")
 
 // daemonizer is the seam: the parent side of --daemon. Faked in tests.
@@ -107,18 +116,55 @@ func (execDaemonizer) spawnAndAwaitReady(childArgs []string) error {
 	const daemonReadyTimeout = 30 * time.Second
 	_ = pr.SetReadDeadline(time.Now().Add(daemonReadyTimeout))
 
-	buf := make([]byte, 5)
-	n, _ := io.ReadFull(pr, buf) // child writes "ready"
-	if n < 5 {
-		return fmt.Errorf("%w (timed out or child exited; see %s)", errReady, logPath)
+	// The child writes a short status to the pipe and closes it: "ready" on a
+	// successful mount, or "err:<message>" when the mount fails before it comes
+	// up (e.g. the cache lock — "volume already mounted"). Reading to EOF lets
+	// us surface the real reason instead of a generic timeout. An empty read
+	// (the child crashed or hung past the deadline) falls back to the log.
+	data, _ := io.ReadAll(pr)
+	if err := interpretReadyMsg(string(data), logPath); err != nil {
+		return err
 	}
 	fmt.Fprintf(os.Stderr, "gMountie: mounted in background (pid %d, logs: %s)\n", cmd.Process.Pid, logPath)
 	return nil
 }
 
+// interpretReadyMsg maps the child's ready-pipe status to a result: nil on
+// "ready", the child's propagated reason on "err:<message>", and the generic
+// timed-out/crashed error otherwise (empty read = child died before signalling
+// or blew past the deadline). Pure, so it's unit-testable without a re-exec.
+func interpretReadyMsg(msg, logPath string) error {
+	switch {
+	case msg == daemonReadyMsg:
+		return nil
+	case strings.HasPrefix(msg, daemonErrPrefix):
+		return fmt.Errorf("mount failed: %s (see %s)", strings.TrimPrefix(msg, daemonErrPrefix), logPath)
+	default:
+		return fmt.Errorf("%w (timed out or child exited; see %s)", errReady, logPath)
+	}
+}
+
 // signalDaemonReady is called by the child after a successful mount to release
 // the waiting parent. No-op when not a daemon child.
 func signalDaemonReady() {
+	writeReadyPipe(daemonReadyMsg)
+}
+
+// signalDaemonError is called by the child when the mount fails before it comes
+// up, so the parent can report the real cause (e.g. "volume already mounted")
+// instead of a generic "child exited" timeout. No-op when not a daemon child,
+// or after signalDaemonReady already closed the pipe (the success path blocks
+// until teardown, so this only fires on a pre-ready failure).
+func signalDaemonError(err error) {
+	if err == nil {
+		return
+	}
+	writeReadyPipe(daemonErrPrefix + err.Error())
+}
+
+// writeReadyPipe writes one status string to readyFD and closes it. No-op when
+// not a daemon child or the fd is unavailable.
+func writeReadyPipe(msg string) {
 	if !isDaemonChild() {
 		return
 	}
@@ -126,6 +172,6 @@ func signalDaemonReady() {
 	if f == nil {
 		return
 	}
-	_, _ = f.WriteString("ready")
+	_, _ = f.WriteString(msg)
 	_ = f.Close()
 }
