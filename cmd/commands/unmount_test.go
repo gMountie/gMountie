@@ -18,6 +18,7 @@ type UnmountSuite struct {
 	restoreAlive   func(int) bool
 	restoreSignal  func(int) error
 	restoreFuse    func(string) error
+	restoreMounted func(string) mountCheck
 	restoreTimeout time.Duration
 	restorePoll    time.Duration
 
@@ -31,10 +32,14 @@ func (s *UnmountSuite) SetupTest() {
 	s.T().Setenv("XDG_STATE_HOME", s.T().TempDir())
 	xdg.Reload()
 	s.restoreAlive, s.restoreSignal, s.restoreFuse = processAlive, signalMount, fuseUnmount
+	s.restoreMounted = checkMounted
 	s.restoreTimeout, s.restorePoll = unmountWaitTimeout, unmountPollInterval
 	unmountWaitTimeout, unmountPollInterval = 250*time.Millisecond, 5*time.Millisecond
 	s.signalled, s.fuseCalled = nil, nil
 	processAlive = func(int) bool { return true }
+	// Default: "can't tell" — matches the real check on the non-existent
+	// /mnt/* paths these tests use, so the fallback path runs fuseUnmount.
+	checkMounted = func(string) mountCheck { return mountUnknown }
 	// The default signal stub also flips processAlive to "gone", modelling a
 	// mount process that exits promptly after SIGTERM so waitMountExit returns.
 	signalMount = func(pid int) error {
@@ -47,6 +52,7 @@ func (s *UnmountSuite) SetupTest() {
 
 func (s *UnmountSuite) TearDownTest() {
 	processAlive, signalMount, fuseUnmount = s.restoreAlive, s.restoreSignal, s.restoreFuse
+	checkMounted = s.restoreMounted
 	unmountWaitTimeout, unmountPollInterval = s.restoreTimeout, s.restorePoll
 }
 
@@ -92,12 +98,50 @@ func (s *UnmountSuite) TestManagedMountTimesOutWhenProcessHangs() {
 	var buf bytes.Buffer
 	err := unmountTarget(&buf, "/mnt/stuck")
 	s.Require().Error(err)
-	s.Contains(err.Error(), "still running")
+	s.Contains(err.Error(), "still attached")
 	s.NotContains(buf.String(), "Unmounted")
 
 	_, ok, ferr := findMountState("/mnt/stuck")
 	s.Require().NoError(ferr)
 	s.True(ok, "state record must survive a failed unmount")
+}
+
+// A busy mount whose process lingers (draining open fds) but whose mountpoint
+// has already lazily detached is a success, not a 10s false error — and the
+// record is left for the still-live daemon to remove on its own exit, so a
+// heartbeat can't race a re-create.
+func (s *UnmountSuite) TestBusyMountDetachesWhileProcessDrains() {
+	signalMount = func(pid int) error { s.signalled = append(s.signalled, pid); return nil } // process stays alive
+	checkMounted = func(string) mountCheck { return mountNo }                                // but the path is detached
+	s.Require().NoError(writeMountState(mountState{Mountpoint: "/mnt/busy", PID: 11}))
+
+	var buf bytes.Buffer
+	s.Require().NoError(unmountTarget(&buf, "/mnt/busy"))
+	s.Contains(buf.String(), "releasing open files")
+	s.NotContains(buf.String(), "stuck")
+
+	_, ok, err := findMountState("/mnt/busy")
+	s.Require().NoError(err)
+	s.True(ok, "record must be left for the draining process to remove on exit")
+}
+
+// Unmount is idempotent: a second invocation on an already-unmounted path is a
+// success (rc=0), not a hard error — no state, confidently not a mount point.
+func (s *UnmountSuite) TestUnmountIsIdempotentWhenNotMounted() {
+	checkMounted = func(string) mountCheck { return mountNo }
+
+	var buf bytes.Buffer
+	s.Require().NoError(unmountTarget(&buf, "/mnt/gone"))
+	s.Contains(buf.String(), "not mounted")
+	s.Empty(s.fuseCalled, "a confidently-unmounted path must not shell out to fusermount")
+}
+
+// fuseUnmount treats a tool's "not mounted" output as success, so the fallback
+// path is idempotent too (real fuseUnmount is exercised here, not the stub).
+func (s *UnmountSuite) TestFuseUnmountTreatsNotMountedAsSuccess() {
+	s.True(looksNotMounted("fusermount3: entry for /mnt/x not found in /etc/mtab"))
+	s.True(looksNotMounted("umount: /mnt/x: not mounted."))
+	s.False(looksNotMounted("umount: /mnt/x: target is busy"))
 }
 
 // A path with no gMountie state (mounted some other way, or state lost) falls

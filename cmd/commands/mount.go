@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"go.gmountie.dev/gmountie/pkg/client/config"
 	"go.gmountie.dev/gmountie/pkg/client/grpc"
@@ -291,6 +292,13 @@ func buildMountConfig(cmd *cobra.Command, args []string, f *mountFlags) (*mountT
 func runMount(t *mountTarget) error {
 	startPprofIfEnabled()
 
+	// Fail fast (before minting a client cert / opening the cache) if this
+	// machine already has a live gMountie mount at this path — re-mounting the
+	// same path otherwise surfaces as an opaque local cache-lock error.
+	if st, ok, err := findMountState(t.mountpoint); err == nil && ok && processAlive(st.PID) {
+		return fmt.Errorf("%s is already mounted (volume %q, pid %d); unmount it first", t.mountpoint, st.Volume, st.PID)
+	}
+
 	// Create client. When t.volume is empty it auto-resolves the sole volume
 	// and returns its name, which the mounter/state/logs below then use.
 	c, volume, err := grpc.NewClientForVolume(t.cfg, t.volume)
@@ -324,15 +332,29 @@ func runMount(t *mountTarget) error {
 	// Record this mount so `gmountie status` can list it and `gmountie
 	// unmount` can stop it; clear the record on exit. Best-effort — a
 	// state-file failure must not bring down a working mount.
-	if err := writeMountState(mountState{
+	baseState := mountState{
 		Mountpoint: t.mountpoint,
 		Server:     t.addr,
 		Volume:     volume,
 		PID:        os.Getpid(),
-	}); err != nil {
+		StartedAt:  time.Now(),
+		Healthy:    c.SessionLive(),
+	}
+	if err := writeMountState(baseState); err != nil {
 		log.Log.Warn("could not record mount state", zap.Error(err))
 	}
 	defer func() { _ = removeMountState(t.mountpoint) }()
+
+	// Heartbeat the session-health flag into the record so `gmountie status`
+	// (a separate process) can tell a working mount from a zombie whose
+	// session is locked out. Stopped explicitly below — before the deferred
+	// removeMountState — so a final tick can't resurrect the record.
+	stopHeartbeat := make(chan struct{})
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		runMountHeartbeat(baseState, c.SessionLive, stopHeartbeat)
+	}()
 
 	// Release a waiting --daemon parent now that the mount is up (no-op
 	// unless this process is the detached child).
@@ -356,7 +378,41 @@ func runMount(t *mountTarget) error {
 		log.Log.Sugar().Infof("Volume %s was unmounted; exiting", volume)
 	}
 
+	// Stop the heartbeat before the deferred removeMountState runs, so a final
+	// tick can't write the record back after it's deleted (status would then
+	// show a mount that's already torn down).
+	close(stopHeartbeat)
+	<-heartbeatDone
+
 	return nil
+}
+
+// runMountHeartbeat refreshes the mount record's Healthy/HeartbeatAt every
+// mountHeartbeatInterval until stop is closed. health is the daemon's
+// session-liveness probe (grpc.Client.SessionLive). Best-effort: a failed
+// write is logged and retried on the next tick — a heartbeat hiccup must never
+// affect the running mount. An immediate first beat means status reflects
+// health without waiting a full interval.
+func runMountHeartbeat(base mountState, health func() bool, stop <-chan struct{}) {
+	ticker := time.NewTicker(mountHeartbeatInterval)
+	defer ticker.Stop()
+	beat := func() {
+		rec := base
+		rec.Healthy = health()
+		rec.HeartbeatAt = time.Now()
+		if err := writeMountState(rec); err != nil {
+			log.Log.Warn("mount heartbeat write failed", zap.Error(err))
+		}
+	}
+	beat()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			beat()
+		}
+	}
 }
 
 // newMountCmd constructs the mount command with its own flag state.
@@ -388,7 +444,16 @@ func newMountCmd() *cobra.Command {
 				return daemonize(execDaemonizer{}, os.Args)
 			}
 
-			return runMount(t)
+			// In the detached child, a mount failure before the mount is up
+			// returns here without ever signalling the parent. Report the real
+			// reason up the ready pipe so the parent prints it instead of a
+			// generic timeout (no-op unless this is the daemon child). On
+			// success runMount blocks until teardown, so err is nil here.
+			err = runMount(t)
+			if err != nil {
+				signalDaemonError(err)
+			}
+			return err
 		},
 	}
 

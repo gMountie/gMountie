@@ -39,11 +39,12 @@ func renderMountStates(out io.Writer, states []mountState) {
 		_, _ = fmt.Fprintln(out, "No active gMountie mounts.")
 		return
 	}
+	now := time.Now()
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "MOUNTPOINT\tVOLUME\tSERVER\tPID\tUPTIME")
+	_, _ = fmt.Fprintln(tw, "MOUNTPOINT\tVOLUME\tSERVER\tPID\tUPTIME\tSTATUS")
 	for _, st := range states {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
-			st.Mountpoint, st.Volume, st.Server, st.PID, uptime(st.StartedAt))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\n",
+			st.Mountpoint, st.Volume, st.Server, st.PID, uptime(st.StartedAt), mountStatusOf(st, now))
 	}
 	_ = tw.Flush()
 }

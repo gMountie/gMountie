@@ -52,3 +52,31 @@ func (f *fakeDaemonizer) spawnAndAwaitReady(childArgs []string) error {
 	}
 	return nil
 }
+
+// The ready pipe now carries the child's real failure reason so the parent can
+// report it instead of a generic timeout (issue #114). interpretReadyMsg is the
+// pure parser the parent applies to whatever the child wrote.
+func (s *DaemonSuite) TestReadyMsgSuccess() {
+	s.Require().NoError(interpretReadyMsg(daemonReadyMsg, "/tmp/log"))
+}
+
+func (s *DaemonSuite) TestReadyMsgPropagatesChildError() {
+	err := interpretReadyMsg(daemonErrPrefix+"open cache persist: cache directory is locked by another process", "/tmp/log")
+	s.Require().Error(err)
+	s.Contains(err.Error(), "cache directory is locked", "the real cause must reach the parent")
+	s.Contains(err.Error(), "/tmp/log", "the log path is still pointed to")
+	s.NotContains(err.Error(), "timed out", "a signalled error is not a timeout")
+}
+
+func (s *DaemonSuite) TestReadyMsgEmptyIsTimeout() {
+	err := interpretReadyMsg("", "/tmp/log")
+	s.Require().ErrorIs(err, errReady)
+	s.Contains(err.Error(), "timed out or child exited")
+}
+
+// signalDaemonError is a no-op outside a daemon child (no readyFD), so it must
+// not panic and must ignore a nil error.
+func (s *DaemonSuite) TestSignalDaemonErrorNoopOutsideChild() {
+	s.NotPanics(func() { signalDaemonError(nil) })
+	s.NotPanics(func() { signalDaemonError(errReady) })
+}

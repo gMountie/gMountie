@@ -577,6 +577,50 @@ func (_c *MockClient_SessionID_Call) RunAndReturn(run func() string) *MockClient
 	return _c
 }
 
+// SessionLive provides a mock function for the type MockClient
+func (_mock *MockClient) SessionLive() bool {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for SessionLive")
+	}
+
+	var r0 bool
+	if returnFunc, ok := ret.Get(0).(func() bool); ok {
+		r0 = returnFunc()
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	return r0
+}
+
+// MockClient_SessionLive_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SessionLive'
+type MockClient_SessionLive_Call struct {
+	*mock.Call
+}
+
+// SessionLive is a helper method to define mock.On call
+func (_e *MockClient_Expecter) SessionLive() *MockClient_SessionLive_Call {
+	return &MockClient_SessionLive_Call{Call: _e.mock.On("SessionLive")}
+}
+
+func (_c *MockClient_SessionLive_Call) Run(run func()) *MockClient_SessionLive_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockClient_SessionLive_Call) Return(b bool) *MockClient_SessionLive_Call {
+	_c.Call.Return(b)
+	return _c
+}
+
+func (_c *MockClient_SessionLive_Call) RunAndReturn(run func() bool) *MockClient_SessionLive_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Version provides a mock function for the type MockClient
 func (_mock *MockClient) Version() proto.VersionServiceClient {
 	ret := _mock.Called()
