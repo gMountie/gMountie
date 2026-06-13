@@ -87,8 +87,11 @@ jobs:
       # updates SHA pins fine); the comment tracks the resolved tag.
       - uses: awalsh128/cache-apt-pkgs-action@2c09a5e66da6c8016428a2172bd76e5e4f14bb17 # v1.5.3 (current v1)
         with:
-          packages: fio
-          version: 2.0
+          # fio: fio-based fs benchmarks. sqlite3: the WAL-over-FUSE
+          # regression test (issue #111) drives the real sqlite3 CLI.
+          packages: fio sqlite3
+          # bump when the package list changes — it is the apt-cache key.
+          version: 2.1
       - name: Setup Go
         uses: actions/setup-go@v6
         with:

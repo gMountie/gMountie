@@ -25,6 +25,13 @@ const (
 	// high-RTT link instead of one synchronous WRITE per round-trip. Wired
 	// through ExtraCapabilities (CAP_WRITEBACK_CACHE) at mount time when true.
 	DefaultFUSEWritebackCache = false
+	// DefaultFUSEDirectIO leaves global direct-IO off by default: ordinary
+	// files keep the kernel page cache (and the readahead/caching the perf
+	// path relies on). It is an opt-in escape hatch for mmap-heavy workloads
+	// (LMDB, SQLite with a large mmap_size) that would otherwise SIGBUS on a
+	// shared writable mmap. Note SQLite WAL -shm sidecars are opened direct-IO
+	// unconditionally regardless of this flag (see pkg/client/io node.go).
+	DefaultFUSEDirectIO = false
 	// DefaultFUSEAttrTimeout is the default kernel dentry-attribute cache
 	// lifetime. 1 s matches go-fuse's built-in default and is a safe
 	// starting point: it cuts per-op GETATTR chatter while keeping the
@@ -71,6 +78,14 @@ type FUSEConfig struct {
 	// async writeback for WAN throughput — write errors then surface at
 	// flush/close, and write visibility to other clients is close-to-open.
 	WritebackCache bool `mapstructure:"writeback_cache"`
+	// DirectIO forces FOPEN_DIRECT_IO on every file handle when true: the
+	// kernel bypasses its page cache for reads/writes and refuses a shared
+	// writable mmap with a clean error instead of letting the page fault die
+	// with SIGBUS. Off by default — it disables kernel-side read caching, so
+	// only enable it for mmap-heavy workloads (LMDB, SQLite mmap_size>0).
+	// SQLite WAL -shm sidecars are always opened direct-IO independently of
+	// this flag, so plain WAL databases do not need it (see issue #111).
+	DirectIO bool `mapstructure:"direct_io"`
 	// AttrTimeout controls how long the kernel caches inode attributes
 	// (size, mode, timestamps) before issuing a GETATTR. Raising this value
 	// cuts GETATTR round-trips on attribute-heavy workloads (e.g. repeated
@@ -97,6 +112,7 @@ func NewFUSEConfig(v *viper.Viper) (*FUSEConfig, error) {
 		MaxWriteBytes:  DefaultFUSEMaxWriteBytes,
 		MaxBackground:  DefaultFUSEMaxBackground,
 		WritebackCache: DefaultFUSEWritebackCache,
+		DirectIO:       DefaultFUSEDirectIO,
 		AttrTimeout:    DefaultFUSEAttrTimeout,
 		EntryTimeout:   DefaultFUSEEntryTimeout,
 	}
@@ -106,6 +122,7 @@ func NewFUSEConfig(v *viper.Viper) (*FUSEConfig, error) {
 	v.SetDefault("max_write_bytes", DefaultFUSEMaxWriteBytes)
 	v.SetDefault("max_background", DefaultFUSEMaxBackground)
 	v.SetDefault("writeback_cache", DefaultFUSEWritebackCache)
+	v.SetDefault("direct_io", DefaultFUSEDirectIO)
 	v.SetDefault("attr_timeout", DefaultFUSEAttrTimeout)
 	v.SetDefault("entry_timeout", DefaultFUSEEntryTimeout)
 	if err := v.UnmarshalExact(cfg, viper.DecodeHook(mapstructure.StringToTimeDurationHookFunc())); err != nil {

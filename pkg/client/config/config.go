@@ -172,6 +172,7 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		"max_write_bytes",
 		"max_background",
 		"writeback_cache",
+		"direct_io",
 		"attr_timeout",
 		"entry_timeout",
 	})

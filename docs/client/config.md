@@ -246,6 +246,22 @@ workloads over high-latency links. The client-side cache, readahead, and
 write coalescing work independently of this kernel knob; see
 [Caching & consistency](../design/caching-and-consistency.md).
 
+`direct_io` defaults to off. When on, every file handle is opened with
+`FOPEN_DIRECT_IO`: the kernel bypasses its page cache for reads/writes and
+**refuses a shared writable `mmap` with a clean error instead of a `SIGBUS`**.
+It disables kernel-side read caching for the whole mount, so leave it off
+unless you run an `mmap`-heavy workload that needs `MAP_SHARED` writable
+mappings (e.g. LMDB, or SQLite with a large `mmap_size`).
+
+**SQLite WAL works out of the box** — you do **not** need `direct_io` for it.
+SQLite's WAL mode `MAP_SHARED`-mmaps a `-shm` sidecar, which cannot be backed
+over a network FUSE mount; the client always opens `*-shm` files direct-IO so
+that mapping fails cleanly rather than bus-faulting (which previously also
+left the database unopenable until the sidecars were deleted by hand). WAL
+itself is not coherent over the mount, so SQLite returns a normal I/O error;
+for a working journal use `PRAGMA journal_mode=DELETE` (and `PRAGMA
+mmap_size=0` if you raised it). The data is never corrupted by any of this.
+
 `attr_timeout` and `entry_timeout` both default to 1 s, matching go-fuse's
 built-in default. Raising them cuts GETATTR / LOOKUP round-trips at the cost
 of a wider kernel-side staleness window. **Important:** the Subscribe
@@ -266,6 +282,7 @@ fuse:
   max_write_bytes: 2097152  # 2 MiB
   max_background: 128
   writeback_cache: false
+  direct_io: false    # set true only for MAP_SHARED mmap workloads (LMDB, SQLite mmap_size>0)
   attr_timeout: 5s    # raise on read-only / sole-writer mounts to cut GETATTR traffic
   entry_timeout: 5s   # same tradeoff for dentry (name→inode) lookups
 ```

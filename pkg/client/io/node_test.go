@@ -35,7 +35,7 @@ type NodeAdapterTestSuite struct {
 
 func (s *NodeAdapterTestSuite) SetupTest() {
 	s.backend = iomocks.NewMockFileSystemBackend(s.T())
-	s.root = clientio.NewMountieRoot(s.backend, nil)
+	s.root = clientio.NewMountieRoot(s.backend, nil, false)
 	// fs.NewNodeFS wires up the rawBridge so Inode.NewInode() can run
 	// without a real FUSE mount. We never call Mount, so no kernel
 	// interaction; the bridge just satisfies the in-memory inode tree.

@@ -31,7 +31,7 @@ func (s *NodeIDRewriteSuite) SetupTest() {
 		&clientio.Identity{Uid: 1001, Gid: 1001, Gids: []uint32{1001}},
 		500, 500,
 	)
-	s.root = clientio.NewMountieRoot(s.backend, rw)
+	s.root = clientio.NewMountieRoot(s.backend, rw, false)
 	fs.NewNodeFS(s.root, &fs.Options{})
 }
 
