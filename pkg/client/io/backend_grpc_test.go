@@ -138,7 +138,7 @@ func (s *BackendClientTestSuite) SetupTest() {
 // the fd-level RPCs (Read/Write/Flush/Release/Fsync). The handle is
 // otherwise identical to one returned by Open/Create.
 func (s *BackendClientTestSuite) newHandle(cfg grpcclient.PerFileConfig) *grpcFileHandle {
-	return newGrpcFileHandle(s.client, "testVolume", "/test/path", 1, 30*time.Second, "test-session", cfg)
+	return newGrpcFileHandle(s.client, "testVolume", "/test/path", 1, 0, 30*time.Second, "test-session", cfg)
 }
 
 // --- path-level ops ---
@@ -1594,7 +1594,7 @@ func (s *BackendClientTestSuite) TestSetAttr_CancelledParentDoesNotAbortRPC() {
 // newHandleAt is like newHandle but lets the caller choose path and fd so
 // CopyFileRange tests can construct distinct source and destination handles.
 func (s *BackendClientTestSuite) newHandleAt(path string, fd uint64, cfg grpcclient.PerFileConfig) *grpcFileHandle {
-	return newGrpcFileHandle(s.client, "testVolume", path, fd, 30*time.Second, "test-session", cfg)
+	return newGrpcFileHandle(s.client, "testVolume", path, fd, 0, 30*time.Second, "test-session", cfg)
 }
 
 // --- CopyFileRange ---
