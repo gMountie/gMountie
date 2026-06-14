@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
@@ -73,6 +74,17 @@ type Persist struct {
 	bgWG      sync.WaitGroup // syncer + sweeps; Close waits on it before db.Close
 	closeOnce sync.Once
 	closeErr  error
+	syncCount atomic.Int64 // cumulative db.Sync() calls; observability for tests
+}
+
+// sync fsyncs meta.db and records the call. meta.db opens NoSync (commits
+// don't fsync), so durability of a specific mutation comes only from an
+// explicit Sync — notably kvDelete, which must make an invalidation durable
+// before a crash (issue #113). Routing every db.Sync through here makes that
+// fsync observable to tests.
+func (p *Persist) sync() error {
+	p.syncCount.Add(1)
+	return p.db.Sync()
 }
 
 // Open acquires the LOCK file, opens (or creates) meta.db, ensures
@@ -145,7 +157,7 @@ func (p *Persist) startMetaSyncer() {
 			case <-p.stopCh:
 				return
 			case <-t.C:
-				_ = p.db.Sync()
+				_ = p.sync()
 			}
 		}
 	}()
@@ -162,7 +174,7 @@ func (p *Persist) Close() error {
 		}
 		// Final durable flush: NoSync means db.Close() won't fsync pending
 		// commits for us.
-		_ = p.db.Sync()
+		_ = p.sync()
 		if err := p.db.Close(); err != nil {
 			_ = p.lock.release()
 			p.closeErr = errors.Wrap(err, "close meta.db")
