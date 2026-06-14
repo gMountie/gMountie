@@ -644,7 +644,7 @@ func (b *BackendClient) Open(ctx context.Context, path string, flags uint32) (Fi
 	}
 	return newGrpcFileHandle(
 		b.client, b.volume, path, res.Fd, flags, caller,
-		b.client.IOTimeout(), b.client.SessionID(),
+		b.client.IOTimeout(), b.client.SessionID(), b.client.BootEpoch(),
 		b.client.PerFileConfig(),
 	), fuse.OK
 }
@@ -683,7 +683,7 @@ func (b *BackendClient) Create(ctx context.Context, parent, name string, flags, 
 	}
 	h := newGrpcFileHandle(
 		b.client, b.volume, path, res.Fd, flags, caller,
-		b.client.IOTimeout(), b.client.SessionID(),
+		b.client.IOTimeout(), b.client.SessionID(), b.client.BootEpoch(),
 		b.client.PerFileConfig(),
 	)
 	return h, attrFromProto(res.Attributes), fuse.OK
@@ -1393,12 +1393,14 @@ func (b *BackendClient) SetLkw(ctx context.Context, fh FileHandle, owner uint64,
 	return fuse.Status(res.Status)
 }
 
-// fdState is the immutable (server fd, session id) pair a grpcFileHandle
-// currently targets. reclaimIfStale swaps a fresh *fdState in atomically so
-// concurrent fd-ops read a consistent, current pair without locking.
+// fdState is the immutable (server fd, session id, boot epoch) triple a
+// grpcFileHandle currently targets. reclaimIfStale swaps a fresh *fdState in
+// atomically so concurrent fd-ops read a consistent, current triple without
+// locking.
 type fdState struct {
 	fd        uint64
 	sessionID string
+	epoch     string // server boot epoch this fd was opened/reopened against
 }
 
 // grpcFileHandle is the per-fd state returned by Open/Create. It mirrors
@@ -1502,6 +1504,7 @@ func newGrpcFileHandle(
 	caller *proto.Caller,
 	ioTimeout time.Duration,
 	sessionID string,
+	epoch string,
 	cfg grpcclient.PerFileConfig,
 ) *grpcFileHandle {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1517,7 +1520,7 @@ func newGrpcFileHandle(
 		lifeCtx:           ctx,
 		lifeCancel:        cancel,
 	}
-	h.state.Store(&fdState{fd: fd, sessionID: sessionID})
+	h.state.Store(&fdState{fd: fd, sessionID: sessionID, epoch: epoch})
 	if cfg.ReadaheadChunkBytes > 0 && cfg.ReadaheadThreshold > 0 {
 		h.readahead = NewReadahead(cfg.ReadaheadChunkBytes, cfg.ReadaheadThreshold, cfg.ReadaheadWindow)
 	}

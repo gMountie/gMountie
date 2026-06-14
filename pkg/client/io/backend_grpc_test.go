@@ -128,6 +128,7 @@ func (s *BackendClientTestSuite) SetupTest() {
 	s.client.EXPECT().MetaTimeout().Return(2 * time.Second).Maybe()
 	s.client.EXPECT().IOTimeout().Return(30 * time.Second).Maybe()
 	s.client.EXPECT().SessionID().Return("test-session").Maybe()
+	s.client.EXPECT().BootEpoch().Return("epoch-1").Maybe()
 	s.client.EXPECT().RetryWindow().Return(2 * time.Second).Maybe()
 	s.client.EXPECT().Lifetime().Return(context.Background()).Maybe()
 	s.client.EXPECT().PerFileConfig().Return(grpcclient.PerFileConfig{}).Maybe()
@@ -138,7 +139,7 @@ func (s *BackendClientTestSuite) SetupTest() {
 // the fd-level RPCs (Read/Write/Flush/Release/Fsync). The handle is
 // otherwise identical to one returned by Open/Create.
 func (s *BackendClientTestSuite) newHandle(cfg grpcclient.PerFileConfig) *grpcFileHandle {
-	return newGrpcFileHandle(s.client, "testVolume", "/test/path", 1, 0, nil, 30*time.Second, "test-session", cfg)
+	return newGrpcFileHandle(s.client, "testVolume", "/test/path", 1, 0, nil, 30*time.Second, "test-session", "epoch-1", cfg)
 }
 
 // --- path-level ops ---
@@ -1594,7 +1595,7 @@ func (s *BackendClientTestSuite) TestSetAttr_CancelledParentDoesNotAbortRPC() {
 // newHandleAt is like newHandle but lets the caller choose path and fd so
 // CopyFileRange tests can construct distinct source and destination handles.
 func (s *BackendClientTestSuite) newHandleAt(path string, fd uint64, cfg grpcclient.PerFileConfig) *grpcFileHandle {
-	return newGrpcFileHandle(s.client, "testVolume", path, fd, 0, nil, 30*time.Second, "test-session", cfg)
+	return newGrpcFileHandle(s.client, "testVolume", path, fd, 0, nil, 30*time.Second, "test-session", "epoch-1", cfg)
 }
 
 // --- CopyFileRange ---
@@ -2023,6 +2024,9 @@ func (s *FdOpReclaimSuite) SetupTest() {
 	s.client.EXPECT().IOTimeout().Return(30 * time.Second).Maybe()
 	// Live session is "live-session"; stale handles snapshot "stale-session".
 	s.client.EXPECT().SessionID().Return("live-session").Maybe()
+	// Epoch changed (epoch-1 → epoch-2): stale handles represent the RESTART case
+	// where the server process died and came back. reclaimIfStale must reopen.
+	s.client.EXPECT().BootEpoch().Return("epoch-2").Maybe()
 	s.client.EXPECT().RetryWindow().Return(0 * time.Second).Maybe() // fail-fast: no retries
 	s.client.EXPECT().Lifetime().Return(context.Background()).Maybe()
 	s.client.EXPECT().PerFileConfig().Return(grpcclient.PerFileConfig{}).Maybe()
@@ -2038,6 +2042,7 @@ func (s *FdOpReclaimSuite) newStaleHandle() *grpcFileHandle {
 		nil, /*caller — not relevant for FdOpReclaimSuite tests*/
 		30*time.Second,
 		"stale-session",
+		"epoch-1", // stored epoch; live BootEpoch() returns "epoch-2" → restart case
 		grpcclient.PerFileConfig{},
 	)
 	h.fileClient = s.fileClient
