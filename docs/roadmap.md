@@ -276,7 +276,7 @@ The Wails desktop app (`ui/`, `pkg/ui/`) and the VFS multi-volume mounter (`pkg/
 - **Server TLS leaf live-reload** (v0.15) — cert rotation without restart on both listeners; see [Security & Transport](design/security-and-transport.md).
 - **Resilient mount retry** (v0.16) — transient FS-RPC failures retry within `rpc.retry_window` (default 60 s) with fresh per-attempt deadlines and a session-change guard; `server.session.grace_period` configurable (default 60 s, must stay ≥ the client window).
 - **`get.gmountie.dev` install script** (v0.16) — `curl | sh` installer published from `website/static/install.sh`; see [Operations & Packaging](design/operations-and-packaging.md).
-- **Session reclaim across server restarts** — client transparently reopens open files against the new session after a `serve` restart (no external DB, no proto change); sanitized reopen flags guard against truncation; `classFdOp` self-heals within `rpc.retry_window`. See [Reliability & Recovery](design/reliability-and-recovery.md). Byte-range lock re-assertion and recovery of unlinked-but-open files deferred (Design B).
+- **Session reclaim across server restarts** — client transparently reopens open files against the new server session after a `serve` restart (no external DB), gated on a per-process **boot epoch** (`boot_epoch` on `SessionCreateReply`) so it reclaims only on a true restart and fails cleanly on a same-process session reap — preserving the resilient-retry "fail cleanly past grace" contract. Sanitized reopen flags guard against truncation; `classFdOp` self-heals within `rpc.retry_window`. See [Reliability & Recovery](design/reliability-and-recovery.md). Byte-range lock re-assertion and recovery of unlinked-but-open files deferred (Design B).
 
 ---
 
