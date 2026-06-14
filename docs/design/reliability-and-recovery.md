@@ -1,6 +1,6 @@
 # Reliability and Recovery
 
-**Status:** Shipped (PR #[session-reclaim], 2026-06-14)
+**Status:** Shipped (PR #119, 2026-06-14)
 **Last updated:** 2026-06-14
 
 The durable record of gMountie's client-side recovery model: how open file
