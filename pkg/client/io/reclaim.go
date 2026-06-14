@@ -60,6 +60,14 @@ func (h *grpcFileHandle) reclaimIfStale(ctx context.Context) fuse.Status {
 	return fuse.OK
 }
 
+// reclaimError wraps a fuse.Status from a failed reclaim as a non-retryable
+// error so retryOp short-circuits and the status reaches userspace unchanged.
+type reclaimError struct{ st fuse.Status }
+
+func (e reclaimError) Error() string { return "reclaim failed: " + e.st.String() }
+
+func errFromStatus(st fuse.Status) error { return reclaimError{st} }
+
 // sanitizeReopenFlags returns the open flags to use when REOPENING an
 // already-open file during reclaim. The file already exists and already holds
 // the application's data, so creation/exclusivity/truncation flags must be

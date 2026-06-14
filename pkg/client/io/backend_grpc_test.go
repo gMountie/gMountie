@@ -1998,3 +1998,135 @@ func (b badHandle) Unwrap() FileHandle { return b }
 func TestBackendClientTestSuite(t *testing.T) {
 	suite.Run(t, new(BackendClientTestSuite))
 }
+
+// FdOpReclaimSuite proves the two properties that Task 4b's wiring must hold:
+//
+//  1. A stale handle (snapshotted sessionID != live session) causes reclaimIfStale
+//     to call Open exactly once, and the subsequent RPC uses the newly-issued fd.
+//
+//  2. When reclaimIfStale fails (Open returns a non-OK status), the fd-op surfaces
+//     that status and never issues the underlying RPC — no phantom calls.
+type FdOpReclaimSuite struct {
+	suite.Suite
+	client     *grpcmocks.MockClient
+	fileClient *mockProto.MockRpcFileClient
+	backend    *BackendClient
+}
+
+func (s *FdOpReclaimSuite) SetupTest() {
+	s.client = grpcmocks.NewMockClient(s.T())
+	s.fileClient = mockProto.NewMockRpcFileClient(s.T())
+	s.client.EXPECT().File().Return(s.fileClient).Maybe()
+	s.client.EXPECT().Fs().Return(mockProto.NewMockRpcFsClient(s.T())).Maybe()
+	s.client.EXPECT().MetaTimeout().Return(2 * time.Second).Maybe()
+	s.client.EXPECT().IOTimeout().Return(30 * time.Second).Maybe()
+	// Live session is "live-session"; stale handles snapshot "stale-session".
+	s.client.EXPECT().SessionID().Return("live-session").Maybe()
+	s.client.EXPECT().RetryWindow().Return(0 * time.Second).Maybe() // fail-fast: no retries
+	s.client.EXPECT().Lifetime().Return(context.Background()).Maybe()
+	s.client.EXPECT().PerFileConfig().Return(grpcclient.PerFileConfig{}).Maybe()
+	s.backend = NewBackendClient(s.client, "testVolume")
+}
+
+// newStaleHandle builds a grpcFileHandle whose snapshotted sessionID ("stale-session")
+// differs from the live client session ("live-session"). fd=7.
+func (s *FdOpReclaimSuite) newStaleHandle() *grpcFileHandle {
+	h := newGrpcFileHandle(
+		s.client, "testVolume", "/test/file", 7,
+		0 /*flags — O_RDONLY*/,
+		30*time.Second,
+		"stale-session",
+		grpcclient.PerFileConfig{},
+	)
+	h.fileClient = s.fileClient
+	return h
+}
+
+// expectOpenReturns sets up a single Open expectation for the stale handle's
+// reclaim; it returns a reply with the given fd and status.
+func (s *FdOpReclaimSuite) expectOpenReturns(newFd uint64, st fuse.Status) {
+	s.fileClient.EXPECT().Open(
+		mock.Anything,
+		mock.MatchedBy(func(req *proto.OpenRequest) bool {
+			return req.Volume == "testVolume" &&
+				req.Path == "/test/file" &&
+				req.SessionId == "live-session"
+		}),
+		mock.Anything,
+	).Return(&proto.OpenReply{Fd: newFd, Status: int32(st)}, nil).Once()
+}
+
+// TestReadUsesReclaimedFd: Read on a stale handle must trigger reclaim, then
+// issue the Read RPC with the new fd from the Open reply.
+func (s *FdOpReclaimSuite) TestReadUsesReclaimedFd() {
+	const freshFd = uint64(99)
+	s.expectOpenReturns(freshFd, fuse.OK)
+
+	readStream := newBackendReadStreamStub(s.T(),
+		&proto.ReadFrame{Status: int32(fuse.OK), Data: []byte("hello")},
+	)
+	s.fileClient.EXPECT().Read(
+		mock.Anything,
+		mock.MatchedBy(func(req *proto.ReadRequest) bool {
+			return req.Fd == freshFd && req.SessionId == "live-session"
+		}),
+		mock.Anything,
+	).Return(readStream, nil).Once()
+
+	h := s.newStaleHandle()
+	dest := make([]byte, 64)
+	n, st := s.backend.Read(context.Background(), h, 0, dest)
+	s.Require().Equal(fuse.OK, st)
+	s.Assert().Equal(5, n)
+	s.fileClient.AssertNumberOfCalls(s.T(), "Open", 1)
+}
+
+// TestReadReclaimFailureSurfacesStatus: when reclaim fails (Open returns ENOENT),
+// the Read must return ENOENT and must NOT issue the underlying Read RPC.
+func (s *FdOpReclaimSuite) TestReadReclaimFailureSurfacesStatus() {
+	s.expectOpenReturns(0, fuse.ENOENT)
+	// No Read expectation — strict mock proves the RPC is never issued.
+
+	h := s.newStaleHandle()
+	dest := make([]byte, 64)
+	_, st := s.backend.Read(context.Background(), h, 0, dest)
+	s.Assert().Equal(fuse.ENOENT, st)
+	s.fileClient.AssertNumberOfCalls(s.T(), "Read", 0)
+}
+
+// TestFlushUsesReclaimedFd: Flush on a stale dirty handle reclaims then
+// issues WriteAndFlush with the new fd.
+func (s *FdOpReclaimSuite) TestFlushUsesReclaimedFd() {
+	const freshFd = uint64(42)
+	s.expectOpenReturns(freshFd, fuse.OK)
+
+	s.fileClient.EXPECT().WriteAndFlush(
+		mock.Anything,
+		mock.MatchedBy(func(req *proto.WriteAndFlushRequest) bool {
+			return req.Fd == freshFd && req.SessionId == "live-session"
+		}),
+		mock.Anything,
+	).Return(&proto.WriteAndFlushReply{Status: int32(fuse.OK)}, nil).Once()
+
+	h := s.newStaleHandle()
+	h.dirty.Store(true)
+	st := s.backend.Flush(context.Background(), h)
+	s.Require().Equal(fuse.OK, st)
+	s.fileClient.AssertNumberOfCalls(s.T(), "Open", 1)
+}
+
+// TestFlushReclaimFailureSurfacesStatus: when reclaim fails, Flush returns that
+// status without calling WriteAndFlush.
+func (s *FdOpReclaimSuite) TestFlushReclaimFailureSurfacesStatus() {
+	s.expectOpenReturns(0, fuse.EACCES)
+
+	h := s.newStaleHandle()
+	h.dirty.Store(true)
+	st := s.backend.Flush(context.Background(), h)
+	s.Assert().Equal(fuse.EACCES, st)
+	s.fileClient.AssertNumberOfCalls(s.T(), "WriteAndFlush", 0)
+}
+
+func TestFdOpReclaimSuite(t *testing.T) {
+	suite.Run(t, new(FdOpReclaimSuite))
+}
