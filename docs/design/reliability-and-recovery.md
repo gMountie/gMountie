@@ -5,8 +5,7 @@
 
 The durable record of gMountie's client-side recovery model: how open file
 handles survive a `gmountie serve` process restart without an external
-database, without a wire-protocol change, and without the application ever
-seeing an error.
+database, and without the application ever seeing an error.
 
 Sessions, identity binding, and transport security are covered in
 [security-and-transport.md](security-and-transport.md). The cache layer,
@@ -49,28 +48,50 @@ state by replaying opens against the new server.
 
 ---
 
-## 3. The restart signal
-
-The client already detects a server restart — no new wire-level epoch is
-needed.
+## 3. Detecting a restart — and distinguishing it from a reap
 
 The client holds a session via `SessionHandshake`
 (`pkg/client/grpc/session.go`). On any disconnect it first tries
-`Resume(session_id)`. When the server is still up, `Resume` succeeds and
-all fds remain valid (a brief network blip, handled by the existing
-resilient-retry layer). A **fresh server process has an empty session
-table**, so `Resume` returns `Resumed=false` and the client falls back to
-`Create`, minting a **new `session_id`**.
+`Resume(session_id)`. When the server is still up *and* the session is still
+alive, `Resume` succeeds and all fds remain valid (a brief network blip,
+handled by the existing resilient-retry layer). Otherwise `Resume` returns
+`Resumed=false` and the client falls back to `Create`, minting a **new
+`session_id`**.
 
-That `session_id` change *is* the restart signal. It changes exactly when
-server-side fds are dead (restart, or a grace-period reap) and stays stable
-when `Resume` succeeds. A new server cannot know the old id, so a true
-restart always produces a different id.
+A `session_id` change tells the client its server-side fds are dead — but it
+does **not** by itself say *why*, and the two causes need opposite handling:
 
-Each open file handle (`grpcFileHandle`) stores a snapshot of the
-`session_id` taken at open time, as part of an `atomic.Pointer[fdState]`
-(see §4.2). The predicate `h.state.Load().sessionID != client.SessionID()`
-is therefore a precise, per-handle "my server fd is stale" test.
+- **Server restart.** The process died and came back with an empty session
+  table. While it was down, no client could write, so the backing file is
+  exactly as the last writer left it — reopening by path is as safe as the
+  original `Open`. **Reclaim.**
+- **Same-process reap.** The server stayed up and reaped this client's idle
+  session after it was disconnected past `server.session.grace_period`. Other
+  clients may have mutated the file in the meantime, so silently reopening
+  would substitute a possibly-changed file into a live fd. **Do not reclaim**
+  — let the dead fd fail cleanly (the historical "fail cleanly past grace"
+  contract).
+
+The client cannot tell these apart from the `session_id` change alone (both
+produce a `Create`). The server therefore mints a **boot epoch** — a random
+nonce generated once per process (`AppContext.BootEpoch`, `pkg/server/app.go`)
+and returned on every `SessionCreateReply` (`boot_epoch`). The client records
+it (`SessionHandshake.BootEpoch()`):
+
+- `Create` reply carries a **different** epoch ⇒ the process restarted ⇒ reclaim.
+- `Create` reply carries the **same** epoch ⇒ the same process reaped us ⇒ fail clean.
+
+This is exactly NFSv4's *boot verifier*. Each open file handle
+(`grpcFileHandle`) stores a snapshot of both the `session_id` and the
+`boot_epoch` at open time, inside an `atomic.Pointer[fdState]` (see §4.2). The
+gate is then: a changed `session_id` triggers reclaim **only** when the live
+`BootEpoch()` also differs from the handle's snapshot epoch.
+
+> **Read-order invariant.** The handshake publishes the new epoch *before* the
+> new `session_id` (under one mutex, in both `Establish` and the Create
+> fallback), and `reclaimIfStale` reads `SessionID()` *before* `BootEpoch()`.
+> So any reader that observes a changed session id is guaranteed to observe the
+> matching new epoch — a restart can never be misread as a reap.
 
 ---
 
@@ -102,19 +123,22 @@ preserving server-side identity enforcement.
 
 ### 4.2 The `fdState` atomic snapshot
 
-The `(fd, sessionID)` pair is held in a single `atomic.Pointer[fdState]`:
+The `(fd, sessionID, epoch)` triple is held in a single
+`atomic.Pointer[fdState]`:
 
 ```go
 type fdState struct {
     fd        uint64
     sessionID string
+    epoch     string // server boot epoch this fd was opened/reopened against
 }
 ```
 
-This keeps the pair consistent without a read lock: any reader that loads
+This keeps the values consistent without a read lock: any reader that loads
 the pointer sees either the pre-reclaim or post-reclaim state atomically,
 never a mix. The write side (swap-in) is protected by `reopenMu`; reads
-are lock-free.
+are lock-free. The `epoch` rides along so a *subsequent* reap is judged
+against the incarnation the fd was last reopened on, not the original one.
 
 ### 4.3 `reclaimIfStale`
 
@@ -126,19 +150,27 @@ func (h *grpcFileHandle) reclaimIfStale(ctx context.Context) fuse.Status
    `cur.sessionID` to `client.SessionID()`. Equal → return `fuse.OK`
    immediately (the common case for a handle that has never gone stale).
 
-2. **Acquire `reopenMu`.** Re-check the predicate under the lock. A racing
-   caller may have already reclaimed; the re-check avoids a redundant
-   `Open` RPC.
+2. **Restart-vs-reap gate.** The session changed. Compare `client.BootEpoch()`
+   to `cur.epoch`. **Equal → a same-process reap:** return `fuse.OK` *without
+   reopening*. The fd-op then proceeds with the dead fd and the server returns
+   a clean `NotFound`, so the application gets an honest error instead of a
+   silently-substituted file. Only when the epoch **differs** (a true restart)
+   does reclaim continue.
 
-3. **Reopen.** Call `client.File().Open(path, reopenFlags)` against the
-   live session, with `grpc.WaitForReady(true)` so the call transparently
-   waits for the new server to finish starting up.
+3. **Acquire `reopenMu`.** Re-check both the session id and the epoch under
+   the lock (a racing caller may have already reclaimed, or the change may have
+   resolved into a reap); either re-check returns `fuse.OK` and skips the
+   redundant `Open`.
 
-4. **Atomic swap.** On success, store a new `&fdState{fd: newFd, sessionID: live}`
-   via `h.state.Store`. All subsequent lock-free reads on this handle see
-   the fresh pair.
+4. **Reopen.** Call `client.File().Open(path, reopenFlags)` under the original
+   `reopenCaller`, against the live session, with `grpc.WaitForReady(true)` so
+   the call transparently waits for the new server to finish starting up.
 
-5. **Surface failure.** If the path no longer resolves (unlinked-but-open;
+5. **Atomic swap.** On success, store a new
+   `&fdState{fd: newFd, sessionID: live, epoch: liveEpoch}` via `h.state.Store`.
+   All subsequent lock-free reads on this handle see the fresh triple.
+
+6. **Surface failure.** If the path no longer resolves (unlinked-but-open;
    see §6), reclaim fails and the error surfaces to the application.
 
 ### 4.4 Wiring into every fd-op
@@ -160,6 +192,10 @@ like `classIdempotentRead`. `classPathMutation` still bails on a session
 change (no fd to reopen; replay-unsafe against the new session's empty
 idempotency table).
 
+This relaxation does not cause a reaped fd to loop: on a reap, `reclaimIfStale`
+does not reopen, the op sends the dead fd, and the server returns `NotFound` —
+a *permanent* (non-retryable) status — so `retryOp` returns it immediately.
+
 ---
 
 ## 5. Server side
@@ -178,10 +214,14 @@ A crash skips the drain. In-flight bytes from the crashed op are lost
 file and subsequent ops succeed.
 
 **Config invariant:** `server.session.grace_period` must be `≥` the client's
-`rpc.retry_window`. Both default to 60 s. If the grace period is shorter
-than the retry window, a session can be reaped while the client is still
-trying to reclaim within the window, causing spurious errors. This is config,
-not code.
+`rpc.retry_window`. Both default to 60 s. The grace period keeps a session
+alive across a brief disconnect so `Resume` reattaches the *same* session and
+the fds stay valid. If the grace period is shorter than the retry window, a
+blip only slightly longer than the grace gets the session reaped while the
+server is otherwise healthy; because that is a same-process reap (epoch
+unchanged), the client correctly fails the fd cleanly rather than reopening —
+but it is an avoidable loss of availability. Keep grace `≥` window. This is
+config, not code.
 
 ---
 
@@ -232,18 +272,30 @@ Two cases cannot be recovered by reopen-by-path:
 ## 8. Data flow — planned restart
 
 ```
-app write() ─▶ grpcFileHandle{fdState: {fd=7, sessionID=A}}
-               ─▶ Write(fd=7, sid=A) ─▶ server(session A)
+app write() ─▶ grpcFileHandle{fdState: {fd=7, sessionID=A, epoch=E1}}
+               ─▶ Write(fd=7, sid=A) ─▶ server(session A, epoch E1)
                                           │ SIGTERM → GracefulStop (drains, exits)
-                        UNAVAILABLE ◀─────┘
+                        UNAVAILABLE ◀─────┘  ... process restarts → epoch E2
 
-SessionHandshake: Resume(A) → Resumed=false → Create → live sessionID=B
+SessionHandshake: Resume(A) → Resumed=false → Create → sessionID=B, epoch=E2
 
 client retryOp: WaitForReady reconnects; next attempt:
-  reclaimIfStale: state.sessionID(A) ≠ client.SessionID(B)
-    → Open(path, reopenFlags) → new fd=3
-    → state.Store(&fdState{fd=3, sessionID=B})
+  reclaimIfStale: state.sessionID(A) ≠ client.SessionID(B)   [stale]
+                  client.BootEpoch(E2) ≠ state.epoch(E1)     [restart, not reap]
+    → Open(path, reopenFlags, reopenCaller) → new fd=3
+    → state.Store(&fdState{fd=3, sessionID=B, epoch=E2})
   retry Write(fd=3, sid=B) ─────────────────────────▶ OK
 
 app write() returns — never saw an error
+```
+
+Contrast — a same-process **reap** (server stays up, epoch unchanged):
+
+```
+SessionHandshake: Resume(A) → Resumed=false → Create → sessionID=B, epoch=E1
+  reclaimIfStale: state.sessionID(A) ≠ client.SessionID(B)   [stale]
+                  client.BootEpoch(E1) == state.epoch(E1)    [reap → do NOT reopen]
+    → return OK without reopening
+  Read(fd=7, sid=A) ─▶ server: session A unknown ─▶ NotFound ─▶ ENOENT
+app read() gets a clean error — no silent file substitution
 ```
