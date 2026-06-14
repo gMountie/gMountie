@@ -40,7 +40,7 @@ func (h *grpcFileHandle) reclaimIfStale(ctx context.Context) fuse.Status {
 
 	reply, err := h.client.File().Open(ctx, &proto.OpenRequest{
 		Volume:    h.volume,
-		Caller:    callerFromCtx(ctx),
+		Caller:    h.reopenCaller,
 		Path:      h.path,
 		Flags:     h.reopenFlags,
 		SessionId: live,
