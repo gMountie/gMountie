@@ -105,8 +105,8 @@ func (s *ReclaimStaleSuite) TestReopensWhenStale() {
 	st := h.reclaimIfStale(context.Background())
 
 	s.Require().Equal(fuse.OK, st)
-	s.Assert().Equal(wantFd, h.fd, "fd must be updated to the reply fd")
-	s.Assert().Equal("B", h.sessionID, "sessionID must be updated to the live session")
+	s.Assert().Equal(wantFd, h.state.Load().fd, "fd must be updated to the reply fd")
+	s.Assert().Equal("B", h.state.Load().sessionID, "sessionID must be updated to the live session")
 	fileClient.AssertNumberOfCalls(s.T(), "Open", 1)
 }
 
@@ -123,13 +123,13 @@ func (s *ReclaimStaleSuite) TestNoopWhenFresh() {
 	client.EXPECT().File().Return(fileClient).Once()
 
 	h := s.newStaleHandle(client, fileClient, "/f", 7, uint32(syscall.O_RDONLY), "A")
-	origFd := h.fd
+	origFd := h.state.Load().fd
 
 	st := h.reclaimIfStale(context.Background())
 
 	s.Require().Equal(fuse.OK, st)
-	s.Assert().Equal(origFd, h.fd, "fd must be unchanged")
-	s.Assert().Equal("A", h.sessionID, "sessionID must be unchanged")
+	s.Assert().Equal(origFd, h.state.Load().fd, "fd must be unchanged")
+	s.Assert().Equal("A", h.state.Load().sessionID, "sessionID must be unchanged")
 	fileClient.AssertNumberOfCalls(s.T(), "Open", 0)
 }
 
@@ -165,8 +165,8 @@ func (s *ReclaimStaleSuite) TestConcurrentReopenOnce() {
 	wg.Wait()
 
 	s.Assert().Equal(int32(1), openCount.Load(), "Open must be called exactly once despite concurrent callers")
-	s.Assert().Equal(uint64(42), h.fd, "fd must be updated")
-	s.Assert().Equal("B", h.sessionID, "sessionID must be updated")
+	s.Assert().Equal(uint64(42), h.state.Load().fd, "fd must be updated")
+	s.Assert().Equal("B", h.state.Load().sessionID, "sessionID must be updated")
 }
 
 func TestReclaimStaleSuite(t *testing.T) {

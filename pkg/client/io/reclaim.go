@@ -25,11 +25,16 @@ import (
 // are swapped to the new values. On failure the fuse.Status surfaces (notably
 // the unlinked-but-open case: the path no longer resolves and reopen fails).
 func (h *grpcFileHandle) reclaimIfStale(ctx context.Context) fuse.Status {
+	cur := h.state.Load()
+	live := h.client.SessionID()
+	if cur.sessionID == live { // lock-free fast path
+		return fuse.OK
+	}
 	h.reopenMu.Lock()
 	defer h.reopenMu.Unlock()
-
-	live := h.client.SessionID()
-	if h.sessionID == live {
+	cur = h.state.Load()
+	live = h.client.SessionID()
+	if cur.sessionID == live { // a racing caller already reclaimed
 		return fuse.OK
 	}
 
@@ -50,9 +55,8 @@ func (h *grpcFileHandle) reclaimIfStale(ctx context.Context) fuse.Status {
 
 	log.Log.Info("reclaimed file handle after server restart",
 		zap.String("path", h.path),
-		zap.Uint64("old_fd", h.fd), zap.Uint64("new_fd", reply.Fd))
-	h.fd = reply.Fd
-	h.sessionID = live
+		zap.Uint64("old_fd", cur.fd), zap.Uint64("new_fd", reply.Fd))
+	h.state.Store(&fdState{fd: reply.Fd, sessionID: live})
 	return fuse.OK
 }
 
