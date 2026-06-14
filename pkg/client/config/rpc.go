@@ -125,10 +125,13 @@ type RpcConfig struct {
 	RetryWindow time.Duration `mapstructure:"retry_window" validate:"gte=0"`
 }
 
-// NewRpcConfig parses an RpcConfig from a viper sub-tree. A nil v yields
-// defaults; an empty sub-tree yields defaults; explicit values override.
-func NewRpcConfig(v *viper.Viper) (*RpcConfig, error) {
-	cfg := &RpcConfig{
+// defaultRpcConfig returns an RpcConfig seeded entirely from the Default*
+// constants. It is the single source of the literal defaults, reused by the
+// v==nil fast path and as the unmarshal target so the SetDefault block below
+// (kept only to surface defaults via v.AllSettings()/--effective) and this
+// literal can never drift apart.
+func defaultRpcConfig() *RpcConfig {
+	return &RpcConfig{
 		TimeoutMeta:         DefaultRpcTimeoutMeta,
 		TimeoutIO:           DefaultRpcTimeoutIO,
 		ReadaheadChunkBytes: DefaultReadaheadChunkBytes,
@@ -144,6 +147,12 @@ func NewRpcConfig(v *viper.Viper) (*RpcConfig, error) {
 		Compression: DefaultCompression,
 		RetryWindow: DefaultRpcRetryWindow,
 	}
+}
+
+// NewRpcConfig parses an RpcConfig from a viper sub-tree. A nil v yields
+// defaults; an empty sub-tree yields defaults; explicit values override.
+func NewRpcConfig(v *viper.Viper) (*RpcConfig, error) {
+	cfg := defaultRpcConfig()
 	if v == nil {
 		return cfg, nil
 	}
