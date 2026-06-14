@@ -2033,7 +2033,7 @@ func (s *FdOpReclaimSuite) SetupTest() {
 func (s *FdOpReclaimSuite) newStaleHandle() *grpcFileHandle {
 	h := newGrpcFileHandle(
 		s.client, "testVolume", "/test/file", 7,
-		0 /*flags — O_RDONLY*/,
+		0,   /*flags — O_RDONLY*/
 		nil, /*caller — not relevant for FdOpReclaimSuite tests*/
 		30*time.Second,
 		"stale-session",
