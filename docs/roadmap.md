@@ -106,7 +106,7 @@ See [Architecture & Protocol](design/architecture.md) for the implementation rec
 3. Per-volume / per-op business metrics: `gmountie_server_open_files`, `gmountie_server_bytes_total`, `gmountie_server_rpc_errors_total`, `gmountie_server_request_duration_seconds`, `gmountie_server_sessions_active`; client-side: `gmountie_client_retry_total`, `gmountie_client_in_flight`, and cache metrics (landed with Phase 4).
 4. gRPC health protocol + `/healthz` / `/readyz` endpoints.
 5. `Version` gRPC + `/version` HTTP endpoint wired to `pkg.GetBuildInfo()`.
-6. Metrics port moved to `server.metrics_addr` config key.
+6. Ops HTTP server (metrics + health) address configurable via the `server.ops.addr` config key.
 
 **Deferred (still deferred):**
 - OpenTelemetry tracing — log-correlation IDs cover most of the value at a fraction of the build complexity.
