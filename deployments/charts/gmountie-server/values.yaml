@@ -156,8 +156,19 @@ auth:
   # config checksum annotation only tracks chart-managed content).
   existingSecret: ""
 
+# Opt-in marker that this install is reachable from outside the cluster.
+# The chart's demo-credential refusal already triggers automatically for a
+# LoadBalancer/NodePort Service or an enabled ingress, but a ClusterIP
+# Service fronted by a Gateway-API GRPCRoute + BackendTLSPolicy (the
+# documented prod path — see service.appProtocol below) looks internal to
+# the chart and would otherwise ship the PUBLISHED demo password externally.
+# Set this true for Gateway-API / GRPCRoute installs so the refusal applies.
+exposedExternally: false
+
 # Cluster-internal Service. Set type: LoadBalancer (and optionally
-# externalTrafficPolicy) to expose externally.
+# externalTrafficPolicy) to expose externally. For a ClusterIP Service
+# exposed via a Gateway-API GRPCRoute, set exposedExternally: true above so
+# the demo-credential refusal still fires.
 service:
   type: ClusterIP
   port: 9449
@@ -172,6 +183,8 @@ service:
   # appProtocol on the grpc port. Empty (default) suits a TLS gRPC backend
   # behind a GRPCRoute + BackendTLSPolicy (Envoy negotiates h2 over TLS via
   # ALPN). Set "kubernetes.io/h2c" only for a cleartext-h2 backend.
+  # NOTE: a GRPCRoute exposes a ClusterIP Service externally — set the
+  # top-level exposedExternally: true so the demo-credential refusal applies.
   appProtocol: ""
 
 # Plain-HTTP /metrics listener + optional Prometheus-Operator ServiceMonitor.
