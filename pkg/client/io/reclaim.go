@@ -1,6 +1,60 @@
 package io
 
-import "syscall"
+import (
+	"context"
+	"syscall"
+
+	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
+
+	"github.com/google/uuid"
+	"github.com/hanwen/go-fuse/v2/fuse"
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
+)
+
+// reclaimIfStale reopens this handle's server-side fd against the current
+// session when the server has restarted. The predicate is the handle's session
+// snapshot (taken at open) vs the client's live session id: they diverge
+// exactly when SessionHandshake fell back from Resume to Create — i.e. the
+// server lost the original session and every fd under it.
+//
+// Safe to call on every fd-op attempt: a fresh handle is a cheap compare-and-
+// return. reopenMu serializes concurrent callers so the fd is reopened once;
+// each re-checks the predicate under the lock. On success h.fd and h.sessionID
+// are swapped to the new values. On failure the fuse.Status surfaces (notably
+// the unlinked-but-open case: the path no longer resolves and reopen fails).
+func (h *grpcFileHandle) reclaimIfStale(ctx context.Context) fuse.Status {
+	h.reopenMu.Lock()
+	defer h.reopenMu.Unlock()
+
+	live := h.client.SessionID()
+	if h.sessionID == live {
+		return fuse.OK
+	}
+
+	reply, err := h.client.File().Open(ctx, &proto.OpenRequest{
+		Volume:    h.volume,
+		Caller:    callerFromCtx(ctx),
+		Path:      h.path,
+		Flags:     h.reopenFlags,
+		SessionId: live,
+		RequestId: uuid.NewString(),
+	}, grpc.WaitForReady(true))
+	if err != nil {
+		return statusFromRPCError(err)
+	}
+	if fuse.Status(reply.Status) != fuse.OK {
+		return fuse.Status(reply.Status)
+	}
+
+	log.Log.Info("reclaimed file handle after server restart",
+		zap.String("path", h.path),
+		zap.Uint64("old_fd", h.fd), zap.Uint64("new_fd", reply.Fd))
+	h.fd = reply.Fd
+	h.sessionID = live
+	return fuse.OK
+}
 
 // sanitizeReopenFlags returns the open flags to use when REOPENING an
 // already-open file during reclaim. The file already exists and already holds
