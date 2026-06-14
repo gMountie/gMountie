@@ -29,10 +29,10 @@ const (
 // safe under concurrent calls; the expected usage is one Establish on
 // connect, then one Close at teardown.
 type SessionHandshake struct {
-	client     proto.SessionServiceClient
-	sessionID  string
-	bootEpoch  string
-	running    atomic.Bool
+	client    proto.SessionServiceClient
+	sessionID string
+	bootEpoch string
+	running   atomic.Bool
 	// healthy is true exactly while a keepalive stream is currently open
 	// and draining. It goes false initially, during recovery, and after
 	// teardown. It is safe to read from any goroutine (atomic).

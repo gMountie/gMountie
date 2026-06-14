@@ -22,9 +22,9 @@ import (
 const keepalivePingInterval = 10 * time.Second
 
 type SessionController struct {
-	sessions   service.SessionManager
-	volSvc     service.VolumeService
-	bootEpoch  string
+	sessions  service.SessionManager
+	volSvc    service.VolumeService
+	bootEpoch string
 	proto.UnimplementedSessionServiceServer
 }
 
