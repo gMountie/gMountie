@@ -81,9 +81,10 @@ checksum:
   name_template: 'checksums.txt'
   algorithm: sha256
 
-# SPDX SBOM per release archive (syft default). The container image SBOM is
-# generated + attested separately in the Release workflow — goreleaser has no
-# native docker SBOM step.
+# SPDX SBOM per release archive (syft default). These cover the archived
+# binaries only — the container image is signed (cosign, see docker_signs
+# below) but NOT SBOM-attested; goreleaser has no native docker SBOM step and
+# the Release workflow does not generate/attest an image SBOM.
 sboms:
   - id: archive
     artifacts: archive
