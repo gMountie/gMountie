@@ -113,14 +113,14 @@ gMountie emits JSON logs in non-TTY environments by default — easy to feed int
 
 ## Health and metrics
 
-`server.metrics: true` exposes Prometheus metrics and a health endpoint on `:9090`:
+The ops HTTP server exposes Prometheus metrics and the health endpoints; it binds `server.ops.addr` (default `127.0.0.1:9090`):
 
 ```bash
 curl http://127.0.0.1:9090/healthz       # 200 = ready
 curl http://127.0.0.1:9090/metrics       # Prometheus text format
 ```
 
-Scrape `:9090` from your monitoring stack; alert on `up == 0` and on the per-RPC error-rate metrics. You can change the port via `server.metrics_addr` in the config.
+Scrape `:9090` from your monitoring stack; alert on `up == 0` and on the per-RPC error-rate metrics. You can change the address via `server.ops.addr` in the config.
 
 ## Upgrading
 

@@ -48,7 +48,7 @@ auth:
   type: basic
   users:
     - username: admin
-      password_hash: $argon2id$v=19$m=19456,t=2,p=1$...  # output of: gmountie genpass
+      password_hash: $argon2id$v=19$m=65536,t=3,p=4$...  # output of: gmountie genpass
 volumes:
   - name: shared
     path: /srv/shared
