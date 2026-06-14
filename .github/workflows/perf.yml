@@ -50,6 +50,10 @@ jobs:
     # gha-runner-scale-set runners are addressed by a single label equal to the
     # scale-set name; `[self-hosted, gmountie-perf]` would never match.
     runs-on: gmountie-perf
+    # Headroom over the ~30-40 min worst case (see COUNT/BENCHTIME note below)
+    # while staying well under the 360-min self-hosted cap, so a hung fio/netem
+    # step can't pin the single perf runner for six hours.
+    timeout-minutes: 90
     env:
       # WORKDIR is the runner Pod's node-local NVMe PVC mount (claim
       # gmountie-perf-data, mounted at /perf-data) so fio + benches hit a stable
