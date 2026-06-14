@@ -79,13 +79,13 @@ func (c *attrCache) putPositive(path string, attr *io.Attr) {
 		return
 	}
 	ae := &attrEntry{attr: attr, expiresAt: c.now().Add(c.attrTTL)}
-	c.st.put(path, ae, attrEntrySize(ae))
+	c.st.put(path, ae, attrEntrySize(path, ae))
 }
 
 // putNegative caches an ENOENT result.
 func (c *attrCache) putNegative(path string) {
 	ae := &attrEntry{negative: true, expiresAt: c.now().Add(c.negativeTTL)}
-	c.st.put(path, ae, attrEntrySize(ae))
+	c.st.put(path, ae, attrEntrySize(path, ae))
 }
 
 // invalidate drops the cached entry for path (positive or negative).
@@ -93,12 +93,19 @@ func (c *attrCache) invalidate(path string) {
 	c.st.remove(path)
 }
 
-// attrEntrySize estimates the in-memory footprint of an attrEntry.
-// Used for accountant bookkeeping; small and approximate is fine.
-func attrEntrySize(_ *attrEntry) int {
-	// 16-ish fields × 8 bytes + struct overhead. 256 is a generous
-	// rounded estimate that absorbs the negative variant too.
-	return 256
+// attrFixedOverheadBytes approximates the per-entry resident cost that does
+// NOT scale with the path: the io.Attr value, the attrEntry struct, the store
+// entry struct, the container/list node, and amortised Go map bucket overhead.
+const attrFixedOverheadBytes = 300
+
+// attrEntrySize estimates the real in-memory footprint of a cached attr entry.
+// The path string is stored TWICE (the map key and the store entry's key
+// copy), so it dominates the cost for the long, distinct paths that drive the
+// leak (git objects, sqlite temp files). The old flat 256 B ignored the key
+// entirely and systematically under-counted, letting the maps grow in real
+// heap far past the byte budget without eviction (issue #118).
+func attrEntrySize(path string, _ *attrEntry) int {
+	return 2*len(path) + attrFixedOverheadBytes
 }
 
 // persistedAttr is the on-disk shape. Negative entries persist false
@@ -140,7 +147,7 @@ func newAttrCacheWithPersist(acct *accountant, attrTTL, negativeTTL time.Duratio
 			negative:  pa.Negative,
 			expiresAt: time.Unix(0, pa.ExpiresAt),
 		}
-		return ae, attrEntrySize(ae), true
+		return ae, attrEntrySize(key, ae), true
 	}
 	putter := func(key string, value any, _ int) {
 		ae, _ := value.(*attrEntry) // store only holds *attrEntry

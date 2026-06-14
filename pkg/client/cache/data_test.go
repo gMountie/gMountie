@@ -12,7 +12,7 @@ type DataCacheTestSuite struct {
 }
 
 func (s *DataCacheTestSuite) SetupTest() {
-	s.c = newDataCache(newAccountant(0), 1024) // 1 KiB chunks for arithmetic clarity
+	s.c = newDataCache(newAccountant(0, 0), 1024) // 1 KiB chunks for arithmetic clarity
 }
 
 func (s *DataCacheTestSuite) TestMissAndPut() {
