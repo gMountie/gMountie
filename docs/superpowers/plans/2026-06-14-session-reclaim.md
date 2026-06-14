@@ -344,9 +344,110 @@ git commit -m "feat(client): reclaimIfStale reopens a handle against the new ses
 
 ---
 
-## Task 4: Call reclaimIfStale from every fd-op
+## Task 4a: Make fd + sessionID race-free (atomic fdState)
 
-Wire the self-heal into the fd-op closures so a stale handle reopens before the RPC. Each fd-op on `grpcFileHandle` runs its RPC inside a `retryOp(h.client, ...)` closure; add the reclaim call as the first statement of each closure.
+`reclaimIfStale` (Task 3) writes `h.fd` and `h.sessionID` under `reopenMu`, but every fd-op reads them WITHOUT the lock (Read ~764, Write ~907, Flush ~1090, Release ~1033, Fsync, Allocate, locks, CopyFileRange, Lseek, the streaming-write header, drainCoalescer). That is a data race once reclaim can write concurrently. Fold both fields into one immutable snapshot behind an `atomic.Pointer`, so reads are lock-free AND get a consistent `(fd, sessionID)` pair, and reclaim swaps the whole pointer. This also restores the lock-free fast path in `reclaimIfStale`. No behaviour change; all existing tests still pass.
+
+**Files:** Modify `pkg/client/io/backend_grpc.go` (struct, constructor, every `h.fd`/`h.sessionID` read site) and `pkg/client/io/reclaim.go` (`reclaimIfStale`).
+
+- [ ] **Step 1: Replace the two plain fields with an atomic snapshot**
+
+In `grpcFileHandle`, remove `fd uint64` and `sessionID string`; add:
+
+```go
+	// state is the (fd, sessionID) pair this handle currently targets. It is
+	// swapped atomically by reclaimIfStale after a server restart so concurrent
+	// fd-ops always read a consistent, current pair without locking. reopenMu
+	// still serializes the reopen itself (one Open per restart).
+	state atomic.Pointer[fdState]
+```
+
+Add the value type (top of backend_grpc.go near the struct, or in reclaim.go — keep it next to the struct):
+
+```go
+// fdState is the immutable (server fd, session id) pair a grpcFileHandle
+// currently targets. reclaimIfStale swaps a fresh *fdState in atomically.
+type fdState struct {
+	fd        uint64
+	sessionID string
+}
+```
+
+Ensure `sync/atomic` is imported.
+
+- [ ] **Step 2: Initialize it in the constructor**
+
+In `newGrpcFileHandle`, after building `h`, store the initial snapshot (replacing the removed `fd:`/`sessionID:` literal fields):
+
+```go
+	h.state.Store(&fdState{fd: fd, sessionID: sessionID})
+```
+
+- [ ] **Step 3: Convert every read site**
+
+Grep both files for `h.fd` and `h.sessionID`. At the top of each fd-op (and `reclaimIfStale`, and any helper that reads them), load once into a local and use the local for that operation:
+
+```go
+	st := h.state.Load()
+	// ... use st.fd and st.sessionID in the request ...
+```
+
+Replace `Fd: h.fd` → `Fd: st.fd` and `SessionId: h.sessionID` → `SessionId: st.sessionID` throughout. For ops that previously read `h.fd`/`h.sessionID` in multiple spots within one call, take ONE `st := h.state.Load()` and reuse it so the pair stays consistent.
+
+- [ ] **Step 4: Update `reclaimIfStale` to swap the pointer**
+
+```go
+func (h *grpcFileHandle) reclaimIfStale(ctx context.Context) fuse.Status {
+	cur := h.state.Load()
+	live := h.client.SessionID()
+	if cur.sessionID == live { // lock-free fast path
+		return fuse.OK
+	}
+	h.reopenMu.Lock()
+	defer h.reopenMu.Unlock()
+	cur = h.state.Load()
+	live = h.client.SessionID()
+	if cur.sessionID == live { // a racing caller already reclaimed
+		return fuse.OK
+	}
+	reply, err := h.client.File().Open(ctx, &proto.OpenRequest{
+		Volume:    h.volume,
+		Caller:    callerFromCtx(ctx),
+		Path:      h.path,
+		Flags:     h.reopenFlags,
+		SessionId: live,
+		RequestId: uuid.NewString(),
+	}, grpc.WaitForReady(true))
+	if err != nil {
+		return statusFromRPCError(err)
+	}
+	if fuse.Status(reply.Status) != fuse.OK {
+		return fuse.Status(reply.Status)
+	}
+	log.Log.Info("reclaimed file handle after server restart",
+		zap.String("path", h.path),
+		zap.Uint64("old_fd", cur.fd), zap.Uint64("new_fd", reply.Fd))
+	h.state.Store(&fdState{fd: reply.Fd, sessionID: live})
+	return fuse.OK
+}
+```
+
+Update the Task-3 tests in `reclaim_test.go` that asserted on `h.fd`/`h.sessionID` to read `h.state.Load().fd` / `.sessionID` instead.
+
+- [ ] **Step 5: Verify + commit**
+
+Run (cwd = worktree): `go build ./pkg/client/...` and `go test -race ./pkg/client/io/`. All green (behaviour unchanged).
+
+```bash
+git -C <worktree> add pkg/client/io/backend_grpc.go pkg/client/io/reclaim.go pkg/client/io/reclaim_test.go
+git -C <worktree> commit -m "refactor(client): atomic (fd, sessionID) snapshot for race-free reclaim"
+```
+
+---
+
+## Task 4b: Call reclaimIfStale from every fd-op
+
+Wire the self-heal into the fd-op closures so a stale handle reopens before the RPC. Each fd-op on `grpcFileHandle` runs its RPC inside a `retryOp(h.client, ...)` closure; add the reclaim call as the first statement of each closure. (After Task 4a the request fields read from `st := h.state.Load()` — call `reclaimIfStale` FIRST, then `h.state.Load()` so the load sees the reopened pair.)
 
 **Files:**
 - Modify: `pkg/client/io/backend_grpc.go` (fd-op closures: `Read` ~755, streaming `Write` ~830, `Release` ~1025, `Flush` ~1083, `Fsync` ~1118, `Allocate`, `GetLk`/`SetLk`/`SetLkw`, `CopyFileRange`, `Lseek`; and `drainCoalescer` ~986)
