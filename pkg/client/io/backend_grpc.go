@@ -638,7 +638,7 @@ func (b *BackendClient) Open(ctx context.Context, path string, flags uint32) (Fi
 		return nil, fuse.Status(res.Status)
 	}
 	return newGrpcFileHandle(
-		b.client, b.volume, path, res.Fd,
+		b.client, b.volume, path, res.Fd, flags,
 		b.client.IOTimeout(), b.client.SessionID(),
 		b.client.PerFileConfig(),
 	), fuse.OK
@@ -676,7 +676,7 @@ func (b *BackendClient) Create(ctx context.Context, parent, name string, flags, 
 		return nil, nil, fuse.Status(res.Status)
 	}
 	h := newGrpcFileHandle(
-		b.client, b.volume, path, res.Fd,
+		b.client, b.volume, path, res.Fd, flags,
 		b.client.IOTimeout(), b.client.SessionID(),
 		b.client.PerFileConfig(),
 	)
@@ -1350,8 +1350,15 @@ type grpcFileHandle struct {
 	volume     string
 	path       string
 	fd         uint64
-	ioTimeout  time.Duration
-	sessionID  string
+	// reopenFlags are the access-mode + O_APPEND flags to use when reclaiming
+	// this handle after a server restart (creation/trunc flags stripped). Set
+	// once at construction; never mutated.
+	reopenFlags uint32
+	// reopenMu serializes reclaimIfStale so concurrent fd-ops on this handle
+	// reopen the server fd exactly once. It guards the fd/sessionID swap.
+	reopenMu  sync.Mutex
+	ioTimeout time.Duration
+	sessionID string
 	// dirty tracks whether a Write has been accepted since the last
 	// successful Flush or Fsync. Flush skips the RPC entirely when dirty is
 	// false (clean-handle fast path). Set atomically by Write; cleared
@@ -1418,6 +1425,7 @@ func newGrpcFileHandle(
 	client grpcclient.Client,
 	volume, path string,
 	fd uint64,
+	flags uint32,
 	ioTimeout time.Duration,
 	sessionID string,
 	cfg grpcclient.PerFileConfig,
@@ -1429,6 +1437,7 @@ func newGrpcFileHandle(
 		volume:            volume,
 		path:              path,
 		fd:                fd,
+		reopenFlags:       sanitizeReopenFlags(flags),
 		ioTimeout:         ioTimeout,
 		sessionID:         sessionID,
 		coalesceThreshold: cfg.WriteCoalesceBytes,
