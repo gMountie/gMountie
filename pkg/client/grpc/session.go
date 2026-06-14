@@ -29,9 +29,10 @@ const (
 // safe under concurrent calls; the expected usage is one Establish on
 // connect, then one Close at teardown.
 type SessionHandshake struct {
-	client    proto.SessionServiceClient
-	sessionID string
-	running   atomic.Bool
+	client     proto.SessionServiceClient
+	sessionID  string
+	bootEpoch  string
+	running    atomic.Bool
 	// healthy is true exactly while a keepalive stream is currently open
 	// and draining. It goes false initially, during recovery, and after
 	// teardown. It is safe to read from any goroutine (atomic).
@@ -62,6 +63,12 @@ func (h *SessionHandshake) SessionID() string {
 	return h.sessionID
 }
 
+func (h *SessionHandshake) BootEpoch() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.bootEpoch
+}
+
 func (h *SessionHandshake) isRunning() bool {
 	return h.running.Load()
 }
@@ -79,6 +86,12 @@ func (h *SessionHandshake) setSessionID(id string) {
 	h.sessionID = id
 }
 
+func (h *SessionHandshake) setBootEpoch(e string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.bootEpoch = e
+}
+
 // Establish calls Create and opens the initial Keepalive stream, then
 // launches the background recovery loop.
 func (h *SessionHandshake) Establish(ctx context.Context) error {
@@ -93,6 +106,7 @@ func (h *SessionHandshake) Establish(ctx context.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "session create")
 	}
+	h.setBootEpoch(reply.BootEpoch)
 	h.setSessionID(reply.SessionId)
 
 	streamCtx, cancel := context.WithCancel(context.Background())
@@ -238,6 +252,7 @@ func (h *SessionHandshake) tryReattach() (proto.SessionService_KeepaliveClient, 
 	if err != nil {
 		return nil, errors.Wrap(err, "create after resume failure")
 	}
+	h.setBootEpoch(resp.BootEpoch)
 	h.setSessionID(resp.SessionId)
 	log.Log.Info("session re-created after resume failure (open fds are now invalid)",
 		zap.String("old_session_fp", common.FingerprintID(currentID)),

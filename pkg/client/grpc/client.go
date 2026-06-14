@@ -50,6 +50,11 @@ type Client interface {
 	Lifetime() context.Context
 	// SessionID returns the server-assigned session id obtained during Connect.
 	SessionID() string
+	// BootEpoch returns the server's per-process boot epoch received during the
+	// most recent successful session Create. Empty before Connect succeeds or if
+	// the server does not send one. A change in value across re-connections
+	// indicates a server restart; callers may use this to gate session reclaim.
+	BootEpoch() string
 	// SessionLive reports whether the keepalive-backed session is currently
 	// healthy (a keepalive stream is open and draining). False before Connect,
 	// during recovery, and after Close. `gmountie mount` heartbeats this into
@@ -345,6 +350,16 @@ func (c *ClientImpl) SessionID() string {
 		return ""
 	}
 	return c.handshake.SessionID()
+}
+
+// BootEpoch returns the server's per-process boot epoch received during the
+// most recent successful session Create. Returns "" if Connect has not been
+// called, failed, or if c.handshake is nil.
+func (c *ClientImpl) BootEpoch() string {
+	if c.handshake == nil {
+		return ""
+	}
+	return c.handshake.BootEpoch()
 }
 
 // SessionLive reports whether the keepalive-backed session is currently healthy

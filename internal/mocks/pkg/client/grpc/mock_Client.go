@@ -41,6 +41,50 @@ func (_m *MockClient) EXPECT() *MockClient_Expecter {
 	return &MockClient_Expecter{mock: &_m.Mock}
 }
 
+// BootEpoch provides a mock function for the type MockClient
+func (_mock *MockClient) BootEpoch() string {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for BootEpoch")
+	}
+
+	var r0 string
+	if returnFunc, ok := ret.Get(0).(func() string); ok {
+		r0 = returnFunc()
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+	return r0
+}
+
+// MockClient_BootEpoch_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'BootEpoch'
+type MockClient_BootEpoch_Call struct {
+	*mock.Call
+}
+
+// BootEpoch is a helper method to define mock.On call
+func (_e *MockClient_Expecter) BootEpoch() *MockClient_BootEpoch_Call {
+	return &MockClient_BootEpoch_Call{Call: _e.mock.On("BootEpoch")}
+}
+
+func (_c *MockClient_BootEpoch_Call) Run(run func()) *MockClient_BootEpoch_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockClient_BootEpoch_Call) Return(s string) *MockClient_BootEpoch_Call {
+	_c.Call.Return(s)
+	return _c
+}
+
+func (_c *MockClient_BootEpoch_Call) RunAndReturn(run func() string) *MockClient_BootEpoch_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Close provides a mock function for the type MockClient
 func (_mock *MockClient) Close() error {
 	ret := _mock.Called()
