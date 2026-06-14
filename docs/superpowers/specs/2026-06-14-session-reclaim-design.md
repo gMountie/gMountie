@@ -1,9 +1,9 @@
 # Session reclaim across server restarts — Design A
 
 **Date:** 2026-06-14
-**Status:** Approved design, pre-implementation
+**Status:** Approved design (refined during planning — see "Refinement")
 **Repo:** `gMountie` (OSS core)
-**Scope:** Make open files survive a `gmountie serve` process restart, driven by client-side reclaim. No external database.
+**Scope:** Make open files survive a `gmountie serve` process restart, driven by client-side reclaim. No external database, no wire-protocol change.
 
 ---
 
@@ -20,73 +20,75 @@ One instinct is to persist sessions and open files in an external database and r
 
 So a database would store metadata the client already has, while adding a stateful dependency on the filesystem hot path (every `Open`/`Release`/lock round-tripping to it) and a new failure domain (DB down → every mount down). It pays a high price and still does not solve fd restoration.
 
-The proven design for this problem is **NFSv4 server-reboot recovery**: the client is the source of truth for "what I have open," and on detecting a server restart it *reclaims* its state by replaying opens (and, in the full version, locks) against the new server. State authority lives at the client, not in a server-side store.
+The proven design for this problem is **NFSv4 server-reboot recovery**: the client is the source of truth for "what I have open," and on detecting a server restart it *reclaims* its state by replaying opens against the new server. State authority lives at the client, not in a server-side store.
+
+## Refinement — the restart signal already exists
+
+Planning-time code review (`pkg/client/grpc/session.go`, `pkg/client/io/retry.go`, `pkg/client/io/backend_grpc.go`) showed the client **already detects a server restart** — we do not need a new wire-level "boot epoch":
+
+- The client holds a session via `SessionHandshake`. On any disconnect it tries `Resume(session_id)`; on success the server still has the session and fds stay valid (a brief network blip, already handled). A **fresh server process has an empty session table**, so `Resume` returns `Resumed=false` and the client falls back to `Create`, minting a **new `session_id`** (`session.go`, the "open fds are now invalid" path).
+- **The `session_id` change *is* the restart signal.** It changes exactly when the server-side fds are dead (restart, or a grace-period reap) and stays stable when `Resume` succeeds. A new server cannot know the old id, so a true restart always changes it.
+- fd-carrying RPCs already put a **snapshot** of the session id (`h.sessionID`, captured at `Open` time) on the wire, while `Open`/`Create` use the **live** `client.SessionID()`. So `h.sessionID != client.SessionID()` is a precise, per-handle "my fd is stale" predicate — it fires both for an op already in flight during recovery *and* for a handle's first op issued after recovery already completed.
+
+This collapses the server side to nearly nothing and makes the feature **client-only, with no proto change**.
 
 ## Deployment assumption
 
-Reopen-by-path only works if the restarted process sees the **same underlying storage** (the same volume/data directory the original process served). Two requirements on whatever supervises the server:
+Reopen-by-path only works if the restarted process sees the **same underlying storage** (the same volume/data directory the original process served), and the supervisor must give an **exclusive serialized handoff** (old process releases the storage before the new one writes), so the two never have it open read-write at once. The restart gap (old exits → new ready) must fit inside the client retry window. These are generic deployment requirements; verifying a specific orchestrated deployment satisfies them is an operational task for that deployment, not part of this OSS design.
 
-1. **Same data on restart.** The new process must come up with the same backing storage present and readable at the same paths.
-2. **Exclusive serialized handoff.** The previous process must release the storage before the new one writes to it, so the two never have it open read-write simultaneously. The supervisor/orchestrator is responsible for this; this design assumes it and does not attempt to arbitrate concurrent writers itself.
+## Design A
 
-The restart gap (old process exits → new process ready) must fit inside the client retry window (below) for reclaim to be transparent. Both requirements are generic to any deployment model; verifying that a specific orchestrated deployment satisfies them is an operational task for that deployment, not part of this OSS design.
+### Server — already done
 
-## Design A — client reopen-on-epoch + graceful drain
+The graceful path already exists and needs no new code:
 
-Two cooperating pieces. Drain makes *planned* restarts clean (in-flight ops finish and flush before death — no torn writes); client reopen-on-epoch makes open files actually *survive* the restart (planned or crash).
+- `SIGTERM`/`SIGINT` route through `signal.NotifyContext` → `ctx.Done()` → `s.Stop(true)` → gRPC `GracefulStop()` (`cmd/commands/serve.go`, `pkg/server/app.go`, `pkg/server/grpc/server.go`). `GracefulStop` stops accepting new RPCs and **blocks until in-flight RPCs finish — including active streaming `Read`/`Write`** — so planned restarts drain cleanly (no torn in-flight ops). A crash skips this; reclaim still recovers the files, losing only the unflushed in-flight bytes from the crash (same as any process crash on a local fs).
 
-### Server
+The one operational invariant (already stated in code comments): `server.session.grace_period` should be `≥` the client's `rpc.retry_window` so a transparent resume holds for the whole window. Both default to 60s. This is config, not code.
 
-1. **Boot epoch.** On startup the server generates a process-unique **epoch id** (a random nonce, regenerated every boot). It is returned on session establishment and surfaced on fd-carrying RPC replies/metadata so a client can detect "I am now talking to a different server process." A stale epoch on an fd-op is a distinct, retryable signal — not a generic error.
+### Client — lazy per-handle reclaim
 
-2. **Graceful drain on SIGTERM.** The server traps `SIGTERM` and enters a *draining* state:
-   - Reject new `Open`/`Create` and new session establishment with `UNAVAILABLE` (retryable; the client already treats this as a transient, retry-within-window condition).
-   - Let in-flight fd-ops run to completion and flush.
-   - Exit once in-flight work drains or the shutdown deadline approaches.
-   - The supervisor's shutdown grace must comfortably exceed the expected drain time.
+Reclaim is **lazy and per-handle**: a handle reopens itself the next time it is used after going stale. No central registry, no eager enumeration.
 
-   Drain is a complement, not a substitute for reclaim: even with a perfect drain, the new process has an empty session table, so the client must still reopen. Drain's job is to avoid losing unflushed in-flight bytes during *planned* restarts. A crash skips drain; reclaim still recovers the files (losing only the unflushed in-flight bytes from the crash).
+1. **Retain reopen flags.** Add a sanitized `reopenFlags` to `grpcFileHandle` (it currently keeps `path` and `fd` but not `flags`). Sanitize at construction: strip `O_CREAT | O_EXCL | O_TRUNC` (re-applying `O_TRUNC` would truncate the file the app is mid-write on — data loss; `O_EXCL` would fail since the file now exists) and preserve the access mode and `O_APPEND`. A `Create`'d handle therefore reclaims via **`Open`**, never `Create`.
 
-### Client
+2. **`reclaimIfStale(ctx)` on the handle.** Under a per-handle mutex (so concurrent ops on the same handle reopen once, re-checking the predicate under the lock): if `h.sessionID != h.client.SessionID()`, call `client.File().Open(path, reopenFlags)` against the live session (`grpc.WaitForReady(true)`), and on success swap in the new `fd` and `sessionID`. If the path no longer resolves (unlinked-but-open), reclaim fails and the error surfaces.
 
-Extend the existing resilient-mount machinery (PR `#93`: windowed `retryOp`, fresh per-attempt deadlines, `WaitForReady`, and the session-change guard). Today the session-change guard *stops* fd-ops when it detects the session changed. This design changes that response from "stop" to "reclaim":
+3. **Invoke it inside each fd-op attempt.** Call `reclaimIfStale` at the top of every fd-op's `retryOp` closure — `Read`, `Write` (streaming), `Flush`, `Fsync`, `Release`, `Allocate`, `GetLk`/`SetLk`/`SetLkw`, `CopyFileRange`, `Lseek`, and the coalescer drain path (`drainCoalescer`). Because it runs per attempt, it benefits from `WaitForReady` reconnect and the retry window, and **coalesced writes buffered on a now-stale handle replay to the new fd** instead of being dropped.
 
-1. **Detect epoch change.** When an fd-op observes a new epoch (or the session is unknown to the server), the client treats it as a reclaim trigger rather than a terminal error.
+4. **Relax the retryOp guard for `classFdOp`.** Today `retry.go` stops retrying a `classFdOp` on a session-id change ("fd dead / replay-unsafe"). With reclaim that reason no longer holds — the fd self-heals — so `classFdOp` should keep retrying within the window like `classIdempotentRead`. `classPathMutation` keeps stopping (no fd to reopen; replay-unsafe against the new session's empty idempotency cache).
 
-2. **Re-establish the session.** Open a fresh session against the new process. Do **not** reuse or persist the old `session_id`/bearer token in any shared store — re-establish credentials normally. The new session gets the new epoch.
-
-3. **Reopen open files by `(path, flags)`.** For every file the client currently holds open, re-issue `Open` against the new session, obtain the new server-assigned fd handle, and **remap** the client's internal handle → server-fd table. The application's file descriptors are unchanged; only the server-side handle behind them is swapped.
-
-4. **Resume.** In-flight reads/writes that were stalling inside the retry window now succeed against the reclaimed handles. The application's `read()`/`write()` calls never returned an error — they stalled and resumed.
-
-All of this happens inside `rpc.retry_window` (default 60s). If reclaim cannot complete within the window (e.g., the server never comes back), the client surfaces the error as it does today.
+All of this happens inside `rpc.retry_window` (default 60s). If reclaim cannot complete within the window (server never returns, or the path is gone), the client surfaces the error as it does today.
 
 ### Data flow (planned restart)
 
 ```
-app write() ─▶ client fd table ─▶ Write(fd=7, offset, data) ─▶ server(epoch=A)
-                                                                     │ SIGTERM
-                                                  UNAVAILABLE ◀──────┘ drain: finish in-flight, flush, exit
-client: retryOp window, WaitForReady
-                                                              ┌──── server(epoch=B) boots, empty sessions
-re-establish session ───────────────────────────────────────┤
-reopen path "/foo" flags=O_RDWR ─▶ Open ─▶ new fd=3 ─────────┤
-remap client handle: 7 → 3                                    │
-retry Write(fd=3, offset, data) ─────────────────────────────┴──▶ OK
-app write() returns ───────────────────────────────────────────── (never saw an error)
+app write() ─▶ grpcFileHandle{fd=7, sessionID=A} ─▶ Write(fd=7, sid=A) ─▶ server(session A)
+                                                                              │ SIGTERM → GracefulStop
+                                                          UNAVAILABLE ◀───────┘ (drains in-flight, exits)
+SessionHandshake: Resume(A) → Resumed=false → Create → sessionID=B (new process, empty table)
+client retryOp: WaitForReady reconnects; next attempt:
+  reclaimIfStale: h.sessionID(A) != client.SessionID(B) ─▶ Open(path, reopenFlags) ─▶ new fd=3
+  swap handle → {fd=3, sessionID=B}
+  retry Write(fd=3, sid=B) ─────────────────────────────────────────────────▶ OK
+app write() returns ───────────────────────────────────────────────────────── (never saw an error)
 ```
 
 ## Error handling & edge cases
 
-- **Crash mid-write (no drain):** reclaim recovers the open file; unflushed in-flight bytes from the crashed op are lost (same as any process crash on a local filesystem — the app's `write()` had not been `fsync`'d). Acceptable.
-- **Reclaim exceeds retry window:** surface the error as today (`#93` behavior). No silent hang.
-- **Unlinked-but-open files:** the one genuinely hard case — the path no longer resolves, so reopen-by-path fails for a file that was `unlink`'d while held open. Known, bounded limitation for Design A. NFS solves this with silly-rename (`.nfsXXXX`); out of scope here, documented as a limitation.
-- **Byte-range locks (`SetLk`/`SetLkw`):** **not** re-asserted in Design A. When a single client holds a volume, no other client contends a lock during the restart gap; intra-client lock state is not preserved across reclaim. Correct cross-client lock recovery is Design B (below).
-- **Concurrent-writer safety:** out of scope — the design assumes the supervisor enforces exclusive serialized handoff (see Deployment assumption) so the old and new process never write the same storage at once.
+- **Flag sanitization (data-loss guard):** reopen must strip `O_CREAT|O_EXCL|O_TRUNC` and keep the access mode + `O_APPEND`. Reopening with the raw open flags would truncate or fail. Covered by Design.A.1.
+- **Concurrent ops on one handle:** the per-handle reopen mutex re-checks the stale predicate under the lock, so N in-flight ops reopen once, not N times. Covered by Design.A.2.
+- **Coalesced/buffered writes:** the `WriteCoalescer` may hold unsent bytes when the handle goes stale; routing `drainCoalescer` through `reclaimIfStale` replays them to the new fd. Covered by Design.A.3.
+- **Crash mid-write (no drain):** reclaim recovers the open file; unflushed in-flight bytes from the crashed op are lost (the app's `write()` had not been `fsync`'d). Acceptable.
+- **Reclaim exceeds retry window:** surface the error as today. No silent hang.
+- **Unlinked-but-open files:** the one genuinely hard case — the path no longer resolves, so reopen-by-path fails for a file `unlink`'d while held open. Known, bounded limitation; NFS solves it with silly-rename (`.nfsXXXX`), out of scope here.
+- **Byte-range locks (`SetLk`/`SetLkw`):** the *lock state* is not re-asserted in Design A — a reopened fd holds no locks. When a single client holds a volume there is no second contender during the restart gap, so this is acceptable for now. Correct cross-client lock recovery is Design B.
+- **Concurrent-writer safety:** out of scope — the supervisor enforces exclusive serialized handoff (see Deployment assumption).
 
 ## Non-goals
 
 - No external/shared session database.
+- No wire-protocol / proto change, no server "boot epoch".
 - No persistence of `session_id` or any credential in shared state.
 - No cross-client lock recovery (Design B).
 - No recovery of unlinked-but-open files.
@@ -94,16 +96,17 @@ app write() returns ────────────────────
 
 ## Testing
 
-- **Unit (server):** epoch generation is per-boot-unique; drain rejects new `Open`/`Create` with `UNAVAILABLE` while letting registered in-flight fd-ops complete; SIGTERM path. Testify suites per house convention.
-- **Unit (client):** epoch-change detection triggers reclaim; reopen remaps the handle table; reads/writes resume on the new handle; reclaim failure past the window surfaces the error. Test the *property the fix protects* (handle remapped, op resumed), not a guessed error shape.
-- **E2E (`test/e2e/`, real FUSE mount):** mount a volume, hold a file open mid-write, restart the server process in-place (same data dir), assert the application's `read()`/`write()` resume without error and data is intact. Gate any VM-only variant behind the existing env flags; CI has `/dev/fuse` so the in-process variant runs in CI.
+- **Unit (flag sanitizer):** `O_RDWR|O_CREAT|O_TRUNC` → `O_RDWR`; `O_WRONLY|O_APPEND` → `O_WRONLY|O_APPEND`; `O_RDONLY` → `O_RDONLY`. Testify suite.
+- **Unit (`reclaimIfStale`):** with a fake client whose `SessionID()` differs from the handle snapshot, one op reopens and updates `fd`+`sessionID`; a not-stale handle is a no-op; N concurrent callers trigger exactly one `Open` (assert call count). Test the property the fix protects (fd remapped, single reopen), not a guessed error shape.
+- **Unit (retryOp guard):** a `classFdOp` whose closure first errors `Unavailable` then succeeds after a simulated session change returns success (no early bail); a `classPathMutation` still bails on session change.
+- **E2E (`test/e2e/`, real FUSE mount):** mount a volume, hold a file open and mid-write, restart the server process in-place (same data dir, new session table), assert the application's `read()`/`write()` resume without error and data is intact. CI has `/dev/fuse` so the in-process variant runs in CI; gate any VM-only variant behind the existing env flags.
 
 ## Design B — future work (documented, not built)
 
-Server **epoch + grace window + full reclaim**, the NFSv4-grade end state. Adds to A: on boot the server opens a *grace window* during which it accepts only reclaim ops (reopen + **lock re-assert**) and blocks new conflicting opens/locks from *other* clients until grace expires; the client replays its byte-range locks as part of reclaim. This buys correct multi-client lock semantics across a restart. Deferred until there is concurrent multi-client access to a volume to make lock contention real. Design A's epoch + reopen machinery is the foundation B builds on — nothing is thrown away.
+Server **grace window + lock reclaim**, the NFSv4-grade end state. On boot the server opens a *grace window* during which it accepts only reclaim opens + **lock re-assertions** and blocks new conflicting opens/locks from *other* clients until grace expires; the client replays its byte-range locks during reclaim. This buys correct multi-client lock semantics across a restart. Deferred until there is concurrent multi-client access to a volume to make lock contention real. Design A's per-handle reclaim is the foundation B builds on.
 
-The only other legitimate use for a shared store in this area is **session observability** (listing active sessions across server instances) — explicitly deferred, and it would never sit on the read/write hot path.
+The only other legitimate use for a shared store here is **session observability** (listing active sessions across server instances) — explicitly deferred, and it would never sit on the read/write hot path.
 
 ## Roadmap note
 
-When implemented, the durable record lands in `docs/design/` (reliability/recovery section, alongside `security-and-transport.md`), and a one-line row goes in `docs/roadmap.md`. This transient spec is pruned after consolidation.
+When implemented, the durable record lands in `docs/design/` (a reliability/recovery section, alongside `security-and-transport.md` and `caching-and-consistency.md`), and a one-line row goes in `docs/roadmap.md`. This transient spec is pruned after consolidation.
