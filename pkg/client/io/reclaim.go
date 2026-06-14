@@ -26,7 +26,7 @@ import (
 //     were disconnected past the grace period). Its boot epoch is UNCHANGED.
 //     Other clients may have mutated the file while we were gone, so silently
 //     reopening would substitute a possibly-changed file into a live fd. Do NOT
-//     reclaim — let the fd-op fail cleanly (the dead fd yields a NotFound).
+//     reclaim — fail the fd-op cleanly with ESTALE (a stale handle, not ENOENT).
 //
 // Safe to call on every fd-op attempt: a fresh handle is a cheap compare-and-
 // return. reopenMu serializes concurrent callers so the fd is reopened once;
@@ -46,10 +46,11 @@ func (h *grpcFileHandle) reclaimIfStale(ctx context.Context) fuse.Status {
 	if h.client.BootEpoch() == cur.epoch {
 		// Same server process reaped our idle session. The server-side fd is
 		// dead and the file may have been mutated by another client while we
-		// were gone, so we must NOT silently reopen. Returning OK lets the
-		// fd-op proceed with the (dead) fd and get a clean NotFound —
-		// preserving the "fail cleanly past grace" contract.
-		return fuse.OK
+		// were gone, so we must NOT silently reopen. Fail the fd-op cleanly
+		// with ESTALE ("stale file handle") — the honest errno for a dead fd,
+		// and never ENOENT (the file exists; it's our handle that's gone).
+		// This preserves the "fail cleanly past grace" contract.
+		return fuse.Status(syscall.ESTALE)
 	}
 	// Boot epoch changed → the server process restarted. While it was down no
 	// client could write, so reopening by path is as safe as the original open.
@@ -62,7 +63,7 @@ func (h *grpcFileHandle) reclaimIfStale(ctx context.Context) fuse.Status {
 		return fuse.OK // a racing caller already reclaimed
 	}
 	if liveEpoch == cur.epoch {
-		return fuse.OK // became a reap under the lock; fail clean
+		return fuse.Status(syscall.ESTALE) // became a reap under the lock; fail clean
 	}
 	reply, err := h.client.File().Open(ctx, &proto.OpenRequest{
 		Volume:    h.volume,

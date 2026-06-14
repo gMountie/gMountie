@@ -191,12 +191,11 @@ func (s *ResilienceSuite) TestFdOpFailsCleanlyPastGrace() {
 	oldID, newID := s.severUntilSessionChanges(appCtx)
 	s.Require().NotEqual(oldID, newID)
 
-	// A Read on the old fd must fail cleanly and promptly — the fd is dead on
-	// the new session, so the server returns NotFound ("session not found").
-	// That is a permanent (non-retryable) gRPC code, so retryOp short-circuits
-	// immediately and the caller gets a bounded error rather than a hang. (The
-	// classFdOp session-change guard, which stops a *retryable* fd-op error
-	// after a session change, is covered by the retryOp unit tests.)
+	// A Read on the old fd must fail cleanly and promptly with ESTALE — the
+	// boot epoch is unchanged (same-process reap), so reclaimIfStale does NOT
+	// reopen and surfaces a "stale file handle" rather than reopening a
+	// possibly-mutated file. ESTALE (not the misleading ENOENT) is the honest
+	// errno for a dead fd; the file still exists server-side (issue #117).
 	done := make(chan fuse.Status, 1)
 	go func() {
 		dest := make([]byte, 16)
@@ -207,9 +206,63 @@ func (s *ResilienceSuite) TestFdOpFailsCleanlyPastGrace() {
 	}()
 	select {
 	case rst := <-done:
-		s.Require().False(rst.Ok(), "fd-op on a reaped session must fail, got OK (silent data loss)")
+		s.Require().Equal(fuse.Status(syscall.ESTALE), rst,
+			"fd-op on a reaped session must fail with ESTALE (stale handle), not OK (silent loss) or ENOENT (misleading)")
 	case <-time.After(20 * time.Second):
 		s.FailNow("fd-op on a reaped session hung instead of failing cleanly")
+	}
+}
+
+// TestWriteFailsCleanlyOnReap is issue #117's write-side defect: a write left
+// in flight when the session is reaped must NOT be silently truncated. Writes
+// are buffered and acked optimistically (the coalescer), so the durability
+// failure can only be reported at flush time — the errno the application's
+// close(2) observes. This asserts the failure does surface there, and as ESTALE
+// (a stale handle), never silently OK (a truncated file with no error) nor the
+// misleading ENOENT.
+func (s *ResilienceSuite) TestWriteFailsCleanlyOnReap() {
+	srcDir := s.T().TempDir()
+	s.Require().NoError(os.WriteFile(filepath.Join(srcDir, "out.bin"), nil, 0o644))
+
+	appCtx, err := utils.NewAppTestingContext(
+		utils.WithBasicAuth("test", "test"),
+		utils.WithExistingVolume("vol", srcDir),
+		utils.WithProxy(),
+		utils.WithSessionGracePeriod(resilienceGrace),
+	)
+	s.Require().NoError(err)
+	s.Require().NoError(appCtx.Start())
+	defer func() { s.Require().NoError(appCtx.Close()) }()
+
+	backend := clientio.NewBackendClient(appCtx.GetClient(), "vol")
+
+	fh, st := backend.Open(context.Background(), "/out.bin", uint32(os.O_WRONLY))
+	s.Require().Equal(fuse.OK, st, "Open for write before the drop must succeed")
+
+	// A write on the pre-drop session — accepted (possibly coalesced/acked),
+	// marking the handle dirty so the eventual Flush must emit a WriteAndFlush.
+	_, wst := backend.Write(context.Background(), fh, 0, []byte("partial-output"))
+	s.Require().Equal(fuse.OK, wst, "the pre-drop write must be accepted")
+
+	// Reap the session (drop > grace, same server → boot epoch unchanged).
+	oldID, newID := s.severUntilSessionChanges(appCtx)
+	s.Require().NotEqual(oldID, newID)
+
+	// Flush is the FUSE op behind close(2). It must surface the dead-fd failure
+	// as ESTALE — never silently succeed (which would leave a truncated file
+	// with no error reaching the writer), never ENOENT.
+	done := make(chan fuse.Status, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		done <- backend.Flush(ctx, fh)
+	}()
+	select {
+	case fst := <-done:
+		s.Require().Equal(fuse.Status(syscall.ESTALE), fst,
+			"a write reaped mid-flight must fail the flush with ESTALE, not silently truncate or ENOENT")
+	case <-time.After(20 * time.Second):
+		s.FailNow("Flush after a reaped session hung instead of failing cleanly")
 	}
 }
 
