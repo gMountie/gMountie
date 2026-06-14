@@ -10,6 +10,7 @@ import (
 	stdio "io"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	grpcclient "go.gmountie.dev/gmountie/pkg/client/grpc"
@@ -165,6 +166,25 @@ func statusFromRPCError(err error) fuse.Status {
 	default:
 		return fuse.EIO
 	}
+}
+
+// fdOpStatus maps an error from an fd-keyed RPC (Read/Write/Flush/Fsync/
+// Release/Allocate/locks/CopyFileRange/Lseek) to a fuse.Status. It differs from
+// statusFromRPCError on exactly one code: an fd-op addresses an already-open
+// server fd, never a path, so a gRPC NotFound ("session not found" / "fd not
+// found in session") means the handle is STALE — the file still exists, our
+// fd/session is gone. That must surface as ESTALE, not the misleading ENOENT
+// ("No such file or directory") a path op would return. Every other code is
+// mapped identically to statusFromRPCError.
+func fdOpStatus(err error) fuse.Status {
+	var re reclaimError
+	if errors.As(err, &re) {
+		return re.st
+	}
+	if s, ok := grpcstatus.FromError(err); ok && s != nil && s.Code() == codes.NotFound {
+		return fuse.Status(syscall.ESTALE)
+	}
+	return statusFromRPCError(err)
 }
 
 // Stat returns the attributes of path. Idempotent; no request_id stamping.
@@ -802,7 +822,7 @@ func (b *BackendClient) readLive(ctx context.Context, h *grpcFileHandle, off int
 	})
 	if err != nil {
 		log.Log.Error("error in call: Read", zap.String("path", h.path), zap.Error(err))
-		return 0, statusFromRPCError(err)
+		return 0, fdOpStatus(err)
 	}
 	if !res.status.Ok() {
 		return 0, res.status
@@ -943,7 +963,7 @@ func (b *BackendClient) streamingWrite(h *grpcFileHandle, data []byte, off int64
 		})
 	if err != nil || res == nil {
 		log.Log.Error("error in call: Write", zap.String("path", h.path), zap.Error(err))
-		return 0, statusFromRPCError(err)
+		return 0, fdOpStatus(err)
 	}
 	return res.Written, fuse.Status(res.Status)
 }
@@ -1055,7 +1075,7 @@ func (b *BackendClient) Release(ctx context.Context, fh FileHandle) fuse.Status 
 		})
 	if err != nil {
 		log.Log.Error("error in call: Release", zap.String("path", h.path), zap.Error(err))
-		return statusFromRPCError(err)
+		return fdOpStatus(err)
 	}
 	return fuse.OK
 }
@@ -1119,7 +1139,7 @@ func (b *BackendClient) Flush(ctx context.Context, fh FileHandle) fuse.Status {
 		})
 	if err != nil {
 		log.Log.Error("error in call: WriteAndFlush", zap.String("path", h.path), zap.Error(err))
-		return statusFromRPCError(err)
+		return fdOpStatus(err)
 	}
 	st := fuse.Status(res.Status)
 	if st.Ok() {
@@ -1156,7 +1176,7 @@ func (b *BackendClient) Fsync(ctx context.Context, fh FileHandle, flags int64) f
 		})
 	if err != nil {
 		log.Log.Error("error in call: Fsync", zap.String("path", h.path), zap.Error(err))
-		return statusFromRPCError(err)
+		return fdOpStatus(err)
 	}
 	st := fuse.Status(res.Status)
 	if st.Ok() {
@@ -1193,7 +1213,7 @@ func (b *BackendClient) Allocate(ctx context.Context, fh FileHandle, off, size u
 		})
 	if err != nil {
 		log.Log.Error("error in call: Allocate", zap.String("path", h.path), zap.Error(err))
-		return statusFromRPCError(err)
+		return fdOpStatus(err)
 	}
 	return fuse.Status(res.Status)
 }
@@ -1252,7 +1272,7 @@ func (b *BackendClient) CopyFileRange(ctx context.Context, fhIn FileHandle, offI
 		})
 	if err != nil {
 		log.Log.Error("error in call: CopyFileRange", zap.String("path", dst.path), zap.Error(err))
-		return 0, statusFromRPCError(err)
+		return 0, fdOpStatus(err)
 	}
 	st := fuse.Status(res.Status)
 	if st.Ok() && res.BytesCopied > 0 {
@@ -1291,7 +1311,7 @@ func (b *BackendClient) Lseek(ctx context.Context, fh FileHandle, offset uint64,
 		})
 	if err != nil {
 		log.Log.Error("error in call: Lseek", zap.String("path", h.path), zap.Error(err))
-		return 0, statusFromRPCError(err)
+		return 0, fdOpStatus(err)
 	}
 	return res.Offset, fuse.Status(res.Status)
 }
@@ -1322,7 +1342,7 @@ func (b *BackendClient) GetLk(ctx context.Context, fh FileHandle, owner uint64, 
 		})
 	if err != nil {
 		log.Log.Error("error in call: GetLk", zap.String("path", h.path), zap.Error(err))
-		return statusFromRPCError(err)
+		return fdOpStatus(err)
 	}
 	if res.Lk != nil {
 		*out = fuse.FileLock{Start: res.Lk.Start, End: res.Lk.End, Typ: res.Lk.Typ, Pid: res.Lk.Pid}
@@ -1356,7 +1376,7 @@ func (b *BackendClient) SetLk(ctx context.Context, fh FileHandle, owner uint64, 
 		})
 	if err != nil {
 		log.Log.Error("error in call: SetLk", zap.String("path", h.path), zap.Error(err))
-		return statusFromRPCError(err)
+		return fdOpStatus(err)
 	}
 	return fuse.Status(res.Status)
 }
@@ -1388,7 +1408,7 @@ func (b *BackendClient) SetLkw(ctx context.Context, fh FileHandle, owner uint64,
 	})
 	if err != nil {
 		log.Log.Error("error in call: SetLkw", zap.String("path", h.path), zap.Error(err))
-		return statusFromRPCError(err)
+		return fdOpStatus(err)
 	}
 	return fuse.Status(res.Status)
 }

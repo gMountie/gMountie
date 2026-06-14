@@ -192,9 +192,9 @@ func (s *ReclaimStaleSuite) TestConcurrentReopenOnce() {
 
 // TestNoReclaimOnReap: when the session changes but the server boot epoch is
 // UNCHANGED (same-process reap: the server reaped our idle session), reclaimIfStale
-// must return OK WITHOUT calling File().Open. The dead fd will then surface a
-// clean NotFound from the server — the "fail cleanly past grace" contract.
-// This is the key invariant the epoch gate protects.
+// must fail cleanly with ESTALE WITHOUT calling File().Open — the honest "stale
+// handle" errno, never reopening a possibly-mutated file. This is the key
+// invariant the epoch gate protects ("fail cleanly past grace", issue #117).
 func (s *ReclaimStaleSuite) TestNoReclaimOnReap() {
 	client := grpcmocks.NewMockClient(s.T())
 	fileClient := mockProto.NewMockRpcFileClient(s.T())
@@ -213,7 +213,7 @@ func (s *ReclaimStaleSuite) TestNoReclaimOnReap() {
 
 	st := h.reclaimIfStale(context.Background())
 
-	s.Require().Equal(fuse.OK, st, "reap must return OK (let fd-op send the dead fd for a clean NotFound)")
+	s.Require().Equal(fuse.Status(syscall.ESTALE), st, "reap must fail cleanly with ESTALE, not reopen")
 	s.Assert().Equal(origFd, h.state.Load().fd, "fd must be unchanged on a reap")
 	s.Assert().Equal(origSession, h.state.Load().sessionID, "sessionID must be unchanged on a reap")
 	s.Assert().Equal(origEpoch, h.state.Load().epoch, "epoch must be unchanged on a reap")

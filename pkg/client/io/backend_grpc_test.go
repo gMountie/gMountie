@@ -5,6 +5,7 @@ import (
 	stdio "io"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1918,16 +1919,18 @@ func (s *BackendClientTestSuite) TestStat_TransportPermissionDeniedMapsToEACCES(
 	s.Assert().Nil(attr)
 }
 
-// TestRead_DeadFdNotFoundMapsToENOENT verifies the fd-op error arm: the
-// server's NotFound for a dead/reaped fd surfaces as ENOENT (non-retryable,
-// single attempt) rather than EIO.
-func (s *BackendClientTestSuite) TestRead_DeadFdNotFoundMapsToENOENT() {
+// TestRead_DeadFdNotFoundMapsToESTALE verifies the fd-op error arm: the
+// server's NotFound for a dead/reaped fd surfaces as ESTALE ("stale file
+// handle"), NOT ENOENT. An fd-op addresses an open server fd, never a path, so
+// a NotFound means the fd/session is gone — the file still exists; reporting
+// "No such file or directory" would be misleading and unactionable (issue #117).
+func (s *BackendClientTestSuite) TestRead_DeadFdNotFoundMapsToESTALE() {
 	s.fileClient.EXPECT().Read(mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, status.Error(codes.NotFound, "fd 1 not found in session")).Once()
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	n, st := s.backend.Read(context.Background(), h, 0, make([]byte, 8))
-	s.Assert().Equal(fuse.ENOENT, st)
+	s.Assert().Equal(fuse.Status(syscall.ESTALE), st)
 	s.Assert().Equal(0, n)
 }
 
