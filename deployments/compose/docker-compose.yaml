@@ -4,6 +4,9 @@ name: gmountie
 
 services:
   server:
+    # `latest` only exists once a stable (non-prerelease) release ships; with
+    # only alpha prereleases published it 404s. Pin a real tag via
+    # GMOUNTIE_IMAGE_TAG in .env (see .env.example) until then.
     image: ghcr.io/gmountie/gmountie-server:${GMOUNTIE_IMAGE_TAG:-latest}
     build:
       context: ../../
