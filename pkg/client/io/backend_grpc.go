@@ -622,12 +622,13 @@ func (b *BackendClient) Open(ctx context.Context, path string, flags uint32) (Fi
 	// dead/leaked on the (new) server session, so retryOp stops retrying. The
 	// request_id is allocated OUTSIDE retryOp so same-session retries dedup
 	// against the server's Open idempotency cache. Path-level timeout (MetaTimeout).
+	caller := callerFromCtx(ctx)
 	requestID := uuid.NewString()
 	res, err := retryOp(b.client, ctx, "Open", classFdOp, b.client.MetaTimeout(),
 		func(ctx context.Context) (*proto.OpenReply, error) {
 			return b.client.File().Open(ctx, &proto.OpenRequest{
 				Volume:    b.volume,
-				Caller:    callerFromCtx(ctx),
+				Caller:    caller,
 				Path:      path,
 				Flags:     flags,
 				SessionId: b.client.SessionID(),
@@ -642,7 +643,7 @@ func (b *BackendClient) Open(ctx context.Context, path string, flags uint32) (Fi
 		return nil, fuse.Status(res.Status)
 	}
 	return newGrpcFileHandle(
-		b.client, b.volume, path, res.Fd, flags,
+		b.client, b.volume, path, res.Fd, flags, caller,
 		b.client.IOTimeout(), b.client.SessionID(),
 		b.client.PerFileConfig(),
 	), fuse.OK
@@ -659,12 +660,13 @@ func (b *BackendClient) Create(ctx context.Context, parent, name string, flags, 
 	// replay could surface a spurious EEXIST). The request_id is allocated
 	// OUTSIDE retryOp so same-session retries dedup against the server cache
 	// (like mutatePath). Path-level timeout (MetaTimeout).
+	caller := callerFromCtx(ctx)
 	requestID := uuid.NewString()
 	res, err := retryOp(b.client, ctx, "Create", classPathMutation, b.client.MetaTimeout(),
 		func(ctx context.Context) (*proto.CreateReply, error) {
 			return b.client.File().Create(ctx, &proto.CreateRequest{
 				Volume:    b.volume,
-				Caller:    callerFromCtx(ctx),
+				Caller:    caller,
 				Path:      path,
 				Flags:     flags,
 				Mode:      mode,
@@ -680,7 +682,7 @@ func (b *BackendClient) Create(ctx context.Context, parent, name string, flags, 
 		return nil, nil, fuse.Status(res.Status)
 	}
 	h := newGrpcFileHandle(
-		b.client, b.volume, path, res.Fd, flags,
+		b.client, b.volume, path, res.Fd, flags, caller,
 		b.client.IOTimeout(), b.client.SessionID(),
 		b.client.PerFileConfig(),
 	)
@@ -1421,6 +1423,11 @@ type grpcFileHandle struct {
 	// this handle after a server restart (creation/trunc flags stripped). Set
 	// once at construction; never mutated.
 	reopenFlags uint32
+	// reopenCaller is the wire identity that originally opened this handle.
+	// Reclaim reopens with this identity (not the triggering op's caller) so a
+	// reopen from a detached context — e.g. the streaming-write retry loop —
+	// still binds the correct principal in non-squash volume modes.
+	reopenCaller *proto.Caller
 	// reopenMu serializes reclaimIfStale so concurrent fd-ops on this handle
 	// reopen the server fd exactly once. It guards the state pointer swap.
 	reopenMu  sync.Mutex
@@ -1492,6 +1499,7 @@ func newGrpcFileHandle(
 	volume, path string,
 	fd uint64,
 	flags uint32,
+	caller *proto.Caller,
 	ioTimeout time.Duration,
 	sessionID string,
 	cfg grpcclient.PerFileConfig,
@@ -1503,6 +1511,7 @@ func newGrpcFileHandle(
 		volume:            volume,
 		path:              path,
 		reopenFlags:       sanitizeReopenFlags(flags),
+		reopenCaller:      caller,
 		ioTimeout:         ioTimeout,
 		coalesceThreshold: cfg.WriteCoalesceBytes,
 		lifeCtx:           ctx,

@@ -65,6 +65,7 @@ func (s *ReclaimStaleSuite) newStaleHandle(
 	h := newGrpcFileHandle(
 		client, "vol", path, fd,
 		flags,
+		nil, /*caller — not the focus of these tests*/
 		30*time.Second,
 		snapshotSession,
 		grpcclient.PerFileConfig{},
@@ -76,7 +77,10 @@ func (s *ReclaimStaleSuite) newStaleHandle(
 
 // TestReopensWhenStale: a handle whose snapshotted sessionID ("A") differs from
 // the live client session ("B") must call File().Open() exactly once, update
-// h.fd to the reply fd, and update h.sessionID to the live session.
+// h.fd to the reply fd, update h.sessionID to the live session, and — critically
+// — stamp the OPENER's identity (reopenCaller) on the reopen request rather than
+// deriving a caller from the triggering op's context (which may be a detached
+// context.Background() that carries no FUSE caller at all).
 func (s *ReclaimStaleSuite) TestReopensWhenStale() {
 	client := grpcmocks.NewMockClient(s.T())
 	fileClient := mockProto.NewMockRpcFileClient(s.T())
@@ -88,6 +92,11 @@ func (s *ReclaimStaleSuite) TestReopensWhenStale() {
 	const flags = uint32(syscall.O_RDWR)
 	const path = "/data/file.txt"
 
+	// openerCaller is the identity captured at Open/Create time and stored on the
+	// handle. The reopen must use this, not callerFromCtx(ctx) — the bug being
+	// fixed: a detached context (e.g. streamingWrite) carries no FUSE caller.
+	openerCaller := &proto.Caller{Owner: &proto.Owner{Uid: 1000, Gid: 2000}, Pid: 42}
+
 	fileClient.EXPECT().Open(
 		mock.Anything,
 		mock.MatchedBy(func(req *proto.OpenRequest) bool {
@@ -95,12 +104,14 @@ func (s *ReclaimStaleSuite) TestReopensWhenStale() {
 				req.Path == path &&
 				req.Flags == sanitizeReopenFlags(flags) &&
 				req.SessionId == "B" &&
-				req.RequestId != ""
+				req.RequestId != "" &&
+				req.Caller == openerCaller // must be the stored opener identity
 		}),
 		mock.Anything,
 	).Return(&proto.OpenReply{Fd: wantFd, Status: int32(fuse.OK)}, nil).Once()
 
 	h := s.newStaleHandle(client, fileClient, path, 7, flags, "A")
+	h.reopenCaller = openerCaller // inject the opener's identity
 
 	st := h.reclaimIfStale(context.Background())
 
