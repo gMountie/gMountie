@@ -43,7 +43,7 @@ type cachedBackend struct {
 // nil for memory-only operation. client and volume are used to start the
 // Subscribe-based invalidation goroutine; pass nil client to disable it.
 func NewCachedBackend(inner io.FileSystemBackend, cfg Config, p *persist.Persist, client proto.RpcFsClient, volume string) io.FileSystemBackend {
-	acct := newAccountant(cfg.MemoryMaxBytes)
+	acct := newAccountant(cfg.MemoryMaxBytes, deriveMaxEntries(cfg.MemoryMaxBytes))
 	b := &cachedBackend{
 		inner:    inner,
 		cfg:      cfg,

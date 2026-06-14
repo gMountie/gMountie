@@ -13,7 +13,7 @@ type StoreTestSuite struct {
 }
 
 func (s *StoreTestSuite) SetupTest() {
-	s.acct = newAccountant(0) // unlimited for the basic suite
+	s.acct = newAccountant(0, 0) // unlimited for the basic suite
 	s.s = newStore(s.acct, "attr")
 }
 
@@ -94,7 +94,7 @@ func (s *PersistedStoreSuite) TestMemoryMissFallsThroughToLoader() {
 		}
 		return nil, 0, false
 	}
-	acct := newAccountant(0)
+	acct := newAccountant(0, 0)
 	st := newStoreWithPersist(acct, loader, func(string, any, int) {}, nil, "attr")
 
 	e := st.get("k1")
@@ -111,7 +111,7 @@ func (s *PersistedStoreSuite) TestPutAlsoWritesThrough() {
 	var putCalls int
 	loader := func(string) (any, int, bool) { return nil, 0, false }
 	putter := func(_ string, _ any, _ int) { putCalls++ }
-	st := newStoreWithPersist(newAccountant(0), loader, putter, nil, "attr")
+	st := newStoreWithPersist(newAccountant(0, 0), loader, putter, nil, "attr")
 	st.put("k", "v", 1)
 	s.Assert().Equal(1, putCalls, "write-through must call putter")
 }
@@ -121,7 +121,7 @@ func (s *PersistedStoreSuite) TestRemoveForwardsToRemover() {
 	loader := func(string) (any, int, bool) { return nil, 0, false }
 	putter := func(string, any, int) {}
 	remover := func(string) { removerCalls++ }
-	st := newStoreWithPersist(newAccountant(0), loader, putter, remover, "attr")
+	st := newStoreWithPersist(newAccountant(0, 0), loader, putter, remover, "attr")
 	st.put("k", "v", 1)
 	st.remove("k")
 	s.Assert().Equal(1, removerCalls)

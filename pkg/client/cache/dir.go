@@ -51,15 +51,26 @@ func (c *dirCache) put(path string, entries []io.DirEntry) {
 	stored := make([]io.DirEntry, len(entries))
 	copy(stored, entries)
 	de := &dirEntry{entries: stored, expiresAt: c.now().Add(c.dirTTL)}
-	c.st.put(path, de, dirEntrySize(de))
+	c.st.put(path, de, dirEntrySize(path, de))
 }
 
 func (c *dirCache) invalidate(path string) { c.st.remove(path) }
 
-// dirEntrySize estimates the in-memory footprint of a cached listing.
-// 64 bytes overhead per DirEntry is a generous round figure that
-// covers the struct + name string header.
-func dirEntrySize(de *dirEntry) int { return 32 + 64*len(de.entries) }
+// dirPerEntryOverheadBytes is the non-name resident cost of one cached
+// io.DirEntry (struct fields + the name string header).
+const dirPerEntryOverheadBytes = 64
+
+// dirEntrySize estimates the real in-memory footprint of a cached listing.
+// It accounts for the keyed path (stored twice — map key + entry key copy)
+// and the actual entry-name bytes, not just a flat per-entry constant, so a
+// directory of many long names is sized close to its true heap cost (#118).
+func dirEntrySize(path string, de *dirEntry) int {
+	n := 2*len(path) + 64 // path stored twice + dirEntry/store struct overhead
+	for i := range de.entries {
+		n += len(de.entries[i].Name) + dirPerEntryOverheadBytes
+	}
+	return n
+}
 
 // persistedDir is the on-disk shape of a cached listing.
 type persistedDir struct {
@@ -87,7 +98,7 @@ func newDirCacheWithPersist(acct *accountant, dirTTL time.Duration, now func() t
 			return nil, 0, false
 		}
 		de := &dirEntry{entries: pd.Entries, expiresAt: time.Unix(0, pd.ExpiresAt)}
-		return de, dirEntrySize(de), true
+		return de, dirEntrySize(key, de), true
 	}
 	putter := func(key string, value any, _ int) {
 		de, _ := value.(*dirEntry) // dir store only holds *dirEntry
