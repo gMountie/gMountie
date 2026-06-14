@@ -21,9 +21,10 @@ import (
 //
 // Safe to call on every fd-op attempt: a fresh handle is a cheap compare-and-
 // return. reopenMu serializes concurrent callers so the fd is reopened once;
-// each re-checks the predicate under the lock. On success h.fd and h.sessionID
-// are swapped to the new values. On failure the fuse.Status surfaces (notably
-// the unlinked-but-open case: the path no longer resolves and reopen fails).
+// each re-checks the predicate under the lock. On success a fresh fdState with
+// the new fd and session id is atomically swapped in via h.state. On failure
+// the fuse.Status surfaces (notably the unlinked-but-open case: the path no
+// longer resolves and reopen fails).
 func (h *grpcFileHandle) reclaimIfStale(ctx context.Context) fuse.Status {
 	cur := h.state.Load()
 	live := h.client.SessionID()
