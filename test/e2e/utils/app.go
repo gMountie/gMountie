@@ -23,6 +23,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/server/service"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/thanhpk/randstr"
 	"go.uber.org/zap"
@@ -966,12 +967,13 @@ func (c *AppTestingContext) RestartServer() error {
 }
 
 // RestartServerNewSession stops the server and brings it back up over the same
-// TCP address but with a FRESH, EMPTY SessionManager — faithfully simulating a
-// real process restart where the in-memory session table is lost. After this,
-// the client's Resume(old_session_id) fails against the empty table, so it
-// Creates a new session (new session_id) and reclaim must reopen its fds. (The
-// plain RestartServer reuses the SessionManager and therefore tests the
-// connection-drop/Resume path, not reclaim.)
+// TCP address but with a FRESH, EMPTY SessionManager AND a new BootEpoch —
+// faithfully simulating a real process restart: new epoch + empty session table.
+// After this, the client's Resume(old_session_id) fails against the empty table,
+// so it Creates a new session (new session_id). The new epoch causes
+// reclaimIfStale to reopen open fds by path (epoch changed → safe to reopen).
+// (The plain RestartServer reuses the SessionManager and epoch and therefore
+// tests the connection-drop/Resume path, not reclaim.)
 //
 // The stop is non-graceful (KillServer): at restart time the mounted client
 // holds live Keepalive and Subscribe streams whose server-side handlers block
@@ -980,21 +982,22 @@ func (c *AppTestingContext) RestartServer() error {
 // forever. KillServer drops all active connections immediately, which also
 // more faithfully simulates a hard process restart.
 //
-// The swap propagates to the rebuilt server because buildServer reads
-// c.serverCtx.SessionManager at serve time on BOTH paths: it passes the field
-// to grpcServer.WithSessionManager (the auth interceptor) AND it calls
-// c.serverCtx.GetGrpcServices(), which constructs every controller — including
-// the SessionController and RpcFile/file controllers — from
-// c.serverCtx.SessionManager at call time. Swapping the field before
-// StartServer therefore gives the rebuilt server a genuinely empty table.
+// Both swaps propagate to the rebuilt server because buildServer reads
+// c.serverCtx.SessionManager and calls c.serverCtx.GetGrpcServices() at serve
+// time. GetGrpcServices() constructs every controller — including
+// SessionController (which receives BootEpoch) and the RpcFile/fs controllers —
+// from the current c.serverCtx fields at call time. Swapping both fields before
+// StartServer gives the rebuilt server a genuinely empty table and a new epoch.
 func (c *AppTestingContext) RestartServerNewSession() error {
 	c.KillServer()
-	// Swap in a fresh SessionManager BEFORE StartServer (see doc comment).
+	// Swap in a fresh SessionManager and a new BootEpoch BEFORE StartServer
+	// (see doc comment). Both are read by GetGrpcServices() at buildServer time.
 	c.serverCtx.SessionManager = service.NewSessionManager(service.SessionManagerOptions{
 		Metrics:              c.serverCtx.Metrics,
 		GracePeriod:          c.cfg.Server.Session.GracePeriod,
 		IdempotencyCacheSize: c.cfg.Server.Session.IdempotencyCacheSize,
 	})
+	c.serverCtx.BootEpoch = uuid.NewString()
 	return c.StartServer()
 }
 

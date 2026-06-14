@@ -277,6 +277,79 @@ func (s *ResilienceSuite) TestNoDoubleApplyPastGrace() {
 			"the guard prevented exactly this spurious status from reaching the first caller")
 }
 
+// TestFdOpReclaimsAcrossRestart proves the complement of TestFdOpFailsCleanlyPastGrace:
+// when the server RESTARTS (new boot epoch + empty session table), reclaimIfStale
+// detects the epoch change and reopens the fd by path, so a Read on the
+// pre-restart handle SUCCEEDS and returns the original content.
+//
+// This test uses WithTCPTransport (no proxy) because RestartServerNewSession
+// rebinds the TCP listener; bufconn cannot rebind.
+func (s *ResilienceSuite) TestFdOpReclaimsAcrossRestart() {
+	srcDir := s.T().TempDir()
+	const content = "hello-reclaim"
+	s.Require().NoError(os.WriteFile(filepath.Join(srcDir, "data.bin"), []byte(content), 0o644))
+
+	appCtx, err := utils.NewAppTestingContext(
+		utils.WithTCPTransport(),
+		utils.WithBasicAuth("test", "test"),
+		utils.WithExistingVolume("vol", srcDir),
+		utils.WithSessionGracePeriod(resilienceGrace),
+	)
+	s.Require().NoError(err)
+	s.Require().NoError(appCtx.Start())
+	defer func() { s.Require().NoError(appCtx.Close()) }()
+
+	backend := clientio.NewBackendClient(appCtx.GetClient(), "vol")
+
+	// Open an fd on the pre-restart session.
+	fh, st := backend.Open(context.Background(), "/data.bin", uint32(os.O_RDONLY))
+	s.Require().Equal(fuse.OK, st, "Open before restart must succeed")
+
+	oldID := appCtx.GetClient().SessionID()
+	s.Require().NotEmpty(oldID)
+
+	// Restart with a fresh epoch + empty session table.
+	s.Require().NoError(appCtx.RestartServerNewSession())
+
+	// Wait for the client's keepalive loop to Create a new session (Resume will
+	// fail against the empty table, causing a Create with a new session id).
+	s.Require().Eventually(func() bool {
+		id := appCtx.GetClient().SessionID()
+		return id != "" && id != oldID
+	}, 10*time.Second, 50*time.Millisecond,
+		"client must Create a new session after restart")
+
+	// Read on the SAME fd in a bounded goroutine — reclaimIfStale must detect
+	// the epoch change and reopen by path, so the Read succeeds.
+	type result struct {
+		n  int
+		st fuse.Status
+	}
+	done := make(chan result, 1)
+	go func() {
+		dest := make([]byte, len(content))
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		n, rst := backend.Read(ctx, fh, 0, dest)
+		done <- result{n, rst}
+	}()
+
+	select {
+	case r := <-done:
+		s.Require().Equal(fuse.OK, r.st, "fd-op must reclaim and succeed across a true restart")
+		dest := make([]byte, len(content))
+		// Re-read to get the actual bytes (done channel carries n, not dest).
+		// Redo the read synchronously now that the handle is reclaimed.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		n, rst2 := backend.Read(ctx, fh, 0, dest)
+		s.Require().Equal(fuse.OK, rst2, "second read after reclaim must succeed")
+		s.Require().Equal(content, string(dest[:n]), "reclaimed fd must return the original content")
+	case <-time.After(20 * time.Second):
+		s.FailNow("fd-op after a true restart hung instead of reclaiming")
+	}
+}
+
 func TestResilienceSuite(t *testing.T) {
 	suite.Run(t, new(ResilienceSuite))
 }
