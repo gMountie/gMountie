@@ -13,6 +13,12 @@ message SessionCreateRequest {
 
 message SessionCreateReply {
   string session_id = 1;
+  // boot_epoch is a per-server-process random nonce. A client compares the
+  // epoch from a Create-after-Resume-failure against the prior one: a CHANGED
+  // epoch means the server process restarted (open fds can be safely reopened);
+  // an UNCHANGED epoch means this same process reaped the client's idle session
+  // (the fd is dead and must NOT be silently reopened).
+  string boot_epoch = 2;
 }
 
 // SessionResumeRequest re-attaches to a session that the server is still

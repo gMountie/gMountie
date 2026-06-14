@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/adrg/xdg"
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	prometheus "github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -44,6 +45,10 @@ type AppContext struct {
 	// ops reload writer share this single pointer so updates are immediately
 	// visible without restarting the server.
 	Revocation *service.RevocationStore
+	// BootEpoch is a random nonce minted once per server process. Returned on
+	// session Create so clients can distinguish a true restart (new epoch)
+	// from a same-process session reap (same epoch).
+	BootEpoch string
 }
 
 // NewServerAppContext creates a new ServerContext.
@@ -75,6 +80,7 @@ func NewServerAppContext(cfg *config.Config) (*AppContext, error) {
 	})
 	revocation := service.NewRevocationStore()
 	revocation.Set(revokedSerialsFromConfig(cfg))
+	bootEpoch := uuid.NewString()
 	return &AppContext{
 		Config:         cfg,
 		VolumeService:  volumeService,
@@ -83,6 +89,7 @@ func NewServerAppContext(cfg *config.Config) (*AppContext, error) {
 		Metrics:        m,
 		Bus:            bus,
 		Revocation:     revocation,
+		BootEpoch:      bootEpoch,
 	}, nil
 }
 
@@ -112,7 +119,7 @@ func (c *AppContext) GetGrpcServices() []grpc.ServiceRegistrar {
 		controller.NewGrpcServer(c.VolumeService, c.SessionManager, c.Bus, c.Metrics),
 		controller.NewRpcFileServer(c.VolumeService, c.SessionManager, c.Metrics, c.Config.Server.FrameSizeBytes, c.Bus),
 		controller.NewVolumeService(c.VolumeService),
-		controller.NewSessionController(c.SessionManager, c.VolumeService),
+		controller.NewSessionController(c.SessionManager, c.VolumeService, c.BootEpoch),
 		controller.NewVersionController(c.Config.Server.FrameSizeBytes),
 	}
 }

@@ -22,15 +22,16 @@ import (
 const keepalivePingInterval = 10 * time.Second
 
 type SessionController struct {
-	sessions service.SessionManager
-	volSvc   service.VolumeService
+	sessions   service.SessionManager
+	volSvc     service.VolumeService
+	bootEpoch  string
 	proto.UnimplementedSessionServiceServer
 }
 
 var _ proto.SessionServiceServer = (*SessionController)(nil)
 
-func NewSessionController(mgr service.SessionManager, volSvc service.VolumeService) *SessionController {
-	return &SessionController{sessions: mgr, volSvc: volSvc}
+func NewSessionController(mgr service.SessionManager, volSvc service.VolumeService, bootEpoch string) *SessionController {
+	return &SessionController{sessions: mgr, volSvc: volSvc, bootEpoch: bootEpoch}
 }
 
 func (c *SessionController) Register(server *grpc.Server) {
@@ -51,7 +52,7 @@ func (c *SessionController) Create(ctx context.Context, _ *proto.SessionCreateRe
 		return nil, status.Errorf(codes.Internal, "failed to create session: %v", err)
 	}
 	log.Log.Info("session created", zap.String("session_fp", common.FingerprintID(id)), zap.String("principal", p))
-	return &proto.SessionCreateReply{SessionId: id}, nil
+	return &proto.SessionCreateReply{SessionId: id, BootEpoch: c.bootEpoch}, nil
 }
 
 func (c *SessionController) Resume(ctx context.Context, req *proto.SessionResumeRequest) (*proto.SessionResumeReply, error) {
