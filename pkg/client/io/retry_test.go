@@ -171,6 +171,39 @@ func (s *RetryOpSuite) TestFuseCtxCancelDoesNotAbortButLifetimeDoes() {
 	s.Require().Error(<-done)
 }
 
+// fd-op continues across a session change so reclaimIfStale can self-heal on
+// the next attempt. The old guard bailed classFdOp the moment the session id
+// flipped — this test pins the new behaviour (keep retrying inside the window).
+func (s *RetryOpSuite) TestFdOpContinuesAcrossSessionChange() {
+	f := &fakeRetryClient{id: "A", life: context.Background(), window: 2 * time.Second, meta: 20 * time.Millisecond}
+	calls := 0
+	_, err := retryOp[int](f, context.Background(), "Read", classFdOp, f.meta, func(ctx context.Context) (int, error) {
+		calls++
+		f.setID("B") // simulate Create-fallback: new session mid-op
+		if calls < 2 {
+			return 0, status.Error(codes.Unavailable, "down")
+		}
+		return 42, nil // reclaimIfStale would have reopened the fd; we just succeed
+	})
+	s.Require().NoError(err)
+	s.Equal(2, calls) // retried across the session change and healed
+}
+
+// path-mutation bails immediately when the session id changes: replaying
+// against the new session's empty idempotency cache could surface a spurious
+// EEXIST/ENOENT, so we stop and return the error.
+func (s *RetryOpSuite) TestPathMutationBailsOnSessionChange() {
+	f := &fakeRetryClient{id: "A", life: context.Background(), window: 2 * time.Second, meta: 20 * time.Millisecond}
+	calls := 0
+	_, err := retryOp[int](f, context.Background(), "Mkdir", classPathMutation, f.meta, func(ctx context.Context) (int, error) {
+		calls++
+		f.setID("B") // session changed on the first attempt
+		return 0, status.Error(codes.Unavailable, "down")
+	})
+	s.Require().Error(err)
+	s.Equal(1, calls) // bailed after the first attempt, did not retry
+}
+
 // Idempotent read continues across a session change.
 func (s *RetryOpSuite) TestReadContinuesOnSessionChange() {
 	f := &fakeRetryClient{id: "A", life: context.Background(), window: 2 * time.Second, meta: 20 * time.Millisecond}

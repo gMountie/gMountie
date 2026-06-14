@@ -92,8 +92,14 @@ func retryOp[T any](c retryClient, fuseCtx context.Context, op string, class opC
 		if window <= 0 || life.Err() != nil {
 			return zero, err // fail-fast mode, or unmounting
 		}
-		if c.SessionID() != startID && class != classIdempotentRead {
-			return zero, err // session changed: fd dead / replay-unsafe
+		// Session changed (Create-fallback after a server restart). classFdOp
+		// closures run reclaimIfStale on each attempt and reopen their fd, so
+		// they keep retrying within the window to self-heal. classPathMutation
+		// still bails: it has no fd to reopen and replaying against the new
+		// session's empty idempotency cache could surface a spurious
+		// EEXIST/ENOENT. classIdempotentRead is path-based and also continues.
+		if c.SessionID() != startID && class == classPathMutation {
+			return zero, err
 		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
