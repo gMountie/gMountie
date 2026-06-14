@@ -13,32 +13,57 @@ import (
 	"google.golang.org/grpc"
 )
 
-// reclaimIfStale reopens this handle's server-side fd against the current
-// session when the server has restarted. The predicate is the handle's session
-// snapshot (taken at open) vs the client's live session id: they diverge
-// exactly when SessionHandshake fell back from Resume to Create — i.e. the
-// server lost the original session and every fd under it.
+// reclaimIfStale reopens this handle's server-side fd when the server has
+// restarted (boot epoch changed). It gates reclaim on the server's boot epoch
+// to distinguish two very different scenarios that both cause a session-id
+// change:
+//
+//   - Server RESTART: the server process died and came back. Its boot epoch is
+//     NEW. While it was down no client could write, so the file is exactly as
+//     last left — reopening the fd by path is safe. Reclaim.
+//
+//   - Same-process REAP: the same server process reaped our idle session (we
+//     were disconnected past the grace period). Its boot epoch is UNCHANGED.
+//     Other clients may have mutated the file while we were gone, so silently
+//     reopening would substitute a possibly-changed file into a live fd. Do NOT
+//     reclaim — let the fd-op fail cleanly (the dead fd yields a NotFound).
 //
 // Safe to call on every fd-op attempt: a fresh handle is a cheap compare-and-
 // return. reopenMu serializes concurrent callers so the fd is reopened once;
 // each re-checks the predicate under the lock. On success a fresh fdState with
-// the new fd and session id is atomically swapped in via h.state. On failure
-// the fuse.Status surfaces (notably the unlinked-but-open case: the path no
-// longer resolves and reopen fails).
+// the new fd, session id, and epoch is atomically swapped in via h.state.
 func (h *grpcFileHandle) reclaimIfStale(ctx context.Context) fuse.Status {
 	cur := h.state.Load()
-	live := h.client.SessionID()
-	if cur.sessionID == live { // lock-free fast path
+	// IMPORTANT: read SessionID() BEFORE BootEpoch(). The handshake sets the
+	// new epoch before the new session id under its mutex, so observing a
+	// changed session id guarantees the matching (new) epoch is already
+	// visible. Reading in this order makes the restart/reap classification
+	// race-free.
+	if cur.sessionID == h.client.SessionID() {
+		return fuse.OK // fresh: same session, nothing to do
+	}
+	// Session changed (Resume failed → Create). Restart or same-process reap?
+	if h.client.BootEpoch() == cur.epoch {
+		// Same server process reaped our idle session. The server-side fd is
+		// dead and the file may have been mutated by another client while we
+		// were gone, so we must NOT silently reopen. Returning OK lets the
+		// fd-op proceed with the (dead) fd and get a clean NotFound —
+		// preserving the "fail cleanly past grace" contract.
 		return fuse.OK
 	}
+	// Boot epoch changed → the server process restarted. While it was down no
+	// client could write, so reopening by path is as safe as the original open.
 	h.reopenMu.Lock()
 	defer h.reopenMu.Unlock()
 	cur = h.state.Load()
-	live = h.client.SessionID()
-	if cur.sessionID == live { // a racing caller already reclaimed
-		return fuse.OK
+	live := h.client.SessionID()
+	liveEpoch := h.client.BootEpoch()
+	if cur.sessionID == live {
+		return fuse.OK // a racing caller already reclaimed
 	}
-
+	if liveEpoch == cur.epoch {
+		return fuse.OK // became a reap under the lock; fail clean
+	}
 	reply, err := h.client.File().Open(ctx, &proto.OpenRequest{
 		Volume:    h.volume,
 		Caller:    h.reopenCaller,
@@ -53,11 +78,10 @@ func (h *grpcFileHandle) reclaimIfStale(ctx context.Context) fuse.Status {
 	if fuse.Status(reply.Status) != fuse.OK {
 		return fuse.Status(reply.Status)
 	}
-
 	log.Log.Info("reclaimed file handle after server restart",
 		zap.String("path", h.path),
 		zap.Uint64("old_fd", cur.fd), zap.Uint64("new_fd", reply.Fd))
-	h.state.Store(&fdState{fd: reply.Fd, sessionID: live})
+	h.state.Store(&fdState{fd: reply.Fd, sessionID: live, epoch: liveEpoch})
 	return fuse.OK
 }
 
