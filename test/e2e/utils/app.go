@@ -973,6 +973,13 @@ func (c *AppTestingContext) RestartServer() error {
 // plain RestartServer reuses the SessionManager and therefore tests the
 // connection-drop/Resume path, not reclaim.)
 //
+// The stop is non-graceful (KillServer): at restart time the mounted client
+// holds live Keepalive and Subscribe streams whose server-side handlers block
+// until their stream context is cancelled. GracefulStop does NOT cancel active
+// RPC contexts — it waits for them to finish — so StopServer would block
+// forever. KillServer drops all active connections immediately, which also
+// more faithfully simulates a hard process restart.
+//
 // The swap propagates to the rebuilt server because buildServer reads
 // c.serverCtx.SessionManager at serve time on BOTH paths: it passes the field
 // to grpcServer.WithSessionManager (the auth interceptor) AND it calls
@@ -981,7 +988,7 @@ func (c *AppTestingContext) RestartServer() error {
 // c.serverCtx.SessionManager at call time. Swapping the field before
 // StartServer therefore gives the rebuilt server a genuinely empty table.
 func (c *AppTestingContext) RestartServerNewSession() error {
-	c.StopServer()
+	c.KillServer()
 	// Swap in a fresh SessionManager BEFORE StartServer (see doc comment).
 	c.serverCtx.SessionManager = service.NewSessionManager(service.SessionManagerOptions{
 		Metrics:              c.serverCtx.Metrics,
