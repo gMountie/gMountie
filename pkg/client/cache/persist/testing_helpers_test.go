@@ -80,3 +80,8 @@ func TestingMetaWriteCount(p *Persist) int64 {
 // TestingNoSync reports whether meta.db was opened with fsync-on-commit
 // disabled.
 func TestingNoSync(p *Persist) bool { return p.db.NoSync }
+
+// TestingSyncCount returns the cumulative number of explicit db.Sync()
+// (fsync) calls Persist has made. Lets tests assert that a given op makes
+// its mutation durable under NoSync rather than leaving it for Close.
+func TestingSyncCount(p *Persist) int64 { return p.syncCount.Load() }

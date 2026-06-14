@@ -176,7 +176,7 @@ func (p *Persist) InvalidatePathChunks(path string) error {
 	// only ran because there were entries to delete, so this sync always
 	// follows a real removal. The hot write path (no cached chunks) never
 	// reaches here; cost is proportional to actual invalidation frequency.
-	if err := p.db.Sync(); err != nil {
+	if err := p.sync(); err != nil {
 		return errors.Wrap(err, "sync after InvalidatePathChunks")
 	}
 	for _, h := range toUnlink {
@@ -244,7 +244,7 @@ func (p *Persist) InvalidateChunkRange(path string, firstIdx, lastIdx int) error
 	// under NoSync. The no-op probe above guarantees Update only ran because
 	// ≥1 entry existed, so a real removal just committed. See the comment in
 	// InvalidatePathChunks for the full rationale.
-	if err := p.db.Sync(); err != nil {
+	if err := p.sync(); err != nil {
 		return errors.Wrap(err, "sync after InvalidateChunkRange")
 	}
 	for _, h := range toUnlink {

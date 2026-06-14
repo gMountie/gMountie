@@ -50,7 +50,7 @@ func (p *Persist) kvDelete(bucket []byte, key string) error {
 	// the next open when SubscribeEnabled=false (verified at backend.go:52-57:
 	// that branch calls markGlobalVerified() at construction, bypassing
 	// the unverified-startup revalidation the subscribe path provides).
-	return errors.Wrap(p.db.Sync(), "sync after kvDelete")
+	return errors.Wrap(p.sync(), "sync after kvDelete")
 }
 
 // PutAttrBytes / GetAttrBytes / DeleteAttrBytes: attr bucket facade.
