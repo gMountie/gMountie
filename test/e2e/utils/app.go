@@ -20,6 +20,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/server"
 	"go.gmountie.dev/gmountie/pkg/server/config"
 	grpcServer "go.gmountie.dev/gmountie/pkg/server/grpc"
+	"go.gmountie.dev/gmountie/pkg/server/service"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/pkg/errors"
@@ -961,6 +962,32 @@ func (c *AppTestingContext) StartServer() error {
 // RestartServer is a convenience wrapper for StopServer followed by StartServer.
 func (c *AppTestingContext) RestartServer() error {
 	c.StopServer()
+	return c.StartServer()
+}
+
+// RestartServerNewSession stops the server and brings it back up over the same
+// TCP address but with a FRESH, EMPTY SessionManager — faithfully simulating a
+// real process restart where the in-memory session table is lost. After this,
+// the client's Resume(old_session_id) fails against the empty table, so it
+// Creates a new session (new session_id) and reclaim must reopen its fds. (The
+// plain RestartServer reuses the SessionManager and therefore tests the
+// connection-drop/Resume path, not reclaim.)
+//
+// The swap propagates to the rebuilt server because buildServer reads
+// c.serverCtx.SessionManager at serve time on BOTH paths: it passes the field
+// to grpcServer.WithSessionManager (the auth interceptor) AND it calls
+// c.serverCtx.GetGrpcServices(), which constructs every controller — including
+// the SessionController and RpcFile/file controllers — from
+// c.serverCtx.SessionManager at call time. Swapping the field before
+// StartServer therefore gives the rebuilt server a genuinely empty table.
+func (c *AppTestingContext) RestartServerNewSession() error {
+	c.StopServer()
+	// Swap in a fresh SessionManager BEFORE StartServer (see doc comment).
+	c.serverCtx.SessionManager = service.NewSessionManager(service.SessionManagerOptions{
+		Metrics:              c.serverCtx.Metrics,
+		GracePeriod:          c.cfg.Server.Session.GracePeriod,
+		IdempotencyCacheSize: c.cfg.Server.Session.IdempotencyCacheSize,
+	})
 	return c.StartServer()
 }
 
