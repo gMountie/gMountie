@@ -28,7 +28,7 @@ func (s *SessionControllerTestSuite) SetupTest() {
 		GracePeriod: 100 * time.Millisecond,
 	})
 	s.volSvc = mockservice.NewMockVolumeService(s.T())
-	s.controller = NewSessionController(s.mgr, s.volSvc)
+	s.controller = NewSessionController(s.mgr, s.volSvc, "test-epoch")
 }
 
 func (s *SessionControllerTestSuite) TearDownTest() {

@@ -62,8 +62,14 @@ func (*SessionCreateRequest) Descriptor() ([]byte, []int) {
 }
 
 type SessionCreateReply struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// boot_epoch is a per-server-process random nonce. A client compares the
+	// epoch from a Create-after-Resume-failure against the prior one: a CHANGED
+	// epoch means the server process restarted (open fds can be safely reopened);
+	// an UNCHANGED epoch means this same process reaped the client's idle session
+	// (the fd is dead and must NOT be silently reopened).
+	BootEpoch     string `protobuf:"bytes,2,opt,name=boot_epoch,json=bootEpoch,proto3" json:"boot_epoch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -101,6 +107,13 @@ func (*SessionCreateReply) Descriptor() ([]byte, []int) {
 func (x *SessionCreateReply) GetSessionId() string {
 	if x != nil {
 		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SessionCreateReply) GetBootEpoch() string {
+	if x != nil {
+		return x.BootEpoch
 	}
 	return ""
 }
@@ -426,10 +439,12 @@ var File_api_proto_session_proto protoreflect.FileDescriptor
 const file_api_proto_session_proto_rawDesc = "" +
 	"\n" +
 	"\x17api/proto/session.proto\x12\bgmountie\x1a\x16api/proto/common.proto\"\x16\n" +
-	"\x14SessionCreateRequest\"3\n" +
+	"\x14SessionCreateRequest\"R\n" +
 	"\x12SessionCreateReply\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId\"5\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1d\n" +
+	"\n" +
+	"boot_epoch\x18\x02 \x01(\tR\tbootEpoch\"5\n" +
 	"\x14SessionResumeRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\".\n" +

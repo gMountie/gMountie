@@ -193,7 +193,7 @@ func (s *FactoryTestSuite) newRenewFixtureCA(exchangeStatus int, withCA bool) *r
 	s.Require().NoError(err)
 	srv := grpc.NewServer(grpc.Creds(creds))
 	sessMgr := service.NewSessionManager(service.SessionManagerOptions{})
-	proto.RegisterSessionServiceServer(srv, controller.NewSessionController(sessMgr, nil))
+	proto.RegisterSessionServiceServer(srv, controller.NewSessionController(sessMgr, nil, "test-epoch"))
 	// A volume server so the referral test can drive Resolve over the real mTLS
 	// link. resolveLoc (set per-test) is the location it returns: empty = served
 	// here, non-empty = a referral the client re-dials.
