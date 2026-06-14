@@ -87,11 +87,12 @@ type CacheConfig struct {
 	NegativeTTL time.Duration `mapstructure:"negative_ttl"`
 }
 
-// NewCacheConfig parses a CacheConfig from a viper sub-tree. A nil v
-// yields defaults; an empty sub-tree yields defaults; explicit values
-// override.
-func NewCacheConfig(v *viper.Viper) (*CacheConfig, error) {
-	cfg := &CacheConfig{
+// defaultCacheConfig returns a CacheConfig seeded entirely from the
+// DefaultCache* constants. Single source of the literal defaults, reused by
+// the v==nil fast path and as the unmarshal target so it can never drift from
+// the SetDefault block (kept only for --effective reflection) below.
+func defaultCacheConfig() *CacheConfig {
+	return &CacheConfig{
 		Enabled:          DefaultCacheEnabled,
 		SubscribeEnabled: DefaultCacheSubscribeEnabled,
 		Path:             defaultCachePath(),
@@ -102,6 +103,13 @@ func NewCacheConfig(v *viper.Viper) (*CacheConfig, error) {
 		DirTTL:           DefaultCacheDirTTL,
 		NegativeTTL:      DefaultCacheNegativeTTL,
 	}
+}
+
+// NewCacheConfig parses a CacheConfig from a viper sub-tree. A nil v
+// yields defaults; an empty sub-tree yields defaults; explicit values
+// override.
+func NewCacheConfig(v *viper.Viper) (*CacheConfig, error) {
+	cfg := defaultCacheConfig()
 	if v == nil {
 		return cfg, nil
 	}
