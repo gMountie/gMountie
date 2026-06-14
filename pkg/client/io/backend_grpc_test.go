@@ -1896,6 +1896,7 @@ func (s *BackendClientTestSuite) TestStatusFromRPCError_Mapping() {
 		{"Unavailable", status.Error(codes.Unavailable, "down"), fuse.EIO},
 		{"Internal", status.Error(codes.Internal, "boom"), fuse.EIO},
 		{"non-grpc error", context.DeadlineExceeded, fuse.EIO},
+		{"reclaim failure unwraps to its status", errFromStatus(fuse.ENOENT), fuse.ENOENT},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
