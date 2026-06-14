@@ -149,6 +149,10 @@ func joinPath(parent, name string) string {
 // In-band failures still arrive as fuse.Status in the reply body; this helper
 // only covers the error arm of each RPC.
 func statusFromRPCError(err error) fuse.Status {
+	var re reclaimError
+	if errors.As(err, &re) {
+		return re.st
+	}
 	s, ok := grpcstatus.FromError(err)
 	if !ok || s == nil {
 		return fuse.EIO
@@ -755,13 +759,16 @@ func (b *BackendClient) readLive(ctx context.Context, h *grpcFileHandle, off int
 	// Unavailable; the per-attempt deadline still bounds the wait. On a session
 	// change the fd is dead, so retryOp stops retrying.
 	res, err := retryOp(h.client, ctx, "Read", classFdOp, h.ioTimeout, func(ctx context.Context) (readResult, error) {
-		st := h.state.Load()
+		if st := h.reclaimIfStale(ctx); !st.Ok() {
+			return readResult{}, errFromStatus(st)
+		}
+		snap := h.state.Load()
 		stream, err := h.fileClient.Read(ctx, &proto.ReadRequest{
 			Volume:    h.volume,
-			Fd:        st.fd,
+			Fd:        snap.fd,
 			Offset:    off,
 			Size:      uint32(len(dest)),
-			SessionId: st.sessionID,
+			SessionId: snap.sessionID,
 		}, grpc.WaitForReady(true))
 		if err != nil {
 			return readResult{}, err
@@ -831,6 +838,9 @@ func (b *BackendClient) doPrefetch(h *grpcFileHandle, off int64) {
 	chunk := h.readahead.chunkSize
 	ctx, cancel := context.WithTimeout(h.lifeCtx, h.ioTimeout)
 	defer cancel()
+	if st := h.reclaimIfStale(ctx); !st.Ok() {
+		return // prefetch errors are swallowed; next synchronous Read will refetch
+	}
 	st := h.state.Load()
 	stream, err := h.fileClient.Read(ctx, &proto.ReadRequest{
 		Volume:    h.volume,
@@ -894,19 +904,22 @@ func (b *BackendClient) streamingWrite(h *grpcFileHandle, data []byte, off int64
 	// instant Unavailable; the per-attempt deadline still bounds the wait.
 	res, err := retryOp(h.client, context.Background(), "Write", classFdOp, h.ioTimeout,
 		func(ctx context.Context) (*proto.WriteReply, error) {
+			if st := h.reclaimIfStale(ctx); !st.Ok() {
+				return nil, errFromStatus(st)
+			}
+			snap := h.state.Load()
 			stream, err := h.fileClient.Write(ctx, grpc.WaitForReady(true))
 			if err != nil {
 				return nil, err
 			}
-			st := h.state.Load()
 			first := writeFrameSizeBytes
 			if first > len(data) {
 				first = len(data)
 			}
 			header := &proto.WriteFrame{
 				Volume:    h.volume,
-				Fd:        st.fd,
-				SessionId: st.sessionID,
+				Fd:        snap.fd,
+				SessionId: snap.sessionID,
 				RequestId: requestID,
 				Offset:    off,
 				Data:      data[:first],
@@ -1026,13 +1039,16 @@ func (b *BackendClient) Release(ctx context.Context, fh FileHandle) fuse.Status 
 	// classFdOp: a duplicate Release of an already-closed fd is benign, so
 	// transient errors retry within the session; a session change makes the fd
 	// (and its server-side resources) gone already, so retryOp stops.
-	st := h.state.Load()
 	_, err := retryOp(h.client, ctx, "Release", classFdOp, h.ioTimeout,
 		func(ctx context.Context) (*proto.ReleaseReply, error) {
+			if st := h.reclaimIfStale(ctx); !st.Ok() {
+				return nil, errFromStatus(st)
+			}
+			snap := h.state.Load()
 			return h.fileClient.Release(ctx, &proto.ReleaseRequest{
 				Volume:    h.volume,
-				Fd:        st.fd,
-				SessionId: st.sessionID,
+				Fd:        snap.fd,
+				SessionId: snap.sessionID,
 			}, grpc.WaitForReady(true))
 		})
 	if err != nil {
@@ -1084,9 +1100,12 @@ func (b *BackendClient) Flush(ctx context.Context, fh FileHandle) fuse.Status {
 	// classFdOp: WriteAndFlush is idempotent (same fd/offset/data replayed) so
 	// transient errors retry within the session; a session change kills the fd
 	// and stops the retry.
-	snap := h.state.Load()
 	res, err := retryOp(h.client, ctx, "WriteAndFlush", classFdOp, h.ioTimeout,
 		func(ctx context.Context) (*proto.WriteAndFlushReply, error) {
+			if st := h.reclaimIfStale(ctx); !st.Ok() {
+				return nil, errFromStatus(st)
+			}
+			snap := h.state.Load()
 			return h.fileClient.WriteAndFlush(ctx, &proto.WriteAndFlushRequest{
 				Volume:    h.volume,
 				Fd:        snap.fd,
@@ -1120,9 +1139,12 @@ func (b *BackendClient) Fsync(ctx context.Context, fh FileHandle, flags int64) f
 	}
 	// classFdOp: a second Fsync against an already-synced fd is a no-op, so
 	// transient errors retry within the session; a session change kills the fd.
-	snap := h.state.Load()
 	res, err := retryOp(h.client, ctx, "Fsync", classFdOp, h.ioTimeout,
 		func(ctx context.Context) (*proto.FsyncReply, error) {
+			if st := h.reclaimIfStale(ctx); !st.Ok() {
+				return nil, errFromStatus(st)
+			}
+			snap := h.state.Load()
 			return h.fileClient.Fsync(ctx, &proto.FsyncRequest{
 				Volume:    h.volume,
 				Fd:        snap.fd,
@@ -1150,18 +1172,21 @@ func (b *BackendClient) Allocate(ctx context.Context, fh FileHandle, off, size u
 	if h == nil {
 		return fuse.EBADF
 	}
-	st := h.state.Load()
 	res, err := retryOp(h.client, ctx, "Allocate", classFdOp, h.ioTimeout,
 		func(ctx context.Context) (*proto.AllocateReply, error) {
+			if st := h.reclaimIfStale(ctx); !st.Ok() {
+				return nil, errFromStatus(st)
+			}
+			snap := h.state.Load()
 			return h.fileClient.Allocate(ctx, &proto.AllocateRequest{
 				Volume:    h.volume,
 				Caller:    callerFromCtx(ctx),
-				Fd:        st.fd,
+				Fd:        snap.fd,
 				Path:      h.path,
 				Off:       off,
 				Size:      size,
 				Mode:      mode,
-				SessionId: st.sessionID,
+				SessionId: snap.sessionID,
 			}, grpc.WaitForReady(true))
 		})
 	if err != nil {
@@ -1198,10 +1223,16 @@ func (b *BackendClient) CopyFileRange(ctx context.Context, fhIn FileHandle, offI
 	// replay without re-executing the copy.
 	requestID := uuid.NewString()
 	caller := callerFromCtx(ctx)
-	stSrc := src.state.Load()
-	stDst := dst.state.Load()
 	res, err := retryOp(dst.client, ctx, "CopyFileRange", classFdOp, dst.ioTimeout,
 		func(ctx context.Context) (*proto.CopyFileRangeReply, error) {
+			if st := src.reclaimIfStale(ctx); !st.Ok() {
+				return nil, errFromStatus(st)
+			}
+			if st := dst.reclaimIfStale(ctx); !st.Ok() {
+				return nil, errFromStatus(st)
+			}
+			stSrc := src.state.Load()
+			stDst := dst.state.Load()
 			return dst.fileClient.CopyFileRange(ctx, &proto.CopyFileRangeRequest{
 				Volume:    dst.volume,
 				Caller:    caller,
@@ -1240,17 +1271,20 @@ func (b *BackendClient) Lseek(ctx context.Context, fh FileHandle, offset uint64,
 	}
 	// classFdOp: Lseek is a pure hole-geometry probe (idempotent), so transient
 	// errors retry within the session; a session change kills the fd.
-	st := h.state.Load()
 	res, err := retryOp(h.client, ctx, "Lseek", classFdOp, h.ioTimeout,
 		func(ctx context.Context) (*proto.LseekReply, error) {
+			if st := h.reclaimIfStale(ctx); !st.Ok() {
+				return nil, errFromStatus(st)
+			}
+			snap := h.state.Load()
 			return h.fileClient.Lseek(ctx, &proto.LseekRequest{
 				Volume:    h.volume,
 				Caller:    callerFromCtx(ctx),
-				Fd:        st.fd,
+				Fd:        snap.fd,
 				Path:      h.path,
 				Offset:    offset,
 				Whence:    whence,
-				SessionId: st.sessionID,
+				SessionId: snap.sessionID,
 			}, grpc.WaitForReady(true))
 		})
 	if err != nil {
@@ -1269,16 +1303,19 @@ func (b *BackendClient) GetLk(ctx context.Context, fh FileHandle, owner uint64, 
 	if h == nil {
 		return fuse.EBADF
 	}
-	st := h.state.Load()
 	res, err := retryOp(h.client, ctx, "GetLk", classFdOp, h.ioTimeout,
 		func(ctx context.Context) (*proto.GetLkReply, error) {
+			if st := h.reclaimIfStale(ctx); !st.Ok() {
+				return nil, errFromStatus(st)
+			}
+			snap := h.state.Load()
 			return h.fileClient.GetLk(ctx, &proto.GetLkRequest{
 				Volume:    h.volume,
-				Fd:        st.fd,
+				Fd:        snap.fd,
 				Owner:     owner,
 				Flags:     flags,
 				Lk:        &proto.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid},
-				SessionId: st.sessionID,
+				SessionId: snap.sessionID,
 			}, grpc.WaitForReady(true))
 		})
 	if err != nil {
@@ -1300,16 +1337,19 @@ func (b *BackendClient) SetLk(ctx context.Context, fh FileHandle, owner uint64, 
 	if h == nil {
 		return fuse.EBADF
 	}
-	st := h.state.Load()
 	res, err := retryOp(h.client, ctx, "SetLk", classFdOp, h.ioTimeout,
 		func(ctx context.Context) (*proto.SetLkReply, error) {
+			if st := h.reclaimIfStale(ctx); !st.Ok() {
+				return nil, errFromStatus(st)
+			}
+			snap := h.state.Load()
 			return h.fileClient.SetLk(ctx, &proto.SetLkRequest{
 				Volume:    h.volume,
-				Fd:        st.fd,
+				Fd:        snap.fd,
 				Owner:     owner,
 				Flags:     flags,
 				Lk:        &proto.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid},
-				SessionId: st.sessionID,
+				SessionId: snap.sessionID,
 			}, grpc.WaitForReady(true))
 		})
 	if err != nil {
@@ -1330,16 +1370,19 @@ func (b *BackendClient) SetLkw(ctx context.Context, fh FileHandle, owner uint64,
 	// SetLkw is a BLOCKING lock acquisition (F_SETLKW): keep it cancellable so
 	// a signal can interrupt a stuck wait, rather than detaching it from the
 	// caller's cancellation the way retryOp does for every other op.
-	st := h.state.Load()
 	ctx2, cancel := context.WithTimeout(ctx, h.ioTimeout)
 	defer cancel()
+	if reclaimSt := h.reclaimIfStale(ctx2); !reclaimSt.Ok() {
+		return reclaimSt
+	}
+	snap := h.state.Load()
 	res, err := h.fileClient.SetLkw(ctx2, &proto.SetLkwRequest{
 		Volume:    h.volume,
-		Fd:        st.fd,
+		Fd:        snap.fd,
 		Owner:     owner,
 		Flags:     flags,
 		Lk:        &proto.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid},
-		SessionId: st.sessionID,
+		SessionId: snap.sessionID,
 	})
 	if err != nil {
 		log.Log.Error("error in call: SetLkw", zap.String("path", h.path), zap.Error(err))
