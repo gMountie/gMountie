@@ -14,6 +14,12 @@ import (
 	"github.com/spf13/viper"
 )
 
+// credentialsEnvVar carries a base64-encoded single-blob mount credential
+// (cert/key/CA/endpoint) used when no --credentials file is given. It lives
+// beside its sole consumer (applyCredentialToViper) rather than in the
+// password helpers, which only build under the linux||darwin client tag.
+const credentialsEnvVar = "GMOUNTIE_CREDENTIALS"
+
 // credentialsFile is set by the --credentials flag on whichever client command
 // runs (mount/ls). It points at a single-blob mount credential; when empty the
 // $GMOUNTIE_CREDENTIALS env var is consulted instead.

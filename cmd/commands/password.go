@@ -14,10 +14,6 @@ import (
 // passwordEnvVar is the env var checked when no --password flag is given.
 const passwordEnvVar = "GMOUNTIE_AUTH_PASSWORD"
 
-// credentialsEnvVar carries a base64-encoded single-blob mount credential
-// (cert/key/CA/endpoint) used when no --credentials file is given.
-const credentialsEnvVar = "GMOUNTIE_CREDENTIALS"
-
 // resolveConfiguredPassword resolves a password from the config (profile/file)
 // sources, in order: auth.password_command (run via `sh -c`), then
 // auth.password_file (or $GMOUNTIE_AUTH_PASSWORD_FILE), then the inline
