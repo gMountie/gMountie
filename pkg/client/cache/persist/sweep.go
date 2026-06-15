@@ -10,6 +10,9 @@ import (
 
 	"github.com/pkg/errors"
 	bolt "go.etcd.io/bbolt"
+
+	"go.gmountie.dev/gmountie/pkg/utils/log"
+	"go.uber.org/zap"
 )
 
 // orphanSweepBgAge is the minimum file age used when the orphan sweep
@@ -83,9 +86,13 @@ func (p *Persist) runOrphanSweep(minAge time.Duration, stop <-chan struct{}) err
 					return nil // too fresh; a WriteChunk may still rename it
 				}
 			}
-			if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) {
-				return errors.Wrap(rmErr, "remove stale tmp chunk")
+			if rmErr := os.Remove(path); rmErr != nil {
+				if !os.IsNotExist(rmErr) {
+					return errors.Wrap(rmErr, "remove stale tmp chunk")
+				}
+				return nil // already gone (renamed/removed under us); not reclaimed by us
 			}
+			p.metrics.TmpReclaimed()
 			return nil
 		}
 		if len(name) != 32 { // hex of 16 bytes
@@ -114,9 +121,10 @@ func (p *Persist) runOrphanSweep(minAge time.Duration, stop <-chan struct{}) err
 			return err
 		}
 		if count == 0 {
-			if err := p.unlinkChunk(h); err != nil {
+			if err := p.unlinkChunk(h, unlinkReasonOrphan); err != nil {
 				return err
 			}
+			p.metrics.OrphanReclaimed()
 		}
 		return nil
 	})
@@ -188,12 +196,13 @@ func (p *Persist) runGhostSweep(sampleFraction float64, stop <-chan struct{}) er
 			if derr := idx.Delete(k); derr != nil {
 				return derr
 			}
+			p.metrics.GhostEntryDeleted()
 			remaining, found, derr := decRefTx(tx, curRef.Hash)
 			if derr != nil {
 				return derr
 			}
 			if !found {
-				p.refUnderflows.Add(1)
+				p.recordRefUnderflow(curRef.Hash)
 			}
 			if remaining == 0 {
 				unlinks = append(unlinks, curRef.Hash)
@@ -205,7 +214,13 @@ func (p *Persist) runGhostSweep(sampleFraction float64, stop <-chan struct{}) er
 		return errors.Wrap(err, "ghost sweep delete")
 	}
 	for _, h := range unlinks {
-		_ = p.unlinkChunk(h)
+		// Best-effort: the index entry is already gone, so a failed unlink only
+		// leaks a now-unreferenced chunk file (the orphan sweep will reclaim it
+		// later). Log rather than discard so the leak is observable.
+		if uerr := p.unlinkChunk(h, unlinkReasonGhost); uerr != nil {
+			log.Log.Warn("ghost sweep: unlink of reclaimed chunk failed",
+				zap.String("hash", hex.EncodeToString(h[:])), zap.Error(uerr))
+		}
 	}
 	return nil
 }
@@ -301,12 +316,13 @@ func (p *Persist) enforceDiskBudget() error {
 			if derr := idx.Delete(k); derr != nil {
 				return derr
 			}
+			p.metrics.BudgetEviction()
 			remaining, found, derr := decRefTx(tx, curRef.Hash)
 			if derr != nil {
 				return derr
 			}
 			if !found {
-				p.refUnderflows.Add(1)
+				p.recordRefUnderflow(curRef.Hash)
 			}
 			if remaining == 0 {
 				toUnlink = append(toUnlink, curRef.Hash)
@@ -318,7 +334,12 @@ func (p *Persist) enforceDiskBudget() error {
 		return errors.Wrap(err, "evict delete")
 	}
 	for _, h := range toUnlink {
-		if err := p.unlinkChunk(h); err != nil {
+		if err := p.unlinkChunk(h, unlinkReasonBudget); err != nil {
+			// Unlike the ghost sweep, budget enforcement propagates this error:
+			// it runs inline on the WriteChunk path, so a failure to free bytes
+			// must surface rather than silently leave the cache over budget.
+			log.Log.Warn("budget eviction: unlink of evicted chunk failed",
+				zap.String("hash", hex.EncodeToString(h[:])), zap.Error(err))
 			return err
 		}
 	}

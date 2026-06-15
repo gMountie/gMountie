@@ -48,7 +48,7 @@ func (p *Persist) WriteChunk(data []byte) (hash [16]byte, dedup bool, err error)
 		return hash, false, err
 	}
 	p.accMu.Lock()
-	p.disk.add(int64(len(data)))
+	p.diskAdd(int64(len(data)))
 	p.accMu.Unlock()
 	if err := p.enforceDiskBudget(); err != nil {
 		return hash, false, errors.Wrap(err, "enforce disk budget after WriteChunk")
@@ -60,6 +60,17 @@ func (p *Persist) WriteChunk(data []byte) (hash [16]byte, dedup bool, err error)
 // into place, then fsyncs the parent dir — so both the bytes and the rename
 // survive a crash that precedes the ~1s background meta-sync which publishes
 // the index entry pointing at this chunk.
+//
+// Content-addressed self-heal invariant: callers only ever pass final ==
+// chunkPath(H) with data whose xxh3-128 hashes to H (WriteChunk). The tmp+rename
+// makes the publish atomic, so a file at chunkPath(H) always holds bytes that
+// hash to H — never wrong-but-plausible content. This is what makes the
+// cross-file unlink/dedup race benign: a lost post-commit unlink racing a
+// concurrent dedup leaves the file absent (→ ReadChunk miss → refetch
+// recreates) or byte-correct, so a stale read can only become a cache miss,
+// never a wrong-data hit. Preserve this invariant; do NOT add hot-path locking
+// to "fix" the race (regression tests: TestPersistCrossFileDivergenceIsBenign
+// here, and the loader miss-mapping test in cache/data_test.go).
 func writeChunkFile(final string, data []byte) error {
 	var rnd [8]byte
 	if _, err := rand.Read(rnd[:]); err != nil {
@@ -114,8 +125,20 @@ func (p *Persist) ReadChunk(hash [16]byte) ([]byte, error) {
 }
 
 // unlinkChunk removes the on-disk file backing hash. Idempotent.
-// Stats the file first to debit the disk accountant accurately.
-func (p *Persist) unlinkChunk(hash [16]byte) error {
+// Stats the file first to debit the disk accountant accurately. reason
+// is one of the unlinkReason* consts and labels the ChunkUnlinked metric,
+// fired only on a real removal (not the idempotent already-absent no-op).
+//
+// Content-addressed self-heal invariant (see writeChunkFile): a file at
+// chunkPath(H) exists only if its bytes hash to H. A post-commit unlink lost
+// to a crash or raced by a concurrent dedup therefore leaves the file either
+// absent (→ ReadChunk miss → refetch recreates) or byte-correct — never
+// wrong-but-plausible. So this unlink need not be serialized with the dedup
+// fast path on the hot write path; the cross-file unlink/dedup race is benign
+// (proven by TestPersistCrossFileDivergenceIsBenign and the loader
+// miss-mapping test in cache/data_test.go). Do NOT "fix" it with hot-path
+// locking, and preserve the invariant.
+func (p *Persist) unlinkChunk(hash [16]byte, reason string) error {
 	path := p.chunkPath(hash)
 	p.accMu.Lock()
 	defer p.accMu.Unlock()
@@ -132,7 +155,8 @@ func (p *Persist) unlinkChunk(hash [16]byte) error {
 		}
 		return errors.Wrap(err, "unlink chunk")
 	}
-	p.disk.add(-st.Size())
+	p.diskAdd(-st.Size())
+	p.metrics.ChunkUnlinked(reason)
 	return nil
 }
 
@@ -160,7 +184,7 @@ func (p *Persist) seedDiskBytes() error {
 	if err != nil {
 		return errors.Wrap(err, "seed disk bytes")
 	}
-	p.disk.add(total)
+	p.diskAdd(total)
 	return nil
 }
 
