@@ -76,6 +76,39 @@ func TestDataCacheTestSuite(t *testing.T) {
 	suite.Run(t, new(DataCacheTestSuite))
 }
 
+// divergedPersist models the end-state of the persist cross-file divergence
+// race (#1): a committed, refcount-1 index entry for (path,0) whose backing
+// chunk FILE is missing (ReadChunk fails). It lets us execute the load-bearing
+// severity claim — missing file maps to a cache MISS, never wrong data — in the
+// cache loader rather than only asserting it by inspection.
+type divergedPersist struct{ readErr error }
+
+func (d *divergedPersist) GetChunkRef(_ string, idx int) (persist.ChunkRef, bool, error) {
+	if idx != 0 {
+		return persist.ChunkRef{}, false, nil
+	}
+	return persist.ChunkRef{Size: 16}, true, nil // index entry is present (committed)
+}
+func (d *divergedPersist) ReadChunk(_ [16]byte) ([]byte, error) { return nil, d.readErr } // file gone
+func (d *divergedPersist) WriteChunk(_ []byte) ([16]byte, bool, error) {
+	return [16]byte{}, false, nil
+}
+func (d *divergedPersist) PutChunkRef(_ string, _ int, _ persist.ChunkRef) error { return nil }
+func (d *divergedPersist) InvalidatePathChunks(_ string) error                   { return nil }
+func (d *divergedPersist) InvalidateChunkRange(_ string, _, _ int) error         { return nil }
+
+// TestLoaderMissesOnDivergedChunkFile executes the severity-determining leg of
+// the #1 verdict: when the index entry exists but its chunk file is gone (the
+// race's end-state), the loader returns a MISS (get == nil), never the wrong
+// bytes. This is what makes the race benign rather than severe — the caller
+// refetches and self-heals.
+func (s *DataCacheTestSuite) TestLoaderMissesOnDivergedChunkFile() {
+	fake := &divergedPersist{readErr: errors.New("read chunk: no such file or directory")}
+	c := newDataCacheWithChunkPersist(newAccountant(1<<20, 0), 1024, fake)
+	s.Assert().Nil(c.get("/P2", 0),
+		"index entry present but chunk file gone => loader miss, NOT wrong data served as a trusted hit")
+}
+
 // stalePersist is a fake chunkPersist that always serves a single stale chunk
 // for (path,0) and fails invalidation. It lets us exercise the data cache's
 // cleaner-error → poison-path wiring deterministically: a real *persist.Persist
