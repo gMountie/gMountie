@@ -58,7 +58,24 @@ func (p *Persist) runOrphanSweep(minAge time.Duration, stop <-chan struct{}) err
 		}
 		name := d.Name()
 		if idx := strings.Index(name, ".tmp-"); idx == 32 {
-			// crash-leftover temp chunk from an interrupted WriteChunk
+			// A crash-leftover temp chunk from an interrupted WriteChunk —
+			// UNLESS it's young, in which case it may be a tmp file an
+			// in-flight WriteChunk is about to fsync+rename. Reclaiming it
+			// then would make that rename fail with ENOENT. The same minAge
+			// guard that protects fresh chunk files protects fresh tmp files;
+			// minAge==0 (synchronous reclaim) removes them all.
+			if minAge > 0 {
+				info, err := d.Info()
+				if err != nil {
+					if os.IsNotExist(err) {
+						return nil // renamed into place under us; nothing to reclaim
+					}
+					return err
+				}
+				if info.ModTime().After(cutoff) {
+					return nil // too fresh; a WriteChunk may still rename it
+				}
+			}
 			if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) {
 				return errors.Wrap(rmErr, "remove stale tmp chunk")
 			}
@@ -248,9 +265,15 @@ func (p *Persist) enforceDiskBudget() error {
 	}
 	if len(toDeleteKeys) == 0 {
 		// data_idx can't free more; remaining over-budget bytes are orphan or
-		// crash-leftover tmp chunks. Reclaim them synchronously (age 0) so the
-		// budget self-heals instead of wedging and re-scanning on every write.
-		return errors.Wrap(p.runOrphanSweep(0, nil), "orphan reclaim under budget pressure")
+		// crash-leftover tmp chunks. Reclaim them synchronously so the budget
+		// self-heals instead of wedging and re-scanning on every write. Use the
+		// background min-age (not 0): this runs inside a concurrent WriteChunk,
+		// so reclaiming a fresh orphan chunk before its PutChunkRef — or an
+		// in-flight tmp before its rename — would corrupt a peer write. Only
+		// crash-leftover (old) bytes wedge the budget, and they're older than
+		// the guard. Tmp files aren't charged (seedDiskBytes skips them), so
+		// excluding fresh ones doesn't change what frees the budget.
+		return errors.Wrap(p.runOrphanSweep(orphanSweepBgAge, nil), "orphan reclaim under budget pressure")
 	}
 
 	var toUnlink [][16]byte
