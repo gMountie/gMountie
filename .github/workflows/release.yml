@@ -63,7 +63,7 @@ jobs:
         go-version-file: 'go.mod'
 
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v4
+      uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
 
     # cosign signs release artifacts + images (keyless); syft generates the
     # SBOMs goreleaser attaches to archives and the image SBOM attested below.
@@ -71,15 +71,15 @@ jobs:
     # --output-certificate/--output-signature, which cosign v3 removed; pinning
     # v2.5.2 keeps the signing path stable until that block is migrated.
     - name: Install cosign
-      uses: sigstore/cosign-installer@v3
+      uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
       with:
         cosign-release: 'v2.5.2'
 
     - name: Install syft
-      uses: anchore/sbom-action/download-syft@v0
+      uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
 
     - name: Login to ghcr.io
-      uses: docker/login-action@v4
+      uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
       with:
         registry: ghcr.io
         username: ${{github.actor}}
@@ -108,7 +108,7 @@ jobs:
       run: echo "flags=--snapshot --skip=sign" >> "$GITHUB_ENV"
 
     - name: Run GoReleaser
-      uses: goreleaser/goreleaser-action@v7
+      uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7
       with:
         args: release --clean ${{ env.flags }}
       env:
@@ -134,7 +134,7 @@ jobs:
     #     --version <release-tag-minus-leading-v>
     - name: Set up Helm
       if: ${{ github.event.inputs.type == 'alpha' || github.event.inputs.type == 'production' }}
-      uses: azure/setup-helm@v5
+      uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5
       with:
         version: v3.16.4
 
