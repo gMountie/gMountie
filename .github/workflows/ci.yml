@@ -226,6 +226,12 @@ jobs:
     # End-to-end: run the real installer against the live release artifacts and
     # confirm the binary works. Guards against goreleaser name-template / artifact
     # drift that the unit tests (which use a fixture) cannot see.
+    #
+    # Deliberately gated to master pushes only: it depends on external release
+    # state + CDN availability, so on every PR it would couple unrelated changes
+    # to that flakiness and redden the PR. As a post-merge smoke on master it
+    # still catches installer/artifact drift without blocking feature PRs.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

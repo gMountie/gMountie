@@ -66,8 +66,9 @@ jobs:
       uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
 
     # cosign signs release artifacts + images (keyless); syft generates the
-    # SBOMs goreleaser attaches to archives and the image SBOM attested below.
-    # Pin the cosign binary. goreleaser's `signs` block uses sign-blob's
+    # per-archive SPDX SBOMs goreleaser attaches to the release archives. The
+    # image is signed but NOT SBOM-attested (see the note after GoReleaser for
+    # why the in-registry image SBOM is omitted). Pin the cosign binary. goreleaser's `signs` block uses sign-blob's
     # --output-certificate/--output-signature, which cosign v3 removed; pinning
     # v2.5.2 keeps the signing path stable until that block is migrated.
     - name: Install cosign
