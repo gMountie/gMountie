@@ -606,14 +606,13 @@ const setAttrValidMask = fuse.FATTR_MODE | fuse.FATTR_UID | fuse.FATTR_GID |
 // trailing Stat. A nil Attr with fuse.OK means the server omitted the
 // attrs (its post-apply stat failed); callers fall back to Stat.
 func (b *BackendClient) SetAttr(ctx context.Context, path string, in SetAttrIn) (*Attr, fuse.Status) {
-	requestID := uuid.NewString() // outside retryOp: stable across attempts for idempotency
-	res, err := retryOp(b.client, ctx, "SetAttr", classPathMutation, b.client.MetaTimeout(),
-		func(ctx context.Context) (*proto.SetAttrReply, error) {
+	res, st := mutatePath(b, ctx, "SetAttr",
+		func(ctx context.Context, requestID string) (*proto.SetAttrReply, error) {
 			return b.client.Fs().SetAttr(ctx, &proto.SetAttrRequest{
 				Volume:    b.volume,
 				Caller:    callerFromCtx(ctx),
 				Path:      path,
-				Valid:     in.Valid & setAttrValidMask,
+				Valid:     in.Valid & setAttrValidMask, // mask kernel-only FATTR_* bits off the wire
 				Mode:      in.Mode,
 				Uid:       in.Uid,
 				Gid:       in.Gid,
@@ -623,13 +622,11 @@ func (b *BackendClient) SetAttr(ctx context.Context, path string, in SetAttrIn) 
 				SessionId: b.client.SessionID(),
 				RequestId: requestID,
 			}, grpc.WaitForReady(true))
-		})
-	if err != nil || res == nil {
-		log.Log.Error("error in call: SetAttr",
-			zap.String("request_id", requestID), zap.String("path", path), zap.Error(err))
-		return nil, statusFromRPCError(err)
-	}
-	if st := fuse.Status(res.Status); !st.Ok() {
+		},
+		func(r *proto.SetAttrReply) int32 { return r.Status },
+		zap.String("path", path),
+	)
+	if !st.Ok() {
 		return nil, st
 	}
 	return attrFromProto(res.GetAttributes()), fuse.OK
