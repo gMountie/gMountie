@@ -3,7 +3,10 @@ package cache
 import (
 	"testing"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/suite"
+
+	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
 )
 
 type DataCacheTestSuite struct {
@@ -71,4 +74,56 @@ func (s *DataCacheTestSuite) TestInvalidatePathDoesNotMatchPrefixOfOtherPath() {
 
 func TestDataCacheTestSuite(t *testing.T) {
 	suite.Run(t, new(DataCacheTestSuite))
+}
+
+// stalePersist is a fake chunkPersist that always serves a single stale chunk
+// for (path,0) and fails invalidation. It lets us exercise the data cache's
+// cleaner-error → poison-path wiring deterministically: a real *persist.Persist
+// cannot both error on invalidation AND keep serving the stale ref (the index
+// delete commits before the failable file op), so the persist is faked.
+type stalePersist struct {
+	stale         []byte
+	invalidateErr error
+}
+
+func (s *stalePersist) GetChunkRef(_ string, idx int) (persist.ChunkRef, bool, error) {
+	if idx != 0 {
+		return persist.ChunkRef{}, false, nil
+	}
+	return persist.ChunkRef{Size: uint32(len(s.stale))}, true, nil
+}
+func (s *stalePersist) ReadChunk(_ [16]byte) ([]byte, error)                  { return s.stale, nil }
+func (s *stalePersist) WriteChunk(_ []byte) ([16]byte, bool, error)           { return [16]byte{}, false, nil }
+func (s *stalePersist) PutChunkRef(_ string, _ int, _ persist.ChunkRef) error { return nil }
+func (s *stalePersist) InvalidatePathChunks(_ string) error                   { return s.invalidateErr }
+func (s *stalePersist) InvalidateChunkRange(_ string, _, _ int) error         { return s.invalidateErr }
+
+// TestInvalidatePathPoisonsOnPersistError proves that when the persist
+// invalidation fails, the loader refuses to serve the stale disk chunk for that
+// path (the #113-family serve-stale bug). After a failed invalidatePath, a get
+// must miss rather than return the pre-write disk bytes.
+func (s *DataCacheTestSuite) TestInvalidatePathPoisonsOnPersistError() {
+	fake := &stalePersist{stale: []byte("stale-disk-bytes"), invalidateErr: errors.New("boom")}
+	c := newDataCacheWithChunkPersist(newAccountant(1<<20, 0), 1024, fake)
+
+	// Prime: the disk tier holds the stale chunk; a get loads it into memory.
+	s.Require().Equal([]byte("stale-disk-bytes"), c.get("/f", 0), "loader serves disk chunk before invalidation")
+
+	// A write invalidates the path, but persist invalidation fails.
+	c.invalidatePath("/f")
+
+	// The memory tier was cleared and the path is poisoned, so the loader must
+	// NOT re-serve the stale disk chunk.
+	s.Assert().Nil(c.get("/f", 0), "poisoned path must not serve stale disk chunk after failed invalidation")
+}
+
+// TestInvalidateRangePoisonsOnPersistError is the same guard for the range
+// cleaner.
+func (s *DataCacheTestSuite) TestInvalidateRangePoisonsOnPersistError() {
+	fake := &stalePersist{stale: []byte("stale-disk-bytes"), invalidateErr: errors.New("boom")}
+	c := newDataCacheWithChunkPersist(newAccountant(1<<20, 0), 1024, fake)
+
+	s.Require().Equal([]byte("stale-disk-bytes"), c.get("/f", 0))
+	c.invalidateRange("/f", 0, 1) // touches chunk 0
+	s.Assert().Nil(c.get("/f", 0), "poisoned path must not serve stale disk chunk after failed range invalidation")
 }
