@@ -30,6 +30,10 @@ type SingleVolumeMounterTestSuite struct {
 
 func (s *SingleVolumeMounterTestSuite) SetupTest() {
 	s.client = grpc.NewMockClient(s.T())
+	// Cache-enabled mounts read the client metrics sink to wire persist GC
+	// observability; nil is valid (persist turns it into a no-op). Optional so
+	// cache-disabled paths don't require it.
+	s.client.EXPECT().Metrics().Return(nil).Maybe()
 	s.mounter = NewSingleVolumeMounter(s.client, defaultTestFUSEConfig(), defaultTestCacheConfig(), false)
 
 	var err error
