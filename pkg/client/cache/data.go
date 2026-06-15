@@ -3,9 +3,13 @@ package cache
 import (
 	"strconv"
 	"strings"
+	"sync"
 
 	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
 	"go.gmountie.dev/gmountie/pkg/client/metrics"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
+
+	"go.uber.org/zap"
 )
 
 // dataCache stores file content as fixed-size chunks keyed by
@@ -98,11 +102,38 @@ func newDataCacheWithPersist(acct *accountant, chunkSizeBytes int, p *persist.Pe
 	if p == nil {
 		return newDataCache(acct, chunkSizeBytes)
 	}
+	return newDataCacheWithChunkPersist(acct, chunkSizeBytes, p)
+}
+
+// chunkPersist is the persist surface the data cache fronts. *persist.Persist
+// satisfies it; tests inject fakes (e.g. one whose invalidation fails) to
+// exercise the poison path deterministically.
+type chunkPersist interface {
+	GetChunkRef(path string, chunkIndex int) (persist.ChunkRef, bool, error)
+	ReadChunk(hash [16]byte) ([]byte, error)
+	WriteChunk(data []byte) (hash [16]byte, dedup bool, err error)
+	PutChunkRef(path string, chunkIndex int, ref persist.ChunkRef) error
+	InvalidatePathChunks(path string) error
+	InvalidateChunkRange(path string, firstIdx, lastIdx int) error
+}
+
+// newDataCacheWithChunkPersist builds the persist-backed data cache over the
+// chunkPersist seam. p must be non-nil.
+func newDataCacheWithChunkPersist(acct *accountant, chunkSizeBytes int, p chunkPersist) *dataCache {
 	c := &dataCache{chunkSizeBytes: chunkSizeBytes}
+	// poisoned tracks paths whose persist invalidation failed: while a path is
+	// poisoned the disk tier is not authoritative for it, so the loader refuses
+	// to serve disk chunks (avoids serving a stale hit after a write whose
+	// invalidation was lost — the #113 family). A later successful invalidation
+	// or write-through for the path clears the poison (self-healing).
+	var poisoned sync.Map // path -> struct{}
 	loader := func(key string) (any, int, bool) {
 		path, idx, ok := parseChunkKey(key)
 		if !ok {
 			return nil, 0, false
+		}
+		if _, bad := poisoned.Load(path); bad {
+			return nil, 0, false // a prior invalidation failed; never serve disk for this path
 		}
 		ref, ok, err := p.GetChunkRef(path, idx)
 		if err != nil || !ok {
@@ -128,20 +159,43 @@ func newDataCacheWithPersist(acct *accountant, chunkSizeBytes int, p *persist.Pe
 		data, _ := value.([]byte) // data store only holds []byte
 		hash, dedup, err := p.WriteChunk(data)
 		if err != nil {
+			log.Log.Warn("persist chunk write-through failed; serving from memory only",
+				zap.String("path", path), zap.Int("idx", idx), zap.Error(err))
 			return
 		}
 		if dedup {
 			metrics.CacheDedupeHit()
 		}
-		_ = p.PutChunkRef(path, idx, persist.ChunkRef{Hash: hash, Size: uint32(len(data))})
+		if err := p.PutChunkRef(path, idx, persist.ChunkRef{Hash: hash, Size: uint32(len(data))}); err != nil {
+			log.Log.Warn("persist chunk-ref write-through failed; serving from memory only",
+				zap.String("path", path), zap.Int("idx", idx), zap.Error(err))
+			return
+		}
+		// A successful write-through re-establishes disk as authoritative for
+		// this path: clear any prior poison.
+		poisoned.Delete(path)
 	}
 	// Per-key Remover is a no-op for data: the bulk persistCleaner and
 	// persistRangeCleaner drive index+refcount invalidation efficiently.
 	// The memory tier's per-key remove is still cheap (map delete).
 	c.st = newStoreWithPersist(acct, loader, putter, func(string) {}, "data")
-	c.persistCleaner = func(path string) { _ = p.InvalidatePathChunks(path) }
+	c.persistCleaner = func(path string) {
+		if err := p.InvalidatePathChunks(path); err != nil {
+			poisoned.Store(path, struct{}{})
+			log.Log.Warn("persist path invalidation failed; poisoning path to avoid serving stale cache",
+				zap.String("path", path), zap.Error(err))
+			return
+		}
+		poisoned.Delete(path)
+	}
 	c.persistRangeCleaner = func(path string, firstIdx, lastIdx int) {
-		_ = p.InvalidateChunkRange(path, firstIdx, lastIdx)
+		if err := p.InvalidateChunkRange(path, firstIdx, lastIdx); err != nil {
+			poisoned.Store(path, struct{}{})
+			log.Log.Warn("persist range invalidation failed; poisoning path to avoid serving stale cache",
+				zap.String("path", path), zap.Int("first", firstIdx), zap.Int("last", lastIdx), zap.Error(err))
+			return
+		}
+		poisoned.Delete(path)
 	}
 	return c
 }
