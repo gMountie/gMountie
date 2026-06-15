@@ -155,13 +155,24 @@ func (b *cachedBackend) GetAttrIfChanged(ctx context.Context, p string, knownVer
 	return b.inner.GetAttrIfChanged(ctx, p, knownVersion)
 }
 
-func (b *cachedBackend) Stat(ctx context.Context, p string) (*io.Attr, fuse.Status) {
-	cached, hit, pos := b.attr.get(p)
+// cachedAttrLookup is the shared attr-cache read path behind Stat and Lookup.
+// Both are byte-identical apart from the cache key and the miss/fallback fetch,
+// so they differ only in `key` and the `fromInner` closure: get → fast-path
+// (globally verified or this-epoch path-verified) → lightweight revalidation →
+// outcome switch. fromInner both fetches from inner AND primes the attr cache
+// (statFromInner / lookupFromInner), so it is the single fallback for a miss
+// and for a revalidation-RPC failure.
+func (b *cachedBackend) cachedAttrLookup(
+	ctx context.Context,
+	key string,
+	fromInner func() (*io.Attr, fuse.Status),
+) (*io.Attr, fuse.Status) {
+	cached, hit, pos := b.attr.get(key)
 	if !hit {
-		return b.statFromInner(ctx, p)
+		return fromInner()
 	}
 	// Fast path: globally verified or this path already revalidated this epoch.
-	if b.validity.globalState() == stateVerified || b.validity.isPathVerified(p) {
+	if b.validity.globalState() == stateVerified || b.validity.isPathVerified(key) {
 		if pos {
 			return cached, fuse.OK
 		}
@@ -172,7 +183,7 @@ func (b *cachedBackend) Stat(ctx context.Context, p string) (*io.Attr, fuse.Stat
 	if cached != nil {
 		knownVersion = cached.Version
 	}
-	r := b.revalidate(ctx, p, knownVersion)
+	r := b.revalidate(ctx, key, knownVersion)
 	switch {
 	case r.notModified:
 		if pos {
@@ -182,11 +193,17 @@ func (b *cachedBackend) Stat(ctx context.Context, p string) (*io.Attr, fuse.Stat
 	case r.enoent:
 		return nil, fuse.ENOENT
 	case r.freshAttrs != nil:
-		b.attr.putPositive(p, r.freshAttrs)
+		b.attr.putPositive(key, r.freshAttrs)
 		return r.freshAttrs, fuse.OK
 	default: // fallback: revalidation RPC itself failed
-		return b.statFromInner(ctx, p)
+		return fromInner()
 	}
+}
+
+func (b *cachedBackend) Stat(ctx context.Context, p string) (*io.Attr, fuse.Status) {
+	return b.cachedAttrLookup(ctx, p, func() (*io.Attr, fuse.Status) {
+		return b.statFromInner(ctx, p)
+	})
 }
 
 // statFromInner fetches attrs from inner and populates the attr cache.
@@ -203,35 +220,9 @@ func (b *cachedBackend) statFromInner(ctx context.Context, p string) (*io.Attr, 
 
 func (b *cachedBackend) Lookup(ctx context.Context, parent, name string) (*io.Attr, fuse.Status) {
 	full := joinPath(parent, name)
-	cached, hit, pos := b.attr.get(full)
-	if !hit {
+	return b.cachedAttrLookup(ctx, full, func() (*io.Attr, fuse.Status) {
 		return b.lookupFromInner(ctx, parent, name, full)
-	}
-	if b.validity.globalState() == stateVerified || b.validity.isPathVerified(full) {
-		if pos {
-			return cached, fuse.OK
-		}
-		return nil, fuse.ENOENT
-	}
-	knownVersion := uint64(0)
-	if cached != nil {
-		knownVersion = cached.Version
-	}
-	r := b.revalidate(ctx, full, knownVersion)
-	switch {
-	case r.notModified:
-		if pos {
-			return cached, fuse.OK
-		}
-		return nil, fuse.ENOENT
-	case r.enoent:
-		return nil, fuse.ENOENT
-	case r.freshAttrs != nil:
-		b.attr.putPositive(full, r.freshAttrs)
-		return r.freshAttrs, fuse.OK
-	default:
-		return b.lookupFromInner(ctx, parent, name, full)
-	}
+	})
 }
 
 // lookupFromInner fetches from inner and populates the attr cache.
