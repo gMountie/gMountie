@@ -66,6 +66,21 @@ func (f *fakeDaemonizer) spawnAndAwaitReady(childArgs []string, password string)
 	return nil
 }
 
+// TestDaemonChildEnvironStripsPassword proves the detached child's env is built
+// WITHOUT GMOUNTIE_AUTH_PASSWORD even when the parent has it set: the secret
+// rides the password pipe, not the child's /proc/<pid>/environ (CQ-L2). The
+// daemon-child marker is still present.
+func (s *DaemonSuite) TestDaemonChildEnvironStripsPassword() {
+	parent := []string{"PATH=/usr/bin", passwordEnvVar + "=hunter2", "HOME=/home/x"}
+	env := daemonChildEnviron(parent)
+	for _, e := range env {
+		s.NotContains(e, passwordEnvVar+"=", "password env must be stripped from the child")
+	}
+	s.Contains(env, daemonChildEnv+"=1", "child marker must be set")
+	s.Contains(env, "PATH=/usr/bin", "unrelated env must be preserved")
+	s.Contains(env, "HOME=/home/x")
+}
+
 // TestReadDaemonPasswordRoundTrip proves the child-side reader recovers exactly
 // what the parent wrote to the password pipe — the out-of-band hand-off that
 // keeps the secret out of the child's environment (CQ-L2).
