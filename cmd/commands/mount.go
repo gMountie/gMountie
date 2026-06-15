@@ -203,7 +203,8 @@ type mountTarget struct {
 	mountpoint string
 	addr       string
 	// password is the resolved basic-auth password, carried for the --daemon
-	// env hand-off (the detached child has no TTY to prompt).
+	// pipe hand-off (the detached child has no TTY to prompt; the secret is
+	// passed over fd 4, never the environment — see daemon.go / CQ-L2).
 	password string
 	rawIDs   bool
 }

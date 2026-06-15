@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -118,6 +119,19 @@ func daemonLogPath() string {
 	return filepath.Join(xdg.StateHome, "gmountie", "mount-daemon.log")
 }
 
+// daemonChildEnviron builds the detached child's environment from the parent's:
+// it marks the child (daemonChildEnv=1) and STRIPS any GMOUNTIE_AUTH_PASSWORD.
+// The password travels over the password pipe (fd 4), so it must never ride the
+// child's execve environment — a user-supplied $GMOUNTIE_AUTH_PASSWORD would
+// otherwise stay in the child's /proc/<pid>/environ for the mount lifetime,
+// exactly the leak CQ-L2 closes. Pure, so the strip is unit-testable.
+func daemonChildEnviron(parent []string) []string {
+	env := append(slices.Clone(parent), daemonChildEnv+"=1")
+	return slices.DeleteFunc(env, func(e string) bool {
+		return strings.HasPrefix(e, passwordEnvVar+"=")
+	})
+}
+
 // execDaemonizer is the production seam: re-execs the current binary detached
 // (new session), redirecting output to a log file, and waits for the readyFD
 // pipe to report success.
@@ -156,7 +170,7 @@ func (execDaemonizer) spawnAndAwaitReady(childArgs []string, password string) er
 	// CommandContext (not Command) per the project's noctx lint; the daemon
 	// parent is short-lived, so a background context is appropriate.
 	cmd := exec.CommandContext(context.Background(), self, childArgs...)
-	cmd.Env = append(os.Environ(), daemonChildEnv+"=1")
+	cmd.Env = daemonChildEnviron(os.Environ())
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	// Order is load-bearing: index 0 → fd 3 (ready, child→parent), index 1 →
