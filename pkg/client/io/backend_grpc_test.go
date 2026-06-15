@@ -1127,6 +1127,74 @@ func (s *BackendClientTestSuite) TestFlush_RequestIdNonEmpty() {
 	s.Assert().NotEmpty(gotID, "WriteAndFlush RPC must carry a non-empty request_id")
 }
 
+// TestFlush_SurfacesLostCoalescedWriteErr is the WO-M1 regression: when a
+// coalesced batch flush fails inside Write, the batch was already
+// snapshot-and-cleared from the coalescer, so those acked bytes are gone. A
+// later Flush finds an empty coalescer and must NOT report a spurious OK over
+// the loss — it must surface the original write error exactly once.
+//
+// Setup: threshold 4. First write "ab" (2<4) buffers and returns OK. Second
+// write "cd" at offset 2 is contiguous, fills the buffer to 4, so Append hands
+// back the batch which streamingWrite sends — and the stub fails it in-band
+// with ENOSPC. Write returns (0, ENOSPC). The bytes are lost; the coalescer is
+// now empty. Flush must return ENOSPC (RED before the sticky-error fix: it
+// found the handle dirty-but-empty, issued an empty WriteAndFlush, got OK).
+func (s *BackendClientTestSuite) TestFlush_SurfacesLostCoalescedWriteErr() {
+	h := s.newHandle(grpcclient.PerFileConfig{WriteCoalesceBytes: 4})
+
+	// First small write buffers — no RPC.
+	_, st1 := s.backend.Write(context.Background(), h, 0, []byte("ab"))
+	s.Require().Equal(fuse.OK, st1)
+
+	// Second contiguous write overflows the threshold → batch flush, which the
+	// stub fails in-band with ENOSPC (no transport error, so no retry storm).
+	failStub := newBackendWriteStreamStub(s.T(),
+		&proto.WriteReply{Written: 0, Status: int32(fuse.Status(syscall.ENOSPC))}, nil)
+	s.fileClient.EXPECT().Write(mock.Anything, mock.Anything).Return(failStub, nil).Once()
+
+	_, st2 := s.backend.Write(context.Background(), h, 2, []byte("cd"))
+	s.Require().Equal(fuse.Status(syscall.ENOSPC), st2,
+		"the failed batch flush must surface to FUSE immediately")
+
+	// The coalescer is now empty but the handle is still dirty. Flush must
+	// short-circuit on the sticky write-back error WITHOUT issuing any RPC: a
+	// strict mock with no WriteAndFlush expectation enforces that, and the
+	// returned status must be the lost write's ENOSPC, not a spurious OK.
+	st := s.backend.Flush(context.Background(), h)
+	s.Assert().Equal(fuse.Status(syscall.ENOSPC), st,
+		"Flush must surface the lost coalesced-write error, not mask it with OK")
+
+	// Sticky error is consumed exactly once: the handle is still dirty (the
+	// failed write set dirty before buffering), so a second Flush proceeds to
+	// the (now empty) WriteAndFlush rather than re-surfacing the cleared error.
+	s.fileClient.EXPECT().WriteAndFlush(mock.Anything, mock.Anything, mock.Anything).
+		Return(&proto.WriteAndFlushReply{Status: int32(fuse.OK)}, nil).Once()
+	s.Assert().Equal(fuse.OK, s.backend.Flush(context.Background(), h),
+		"once consumed, the sticky error is not re-surfaced")
+}
+
+// TestFsync_SurfacesLostCoalescedWriteErr mirrors the Flush regression for the
+// Fsync durability boundary: the same lost-batch sticky error must surface
+// through Fsync too, not be masked by an empty-coalescer success.
+func (s *BackendClientTestSuite) TestFsync_SurfacesLostCoalescedWriteErr() {
+	h := s.newHandle(grpcclient.PerFileConfig{WriteCoalesceBytes: 4})
+
+	_, st1 := s.backend.Write(context.Background(), h, 0, []byte("ab"))
+	s.Require().Equal(fuse.OK, st1)
+
+	failStub := newBackendWriteStreamStub(s.T(),
+		&proto.WriteReply{Written: 0, Status: int32(fuse.Status(syscall.ENOSPC))}, nil)
+	s.fileClient.EXPECT().Write(mock.Anything, mock.Anything).Return(failStub, nil).Once()
+
+	_, st2 := s.backend.Write(context.Background(), h, 2, []byte("cd"))
+	s.Require().Equal(fuse.Status(syscall.ENOSPC), st2)
+
+	// Strict mock: no Fsync RPC expected — the sticky error short-circuits.
+	st := s.backend.Fsync(context.Background(), h, 0)
+	s.Assert().Equal(fuse.Status(syscall.ENOSPC), st,
+		"Fsync must surface the lost coalesced-write error")
+}
+
 // TestFsync_RetriesOnUnavailable mirrors the Flush retry test for the
 // Fsync path. Same idempotency argument.
 func (s *BackendClientTestSuite) TestFsync_RetriesOnUnavailable() {

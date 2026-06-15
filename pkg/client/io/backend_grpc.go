@@ -998,10 +998,14 @@ func (b *BackendClient) Write(ctx context.Context, fh FileHandle, off int64, dat
 		return b.streamingWrite(h, data, off, uuid.NewString())
 	}
 	// Big writes bypass the buffer. Drain any pending bytes first so the
-	// on-disk order matches the call order.
+	// on-disk order matches the call order. The drained batch was already
+	// snapshot-and-cleared from the coalescer, so a failure here loses
+	// previously-acked bytes — record it stickily (see recordWriteErr) so the
+	// next Flush/Fsync surfaces it rather than masking it.
 	if len(data) >= h.coalesceThreshold {
 		if pending := h.coalescer.Drain(); pending != nil {
 			if _, st := b.streamingWrite(h, pending.Data, pending.Offset, uuid.NewString()); !st.Ok() {
+				h.recordWriteErr(st)
 				return 0, st
 			}
 		}
@@ -1012,6 +1016,10 @@ func (b *BackendClient) Write(ctx context.Context, fh FileHandle, off int64, dat
 	// they may only be buffered. Durability arrives on Flush.
 	if batch := h.coalescer.Append(data, off); batch != nil {
 		if _, st := b.streamingWrite(h, batch.Data, batch.Offset, uuid.NewString()); !st.Ok() {
+			// The batch was already cleared from the coalescer inside Append, so
+			// these acked bytes are gone. Stick the error so a later
+			// empty-coalescer Flush can't report a spurious success over it.
+			h.recordWriteErr(st)
 			return 0, st
 		}
 	}
@@ -1054,6 +1062,14 @@ func (b *BackendClient) Release(ctx context.Context, fh FileHandle) fuse.Status 
 		h.lifeCancel()
 	}
 	h.prefetchWG.Wait()
+	// A sticky write-back error means an earlier coalesced flush lost acked
+	// bytes. Release's return status is invisible to userspace (close(2) on a
+	// FUSE mount doesn't propagate it), so the only honest thing we can do is
+	// log it loudly and clear it — never silently drop it.
+	if st := h.takeWriteErr(); !st.Ok() {
+		log.Log.Error("sticky write-back error on Release: acked bytes were lost in an earlier coalesced flush",
+			zap.String("path", h.path), zap.Stringer("status", st))
+	}
 	if st := b.drainCoalescer(h); !st.Ok() {
 		log.Log.Error("error draining coalescer on Release",
 			zap.String("path", h.path), zap.Stringer("status", st))
@@ -1099,6 +1115,14 @@ func (b *BackendClient) Flush(ctx context.Context, fh FileHandle) fuse.Status {
 	h := resolveHandle(fh)
 	if h == nil {
 		return fuse.EBADF
+	}
+	// Surface any sticky write-back error first: a coalesced flush failed
+	// earlier inside Write and its bytes are gone. Reporting it here (and
+	// clearing it) is what stops a later empty-coalescer Flush from masking the
+	// loss with a spurious OK. Checked before the clean-handle fast path so the
+	// error is never swallowed even if dirty was cleared in between.
+	if st := h.takeWriteErr(); !st.Ok() {
+		return st
 	}
 	// Clean-handle fast path: nothing written since last flush, coalescer
 	// empty by definition. Skip the RPC entirely.
@@ -1155,6 +1179,11 @@ func (b *BackendClient) Fsync(ctx context.Context, fh FileHandle, flags int64) f
 	h := resolveHandle(fh)
 	if h == nil {
 		return fuse.EBADF
+	}
+	// Surface any sticky write-back error from a lost coalesced flush before
+	// draining/syncing — same durability-boundary contract as Flush.
+	if st := h.takeWriteErr(); !st.Ok() {
+		return st
 	}
 	if st := b.drainCoalescer(h); !st.Ok() {
 		return st
@@ -1459,6 +1488,15 @@ type grpcFileHandle struct {
 	// false (clean-handle fast path). Set atomically by Write; cleared
 	// atomically by a successful Flush or Fsync.
 	dirty atomic.Bool
+	// lastWriteErr is a sticky write-back error (errseq/AS_EIO semantics). When
+	// a coalesced batch flush fails inside Write, the bytes the coalescer had
+	// already snapshot-and-cleared are lost, yet Write returned OK to FUSE for
+	// the earlier small writes. Recording the non-OK status here lets the next
+	// durability boundary (Flush/Fsync) surface it instead of masking it with a
+	// later empty-coalescer success — a silent acked-write loss otherwise. 0
+	// means no pending error (fuse.OK is 0). Set by Write; consumed and cleared
+	// by Flush/Fsync (returned) or Release (logged).
+	lastWriteErr atomic.Int32
 	// readahead is non-nil when readahead is enabled for this fd.
 	readahead *Readahead
 	// coalescer is non-nil when per-fd small-write coalescing is enabled.
@@ -1481,6 +1519,25 @@ type grpcFileHandle struct {
 
 // Path returns the path this handle was opened against.
 func (h *grpcFileHandle) Path() string { return h.path }
+
+// recordWriteErr stickily records a non-OK status from a coalesced flush whose
+// bytes were already snapshot-and-cleared from the coalescer (and thus lost).
+// The first such error wins — later overwrites would hide the original failure
+// behind a possibly-different one. A no-op for fuse.OK.
+func (h *grpcFileHandle) recordWriteErr(st fuse.Status) {
+	if st.Ok() {
+		return
+	}
+	h.lastWriteErr.CompareAndSwap(int32(fuse.OK), int32(st))
+}
+
+// takeWriteErr atomically reads and clears the sticky write-back error,
+// returning fuse.OK when none is pending. Called once at each durability
+// boundary (Flush/Fsync surface it; Release logs it) so a transient failed
+// flush is reported exactly once and not re-surfaced on a later op.
+func (h *grpcFileHandle) takeWriteErr() fuse.Status {
+	return fuse.Status(h.lastWriteErr.Swap(int32(fuse.OK)))
+}
 
 // Unwrap returns the receiver: *grpcFileHandle is the leaf in any
 // FileHandle decorator chain. resolveHandle relies on the self-unwrap
