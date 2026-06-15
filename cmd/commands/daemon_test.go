@@ -3,6 +3,7 @@
 package commands
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -29,28 +30,76 @@ func (s *DaemonSuite) TestStripsDaemonEqualsForm() {
 
 func (s *DaemonSuite) TestParentWaitsForReadyViaSeam() {
 	fake := &fakeDaemonizer{ready: true}
-	err := daemonize(fake, []string{"gmountie", "mount", "/mnt", "--daemon"})
+	err := daemonize(fake, []string{"gmountie", "mount", "/mnt", "--daemon"}, "secret")
 	s.Require().NoError(err)
 	s.True(fake.spawned)
 }
 
 func (s *DaemonSuite) TestParentReportsChildFailure() {
 	fake := &fakeDaemonizer{ready: false}
-	err := daemonize(fake, []string{"gmountie", "mount", "/mnt", "--daemon"})
+	err := daemonize(fake, []string{"gmountie", "mount", "/mnt", "--daemon"}, "secret")
 	s.Require().Error(err)
 }
 
-type fakeDaemonizer struct {
-	ready   bool
-	spawned bool
+// TestDaemonizePassesPasswordToSeam proves the resolved password reaches the
+// daemonizer seam (so it can be handed over the pipe) rather than the
+// environment (CQ-L2).
+func (s *DaemonSuite) TestDaemonizePassesPasswordToSeam() {
+	fake := &fakeDaemonizer{ready: true}
+	err := daemonize(fake, []string{"gmountie", "mount", "/mnt", "--daemon"}, "s3cr3t")
+	s.Require().NoError(err)
+	s.Equal("s3cr3t", fake.gotPassword)
 }
 
-func (f *fakeDaemonizer) spawnAndAwaitReady(childArgs []string) error {
+type fakeDaemonizer struct {
+	ready       bool
+	spawned     bool
+	gotPassword string
+}
+
+func (f *fakeDaemonizer) spawnAndAwaitReady(childArgs []string, password string) error {
 	f.spawned = true
+	f.gotPassword = password
 	if !f.ready {
 		return errReady
 	}
 	return nil
+}
+
+// TestReadDaemonPasswordRoundTrip proves the child-side reader recovers exactly
+// what the parent wrote to the password pipe — the out-of-band hand-off that
+// keeps the secret out of the child's environment (CQ-L2).
+func (s *DaemonSuite) TestReadDaemonPasswordRoundTrip() {
+	pr, pw, err := os.Pipe()
+	s.Require().NoError(err)
+	go func() {
+		_, _ = pw.WriteString("hunter2")
+		_ = pw.Close()
+	}()
+	s.Equal("hunter2", readDaemonPassword(pr))
+}
+
+// TestReadDaemonPasswordEmpty proves an EOF-only pipe (no secret sent, e.g. an
+// mtls daemon mount) yields "" rather than blocking or erroring.
+func (s *DaemonSuite) TestReadDaemonPasswordEmpty() {
+	pr, pw, err := os.Pipe()
+	s.Require().NoError(err)
+	s.Require().NoError(pw.Close())
+	s.Equal("", readDaemonPassword(pr))
+}
+
+// TestReadDaemonPasswordNilFile proves a missing fd (not a daemon child) is a
+// safe no-op.
+func (s *DaemonSuite) TestReadDaemonPasswordNilFile() {
+	s.Equal("", readDaemonPassword(nil))
+}
+
+// TestApplyDaemonPasswordNoopOutsideChild proves the child-side apply is inert
+// when not a daemon child (no fd 4, no env mutation, no panic).
+func (s *DaemonSuite) TestApplyDaemonPasswordNoopOutsideChild() {
+	s.T().Setenv(passwordEnvVar, "")
+	s.NotPanics(applyDaemonPassword)
+	s.Equal("", os.Getenv(passwordEnvVar))
 }
 
 // The ready pipe now carries the child's real failure reason so the parent can

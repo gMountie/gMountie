@@ -475,19 +475,22 @@ func newMountCmd() *cobra.Command {
 			"mount in the background.",
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// In the detached child, recover the password the parent handed over
+			// the password pipe (fd 4) before auth is resolved — the child has no
+			// TTY to prompt, and the secret was deliberately kept out of its
+			// environment (CQ-L2). No-op unless this is the daemon child.
+			applyDaemonPassword()
+
 			t, err := buildMountConfig(cmd, args, f)
 			if err != nil {
 				return err
 			}
 
-			// Background mode: hand off to a detached child, passing the
-			// resolved password through the environment (the child has no
-			// TTY to prompt).
+			// Background mode: hand off to a detached child, passing the resolved
+			// password over the password pipe (NOT the environment, which would
+			// linger in the child's /proc/<pid>/environ for the mount lifetime).
 			if f.daemon {
-				if t.password != "" {
-					_ = os.Setenv(passwordEnvVar, t.password)
-				}
-				return daemonize(execDaemonizer{}, os.Args)
+				return daemonize(execDaemonizer{}, os.Args, t.password)
 			}
 
 			// In the detached child, a mount failure before the mount is up

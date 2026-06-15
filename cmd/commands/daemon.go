@@ -25,6 +25,14 @@ const daemonChildEnv = "GMOUNTIE_DAEMON_CHILD"
 // to once the mount is up.
 const readyFD = 3
 
+// passwordFD is the inherited pipe fd the parent uses to hand the resolved
+// basic-auth password to the detached child OUT OF BAND. The secret must not
+// ride the child's environment: anything in the execve env block stays
+// readable in /proc/<pid>/environ for the whole mount lifetime (CQ-L2). The
+// parent writes the secret and closes the pipe (EOF); the child reads it once,
+// early, before resolving auth.
+const passwordFD = 4
+
 // Ready-pipe protocol. The child writes exactly one of these to readyFD and
 // closes it: daemonReadyMsg on success, or daemonErrPrefix + message on a
 // pre-ready failure, so the parent can report the real cause instead of a
@@ -36,9 +44,11 @@ const (
 
 var errReady = errors.New("daemon child exited before signalling mount ready")
 
-// daemonizer is the seam: the parent side of --daemon. Faked in tests.
+// daemonizer is the seam: the parent side of --daemon. Faked in tests. password
+// is the resolved basic-auth secret to hand the child over the password pipe
+// (empty for mtls / no-password mounts — nothing is written then).
 type daemonizer interface {
-	spawnAndAwaitReady(childArgs []string) error
+	spawnAndAwaitReady(childArgs []string, password string) error
 }
 
 // buildDaemonChildArgs returns args for the child with any --daemon / --daemon=...
@@ -56,13 +66,52 @@ func buildDaemonChildArgs(args []string) []string {
 
 // daemonize runs the parent side: spawn the child, wait until it signals the
 // mount is ready, then return (the caller exits 0). Errors if the child dies
-// first. fullArgs is os.Args (argv[0] is dropped).
-func daemonize(d daemonizer, fullArgs []string) error {
-	return d.spawnAndAwaitReady(buildDaemonChildArgs(fullArgs[1:]))
+// first. fullArgs is os.Args (argv[0] is dropped). password is handed to the
+// child over the password pipe rather than the environment (CQ-L2).
+func daemonize(d daemonizer, fullArgs []string, password string) error {
+	return d.spawnAndAwaitReady(buildDaemonChildArgs(fullArgs[1:]), password)
 }
 
 // isDaemonChild reports whether this process is the re-exec'd child.
 func isDaemonChild() bool { return os.Getenv(daemonChildEnv) == "1" }
+
+// readDaemonPassword reads the password the parent wrote to passwordFD and
+// returns it. Pure on its input fd so it's unit-testable with a plain pipe. An
+// unavailable fd (not a daemon child, or no secret sent) yields "".
+func readDaemonPassword(f *os.File) string {
+	if f == nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	b, err := io.ReadAll(f)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// applyDaemonPassword, in the detached child only, reads the secret the parent
+// handed over passwordFD and exposes it to resolveAuth via GMOUNTIE_AUTH_PASSWORD.
+//
+// Setting it with os.Setenv in the CHILD is safe w.r.t. the leak this fixes:
+// /proc/<pid>/environ is the kernel's snapshot of the execve env block and is
+// NOT rewritten by a post-start os.Setenv — os.Getenv sees it, but it never
+// appears in /proc/environ. The secret therefore reaches resolvePassword
+// without the long-lived /proc exposure the env hand-off caused (CQ-L2).
+//
+// Caveat: a later auth.password_command subprocess (sh -c) would inherit this
+// env var — but password_command, when set, is resolved BEFORE the env is read,
+// so it never reaches that branch in practice. Accepted; left out of band of
+// this fix.
+func applyDaemonPassword() {
+	if !isDaemonChild() {
+		return
+	}
+	f := os.NewFile(passwordFD, "password-pipe")
+	if pw := readDaemonPassword(f); pw != "" {
+		_ = os.Setenv(passwordEnvVar, pw)
+	}
+}
 
 // daemonLogPath is where the detached child's stdout/stderr go.
 func daemonLogPath() string {
@@ -74,7 +123,7 @@ func daemonLogPath() string {
 // pipe to report success.
 type execDaemonizer struct{}
 
-func (execDaemonizer) spawnAndAwaitReady(childArgs []string) error {
+func (execDaemonizer) spawnAndAwaitReady(childArgs []string, password string) error {
 	logPath := daemonLogPath()
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return fmt.Errorf("create daemon log dir: %w", err)
@@ -91,6 +140,15 @@ func (execDaemonizer) spawnAndAwaitReady(childArgs []string) error {
 	}
 	defer func() { _ = pr.Close() }()
 
+	// Password pipe (parent→child). The secret is written here and closed
+	// rather than placed in cmd.Env, so it never lands in the child's
+	// /proc/<pid>/environ for the mount lifetime (CQ-L2).
+	pwR, pwW, err := os.Pipe()
+	if err != nil {
+		return fmt.Errorf("create password pipe: %w", err)
+	}
+	defer func() { _ = pwR.Close() }()
+
 	self, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve executable: %w", err)
@@ -101,14 +159,26 @@ func (execDaemonizer) spawnAndAwaitReady(childArgs []string) error {
 	cmd.Env = append(os.Environ(), daemonChildEnv+"=1")
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	cmd.ExtraFiles = []*os.File{pw} // becomes fd 3 in the child
+	// Order is load-bearing: index 0 → fd 3 (ready, child→parent), index 1 →
+	// fd 4 (password, parent→child). See readyFD / passwordFD.
+	cmd.ExtraFiles = []*os.File{pw, pwR}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	if err := cmd.Start(); err != nil {
 		_ = pw.Close()
+		_ = pwW.Close()
 		return fmt.Errorf("start daemon child: %w", err)
 	}
-	_ = pw.Close() // parent keeps only the read end
+	_ = pw.Close()  // parent keeps only the ready read end
+	_ = pwR.Close() // child owns the password read end now
+
+	// Hand the secret to the child and close so its read sees EOF. A write
+	// failure (child already gone) is non-fatal here — the ready-pipe wait
+	// below surfaces the real outcome.
+	if password != "" {
+		_, _ = pwW.WriteString(password)
+	}
+	_ = pwW.Close()
 
 	// Bound the wait so --daemon detaches promptly even if the child's first
 	// mount RPC hangs; the detached child keeps running in the background
