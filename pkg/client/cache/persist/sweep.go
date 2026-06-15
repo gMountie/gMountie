@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -56,6 +57,13 @@ func (p *Persist) runOrphanSweep(minAge time.Duration, stop <-chan struct{}) err
 			return nil
 		}
 		name := d.Name()
+		if idx := strings.Index(name, ".tmp-"); idx == 32 {
+			// crash-leftover temp chunk from an interrupted WriteChunk
+			if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) {
+				return errors.Wrap(rmErr, "remove stale tmp chunk")
+			}
+			return nil
+		}
 		if len(name) != 32 { // hex of 16 bytes
 			return nil
 		}
@@ -239,8 +247,10 @@ func (p *Persist) enforceDiskBudget() error {
 		testHookAfterCollect()
 	}
 	if len(toDeleteKeys) == 0 {
-		// data_idx is empty; remaining bytes are orphan chunks.
-		return nil
+		// data_idx can't free more; remaining over-budget bytes are orphan or
+		// crash-leftover tmp chunks. Reclaim them synchronously (age 0) so the
+		// budget self-heals instead of wedging and re-scanning on every write.
+		return errors.Wrap(p.runOrphanSweep(0, nil), "orphan reclaim under budget pressure")
 	}
 
 	var toUnlink [][16]byte

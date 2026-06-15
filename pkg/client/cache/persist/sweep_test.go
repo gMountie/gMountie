@@ -80,4 +80,28 @@ func (s *SweepSuite) TestWriteChunkEvictsUnderDiskCap() {
 	s.Assert().LessOrEqual(p.DiskBytesUsed(), int64(64), "disk cap must hold after eviction")
 }
 
+func (s *SweepSuite) TestOrphanSweepReclaimsCrashLeftTmp() {
+	p, err := persist.Open(persist.Options{Root: s.dir, DisableBackgroundSweeps: true})
+	s.Require().NoError(err)
+	defer p.Close()
+
+	data := []byte("real chunk")
+	hash, _, err := p.WriteChunk(data)
+	s.Require().NoError(err)
+	// Reference the real chunk so the orphan sweep keeps it (refcount > 0);
+	// only the crash-leftover tmp file should be reclaimed.
+	s.Require().NoError(p.PutChunkRef("f", 0, persist.ChunkRef{Hash: hash, Size: uint32(len(data))}))
+	realBefore := persist.TestingDiskUsed(p)
+
+	// Drop a crash-leftover tmp file next to a real chunk shard.
+	tmp := persist.TestingChunkPath(p, hash) + ".tmp-deadbeefdeadbeef"
+	s.Require().NoError(os.WriteFile(tmp, []byte("partial junk"), 0o644))
+
+	persist.TestingRunOrphanSweep(s.T(), p)
+
+	_, statErr := os.Stat(tmp)
+	s.Assert().True(os.IsNotExist(statErr), "stale .tmp-* must be removed")
+	s.Assert().Equal(realBefore, persist.TestingDiskUsed(p), "tmp bytes must not stay charged to the budget")
+}
+
 func TestSweepSuite(t *testing.T) { suite.Run(t, new(SweepSuite)) }
