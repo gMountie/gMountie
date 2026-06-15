@@ -37,6 +37,25 @@ func statStamp(path string) (stamp, error) {
 	return stamp{modTime: fi.ModTime(), size: fi.Size(), inode: inodeOf(fi)}, nil
 }
 
+// ReloadMetrics is the optional metrics sink for a Reloader. *metrics.Metrics
+// satisfies it. Defined here (not imported) so the tls package stays decoupled
+// from the metrics package and the sink is trivially fakeable in tests (OB-M2).
+type ReloadMetrics interface {
+	// TLSReloadFailureInc is called once per failed reload/stat attempt.
+	TLSReloadFailureInc()
+	// TLSReloadSucceeded is called after each successful reload.
+	TLSReloadSucceeded()
+}
+
+// ReloaderOption configures a Reloader at construction.
+type ReloaderOption func(*Reloader)
+
+// WithMetrics wires a metrics sink so reload failures and the last-success
+// timestamp are observable. Nil is safe (no-op).
+func WithMetrics(m ReloadMetrics) ReloaderOption {
+	return func(r *Reloader) { r.metrics = m }
+}
+
 // Reloader serves a TLS cert+key pair from disk, transparently reloading
 // it when the cert file changes (Task 3). Safe for concurrent use as a
 // tls.Config.GetCertificate callback.
@@ -52,11 +71,14 @@ type Reloader struct {
 	mu          sync.Mutex
 	fingerprint string
 	failing     atomic.Bool
+	// metrics is an optional sink for reload-failure / last-success metrics.
+	// Nil-guarded at every call site (OB-M2).
+	metrics ReloadMetrics
 }
 
 // NewReloader loads the initial pair — failing fast on a bad cert exactly
 // like the static startup path — and caches the cert file's stamp.
-func NewReloader(certPath, keyPath string) (*Reloader, error) {
+func NewReloader(certPath, keyPath string, opts ...ReloaderOption) (*Reloader, error) {
 	cert, certPEM, err := Load(certPath, keyPath)
 	if err != nil {
 		return nil, err
@@ -70,6 +92,9 @@ func NewReloader(certPath, keyPath string) (*Reloader, error) {
 		return nil, err
 	}
 	r := &Reloader{certPath: certPath, keyPath: keyPath, fingerprint: fp}
+	for _, opt := range opts {
+		opt(r)
+	}
 	r.current.Store(&cert)
 	r.loaded.Store(&st)
 	return r, nil
@@ -129,12 +154,20 @@ func (r *Reloader) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error
 	r.fingerprint = fp
 	r.current.Store(&cert)
 	r.loaded.Store(&st)
+	if r.metrics != nil {
+		r.metrics.TLSReloadSucceeded()
+	}
 	return &cert, nil
 }
 
-// warnOnce logs the first failure of a streak; subsequent failures are
-// silent until a reload succeeds (no per-handshake log spam).
+// warnOnce records a reload/stat failure: it bumps the failure counter for
+// EVERY failed attempt (so the metric reflects failures, not streaks) and logs
+// only the first failure of a streak — subsequent failures stay silent until a
+// reload succeeds (no per-handshake log spam).
 func (r *Reloader) warnOnce(msg string, err error) {
+	if r.metrics != nil {
+		r.metrics.TLSReloadFailureInc()
+	}
 	if r.failing.CompareAndSwap(false, true) {
 		log.Log.Warn(msg, zap.String("cert_path", r.certPath), zap.Error(err))
 	}

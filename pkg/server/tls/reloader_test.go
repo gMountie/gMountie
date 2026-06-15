@@ -287,3 +287,38 @@ func (s *ReloaderSuite) TestListenerServesRotatedCert() {
 	s.Require().NoError(err)
 	s.Equal("ping", string(buf))
 }
+
+// fakeReloadMetrics is a minimal ReloadMetrics for asserting reload accounting.
+type fakeReloadMetrics struct {
+	failures  int
+	successes int
+}
+
+func (f *fakeReloadMetrics) TLSReloadFailureInc() { f.failures++ }
+func (f *fakeReloadMetrics) TLSReloadSucceeded()  { f.successes++ }
+
+// TestMetricsCountReloadFailureAndSuccess covers OB-M2: a failed reload bumps
+// the failure counter (every attempt, not just the first of a streak) and a
+// successful reload stamps the success sink.
+func (s *ReloaderSuite) TestMetricsCountReloadFailureAndSuccess() {
+	dir := s.T().TempDir()
+	certPath, keyPath := s.writePair(dir, "metrics.example.com")
+	fm := &fakeReloadMetrics{}
+	r, err := NewReloader(certPath, keyPath, WithMetrics(fm))
+	s.Require().NoError(err)
+
+	// Torn swap: cert rotated, key stale ⇒ load fails ⇒ failure counted.
+	certPEM, _, err := Generate("metrics.example.com")
+	s.Require().NoError(err)
+	s.writeAtomic(certPath, certPEM)
+	_, err = r.GetCertificate(nil)
+	s.Require().NoError(err) // fail-open
+	s.Equal(1, fm.failures, "a failed reload must bump the failure counter")
+	s.Equal(0, fm.successes)
+
+	// Complete the rotation: a matching pair ⇒ success stamp.
+	s.writePair(dir, "metrics.example.com")
+	_, err = r.GetCertificate(nil)
+	s.Require().NoError(err)
+	s.Equal(1, fm.successes, "a successful reload must stamp the success sink")
+}
