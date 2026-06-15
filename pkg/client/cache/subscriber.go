@@ -37,7 +37,7 @@ type subscribeStream interface {
 // flips the validityTracker. On stream error it sleeps with
 // exponential backoff (1s → 30s) and reconnects.
 type subscribeConsumer struct {
-	client          proto.RpcFsClient
+	client          invalidationSource
 	volume          string
 	cache           subscribeBackendOps
 	validity        *validityTracker
@@ -45,7 +45,7 @@ type subscribeConsumer struct {
 	unverifiedSince time.Time // zero when currently verified
 }
 
-func newSubscribeConsumer(client proto.RpcFsClient, volume string, cache subscribeBackendOps, validity *validityTracker) *subscribeConsumer {
+func newSubscribeConsumer(client invalidationSource, volume string, cache subscribeBackendOps, validity *validityTracker) *subscribeConsumer {
 	c := &subscribeConsumer{client: client, volume: volume, cache: cache, validity: validity}
 	// Capture the mounter's local identity once: Subscribe is a long-lived
 	// background loop with no per-op FUSE ctx (matches the WhoAmI pattern in
