@@ -85,3 +85,10 @@ func TestingNoSync(p *Persist) bool { return p.db.NoSync }
 // (fsync) calls Persist has made. Lets tests assert that a given op makes
 // its mutation durable under NoSync rather than leaving it for Close.
 func TestingSyncCount(p *Persist) int64 { return p.syncCount.Load() }
+
+// TestingDiskUsed returns the disk-accountant's current byte total.
+func TestingDiskUsed(p *Persist) int64 { return p.disk.Used() }
+
+// TestingRefUnderflows returns the count of decrements observed on an absent
+// refcount key (double-decrement / underflow signal).
+func TestingRefUnderflows(p *Persist) int64 { return p.refUnderflows.Load() }

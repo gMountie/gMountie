@@ -54,7 +54,9 @@ func (p *Persist) WriteChunk(data []byte) (hash [16]byte, dedup bool, err error)
 		_ = os.Remove(tmp)
 		return hash, false, errors.Wrap(err, "rename chunk")
 	}
+	p.accMu.Lock()
 	p.disk.add(int64(len(data)))
+	p.accMu.Unlock()
 	if err := p.enforceDiskBudget(); err != nil {
 		return hash, false, errors.Wrap(err, "enforce disk budget after WriteChunk")
 	}
@@ -75,6 +77,8 @@ func (p *Persist) ReadChunk(hash [16]byte) ([]byte, error) {
 // Stats the file first to debit the disk accountant accurately.
 func (p *Persist) unlinkChunk(hash [16]byte) error {
 	path := p.chunkPath(hash)
+	p.accMu.Lock()
+	defer p.accMu.Unlock()
 	st, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {

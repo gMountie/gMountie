@@ -75,6 +75,9 @@ type Persist struct {
 	closeOnce sync.Once
 	closeErr  error
 	syncCount atomic.Int64 // cumulative db.Sync() calls; observability for tests
+
+	accMu         sync.Mutex   // serializes diskAccountant mutations with file ops
+	refUnderflows atomic.Int64 // decRef on an absent key (corruption signal)
 }
 
 // sync fsyncs meta.db and records the call. meta.db opens NoSync (commits
