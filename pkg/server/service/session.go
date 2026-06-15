@@ -165,6 +165,12 @@ type sessionImpl struct {
 	replies   *lru.Cache[string, any]
 	sf        singleflight.Group
 	metrics   SessionMetrics // never nil; manager injects its sink
+	// reaped is set true by whichever claim site wins the authoritative
+	// sessions.LoadAndDelete (grace expiry, ReapIf, Stop) BEFORE it drains the
+	// fd table. RegisterFile checks it so an in-flight handler that grabbed this
+	// *sessionImpl via Get before the reap cannot re-populate the table after
+	// ReleaseAll has drained it (CQ-M1).
+	reaped atomic.Bool
 }
 
 func (s *sessionImpl) ID() string        { return s.id }
@@ -172,6 +178,18 @@ func (s *sessionImpl) Principal() string { return s.principal }
 func (s *sessionImpl) Serial() string    { return s.serial }
 
 func (s *sessionImpl) RegisterFile(volume, path string, file nodefs.File) uint64 {
+	// A handler can hold this *sessionImpl (via Get) while a concurrent reap
+	// wins the sessions claim, sets reaped, and drains the fd table. Without
+	// this guard a late RegisterFile would re-populate the drained table —
+	// leaking the nodefs.File and permanently inflating the open-files gauge.
+	// fd 0 is the sentinel for "rejected": real fds start at 1 (fdNum.Add(1)),
+	// and the controller maps fd 0 to EBADF on the next fd-op (CQ-M1).
+	if s.reaped.Load() {
+		if file != nil {
+			file.Release()
+		}
+		return 0
+	}
 	fd := s.fdNum.Add(1)
 	entry := &FileEntry{File: file, Volume: volume, Path: path, Fd: fd}
 	entry.refs.Store(1) // the fd table's own ref
@@ -344,6 +362,9 @@ func (m *sessionManagerImpl) MarkDisconnected(id string) {
 			// concurrent ReapIf (which also claims via sessions) could
 			// double-ReleaseAll the same session and double-close its fds.
 			if _, ok := m.sessions.LoadAndDelete(sess.id); ok {
+				// Slam the door on a concurrent RegisterFile before draining the
+				// fd table (CQ-M1).
+				sess.reaped.Store(true)
 				m.reap(sess, "grace_expired")
 			}
 		}
@@ -364,6 +385,7 @@ func (m *sessionManagerImpl) ReapIf(pred func(principal, serial string) bool) in
 			if r, had := m.reapers.LoadAndDelete(id); had {
 				r.cancel()
 			}
+			sess.reaped.Store(true) // close RegisterFile before draining (CQ-M1)
 			m.reap(sess, "revoked")
 			reaped++
 		}
@@ -397,6 +419,7 @@ func (m *sessionManagerImpl) Stop(ctx context.Context) error {
 	// Claim each remaining session before releasing.
 	m.sessions.Range(func(id string, sess *sessionImpl) bool {
 		if _, ok := m.sessions.LoadAndDelete(id); ok {
+			sess.reaped.Store(true) // close RegisterFile before draining (CQ-M1)
 			m.reap(sess, "shutdown")
 		}
 		return true
