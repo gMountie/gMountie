@@ -112,6 +112,12 @@ func newDataCacheWithPersist(acct *accountant, chunkSizeBytes int, p *persist.Pe
 		if err != nil {
 			return nil, 0, false
 		}
+		if len(data) != int(ref.Size) {
+			// Torn/partial chunk (crash between data write and index sync).
+			// Treat as a miss so the caller refetches; the subsequent WriteChunk
+			// with correct bytes repairs the file (Task 1 dedup-size check).
+			return nil, 0, false
+		}
 		return data, len(data), true
 	}
 	putter := func(key string, value any, _ int) {

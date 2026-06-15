@@ -70,4 +70,25 @@ func (s *ChunkIOSuite) TestReadMissingReturnsErr() {
 	s.Require().Error(err)
 }
 
+func (s *ChunkIOSuite) TestWriteChunkRepairsTornDedup() {
+	data := []byte("durable chunk payload")
+	hash, dedup, err := s.p.WriteChunk(data)
+	s.Require().NoError(err)
+	s.Require().False(dedup)
+
+	// Simulate a torn/partial chunk left by a crash mid-write.
+	path := persist.TestingChunkPath(s.p, hash)
+	s.Require().NoError(os.Truncate(path, 4))
+
+	// A re-write with the SAME bytes must repair (rewrite), not dedup-skip.
+	gotHash, dedup, err := s.p.WriteChunk(data)
+	s.Require().NoError(err)
+	s.Require().Equal(hash, gotHash)
+	s.Assert().False(dedup, "torn existing chunk must be rewritten, not treated as a dedup hit")
+
+	got, err := s.p.ReadChunk(hash)
+	s.Require().NoError(err)
+	s.Assert().Equal(data, got, "chunk must be fully repaired")
+}
+
 func TestChunkIOSuite(t *testing.T) { suite.Run(t, new(ChunkIOSuite)) }
