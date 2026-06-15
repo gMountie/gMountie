@@ -1,6 +1,7 @@
 package persist_test
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -57,6 +58,37 @@ func (s *CrashDurabilitySuite) TestDeleteDirBytesFsyncsImmediately() {
 	s.Require().NoError(p.DeleteDirBytes("/parent"))
 	s.Assert().Greater(persist.TestingSyncCount(p), before,
 		"a real dir-listing delete must fsync immediately so it survives a crash before Close() (#113)")
+}
+
+func (s *CrashDurabilitySuite) TestCrashLeftoverReclaimedOnReopen() {
+	dir := s.T().TempDir()
+	p, err := persist.Open(persist.Options{Root: dir})
+	s.Require().NoError(err)
+
+	data := []byte("survivor chunk")
+	hash, _, err := p.WriteChunk(data)
+	s.Require().NoError(err)
+	s.Require().NoError(p.PutChunkRef("p", 0, persist.ChunkRef{Hash: hash, Size: uint32(len(data))}))
+	want := persist.TestingDiskUsed(p)
+
+	// Simulate a crash-left tmp file, then close WITHOUT cleaning it.
+	tmp := persist.TestingChunkPath(p, hash) + ".tmp-feedfacefeedface"
+	s.Require().NoError(os.WriteFile(tmp, []byte("junk"), 0o644))
+	s.Require().NoError(p.Close())
+
+	// Reopen: the orphan sweep (runs once at Open) must reclaim the tmp and not
+	// charge it; the real chunk + its ref must survive.
+	p2, err := persist.Open(persist.Options{Root: dir})
+	s.Require().NoError(err)
+	defer p2.Close()
+	persist.TestingRunOrphanSweep(s.T(), p2)
+
+	_, statErr := os.Stat(tmp)
+	s.Assert().True(os.IsNotExist(statErr), "crash-left tmp must be gone after reopen+sweep")
+	s.Assert().Equal(want, persist.TestingDiskUsed(p2), "only real chunk bytes counted after reopen")
+	got, err := p2.ReadChunk(hash)
+	s.Require().NoError(err)
+	s.Assert().Equal(data, got)
 }
 
 func TestCrashDurabilitySuite(t *testing.T) {
