@@ -100,13 +100,13 @@ func (s *DaemonSuite) TestReadDaemonPasswordEmpty() {
 	pr, pw, err := os.Pipe()
 	s.Require().NoError(err)
 	s.Require().NoError(pw.Close())
-	s.Equal("", readDaemonPassword(pr))
+	s.Empty(readDaemonPassword(pr))
 }
 
 // TestReadDaemonPasswordNilFile proves a missing fd (not a daemon child) is a
 // safe no-op.
 func (s *DaemonSuite) TestReadDaemonPasswordNilFile() {
-	s.Equal("", readDaemonPassword(nil))
+	s.Empty(readDaemonPassword(nil))
 }
 
 // TestApplyDaemonPasswordNoopOutsideChild proves the child-side apply is inert
@@ -114,7 +114,7 @@ func (s *DaemonSuite) TestReadDaemonPasswordNilFile() {
 func (s *DaemonSuite) TestApplyDaemonPasswordNoopOutsideChild() {
 	s.T().Setenv(passwordEnvVar, "")
 	s.NotPanics(applyDaemonPassword)
-	s.Equal("", os.Getenv(passwordEnvVar))
+	s.Empty(os.Getenv(passwordEnvVar))
 }
 
 // The ready pipe now carries the child's real failure reason so the parent can
