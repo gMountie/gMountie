@@ -24,6 +24,13 @@ const orphanSweepBgAge = 60 * time.Second
 // concurrent overwrite in the exact lost-update window.
 var testHookAfterCollect func()
 
+// testHookBeforeUnlink, when non-nil, runs inside the invalidate paths after the
+// decRef txn has committed (and synced) but BEFORE the post-commit unlinkChunk
+// loop. Test-only (nil in production) — it lets a test land a concurrent
+// WriteChunk(dedup)+PutChunkRef in the exact window the hypothesised cross-file
+// divergence requires, deterministically and without goroutines.
+var testHookBeforeUnlink func()
+
 // stopRequested reports whether the background-goroutine stop signal has
 // fired. A nil channel never fires (the select falls through to default),
 // so callers that don't participate in lifecycle (tests) pass nil.
