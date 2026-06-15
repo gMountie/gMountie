@@ -255,6 +255,8 @@ func Start(ctx context.Context, cfg *config.Config) error {
 		// Wire the shared RevocationStore so the AuthInterceptor can deny
 		// blocked cert serials per-RPC (covers already-established conns).
 		grpc.WithRevocation(appCtx.Revocation),
+		// Wire the custom collectors so auth denials are counted/logged.
+		grpc.WithMetrics(appCtx.Metrics),
 	}
 	if serverCreds != nil {
 		grpcOpts = append(grpcOpts, grpc.WithCredentials(serverCreds))

@@ -9,9 +9,11 @@ import (
 
 	"go.gmountie.dev/gmountie/pkg/common"
 	commonconfig "go.gmountie.dev/gmountie/pkg/common/config"
+	"go.gmountie.dev/gmountie/pkg/server/metrics"
 	"go.gmountie.dev/gmountie/pkg/server/principal"
 	"go.gmountie.dev/gmountie/pkg/server/service"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -40,6 +42,7 @@ type AuthInterceptorTestSuite struct {
 	suite.Suite
 	sessions    service.SessionManager
 	authSvc     *countingAuthService
+	metrics     *metrics.Metrics
 	interceptor *AuthInterceptor
 }
 
@@ -56,7 +59,8 @@ func (s *AuthInterceptorTestSuite) SetupTest() {
 	s.authSvc = &countingAuthService{
 		inner: newAlwaysGrantAuthService("alice"),
 	}
-	s.interceptor = NewAuthInterceptor(s.authSvc, s.sessions, service.NewRevocationStore())
+	s.metrics = metrics.NewMetrics()
+	s.interceptor = NewAuthInterceptor(s.authSvc, s.sessions, service.NewRevocationStore(), s.metrics)
 }
 
 func (s *AuthInterceptorTestSuite) TearDownTest() {
@@ -300,7 +304,7 @@ func (f *fakeServerStream) RecvMsg(_ interface{}) error    { return nil }
 func (s *AuthInterceptorTestSuite) TestBlockedSerialDenied() {
 	rs := service.NewRevocationStore()
 	rs.Set([]string{"dead"})
-	i := NewAuthInterceptor(s.authSvc, s.sessions, rs)
+	i := NewAuthInterceptor(s.authSvc, s.sessions, rs, s.metrics)
 
 	leaf := &x509.Certificate{SerialNumber: big.NewInt(0xdead)}
 	ti := credentials.TLSInfo{State: tls.ConnectionState{
@@ -314,6 +318,87 @@ func (s *AuthInterceptorTestSuite) TestBlockedSerialDenied() {
 	s.Require().True(ok)
 	s.Equal(codes.Unauthenticated, st.Code())
 	s.Contains(st.Message(), "revoked")
+}
+
+// ctxWithCertAndSession injects a verified client cert (CN/serial) AND a
+// session_id + basic-auth username into the context, so a test can prove the
+// session fast-path is skipped when a cert is present.
+func ctxWithCertAndSession(serial int64, username, sessionID string) context.Context {
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(serial)}
+	ti := credentials.TLSInfo{State: tls.ConnectionState{
+		VerifiedChains: [][]*x509.Certificate{{leaf}},
+	}}
+	ctx := peer.NewContext(context.Background(), &peer.Peer{AuthInfo: ti})
+	return metadata.NewIncomingContext(ctx, metadata.Pairs(
+		common.MetadataSessionID, sessionID,
+		common.MetadataAuthBasicUsername, username,
+		common.MetadataAuthBasicPassword, "any",
+	))
+}
+
+// TestCertPresent_SkipsSessionFastPath covers TH-M2: when a verified client
+// cert is present, a session_id belonging to a DIFFERENT principal must NOT
+// short-circuit auth — the request must still run full Authorize so the
+// principal comes from the cert, not the borrowed session. Otherwise a
+// cert-CN=bob could be labeled "alice" by presenting alice's session_id.
+func (s *AuthInterceptorTestSuite) TestCertPresent_SkipsSessionFastPath() {
+	// Seed a session owned by "alice".
+	aliceID, err := s.sessions.Create("alice", "")
+	s.Require().NoError(err)
+
+	callsBefore := s.authSvc.calls
+	// Cert + basic-auth username "alice" so alwaysGrantAuthService authorizes,
+	// but carry alice's session_id — the fast-path MUST be skipped.
+	ctx := ctxWithCertAndSession(0xbeef, "alice", aliceID)
+	outCtx, err := s.interceptor.authorize(ctx, "/gmountie.RpcFile/Read")
+	s.Require().NoError(err)
+
+	s.Assert().Equal(callsBefore+1, s.authSvc.calls,
+		"a cert-present request must run full Authorize, not the session fast-path")
+	p, ok := principal.FromContext(outCtx)
+	s.Require().True(ok)
+	s.Assert().Equal("alice", p, "principal must be resolved by Authorize (cert path), not borrowed from the session")
+}
+
+// TestDeniedAuthorize_BumpsAuthFailures covers OB-H1: a denied Authorize (the
+// only signal an operator gets that an auth attempt failed) increments the
+// auth-failure counter. RED before the fix: no counter existed.
+func (s *AuthInterceptorTestSuite) TestDeniedAuthorize_BumpsAuthFailures() {
+	before := testutil.ToFloat64(s.metrics.AuthFailures.WithLabelValues("Read", "authorize_error"))
+
+	// No session_id + bad creds → Authorize denies (alwaysGrantAuthService
+	// rejects "nobody"), routing through the authorize_error deny branch.
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(
+		common.MetadataAuthBasicUsername, "nobody",
+		common.MetadataAuthBasicPassword, "wrong",
+	))
+	_, err := s.interceptor.authorize(ctx, "/gmountie.RpcFile/Read")
+	s.Require().Error(err)
+
+	after := testutil.ToFloat64(s.metrics.AuthFailures.WithLabelValues("Read", "authorize_error"))
+	s.Assert().Equal(before+1, after, "a denied Authorize must bump auth_failures_total")
+}
+
+// TestRevokedCert_BumpsAuthFailures covers OB-H1 for the per-RPC revocation
+// deny branch.
+func (s *AuthInterceptorTestSuite) TestRevokedCert_BumpsAuthFailures() {
+	rs := service.NewRevocationStore()
+	rs.Set([]string{"dead"})
+	i := NewAuthInterceptor(s.authSvc, s.sessions, rs, s.metrics)
+
+	before := testutil.ToFloat64(s.metrics.AuthFailures.WithLabelValues("Read", "revoked"))
+
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(0xdead)}
+	ti := credentials.TLSInfo{State: tls.ConnectionState{
+		VerifiedChains: [][]*x509.Certificate{{leaf}},
+	}}
+	ctx := peer.NewContext(context.Background(), &peer.Peer{AuthInfo: ti})
+
+	_, err := i.authorize(ctx, "/gmountie.RpcFile/Read")
+	s.Require().Error(err)
+
+	after := testutil.ToFloat64(s.metrics.AuthFailures.WithLabelValues("Read", "revoked"))
+	s.Assert().Equal(before+1, after, "a revoked-cert denial must bump auth_failures_total")
 }
 
 func TestAuthInterceptorTestSuite(t *testing.T) {

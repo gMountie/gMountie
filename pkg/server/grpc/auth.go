@@ -2,16 +2,21 @@ package grpc
 
 import (
 	"context"
+	"path"
 
 	"go.gmountie.dev/gmountie/pkg/common"
 	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/server/metrics"
 	"go.gmountie.dev/gmountie/pkg/server/principal"
 	"go.gmountie.dev/gmountie/pkg/server/service"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -36,6 +41,9 @@ type AuthInterceptor struct {
 	authService service.AuthService
 	sessions    service.SessionManager
 	revocation  *service.RevocationStore
+	// metrics is an optional sink for the auth-failure counter. Nil-guarded so
+	// tests and metrics-disabled servers are unaffected (OB-H1).
+	metrics *metrics.Metrics
 }
 
 // NewAuthInterceptor creates a new AuthInterceptor.
@@ -44,8 +52,30 @@ type AuthInterceptor struct {
 // revocation is consulted per-RPC to reject blocked cert serials on
 // already-established connections (complements the TLS handshake hook).
 // Passing nil disables the per-RPC check (safe for non-mTLS servers).
-func NewAuthInterceptor(authService service.AuthService, sessions service.SessionManager, revocation *service.RevocationStore) *AuthInterceptor {
-	return &AuthInterceptor{authService: authService, sessions: sessions, revocation: revocation}
+// m is an optional metrics sink for the auth-failure counter; nil is safe.
+func NewAuthInterceptor(authService service.AuthService, sessions service.SessionManager, revocation *service.RevocationStore, m *metrics.Metrics) *AuthInterceptor {
+	return &AuthInterceptor{authService: authService, sessions: sessions, revocation: revocation, metrics: m}
+}
+
+// denied records an auth denial: it bumps the auth-failure counter (nil-safe)
+// and emits a Warn so a denial — invisible to the downstream finish-call logger
+// and metrics interceptors, which run AFTER auth — is observable (OB-H1).
+func (i *AuthInterceptor) denied(ctx context.Context, fullMethod, reason string, err error) {
+	method := path.Base(fullMethod)
+	if i.metrics != nil {
+		i.metrics.AuthFailureInc(method, reason)
+	}
+	fields := []zap.Field{
+		zap.String("method", method),
+		zap.String("reason", reason),
+	}
+	if p, ok := peer.FromContext(ctx); ok && p.Addr != nil {
+		fields = append(fields, zap.String("peer", p.Addr.String()))
+	}
+	if err != nil {
+		fields = append(fields, zap.Error(err))
+	}
+	log.Log.Warn("auth denied", fields...)
 }
 
 // authorize is the single point of auth decision for both Unary and Stream.
@@ -64,7 +94,9 @@ func (i *AuthInterceptor) authorize(ctx context.Context, fullMethod string) (con
 	// servers and tests without a store are unaffected.
 	if i.revocation != nil {
 		if serial, ok := service.VerifiedCertSerial(ctx); ok && i.revocation.IsBlocked(serial) {
-			return nil, status.Errorf(codes.Unauthenticated, "client certificate revoked")
+			err := status.Errorf(codes.Unauthenticated, "client certificate revoked")
+			i.denied(ctx, fullMethod, "revoked", err)
+			return nil, err
 		}
 	}
 
@@ -99,10 +131,13 @@ func (i *AuthInterceptor) authorize(ctx context.Context, fullMethod string) (con
 	// Step 3: full auth path (argon2 or mTLS cert check).
 	user, err := i.authService.Authorize(ctx, fullMethod)
 	if err != nil {
+		i.denied(ctx, fullMethod, "authorize_error", err)
 		return nil, err
 	}
 	if user == nil {
-		return nil, status.Errorf(codes.PermissionDenied, "unauthorized")
+		denyErr := status.Errorf(codes.PermissionDenied, "unauthorized")
+		i.denied(ctx, fullMethod, "nil_user", denyErr)
+		return nil, denyErr
 	}
 	ctx = logging.InjectLogField(ctx, "user", user.Username)
 	ctx = principal.WithPrincipal(ctx, user.Username)
