@@ -121,16 +121,20 @@ type SessionManager interface {
 type SessionMetrics interface {
 	SessionsActiveInc()
 	SessionsActiveDec()
+	// SessionsReapedInc counts a reaped session by reason (grace_expired,
+	// revoked, shutdown) so the reap rate is observable per cause (OB-L1).
+	SessionsReapedInc(reason string)
 	OpenFilesInc(volume string)
 	OpenFilesDec(volume string)
 }
 
 type noopSessionMetrics struct{}
 
-func (noopSessionMetrics) SessionsActiveInc()  {}
-func (noopSessionMetrics) SessionsActiveDec()  {}
-func (noopSessionMetrics) OpenFilesInc(string) {}
-func (noopSessionMetrics) OpenFilesDec(string) {}
+func (noopSessionMetrics) SessionsActiveInc()       {}
+func (noopSessionMetrics) SessionsActiveDec()       {}
+func (noopSessionMetrics) SessionsReapedInc(string) {}
+func (noopSessionMetrics) OpenFilesInc(string)      {}
+func (noopSessionMetrics) OpenFilesDec(string)      {}
 
 type SessionManagerOptions struct {
 	GracePeriod time.Duration
@@ -433,6 +437,7 @@ func (m *sessionManagerImpl) Stop(ctx context.Context) error {
 // Callers must have already won the sessions.LoadAndDelete claim.
 func (m *sessionManagerImpl) reap(sess *sessionImpl, reason string) {
 	m.metrics.SessionsActiveDec()
+	m.metrics.SessionsReapedInc(reason)
 	released := sess.ReleaseAll()
 	log.Log.Info("session reaped",
 		zap.String("session_fp", common.FingerprintID(sess.id)),

@@ -385,14 +385,25 @@ func TestSessionManagerTestSuite(t *testing.T) {
 type fakeSessionMetrics struct {
 	mu     sync.Mutex
 	open   map[string]int
+	reaped map[string]int
 	active int
 }
 
 func newFakeSessionMetrics() *fakeSessionMetrics {
-	return &fakeSessionMetrics{open: map[string]int{}}
+	return &fakeSessionMetrics{open: map[string]int{}, reaped: map[string]int{}}
 }
 func (f *fakeSessionMetrics) SessionsActiveInc() { f.mu.Lock(); f.active++; f.mu.Unlock() }
 func (f *fakeSessionMetrics) SessionsActiveDec() { f.mu.Lock(); f.active--; f.mu.Unlock() }
+func (f *fakeSessionMetrics) SessionsReapedInc(reason string) {
+	f.mu.Lock()
+	f.reaped[reason]++
+	f.mu.Unlock()
+}
+func (f *fakeSessionMetrics) reapedFor(reason string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.reaped[reason]
+}
 func (f *fakeSessionMetrics) OpenFilesInc(volume string) {
 	f.mu.Lock()
 	f.open[volume]++
@@ -453,4 +464,21 @@ func (s *SessionManagerTestSuite) TestOpenFilesGaugeDecrementsOnReap() {
 	s.Require().Eventually(func() bool {
 		return fm.openFor("photos") == 0 && fm.openFor("docs") == 0
 	}, time.Second, 10*time.Millisecond, "reap must decrement the per-volume open-files gauge")
+}
+
+// TestSessionsReapedCounterByReason: a grace-expiry reap bumps the reaped
+// counter under the "grace_expired" reason so the reap rate is observable per
+// cause (OB-L1).
+func (s *SessionManagerTestSuite) TestSessionsReapedCounterByReason() {
+	fm := newFakeSessionMetrics()
+	mgr := NewSessionManager(SessionManagerOptions{Metrics: fm, GracePeriod: 50 * time.Millisecond})
+	defer func() { _ = mgr.Stop(context.Background()) }()
+
+	id, err := mgr.Create("test-user", "")
+	s.Require().NoError(err)
+	mgr.MarkDisconnected(id)
+
+	s.Require().Eventually(func() bool {
+		return fm.reapedFor("grace_expired") == 1
+	}, time.Second, 10*time.Millisecond, "a grace-expiry reap must bump the reaped counter for grace_expired")
 }
