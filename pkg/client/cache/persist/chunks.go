@@ -147,6 +147,9 @@ func (p *Persist) seedDiskBytes() error {
 		if d.IsDir() {
 			return nil
 		}
+		if len(d.Name()) != 32 { // only count hex chunk files; skip .tmp-* and strays
+			return nil
+		}
 		info, err := d.Info()
 		if err != nil {
 			return err
