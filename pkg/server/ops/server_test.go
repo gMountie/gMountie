@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -21,6 +22,10 @@ type ServerTestSuite struct{ suite.Suite }
 // runs requests against it via httptest. Avoids actually opening a
 // listener while still exercising real routing.
 func muxOf(s *Server) http.Handler { return s.server.Handler }
+
+// httpServerOf exposes the underlying *http.Server so a test can assert the
+// Slowloris-guarding timeouts are set (CQ-M3).
+func httpServerOf(s *Server) *http.Server { return s.server }
 
 // writeOpsCertKeyCA generates two independent self-signed ECDSA certs via
 // the existing servertls.Generate helper and writes them to temp files.
@@ -138,6 +143,21 @@ func (s *ServerTestSuite) TestApplyTLSServesRotatedCert() {
 	s.Require().NoError(err)
 	s.NotEqual(beforeLeaf.SerialNumber.String(), afterLeaf.SerialNumber.String(),
 		"rotation must change the leaf serial")
+}
+
+// TestServerTimeoutsSet pins CQ-M3: both the ops and the plain metrics
+// listeners carry Slowloris-guarding timeouts.
+func (s *ServerTestSuite) TestServerTimeoutsSet() {
+	ops := NewServer(":0", stubReadiness{}, false, nil, nil, nil, nil, nil, nil)
+	hs := httpServerOf(ops)
+	s.Equal(5*time.Second, hs.ReadHeaderTimeout)
+	s.Equal(15*time.Second, hs.ReadTimeout)
+	s.Equal(120*time.Second, hs.WriteTimeout)
+	s.Equal(60*time.Second, hs.IdleTimeout)
+
+	ms := httpServerOf(NewMetricsServer(":0"))
+	s.Equal(5*time.Second, ms.ReadHeaderTimeout)
+	s.Equal(60*time.Second, ms.IdleTimeout)
 }
 
 func TestServerTestSuite(t *testing.T) { suite.Run(t, new(ServerTestSuite)) }
