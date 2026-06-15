@@ -7,7 +7,6 @@ package cache
 
 import (
 	"context"
-	"path"
 	"strings"
 
 	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
@@ -676,13 +675,18 @@ func unwrapHandle(fh io.FileHandle) io.FileHandle {
 	return fh
 }
 
-// joinPath joins parent and name using path.Join semantics, treating an
-// empty parent (the mount root) as a no-op.
+// joinPath joins parent and name into the cache key. It MUST mirror the io
+// layer's join byte-for-byte (pkg/client/io/backend_grpc.go joinPath: raw
+// parent + "/" + name, empty-parent passthrough) so a cache key always equals
+// the wire path the server sees. The wire path is the invalidation source of
+// truth — path.Join normalization here would let the same (parent,name) yield a
+// cache key that never matches a Subscribe event's path (MN-L2). FUSE paths are
+// already clean, so normalization buys nothing.
 func joinPath(parent, name string) string {
 	if parent == "" {
 		return name
 	}
-	return path.Join(parent, name)
+	return parent + "/" + name
 }
 
 // pathParent returns the parent directory portion of p. "" represents the
