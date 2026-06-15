@@ -29,18 +29,19 @@ func (r *RpcServerImpl) Subscribe(request *proto.SubscribeRequest, stream proto.
 		r.metrics.SubscribeSubscribersInc(request.Volume)
 		defer r.metrics.SubscribeSubscribersDec(request.Volume)
 	}
-	events, cancel := r.bus.Subscribe(request.Volume)
+	events, busDone, cancel := r.bus.Subscribe(request.Volume)
 	defer cancel()
 	fctx := createContext(ctx, request.Caller)
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case ev, ok := <-events:
-			if !ok {
-				// Bus closed our channel due to backpressure overflow.
-				return nil
-			}
+		case <-busDone:
+			// Subscription ended on the bus side (bus Close or a backpressure
+			// overflow drop). The event channel is never closed — done is the
+			// termination signal (SS-M1).
+			return nil
+		case ev := <-events:
 			if !accessibleToPrincipal(boundFS, ev, fctx) {
 				continue
 			}

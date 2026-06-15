@@ -1,11 +1,14 @@
 package io_test
 
 import (
+	"sync"
 	"testing"
 	"time"
 
 	"go.gmountie.dev/gmountie/pkg/server/io"
+	"go.gmountie.dev/gmountie/pkg/server/metrics"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -14,7 +17,7 @@ type EventBusSuite struct{ suite.Suite }
 func (s *EventBusSuite) TestEmitDeliversToSubscriber() {
 	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 16})
 	defer bus.Close()
-	events, cancel := bus.Subscribe("vol1")
+	events, _, cancel := bus.Subscribe("vol1")
 	defer cancel()
 
 	bus.Emit("vol1", "foo/bar", 42, io.KindMutated)
@@ -32,9 +35,9 @@ func (s *EventBusSuite) TestEmitDeliversToSubscriber() {
 func (s *EventBusSuite) TestEmitOnlyDeliversToMatchingVolume() {
 	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 16})
 	defer bus.Close()
-	vol1Events, cancel1 := bus.Subscribe("vol1")
+	vol1Events, _, cancel1 := bus.Subscribe("vol1")
 	defer cancel1()
-	vol2Events, cancel2 := bus.Subscribe("vol2")
+	vol2Events, _, cancel2 := bus.Subscribe("vol2")
 	defer cancel2()
 
 	bus.Emit("vol1", "p", 1, io.KindMutated)
@@ -54,9 +57,9 @@ func (s *EventBusSuite) TestEmitOnlyDeliversToMatchingVolume() {
 func (s *EventBusSuite) TestMultiSubscriberFanOut() {
 	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 16})
 	defer bus.Close()
-	a, cancelA := bus.Subscribe("v")
+	a, _, cancelA := bus.Subscribe("v")
 	defer cancelA()
-	b, cancelB := bus.Subscribe("v")
+	b, _, cancelB := bus.Subscribe("v")
 	defer cancelB()
 
 	bus.Emit("v", "p", 1, io.KindMutated)
@@ -73,31 +76,63 @@ func (s *EventBusSuite) TestMultiSubscriberFanOut() {
 func (s *EventBusSuite) TestFullChannelDropsSubscriber() {
 	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 1})
 	defer bus.Close()
-	events, cancel := bus.Subscribe("v")
+	_, done, cancel := bus.Subscribe("v")
 	defer cancel()
 
+	// Don't drain — overrun the 1-deep buffer so the slow subscriber is dropped.
 	bus.Emit("v", "p1", 1, io.KindMutated)
 	bus.Emit("v", "p2", 2, io.KindMutated)
 	bus.Emit("v", "p3", 3, io.KindMutated)
 
-	deadline := time.After(time.Second)
-	closed := false
-	for !closed {
-		select {
-		case _, ok := <-events:
-			if !ok {
-				closed = true
-			}
-		case <-deadline:
-			s.FailNow("channel never closed after buffer overrun")
-		}
+	// Termination is signalled via done (the event channel is never closed).
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		s.FailNow("subscriber's done channel never fired after buffer overrun")
 	}
+}
+
+// TestDroppedSubscriberRemovedFromSlice covers SS-L1: a slow subscriber that
+// overflows must be spliced out of the volume's subscriber slice after the
+// drop, so it is NOT re-counted on every subsequent fanout. With a fresh
+// (drained) subscriber present alongside it, the dropped-slow counter must
+// increment exactly once across two more emits.
+func (s *EventBusSuite) TestDroppedSubscriberRemovedFromSlice() {
+	m := metrics.NewMetrics()
+	drops := func() int {
+		return int(testutil.ToFloat64(m.SubscribeDroppedSlow.WithLabelValues("v")))
+	}
+	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 1, Metrics: m})
+	defer bus.Close()
+
+	_, slowDone, cancelSlow := bus.Subscribe("v")
+	defer cancelSlow()
+
+	// Overrun the slow subscriber (buffer 1, three emits, no drain).
+	bus.Emit("v", "p1", 1, io.KindMutated)
+	bus.Emit("v", "p2", 2, io.KindMutated)
+	bus.Emit("v", "p3", 3, io.KindMutated)
+
+	select {
+	case <-slowDone:
+	case <-time.After(time.Second):
+		s.FailNow("slow subscriber was not dropped")
+	}
+	dropsAfterFirst := drops()
+	s.Require().GreaterOrEqual(dropsAfterFirst, 1, "the overrun must have recorded at least one drop")
+
+	// Two more emits: the dropped subscriber must be gone from the slice, so no
+	// further drops are recorded for it.
+	bus.Emit("v", "p4", 4, io.KindMutated)
+	bus.Emit("v", "p5", 5, io.KindMutated)
+	s.Equal(dropsAfterFirst, drops(),
+		"a dropped subscriber must be removed from the slice, not re-counted on later fanouts")
 }
 
 func (s *EventBusSuite) TestHeartbeatFires() {
 	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 16, HeartbeatInterval: 30 * time.Millisecond})
 	defer bus.Close()
-	events, cancel := bus.Subscribe("v")
+	events, _, cancel := bus.Subscribe("v")
 	defer cancel()
 
 	deadline := time.After(time.Second)
@@ -123,7 +158,7 @@ func (s *EventBusSuite) TestHasSubscribers() {
 
 	s.False(bus.HasSubscribers("v"), "fresh bus must report no subscribers")
 
-	_, cancel := bus.Subscribe("v")
+	_, _, cancel := bus.Subscribe("v")
 	s.True(bus.HasSubscribers("v"), "one subscriber must flip the gate")
 	s.False(bus.HasSubscribers("other"), "the gate is per-volume")
 
@@ -135,29 +170,86 @@ func (s *EventBusSuite) TestHasSubscribers() {
 // keep answering false, not panic.
 func (s *EventBusSuite) TestHasSubscribersAfterClose() {
 	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 4})
-	_, cancel := bus.Subscribe("v")
+	_, _, cancel := bus.Subscribe("v")
 	defer cancel()
 	bus.Close()
 	s.False(bus.HasSubscribers("v"))
 }
 
 // TestSubscribeAfterClose verifies that a Subscribe call after Close returns a
-// pre-closed channel instead of panicking or writing to a nil map.
+// pre-terminated subscription (done already closed) instead of panicking or
+// writing to a nil map. The event channel is never closed — done is the signal.
 func (s *EventBusSuite) TestSubscribeAfterClose() {
 	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 16})
 	bus.Close()
 
-	ch, cancel := bus.Subscribe("vol")
+	_, done, cancel := bus.Subscribe("vol")
 	defer cancel()
 
-	// The returned channel must already be closed — reading from it should
-	// unblock immediately with the zero value and ok==false.
+	// done must already be closed — reading from it unblocks immediately.
 	select {
-	case _, ok := <-ch:
-		s.Assert().False(ok, "channel returned by Subscribe-after-Close must be pre-closed")
+	case <-done:
 	case <-time.After(time.Second):
-		s.FailNow("Subscribe-after-Close returned a channel that never closed")
+		s.FailNow("Subscribe-after-Close returned a subscription whose done never fired")
 	}
+}
+
+// TestEmitWhileCancelClose_NoPanic covers SS-M1: under -race, spamming Emit
+// while subscribers concurrently cancel and the bus is concurrently Closed must
+// never panic with "send on closed channel". The pre-fix trySend closed the
+// event channel from the overflow/close paths while a fanout send was in
+// flight — a reachable TOCTOU panic.
+func (s *EventBusSuite) TestEmitWhileCancelClose_NoPanic() {
+	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 1})
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+
+	// Churn subscribers: subscribe, briefly drain, cancel — repeatedly.
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				ev, done, cancel := bus.Subscribe("v")
+				// Drain a few then drop without fully draining (forces overflow).
+				for i := 0; i < 3; i++ {
+					select {
+					case <-ev:
+					case <-done:
+					default:
+					}
+				}
+				cancel()
+			}
+		}()
+	}
+
+	// Spam emits concurrently.
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					bus.Emit("v", "p", 1, io.KindMutated)
+				}
+			}
+		}()
+	}
+
+	time.Sleep(150 * time.Millisecond)
+	bus.Close() // concurrent Close while emits/cancels are in flight
+	close(stop)
+	wg.Wait()
 }
 
 func TestEventBusSuite(t *testing.T) { suite.Run(t, new(EventBusSuite)) }
