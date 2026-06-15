@@ -152,20 +152,22 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 				}
 			case *prometheus.HistogramVec:
 				m.RequestDuration = existing
-			case prometheus.Counter:
-				switch c {
-				case prometheus.Collector(m.TLSReloadFailures):
-					m.TLSReloadFailures = existing
-				}
+			// Gauge MUST be matched before Counter: a plain prometheus.Gauge also
+			// satisfies the prometheus.Counter interface (both have Inc/Add), so a
+			// Counter-first switch would catch every gauge and leave the Gauge case
+			// dead (and the two plain gauges un-adopted under a shared registerer,
+			// go test -count=N). A Counter does not satisfy Gauge (no Set/Dec).
 			case prometheus.Gauge:
-				// Two plain gauges exist — disambiguate, or TLSLastReloadUnixtime
-				// would be mis-adopted onto SessionsActive under a shared
-				// registerer (go test -count=N).
 				switch c {
 				case prometheus.Collector(m.SessionsActive):
 					m.SessionsActive = existing
 				case prometheus.Collector(m.TLSLastReloadUnixtime):
 					m.TLSLastReloadUnixtime = existing
+				}
+			case prometheus.Counter:
+				switch c {
+				case prometheus.Collector(m.TLSReloadFailures):
+					m.TLSReloadFailures = existing
 				}
 			}
 		}

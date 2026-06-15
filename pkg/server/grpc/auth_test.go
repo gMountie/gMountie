@@ -376,7 +376,7 @@ func (s *AuthInterceptorTestSuite) TestDeniedAuthorize_BumpsAuthFailures() {
 	s.Require().Error(err)
 
 	after := testutil.ToFloat64(s.metrics.AuthFailures.WithLabelValues("Read", "authorize_error"))
-	s.Assert().Equal(before+1, after, "a denied Authorize must bump auth_failures_total")
+	s.Assert().InDelta(before+1, after, 0.0001, "a denied Authorize must bump auth_failures_total")
 }
 
 // TestRevokedCert_BumpsAuthFailures covers OB-H1 for the per-RPC revocation
@@ -398,7 +398,7 @@ func (s *AuthInterceptorTestSuite) TestRevokedCert_BumpsAuthFailures() {
 	s.Require().Error(err)
 
 	after := testutil.ToFloat64(s.metrics.AuthFailures.WithLabelValues("Read", "revoked"))
-	s.Assert().Equal(before+1, after, "a revoked-cert denial must bump auth_failures_total")
+	s.Assert().InDelta(before+1, after, 0.0001, "a revoked-cert denial must bump auth_failures_total")
 }
 
 // TestDenialWarnIsThrottledButCounterIsNot covers the OB-H1 hardening: the
@@ -421,7 +421,7 @@ func (s *AuthInterceptorTestSuite) TestDenialWarnIsThrottledButCounterIsNot() {
 		s.Require().Error(err)
 	}
 	after := testutil.ToFloat64(s.metrics.AuthFailures.WithLabelValues("Read", "authorize_error"))
-	s.Equal(before+5, after, "every denial must count even though the log is throttled")
+	s.InDelta(before+5, after, 0.0001, "every denial must count even though the log is throttled")
 }
 
 func TestAuthInterceptorTestSuite(t *testing.T) {

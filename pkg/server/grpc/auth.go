@@ -66,7 +66,7 @@ type AuthInterceptor struct {
 func (i *AuthInterceptor) shouldWarn(reason string) bool {
 	now := time.Now().UnixNano()
 	v, _ := i.warnLast.LoadOrStore(reason, new(atomic.Int64))
-	last := v.(*atomic.Int64)
+	last, _ := v.(*atomic.Int64)
 	prev := last.Load()
 	if now-prev < int64(authWarnInterval) && prev != 0 {
 		return false
