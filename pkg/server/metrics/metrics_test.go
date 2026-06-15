@@ -46,4 +46,12 @@ func (s *MetricsTestSuite) TestSessionsActive() {
 	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.SessionsActive)))
 }
 
+func (s *MetricsTestSuite) TestSessionsReaped() {
+	s.m.SessionsReapedInc("grace_expired")
+	s.m.SessionsReapedInc("grace_expired")
+	s.m.SessionsReapedInc("revoked")
+	s.Assert().Equal(2, int(testutil.ToFloat64(s.m.SessionsReaped.WithLabelValues("grace_expired"))))
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.SessionsReaped.WithLabelValues("revoked"))))
+}
+
 func TestMetricsTestSuite(t *testing.T) { suite.Run(t, new(MetricsTestSuite)) }

@@ -15,6 +15,10 @@ type Metrics struct {
 	RpcErrors       *prometheus.CounterVec
 	RequestDuration *prometheus.HistogramVec
 	SessionsActive  prometheus.Gauge
+	// SessionsReaped counts sessions removed, by reason (grace_expired,
+	// revoked, shutdown), so operators can tell normal grace reaps from
+	// revocation-driven or shutdown reaps (OB-L1).
+	SessionsReaped *prometheus.CounterVec
 
 	// Subscribe counters (Sub-spec D).
 	SubscribeEventsEmitted *prometheus.CounterVec
@@ -51,6 +55,10 @@ func NewMetrics() *Metrics {
 			Name: "gmountie_server_sessions_active",
 			Help: "Number of active sessions (created and not yet reaped).",
 		}),
+		SessionsReaped: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gmountie_server_sessions_reaped_total",
+			Help: "Count of sessions reaped, per reason (grace_expired, revoked, shutdown).",
+		}, []string{"reason"}),
 		SubscribeEventsEmitted: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gmountie_subscribe_events_emitted_total",
 			Help: "Subscribe events emitted to subscribers per kind.",
@@ -70,6 +78,7 @@ func NewMetrics() *Metrics {
 func (m *Metrics) MustRegister(r prometheus.Registerer) {
 	r.MustRegister(
 		m.OpenFiles, m.Bytes, m.RpcErrors, m.RequestDuration, m.SessionsActive,
+		m.SessionsReaped,
 		m.SubscribeEventsEmitted, m.SubscribeSubscribers, m.SubscribeDroppedSlow,
 	)
 }
@@ -80,6 +89,7 @@ func (m *Metrics) MustRegister(r prometheus.Registerer) {
 func (m *Metrics) Register(r prometheus.Registerer) error {
 	all := []prometheus.Collector{
 		m.OpenFiles, m.Bytes, m.RpcErrors, m.RequestDuration, m.SessionsActive,
+		m.SessionsReaped,
 		m.SubscribeEventsEmitted, m.SubscribeSubscribers, m.SubscribeDroppedSlow,
 	}
 	for _, c := range all {
@@ -109,6 +119,8 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 					m.SubscribeEventsEmitted = existing
 				case prometheus.Collector(m.SubscribeDroppedSlow):
 					m.SubscribeDroppedSlow = existing
+				case prometheus.Collector(m.SessionsReaped):
+					m.SessionsReaped = existing
 				}
 			case *prometheus.HistogramVec:
 				m.RequestDuration = existing
@@ -147,6 +159,11 @@ func (m *Metrics) RequestDurationObserve(volume, op string, seconds float64) {
 
 func (m *Metrics) SessionsActiveInc() { m.SessionsActive.Inc() }
 func (m *Metrics) SessionsActiveDec() { m.SessionsActive.Dec() }
+
+// SessionsReapedInc bumps the reaped-sessions counter for the given reason.
+func (m *Metrics) SessionsReapedInc(reason string) {
+	m.SessionsReaped.WithLabelValues(reason).Inc()
+}
 
 // SubscribeEventEmittedInc bumps the emitted-events counter for the given kind.
 func (m *Metrics) SubscribeEventEmittedInc(kind string) {
