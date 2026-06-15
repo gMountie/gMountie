@@ -3,6 +3,9 @@ package grpc
 import (
 	"context"
 	"path"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"go.gmountie.dev/gmountie/pkg/common"
 	"go.gmountie.dev/gmountie/pkg/proto"
@@ -19,6 +22,14 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
+
+// authWarnInterval throttles the per-denial Warn to at most one line per reason
+// per interval. The revoked branch fires PER-RPC on an established connection,
+// so a revoked client (or a credential-spammer) would otherwise drive an
+// unbounded log stream — an attacker-triggerable log-volume amplification. The
+// AuthFailures counter stays exact (incremented every denial); only the human
+// log is sampled (OB-H1).
+const authWarnInterval = 10 * time.Second
 
 // fullAuthMethods lists every RPC that MUST run the full authService.Authorize
 // path (argon2 for basic-auth, cert-check for mTLS) regardless of whether a
@@ -44,6 +55,23 @@ type AuthInterceptor struct {
 	// metrics is an optional sink for the auth-failure counter. Nil-guarded so
 	// tests and metrics-disabled servers are unaffected (OB-H1).
 	metrics *metrics.Metrics
+	// warnLast throttles the denial Warn per reason: reason -> *atomic.Int64
+	// holding the last log time (unix-nanos). The counter is never throttled.
+	warnLast sync.Map
+}
+
+// shouldWarn reports whether a denial Warn for reason is due now, and if so
+// records the time. At most one log per reason per authWarnInterval. Lock-free
+// on the hot (recently-logged) path; a CAS guards the once-per-interval window.
+func (i *AuthInterceptor) shouldWarn(reason string) bool {
+	now := time.Now().UnixNano()
+	v, _ := i.warnLast.LoadOrStore(reason, new(atomic.Int64))
+	last := v.(*atomic.Int64)
+	prev := last.Load()
+	if now-prev < int64(authWarnInterval) && prev != 0 {
+		return false
+	}
+	return last.CompareAndSwap(prev, now)
 }
 
 // NewAuthInterceptor creates a new AuthInterceptor.
@@ -57,13 +85,18 @@ func NewAuthInterceptor(authService service.AuthService, sessions service.Sessio
 	return &AuthInterceptor{authService: authService, sessions: sessions, revocation: revocation, metrics: m}
 }
 
-// denied records an auth denial: it bumps the auth-failure counter (nil-safe)
-// and emits a Warn so a denial — invisible to the downstream finish-call logger
-// and metrics interceptors, which run AFTER auth — is observable (OB-H1).
+// denied records an auth denial: it ALWAYS bumps the auth-failure counter
+// (nil-safe) and emits a THROTTLED Warn so a denial — invisible to the
+// downstream finish-call logger and metrics interceptors, which run AFTER auth
+// — is observable without giving a revoked/spamming client an unbounded log
+// faucet (OB-H1).
 func (i *AuthInterceptor) denied(ctx context.Context, fullMethod, reason string, err error) {
 	method := path.Base(fullMethod)
 	if i.metrics != nil {
 		i.metrics.AuthFailureInc(method, reason)
+	}
+	if !i.shouldWarn(reason) {
+		return
 	}
 	fields := []zap.Field{
 		zap.String("method", method),

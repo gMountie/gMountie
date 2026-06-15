@@ -401,6 +401,29 @@ func (s *AuthInterceptorTestSuite) TestRevokedCert_BumpsAuthFailures() {
 	s.Assert().Equal(before+1, after, "a revoked-cert denial must bump auth_failures_total")
 }
 
+// TestDenialWarnIsThrottledButCounterIsNot covers the OB-H1 hardening: the
+// per-denial Warn is sampled per reason (so a revoked client can't flood the
+// log), while AuthFailures counts EVERY denial.
+func (s *AuthInterceptorTestSuite) TestDenialWarnIsThrottledButCounterIsNot() {
+	// shouldWarn: first call for a reason logs, the immediate next does not.
+	s.True(s.interceptor.shouldWarn("revoked"), "first denial of a reason must log")
+	s.False(s.interceptor.shouldWarn("revoked"), "a back-to-back denial of the same reason must be throttled")
+	s.True(s.interceptor.shouldWarn("nil_user"), "a different reason is throttled independently")
+
+	// The counter is never throttled: many denials of the same reason all count.
+	before := testutil.ToFloat64(s.metrics.AuthFailures.WithLabelValues("Read", "authorize_error"))
+	for i := 0; i < 5; i++ {
+		ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(
+			common.MetadataAuthBasicUsername, "nobody",
+			common.MetadataAuthBasicPassword, "wrong",
+		))
+		_, err := s.interceptor.authorize(ctx, "/gmountie.RpcFile/Read")
+		s.Require().Error(err)
+	}
+	after := testutil.ToFloat64(s.metrics.AuthFailures.WithLabelValues("Read", "authorize_error"))
+	s.Equal(before+5, after, "every denial must count even though the log is throttled")
+}
+
 func TestAuthInterceptorTestSuite(t *testing.T) {
 	suite.Run(t, new(AuthInterceptorTestSuite))
 }
