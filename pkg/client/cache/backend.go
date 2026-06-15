@@ -15,6 +15,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/proto"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"google.golang.org/grpc"
 )
 
 // cachedBackend decorates an inner FileSystemBackend with three
@@ -36,12 +37,22 @@ type cachedBackend struct {
 	persist *persist.Persist
 }
 
+// invalidationSource is the one wire method the cache decorator needs from the
+// gRPC client: opening the Subscribe stream that drives push-invalidation.
+// NewCachedBackend takes this narrow interface instead of the full
+// proto.RpcFsClient so the decorator can't reach past the FileSystemBackend
+// abstraction into unrelated RPCs (AR-L1). proto.RpcFsClient satisfies it, so
+// callers pass their existing client unchanged.
+type invalidationSource interface {
+	Subscribe(ctx context.Context, in *proto.SubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[proto.SubscribeEvent], error)
+}
+
 // NewCachedBackend wraps inner. cfg.MemoryMaxBytes <= 0 disables byte-cap
 // eviction in the memory tier (entries live until invalidated or the process
 // dies; the disk tier still respects DiskMaxBytes independently). p may be
 // nil for memory-only operation. client and volume are used to start the
 // Subscribe-based invalidation goroutine; pass nil client to disable it.
-func NewCachedBackend(inner io.FileSystemBackend, cfg Config, p *persist.Persist, client proto.RpcFsClient, volume string) io.FileSystemBackend {
+func NewCachedBackend(inner io.FileSystemBackend, cfg Config, p *persist.Persist, client invalidationSource, volume string) io.FileSystemBackend {
 	acct := newAccountant(cfg.MemoryMaxBytes, deriveMaxEntries(cfg.MemoryMaxBytes))
 	b := &cachedBackend{
 		inner:    inner,
