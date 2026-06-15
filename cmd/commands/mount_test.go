@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"go.gmountie.dev/gmountie/pkg/client/config"
 	"go.gmountie.dev/gmountie/pkg/client/credentials"
+	logpkg "go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -419,6 +421,37 @@ func (s *MountCmdTestSuite) TestMountCmd_ProfileAndConfigConflict() {
 	err := s.cmd.Execute()
 	s.Require().Error(err)
 	s.Assert().Contains(err.Error(), "one of --profile or --config")
+}
+
+// TestApplyVerbose_AllocatesLogBlock proves --verbose forces debug level even
+// when the config carries no log block (the CQ-H1 fix: the flag was declared
+// but never consumed). A nil cfg.Log must be allocated, not ignored.
+func (s *MountCmdTestSuite) TestApplyVerbose_AllocatesLogBlock() {
+	cfg := &config.Config{}
+	applyVerbose(cfg, true)
+	s.Require().NotNil(cfg.Log)
+	s.Equal("debug", cfg.Log.Level)
+}
+
+// TestApplyVerbose_OverridesConfiguredLevel proves --verbose wins over a level
+// already set in the config (deliberate per-invocation override).
+func (s *MountCmdTestSuite) TestApplyVerbose_OverridesConfiguredLevel() {
+	cfg := &config.Config{Log: &logpkg.LogConfig{Level: "warn", Format: "json"}}
+	applyVerbose(cfg, true)
+	s.Equal("debug", cfg.Log.Level)
+	s.Equal("json", cfg.Log.Format, "format must be preserved")
+}
+
+// TestApplyVerbose_NoopWhenUnset proves the config's level is untouched when
+// --verbose is not set.
+func (s *MountCmdTestSuite) TestApplyVerbose_NoopWhenUnset() {
+	cfg := &config.Config{Log: &logpkg.LogConfig{Level: "warn"}}
+	applyVerbose(cfg, false)
+	s.Equal("warn", cfg.Log.Level)
+
+	bare := &config.Config{}
+	applyVerbose(bare, false)
+	s.Nil(bare.Log, "no verbose and no config block leaves Log nil")
 }
 
 func TestMountCmdSuite(t *testing.T) {
