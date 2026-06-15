@@ -54,4 +54,12 @@ func (s *MetricsTestSuite) TestSessionsReaped() {
 	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.SessionsReaped.WithLabelValues("revoked"))))
 }
 
+func (s *MetricsTestSuite) TestAuthFailures() {
+	s.m.AuthFailureInc("Read", "revoked")
+	s.m.AuthFailureInc("Read", "revoked")
+	s.m.AuthFailureInc("Create", "nil_user")
+	s.Assert().Equal(2, int(testutil.ToFloat64(s.m.AuthFailures.WithLabelValues("Read", "revoked"))))
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.AuthFailures.WithLabelValues("Create", "nil_user"))))
+}
+
 func TestMetricsTestSuite(t *testing.T) { suite.Run(t, new(MetricsTestSuite)) }

@@ -8,6 +8,7 @@ import (
 	grpc2 "go.gmountie.dev/gmountie/pkg/common/grpc"
 	_ "go.gmountie.dev/gmountie/pkg/common/grpc/snappy" // Installing the snappy encoding as an available compressor.
 	"go.gmountie.dev/gmountie/pkg/server/config"
+	"go.gmountie.dev/gmountie/pkg/server/metrics"
 	"go.gmountie.dev/gmountie/pkg/server/service"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 
@@ -47,6 +48,9 @@ type Server struct {
 	extraUnaryInterceptors  []grpc.UnaryServerInterceptor
 	extraStreamInterceptors []grpc.StreamServerInterceptor
 	metricsServer           *prometheus.ServerMetrics
+	// metrics is the custom server-collector set, threaded to the
+	// AuthInterceptor so auth denials are counted. Nil-safe (OB-H1).
+	metrics *metrics.Metrics
 	// HealthService implements grpc.health.v1.Health. It's always set so
 	// probes work regardless of the metrics toggle, and the
 	// graceful-shutdown path flips it to NOT_SERVING before GracefulStop.
@@ -104,6 +108,14 @@ func WithSessionManager(mgr service.SessionManager) ServerOption {
 func WithRevocation(rs *service.RevocationStore) ServerOption {
 	return func(s *Server) {
 		s.revocation = rs
+	}
+}
+
+// WithMetrics wires the custom server-collector set into the AuthInterceptor so
+// auth denials are counted (gmountie_server_auth_failures_total). Nil-safe.
+func WithMetrics(m *metrics.Metrics) ServerOption {
+	return func(s *Server) {
+		s.metrics = m
 	}
 }
 
@@ -203,7 +215,7 @@ func (s *Server) createListener() (net.Listener, error) {
 // getOptions returns the gRPC server options.
 func (s *Server) getOptions() []grpc.ServerOption {
 	unaryLog, streamLog := s.getLoggingInterceptor()
-	authInterceptor := NewAuthInterceptor(s.authService, s.sessionManager, s.revocation)
+	authInterceptor := NewAuthInterceptor(s.authService, s.sessionManager, s.revocation, s.metrics)
 
 	unaryInterceptors := append(
 		[]grpc.UnaryServerInterceptor{
