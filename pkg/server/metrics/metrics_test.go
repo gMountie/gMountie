@@ -3,6 +3,7 @@ package metrics
 import (
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/suite"
 )
@@ -60,6 +61,30 @@ func (s *MetricsTestSuite) TestAuthFailures() {
 	s.m.AuthFailureInc("Create", "nil_user")
 	s.Assert().Equal(2, int(testutil.ToFloat64(s.m.AuthFailures.WithLabelValues("Read", "revoked"))))
 	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.AuthFailures.WithLabelValues("Create", "nil_user"))))
+}
+
+func (s *MetricsTestSuite) TestTLSReloadFailures() {
+	s.m.TLSReloadFailureInc()
+	s.m.TLSReloadFailureInc()
+	s.Assert().Equal(2, int(testutil.ToFloat64(s.m.TLSReloadFailures)))
+}
+
+func (s *MetricsTestSuite) TestTLSReloadSucceededStampsGauge() {
+	s.Assert().Equal(0, int(testutil.ToFloat64(s.m.TLSLastReloadUnixtime)))
+	s.m.TLSReloadSucceeded()
+	s.Assert().Positive(testutil.ToFloat64(s.m.TLSLastReloadUnixtime),
+		"TLSReloadSucceeded must stamp the gauge to the current time")
+}
+
+// TestRegisterCountTolerant pins the adopt-switch: registering twice against a
+// shared registerer must not error and must not mis-adopt one plain
+// gauge/counter onto another (OB-M2 adopt-switch hazard).
+func (s *MetricsTestSuite) TestRegisterCountTolerant() {
+	reg := prometheus.NewRegistry()
+	m1 := NewMetrics()
+	s.Require().NoError(m1.Register(reg))
+	m2 := NewMetrics()
+	s.Require().NoError(m2.Register(reg), "re-register against the same registerer must be tolerated")
 }
 
 func TestMetricsTestSuite(t *testing.T) { suite.Run(t, new(MetricsTestSuite)) }

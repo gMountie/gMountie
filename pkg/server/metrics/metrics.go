@@ -25,6 +25,15 @@ type Metrics struct {
 	// denial emits nothing at all (OB-H1).
 	AuthFailures *prometheus.CounterVec
 
+	// TLSReloadFailures counts failed server-cert reload attempts (stat blip,
+	// cert/key mismatch, unparsable PEM). The Reloader fails open — it keeps
+	// serving the last good pair — so without this counter a stuck-stale cert
+	// is invisible (OB-M2).
+	TLSReloadFailures prometheus.Counter
+	// TLSLastReloadUnixtime is the wall-clock time of the last SUCCESSFUL cert
+	// reload. Alert on staleness to catch a reloader that's failing open.
+	TLSLastReloadUnixtime prometheus.Gauge
+
 	// Subscribe counters (Sub-spec D).
 	SubscribeEventsEmitted *prometheus.CounterVec
 	SubscribeSubscribers   *prometheus.GaugeVec
@@ -68,6 +77,14 @@ func NewMetrics() *Metrics {
 			Name: "gmountie_server_auth_failures_total",
 			Help: "Count of denied authentications, per method and reason.",
 		}, []string{"method", "reason"}),
+		TLSReloadFailures: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gmountie_server_tls_reload_failures_total",
+			Help: "Count of failed server-cert reload attempts (reloader fails open, serving the last good pair).",
+		}),
+		TLSLastReloadUnixtime: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "gmountie_server_tls_last_reload_unixtime_seconds",
+			Help: "Unix time of the last successful server-cert reload.",
+		}),
 		SubscribeEventsEmitted: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gmountie_subscribe_events_emitted_total",
 			Help: "Subscribe events emitted to subscribers per kind.",
@@ -87,7 +104,7 @@ func NewMetrics() *Metrics {
 func (m *Metrics) MustRegister(r prometheus.Registerer) {
 	r.MustRegister(
 		m.OpenFiles, m.Bytes, m.RpcErrors, m.RequestDuration, m.SessionsActive,
-		m.SessionsReaped, m.AuthFailures,
+		m.SessionsReaped, m.AuthFailures, m.TLSReloadFailures, m.TLSLastReloadUnixtime,
 		m.SubscribeEventsEmitted, m.SubscribeSubscribers, m.SubscribeDroppedSlow,
 	)
 }
@@ -98,7 +115,7 @@ func (m *Metrics) MustRegister(r prometheus.Registerer) {
 func (m *Metrics) Register(r prometheus.Registerer) error {
 	all := []prometheus.Collector{
 		m.OpenFiles, m.Bytes, m.RpcErrors, m.RequestDuration, m.SessionsActive,
-		m.SessionsReaped, m.AuthFailures,
+		m.SessionsReaped, m.AuthFailures, m.TLSReloadFailures, m.TLSLastReloadUnixtime,
 		m.SubscribeEventsEmitted, m.SubscribeSubscribers, m.SubscribeDroppedSlow,
 	}
 	for _, c := range all {
@@ -135,8 +152,21 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 				}
 			case *prometheus.HistogramVec:
 				m.RequestDuration = existing
+			case prometheus.Counter:
+				switch c {
+				case prometheus.Collector(m.TLSReloadFailures):
+					m.TLSReloadFailures = existing
+				}
 			case prometheus.Gauge:
-				m.SessionsActive = existing
+				// Two plain gauges exist — disambiguate, or TLSLastReloadUnixtime
+				// would be mis-adopted onto SessionsActive under a shared
+				// registerer (go test -count=N).
+				switch c {
+				case prometheus.Collector(m.SessionsActive):
+					m.SessionsActive = existing
+				case prometheus.Collector(m.TLSLastReloadUnixtime):
+					m.TLSLastReloadUnixtime = existing
+				}
 			}
 		}
 	}
@@ -180,6 +210,12 @@ func (m *Metrics) SessionsReapedInc(reason string) {
 func (m *Metrics) AuthFailureInc(method, reason string) {
 	m.AuthFailures.WithLabelValues(method, reason).Inc()
 }
+
+// TLSReloadFailureInc bumps the cert-reload-failure counter.
+func (m *Metrics) TLSReloadFailureInc() { m.TLSReloadFailures.Inc() }
+
+// TLSReloadSucceeded stamps the last-successful-reload gauge to now.
+func (m *Metrics) TLSReloadSucceeded() { m.TLSLastReloadUnixtime.SetToCurrentTime() }
 
 // SubscribeEventEmittedInc bumps the emitted-events counter for the given kind.
 func (m *Metrics) SubscribeEventEmittedInc(kind string) {

@@ -197,7 +197,8 @@ func Start(ctx context.Context, cfg *config.Config) error {
 		if err != nil {
 			return errors.Wrap(err, "load/generate server cert")
 		}
-		reloader, err := servertls.NewReloader(certPath, keyPath)
+		reloader, err := servertls.NewReloader(certPath, keyPath,
+			servertls.WithMetrics(appCtx.Metrics))
 		if err != nil {
 			return errors.Wrap(err, "init server cert reloader")
 		}
