@@ -434,6 +434,29 @@ volumes:
 	s.Assert().Equal(90*time.Second, cfg.Server.Session.GracePeriod)
 }
 
+// TestNewServerConfigNilReturnsConstantDefaults pins AR-M1: NewServerConfig(nil)
+// is the defaults-in-constructor source of truth and returns the Default*
+// constants verbatim (mirrors NewRpcConfig(nil)).
+func (s *ConfigTestSuite) TestNewServerConfigNilReturnsConstantDefaults() {
+	cfg, err := NewServerConfig(nil)
+	s.Require().NoError(err)
+
+	s.Equal(DefaultAddress, cfg.Address)
+	s.Equal(uint(config.DefaultPort), cfg.Port)
+	s.Equal(DefaultMetrics, cfg.Metrics)
+	s.Equal(DefaultFrameSizeBytes, cfg.FrameSizeBytes)
+	s.Equal(DefaultKeepaliveTime, cfg.Keepalive.Time)
+	s.Equal(DefaultSessionGracePeriod, cfg.Session.GracePeriod)
+	s.Equal(DefaultTLSMinVersion, cfg.TLS.MinVersion)
+	s.Equal(DefaultOpsAddr, cfg.Ops.Addr)
+	s.Equal(DefaultOpsAuthType, cfg.Ops.Auth.Type)
+	s.Equal(DefaultReflection, cfg.GRPC.Reflection)
+	s.Equal(DefaultMaxMessageBytes, cfg.GRPC.Limits.MaxRecvMessageSize)
+	s.Equal(DefaultMaxConcurrentStreams, cfg.GRPC.Limits.MaxConcurrentStreams)
+	s.Equal(DefaultMaxConnectionIdle, cfg.GRPC.Limits.MaxConnectionIdle)
+	s.Equal(DefaultMaxConnectionAge, cfg.GRPC.Limits.MaxConnectionAge)
+}
+
 func TestConfigTestSuite(t *testing.T) {
 	suite.Run(t, new(ConfigTestSuite))
 }

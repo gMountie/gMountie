@@ -53,6 +53,25 @@ const (
 	// (ops take the per-op credential-switch path). Set to a positive value
 	// to enable the experimental pre-credentialed executor.
 	DefaultIdentityExecutorWorkers = 0
+	// DefaultMetrics enables the gRPC Prometheus interceptors by default.
+	DefaultMetrics = true
+	// DefaultTLSMinVersion is the floor TLS version the server presents.
+	DefaultTLSMinVersion = "1.3"
+	// DefaultOpsAddr is the loopback bind for the ops HTTP endpoint.
+	DefaultOpsAddr = "127.0.0.1:9090"
+	// DefaultOpsAuthType is the ops endpoint auth mode ("none" — loopback-only
+	// without auth; enforced at startup).
+	DefaultOpsAuthType = "none"
+	// DefaultReflection keeps the gRPC reflection service off by default so
+	// production doesn't leak the service surface to anonymous callers.
+	DefaultReflection = false
+	// DefaultMaxConcurrentStreams bounds in-flight streams per connection.
+	DefaultMaxConcurrentStreams uint32 = 256
+	// DefaultMaxConnectionIdle closes idle connections after this duration.
+	DefaultMaxConnectionIdle = 5 * time.Minute
+	// DefaultMaxConnectionAge hard-caps total connection lifetime. 0 = unlimited
+	// (long-lived sessions are the gMountie norm).
+	DefaultMaxConnectionAge time.Duration = 0
 )
 
 // IdentityConfig controls the identity-enforcement machinery shared by all
