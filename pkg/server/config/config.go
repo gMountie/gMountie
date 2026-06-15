@@ -84,67 +84,11 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 
 	// Parse the server configuration — read directly from the parent viper
 	// to honour env-var overrides (see comment above).
-	v.SetDefault("server.address", DefaultAddress)
-	v.SetDefault("server.port", config.DefaultPort)
-	v.SetDefault("server.metrics", true)
-	v.SetDefault("server.frame_size_bytes", DefaultFrameSizeBytes)
-	v.SetDefault("server.keepalive.time", DefaultKeepaliveTime)
-	v.SetDefault("server.keepalive.timeout", DefaultKeepaliveTimeout)
-	v.SetDefault("server.keepalive.min_time", DefaultKeepaliveMinTime)
-	v.SetDefault("server.keepalive.permit_without_stream", DefaultKeepalivePermitWithoutStream)
-	v.SetDefault("server.subscribe_buffer_size", DefaultServerSubscribeBufferSize)
-	v.SetDefault("server.subscribe_heartbeat_interval", DefaultServerSubscribeHeartbeatInterval)
-	v.SetDefault("server.session.grace_period", DefaultSessionGracePeriod)
-	v.SetDefault("server.session.idempotency_cache_size", DefaultSessionIdempotencyCacheSize)
-	v.SetDefault("server.identity.executor_workers", DefaultIdentityExecutorWorkers)
-	v.SetDefault("server.tls.min_version", "1.3")
-	v.SetDefault("server.ops.addr", "127.0.0.1:9090")
-	v.SetDefault("server.ops.auth.type", "none")
-	v.SetDefault("server.grpc.reflection", false)
-	v.SetDefault("server.grpc.limits.max_recv_message_size", DefaultMaxMessageBytes)
-	v.SetDefault("server.grpc.limits.max_concurrent_streams", uint32(256))
-	v.SetDefault("server.grpc.limits.max_connection_idle", "5m")
-	v.SetDefault("server.grpc.limits.max_connection_age", 0)
-	result.Server = &ServerConfig{
-		Address:          v.GetString("server.address"),
-		Port:             v.GetUint("server.port"),
-		Metrics:          v.GetBool("server.metrics"),
-		PlainMetricsAddr: v.GetString("server.plain_metrics_addr"),
-		Pprof:            v.GetBool("server.pprof"),
-		FrameSizeBytes:   v.GetInt("server.frame_size_bytes"),
-		Keepalive: ServerKeepaliveConfig{
-			Time:                v.GetDuration("server.keepalive.time"),
-			Timeout:             v.GetDuration("server.keepalive.timeout"),
-			MinTime:             v.GetDuration("server.keepalive.min_time"),
-			PermitWithoutStream: v.GetBool("server.keepalive.permit_without_stream"),
-		},
-		Session: SessionConfig{
-			GracePeriod:          v.GetDuration("server.session.grace_period"),
-			IdempotencyCacheSize: v.GetInt("server.session.idempotency_cache_size"),
-		},
-		Identity: IdentityConfig{
-			ExecutorWorkers: v.GetInt("server.identity.executor_workers"),
-		},
-		SubscribeBufferSize:        v.GetInt("server.subscribe_buffer_size"),
-		SubscribeHeartbeatInterval: v.GetDuration("server.subscribe_heartbeat_interval"),
-		TLS: TLSConfig{
-			CertFile:     v.GetString("server.tls.cert_file"),
-			KeyFile:      v.GetString("server.tls.key_file"),
-			ClientCAFile: v.GetString("server.tls.client_ca_file"),
-			MinVersion:   v.GetString("server.tls.min_version"),
-			Disabled:     v.GetBool("server.tls.disabled"),
-		},
-		Ops: parseOpsConfig(v),
-		GRPC: GRPCConfig{
-			Reflection: v.GetBool("server.grpc.reflection"),
-			Limits: LimitsConfig{
-				MaxRecvMessageSize:   v.GetInt("server.grpc.limits.max_recv_message_size"),
-				MaxConcurrentStreams: uint32(v.GetUint("server.grpc.limits.max_concurrent_streams")),
-				MaxConnectionIdle:    v.GetDuration("server.grpc.limits.max_connection_idle"),
-				MaxConnectionAge:     v.GetDuration("server.grpc.limits.max_connection_age"),
-			},
-		},
+	server, err := NewServerConfig(v)
+	if err != nil {
+		return nil, err
 	}
+	result.Server = server
 
 	// Parse the auth configuration.
 	auth, err := NewFromConfig(v.Sub("auth"))
@@ -184,6 +128,125 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	}
 
 	return &result, nil
+}
+
+// defaultServerConfig is the single source of truth for ServerConfig defaults,
+// seeded from the Default* constants (mirrors client config.NewRpcConfig). Both
+// the v==nil path and the SetDefault seeding below derive from it, so the two
+// can never drift.
+func defaultServerConfig() *ServerConfig {
+	return &ServerConfig{
+		Address: DefaultAddress,
+		Port:    config.DefaultPort,
+		Metrics: DefaultMetrics,
+		Keepalive: ServerKeepaliveConfig{
+			Time:                DefaultKeepaliveTime,
+			Timeout:             DefaultKeepaliveTimeout,
+			MinTime:             DefaultKeepaliveMinTime,
+			PermitWithoutStream: DefaultKeepalivePermitWithoutStream,
+		},
+		Session: SessionConfig{
+			GracePeriod:          DefaultSessionGracePeriod,
+			IdempotencyCacheSize: DefaultSessionIdempotencyCacheSize,
+		},
+		Identity: IdentityConfig{
+			ExecutorWorkers: DefaultIdentityExecutorWorkers,
+		},
+		FrameSizeBytes:             DefaultFrameSizeBytes,
+		SubscribeBufferSize:        DefaultServerSubscribeBufferSize,
+		SubscribeHeartbeatInterval: DefaultServerSubscribeHeartbeatInterval,
+		TLS: TLSConfig{
+			MinVersion: DefaultTLSMinVersion,
+		},
+		Ops: OpsConfig{
+			Addr: DefaultOpsAddr,
+			Auth: OpsAuthConfig{Type: DefaultOpsAuthType},
+		},
+		GRPC: GRPCConfig{
+			Reflection: DefaultReflection,
+			Limits: LimitsConfig{
+				MaxRecvMessageSize:   DefaultMaxMessageBytes,
+				MaxConcurrentStreams: DefaultMaxConcurrentStreams,
+				MaxConnectionIdle:    DefaultMaxConnectionIdle,
+				MaxConnectionAge:     DefaultMaxConnectionAge,
+			},
+		},
+	}
+}
+
+// NewServerConfig builds a ServerConfig. A nil v yields the constant defaults
+// (the defaults-in-constructor source of truth, mirroring NewRpcConfig). A
+// non-nil v is read directly off the PARENT viper with the "server." prefix —
+// NOT via v.Sub — because AutomaticEnv overrides don't propagate through Sub
+// (see the env-bind comment in ParseConfig); explicit values override the
+// seeded defaults.
+func NewServerConfig(v *viper.Viper) (*ServerConfig, error) {
+	cfg := defaultServerConfig()
+	if v == nil {
+		return cfg, nil
+	}
+
+	v.SetDefault("server.address", DefaultAddress)
+	v.SetDefault("server.port", config.DefaultPort)
+	v.SetDefault("server.metrics", DefaultMetrics)
+	v.SetDefault("server.frame_size_bytes", DefaultFrameSizeBytes)
+	v.SetDefault("server.keepalive.time", DefaultKeepaliveTime)
+	v.SetDefault("server.keepalive.timeout", DefaultKeepaliveTimeout)
+	v.SetDefault("server.keepalive.min_time", DefaultKeepaliveMinTime)
+	v.SetDefault("server.keepalive.permit_without_stream", DefaultKeepalivePermitWithoutStream)
+	v.SetDefault("server.subscribe_buffer_size", DefaultServerSubscribeBufferSize)
+	v.SetDefault("server.subscribe_heartbeat_interval", DefaultServerSubscribeHeartbeatInterval)
+	v.SetDefault("server.session.grace_period", DefaultSessionGracePeriod)
+	v.SetDefault("server.session.idempotency_cache_size", DefaultSessionIdempotencyCacheSize)
+	v.SetDefault("server.identity.executor_workers", DefaultIdentityExecutorWorkers)
+	v.SetDefault("server.tls.min_version", DefaultTLSMinVersion)
+	v.SetDefault("server.ops.addr", DefaultOpsAddr)
+	v.SetDefault("server.ops.auth.type", DefaultOpsAuthType)
+	v.SetDefault("server.grpc.reflection", DefaultReflection)
+	v.SetDefault("server.grpc.limits.max_recv_message_size", DefaultMaxMessageBytes)
+	v.SetDefault("server.grpc.limits.max_concurrent_streams", DefaultMaxConcurrentStreams)
+	v.SetDefault("server.grpc.limits.max_connection_idle", DefaultMaxConnectionIdle)
+	v.SetDefault("server.grpc.limits.max_connection_age", DefaultMaxConnectionAge)
+
+	cfg.Address = v.GetString("server.address")
+	cfg.Port = v.GetUint("server.port")
+	cfg.Metrics = v.GetBool("server.metrics")
+	cfg.PlainMetricsAddr = v.GetString("server.plain_metrics_addr")
+	cfg.Pprof = v.GetBool("server.pprof")
+	cfg.FrameSizeBytes = v.GetInt("server.frame_size_bytes")
+	cfg.Keepalive = ServerKeepaliveConfig{
+		Time:                v.GetDuration("server.keepalive.time"),
+		Timeout:             v.GetDuration("server.keepalive.timeout"),
+		MinTime:             v.GetDuration("server.keepalive.min_time"),
+		PermitWithoutStream: v.GetBool("server.keepalive.permit_without_stream"),
+	}
+	cfg.Session = SessionConfig{
+		GracePeriod:          v.GetDuration("server.session.grace_period"),
+		IdempotencyCacheSize: v.GetInt("server.session.idempotency_cache_size"),
+	}
+	cfg.Identity = IdentityConfig{
+		ExecutorWorkers: v.GetInt("server.identity.executor_workers"),
+	}
+	cfg.SubscribeBufferSize = v.GetInt("server.subscribe_buffer_size")
+	cfg.SubscribeHeartbeatInterval = v.GetDuration("server.subscribe_heartbeat_interval")
+	cfg.TLS = TLSConfig{
+		CertFile:     v.GetString("server.tls.cert_file"),
+		KeyFile:      v.GetString("server.tls.key_file"),
+		ClientCAFile: v.GetString("server.tls.client_ca_file"),
+		MinVersion:   v.GetString("server.tls.min_version"),
+		Disabled:     v.GetBool("server.tls.disabled"),
+	}
+	cfg.Ops = parseOpsConfig(v)
+	cfg.GRPC = GRPCConfig{
+		Reflection: v.GetBool("server.grpc.reflection"),
+		Limits: LimitsConfig{
+			MaxRecvMessageSize:   v.GetInt("server.grpc.limits.max_recv_message_size"),
+			MaxConcurrentStreams: uint32(v.GetUint("server.grpc.limits.max_concurrent_streams")),
+			MaxConnectionIdle:    v.GetDuration("server.grpc.limits.max_connection_idle"),
+			MaxConnectionAge:     v.GetDuration("server.grpc.limits.max_connection_age"),
+		},
+	}
+	return cfg, nil
 }
 
 // parseOpsConfig reads the server.ops.* keys from the parent viper and builds
