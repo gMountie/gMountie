@@ -30,11 +30,31 @@ var fingerprintCmd = &cobra.Command{
 func init() {
 	fingerprintCmd.Flags().BoolVar(&fingerprintVerbose, "verbose", false,
 		"print subject, issuer, NotBefore, NotAfter alongside the fingerprint")
+	addProfileFlag(fingerprintCmd)
 	rootCmd.AddCommand(fingerprintCmd)
 }
 
 func runFingerprint(cmd *cobra.Command, _ []string) error {
-	certPath, fromConfig := resolveCertPath()
+	// Resolve the cert path off a freshly-read --profile/--config (mirroring
+	// ls.go) instead of the package-global viper singleton the CLI never
+	// populates — otherwise server.tls.cert_file in the config file is dead.
+	profilePath, err := resolveProfilePath()
+	if err != nil {
+		return err
+	}
+	cfgPath := configFile
+	if profilePath != "" {
+		cfgPath = profilePath
+	}
+	v := viper.New()
+	if cfgPath != "" {
+		v.SetConfigFile(cfgPath)
+		if err := v.ReadInConfig(); err != nil {
+			return fmt.Errorf("failed to read config file %s: %w", cfgPath, err)
+		}
+	}
+
+	certPath, fromConfig := resolveCertPath(v)
 	pemBytes, err := servertls.LoadCertOnly(certPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -83,8 +103,8 @@ func renderFingerprint(fp string) string {
 // indicating whether the path came from explicit config (so we can pick the
 // right error wording when it's missing). server.tls.cert_file wins; falls
 // back to $XDG_STATE_HOME/gmountie/server.crt.
-func resolveCertPath() (path string, fromConfig bool) {
-	if p := viper.GetString("server.tls.cert_file"); p != "" {
+func resolveCertPath(v *viper.Viper) (path string, fromConfig bool) {
+	if p := v.GetString("server.tls.cert_file"); p != "" {
 		return p, true
 	}
 	// xdg.StateFile resolves $XDG_STATE_HOME/<relative>, creating parent dirs

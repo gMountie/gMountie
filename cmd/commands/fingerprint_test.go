@@ -30,6 +30,9 @@ func TestFingerprintCmdSuite(t *testing.T) { suite.Run(t, new(FingerprintCmdSuit
 func (s *FingerprintCmdSuite) SetupTest() {
 	viper.Reset()
 	fingerprintVerbose = false
+	// Shared globals the fingerprint command now reads via --config/--profile.
+	configFile = ""
+	profileName = ""
 
 	s.xdgRestore = os.Getenv("XDG_STATE_HOME")
 	dir := s.T().TempDir()
@@ -40,6 +43,9 @@ func (s *FingerprintCmdSuite) SetupTest() {
 
 	s.buf = new(bytes.Buffer)
 	s.root = &cobra.Command{Use: "root"}
+	// Re-declare the persistent --config flag on the test root so tests can
+	// pass -c without depending on the real rootCmd's init.
+	s.root.PersistentFlags().StringVarP(&configFile, "config", "c", "", "config file path")
 	s.root.AddCommand(fingerprintCmd)
 	s.root.SetOut(s.buf)
 	s.root.SetErr(s.buf)
@@ -48,7 +54,22 @@ func (s *FingerprintCmdSuite) SetupTest() {
 func (s *FingerprintCmdSuite) TearDownTest() {
 	_ = os.Setenv("XDG_STATE_HOME", s.xdgRestore)
 	xdg.Reload()
+	configFile = ""
+	profileName = ""
 	viper.Reset()
+}
+
+// writeCertConfig writes a cert plus a client.yaml pointing server.tls.cert_file
+// at it, returning the config path and the cert fingerprint. This exercises the
+// real --config read path the production CLI uses (MN-M1), not the package
+// global viper.
+func (s *FingerprintCmdSuite) writeCertConfig(host string) (cfgPath, fingerprint string) {
+	certPath, fp := s.writeCert(host)
+	dir := s.T().TempDir()
+	cfgPath = filepath.Join(dir, "client.yaml")
+	cfgYAML := "server:\n  tls:\n    cert_file: " + certPath + "\n"
+	s.Require().NoError(os.WriteFile(cfgPath, []byte(cfgYAML), 0o600))
+	return cfgPath, fp
 }
 
 func (s *FingerprintCmdSuite) writeCert(host string) (certPath string, fingerprint string) {
@@ -70,19 +91,17 @@ func (s *FingerprintCmdSuite) runCmd(args ...string) (string, error) {
 }
 
 func (s *FingerprintCmdSuite) TestPrintsFingerprintWhenCertExists() {
-	certPath, fp := s.writeCert("test.example")
-	viper.Set("server.tls.cert_file", certPath)
+	cfgPath, fp := s.writeCertConfig("test.example")
 
-	out, err := s.runCmd()
+	out, err := s.runCmd("--config", cfgPath)
 	s.Require().NoError(err)
 	s.Contains(out, fp)
 }
 
 func (s *FingerprintCmdSuite) TestVerboseIncludesSubjectAndDates() {
-	certPath, _ := s.writeCert("verbose.example")
-	viper.Set("server.tls.cert_file", certPath)
+	cfgPath, _ := s.writeCertConfig("verbose.example")
 
-	out, err := s.runCmd("--verbose")
+	out, err := s.runCmd("--config", cfgPath, "--verbose")
 	s.Require().NoError(err)
 	s.Contains(out, "Path:")
 	s.Contains(out, "Subject:")
@@ -91,10 +110,21 @@ func (s *FingerprintCmdSuite) TestVerboseIncludesSubjectAndDates() {
 }
 
 func (s *FingerprintCmdSuite) TestMissingConfiguredCertReturnsError() {
-	viper.Set("server.tls.cert_file", "/no/such/file.crt")
-	_, err := s.runCmd()
+	dir := s.T().TempDir()
+	cfgPath := filepath.Join(dir, "client.yaml")
+	s.Require().NoError(os.WriteFile(cfgPath,
+		[]byte("server:\n  tls:\n    cert_file: /no/such/file.crt\n"), 0o600))
+	_, err := s.runCmd("--config", cfgPath)
 	s.Require().Error(err)
 	s.Contains(err.Error(), "set server.tls.cert_file to an existing file or run 'gmountie serve' to auto-generate")
+}
+
+// TestProfileAndConfigConflict proves --profile and --config together error
+// (the fingerprint command now resolves both like the other client commands).
+func (s *FingerprintCmdSuite) TestProfileAndConfigConflict() {
+	_, err := s.runCmd("--profile", "work", "--config", "/tmp/x.yaml")
+	s.Require().Error(err)
+	s.Contains(err.Error(), "one of --profile or --config")
 }
 
 func (s *FingerprintCmdSuite) TestMissingXdgCertReturnsError() {
