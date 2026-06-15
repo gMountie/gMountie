@@ -457,6 +457,72 @@ func (s *MountCmdTestSuite) TestApplyVerbose_NoopWhenUnset() {
 	s.Nil(bare.Log, "no verbose and no config block leaves Log nil")
 }
 
+// buildTargetFromArgs constructs a fresh mount command, runs its argument
+// parsing, and returns the resolved mountTarget from buildMountConfig — the
+// same path the RunE uses. It lets the raw-ids tests inspect the resolved
+// rawIDs without networking (buildMountConfig stops at config resolution).
+func (s *MountCmdTestSuite) buildTargetFromArgs(args ...string) (*mountTarget, error) {
+	f := &mountFlags{}
+	cmd := &cobra.Command{Use: "mount", RunE: func(*cobra.Command, []string) error { return nil }}
+	// --config is a root persistent flag bound to the package global in
+	// production; bind it here so buildMountConfig (which reads configFile) sees
+	// the test's --config value.
+	cmd.PersistentFlags().StringVarP(&configFile, "config", "c", "", "config file path")
+	addProfileFlag(cmd)
+	cmd.PersistentFlags().StringVarP(&f.serverAddr, "server", "s", "127.0.0.1:9449", "server address")
+	cmd.PersistentFlags().StringVarP(&f.volumeName, "volume", "n", "", "volume name")
+	addAuthFlags(cmd, &f.auth)
+	addCredentialsFlag(cmd)
+	cmd.PersistentFlags().BoolVar(&f.rawIDs, "raw-ids", false, "")
+	cmd.PersistentFlags().BoolVar(&f.daemon, "daemon", false, "")
+	s.Require().NoError(cmd.ParseFlags(args))
+	return buildMountConfig(cmd, cmd.Flags().Args(), f)
+}
+
+// TestRawIDs_FromConfig proves mount.raw_ids: true in the config enables raw
+// IDs with the --raw-ids flag unset (the config-OR-flag wiring, TH-L1).
+func (s *MountCmdTestSuite) TestRawIDs_FromConfig() {
+	cfgPath := filepath.Join(s.tempDir, "client.yaml")
+	cfgYAML := `server:
+  address: 192.168.11.11
+  port: 9449
+auth:
+  type: basic
+  username: demo
+  password: demo
+mount:
+  type: single
+  volume: shared
+  raw_ids: true
+`
+	s.Require().NoError(os.WriteFile(cfgPath, []byte(cfgYAML), 0o600))
+	t, err := s.buildTargetFromArgs("--config", cfgPath, s.mountPath)
+	s.Require().NoError(err)
+	s.True(t.rawIDs, "mount.raw_ids in config must enable raw IDs with no flag")
+}
+
+// TestRawIDs_FromFlag proves --raw-ids enables raw IDs even when the config
+// leaves it false (flag ORs with config).
+func (s *MountCmdTestSuite) TestRawIDs_FromFlag() {
+	cfgPath := filepath.Join(s.tempDir, "client.yaml")
+	cfgYAML := `server:
+  address: 192.168.11.11
+  port: 9449
+auth:
+  type: basic
+  username: demo
+  password: demo
+mount:
+  type: single
+  volume: shared
+  raw_ids: false
+`
+	s.Require().NoError(os.WriteFile(cfgPath, []byte(cfgYAML), 0o600))
+	t, err := s.buildTargetFromArgs("--config", cfgPath, "--raw-ids", s.mountPath)
+	s.Require().NoError(err)
+	s.True(t.rawIDs, "--raw-ids must enable raw IDs even when config has it false")
+}
+
 // TestStartClientMetrics_ServesWhenEnabled proves the OB-H2 fix: with
 // GMOUNTIE_METRICS_ADDR set, startClientMetricsIfEnabled brings up a /metrics
 // endpoint that returns 200. We bind an ephemeral port to avoid collisions.
