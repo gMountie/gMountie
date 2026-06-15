@@ -124,23 +124,23 @@ func (c *AppContext) GetGrpcServices() []grpc.ServiceRegistrar {
 	}
 }
 
-// firstVolumePath returns the path of the first configured volume, or
-// "" when no volumes are configured. PathReadinessChecker treats the
-// empty case as not-ready, which is the desired behaviour: a server
-// with no volumes shouldn't pass /readyz.
-func firstVolumePath(cfg *config.Config) string {
-	if len(cfg.Volumes) == 0 {
-		return ""
+// allVolumePaths returns the roots of every configured volume. Empty when no
+// volumes are configured, which MultiPathReadinessChecker treats as not-ready:
+// a server with no volumes shouldn't pass /readyz.
+func allVolumePaths(cfg *config.Config) []string {
+	paths := make([]string, 0, len(cfg.Volumes))
+	for _, v := range cfg.Volumes {
+		paths = append(paths, v.Path)
 	}
-	return cfg.Volumes[0].Path
+	return paths
 }
 
 // newOpsServer builds the ops HTTP server and applies operator mTLS when
 // configured. ApplyTLS is part of construction here so a future change cannot
 // drop it and silently serve the mutating /ops/acl/reload endpoint as plaintext
 // — a missing/invalid keypair fails the build (and thus startup) instead.
-func newOpsServer(cfg *config.Config, appCtx *AppContext) (*ops.Server, error) {
-	readiness := ops.PathReadinessChecker{Path: firstVolumePath(cfg)}
+func newOpsServer(cfg *config.Config, appCtx *AppContext, health ops.ServingChecker) (*ops.Server, error) {
+	readiness := ops.MultiPathReadinessChecker{Paths: allVolumePaths(cfg), Health: health}
 	srv := ops.NewServer(
 		cfg.Server.Ops.Addr,
 		readiness,
@@ -275,7 +275,7 @@ func Start(ctx context.Context, cfg *config.Config) error {
 
 	// Build the ops HTTP server (/metrics, /healthz, /readyz, /version,
 	// /ops/acl/reload) with operator mTLS applied when configured.
-	opsServer, err := newOpsServer(cfg, appCtx)
+	opsServer, err := newOpsServer(cfg, appCtx, s.HealthService)
 	if err != nil {
 		return errors.Wrap(err, "build ops server")
 	}

@@ -115,13 +115,13 @@ func (s *ServerAppTestSuite) TestNewOpsServer_WiresTLS() {
 		}}}
 	}
 
-	_, err := newOpsServer(base(config.OpsTLSConfig{}), &AppContext{})
+	_, err := newOpsServer(base(config.OpsTLSConfig{}), &AppContext{}, nil)
 	s.Require().NoError(err) // plain HTTP ops server builds fine
 
 	_, err = newOpsServer(base(config.OpsTLSConfig{
 		CertFile: "/nonexistent/ops.crt",
 		KeyFile:  "/nonexistent/ops.key",
-	}), &AppContext{})
+	}), &AppContext{}, nil)
 	s.Require().Error(err) // ApplyTLS is wired: a missing keypair fails the build
 }
 
