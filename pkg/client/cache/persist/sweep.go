@@ -134,9 +134,12 @@ func (p *Persist) runGhostSweep(sampleFraction float64, stop <-chan struct{}) er
 			if err := idx.Delete(k); err != nil {
 				return err
 			}
-			remaining, err := decRefTx(tx, toDecRef[i])
+			remaining, found, err := decRefTx(tx, toDecRef[i])
 			if err != nil {
 				return err
+			}
+			if !found {
+				p.refUnderflows.Add(1)
 			}
 			if remaining == 0 {
 				unlinks = append(unlinks, toDecRef[i])
@@ -222,9 +225,12 @@ func (p *Persist) enforceDiskBudget() error {
 			if derr := idx.Delete(k); derr != nil {
 				return derr
 			}
-			remaining, derr := decRefTx(tx, toDeleteRefs[i].Hash)
+			remaining, found, derr := decRefTx(tx, toDeleteRefs[i].Hash)
 			if derr != nil {
 				return derr
+			}
+			if !found {
+				p.refUnderflows.Add(1)
 			}
 			if remaining == 0 {
 				toUnlink = append(toUnlink, toDeleteRefs[i].Hash)

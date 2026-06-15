@@ -61,4 +61,21 @@ func (s *RefcountSuite) TestDecBelowZeroStaysAtZero() {
 	s.Assert().Equal(uint64(0), remaining, "decrementing absent refcount is a no-op returning 0")
 }
 
+func (s *RefcountSuite) TestDoubleDecrementIsRecorded() {
+	data := []byte("refcounted")
+	hash, _, err := s.p.WriteChunk(data)
+	s.Require().NoError(err)
+	s.Require().NoError(s.p.IncChunkRef(hash)) // refcount = 1
+
+	s.Require().Equal(int64(0), persist.TestingRefUnderflows(s.p))
+	_, err = s.p.DecChunkRef(hash) // -> 0, deletes key (legitimate)
+	s.Require().NoError(err)
+	s.Assert().Equal(int64(0), persist.TestingRefUnderflows(s.p))
+
+	_, err = s.p.DecChunkRef(hash) // decrement on an absent key = underflow
+	s.Require().NoError(err)
+	s.Assert().Equal(int64(1), persist.TestingRefUnderflows(s.p),
+		"a decrement on an absent refcount must be recorded as an underflow")
+}
+
 func TestRefcountSuite(t *testing.T) { suite.Run(t, new(RefcountSuite)) }

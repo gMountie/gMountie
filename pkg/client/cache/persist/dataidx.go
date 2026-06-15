@@ -65,9 +65,12 @@ func (p *Persist) PutChunkRef(path string, chunkIndex int, ref ChunkRef) error {
 			if old.Hash == ref.Hash {
 				return nil
 			}
-			remaining, err := decRefTx(tx, old.Hash)
+			remaining, found, err := decRefTx(tx, old.Hash)
 			if err != nil {
 				return err
+			}
+			if !found {
+				p.refUnderflows.Add(1)
 			}
 			if remaining == 0 {
 				priorHash = old.Hash
@@ -157,9 +160,12 @@ func (p *Persist) InvalidatePathChunks(path string) error {
 			if err := idx.Delete(k); err != nil {
 				return err
 			}
-			remaining, err := decRefTx(tx, refs[i].Hash)
+			remaining, found, err := decRefTx(tx, refs[i].Hash)
 			if err != nil {
 				return err
+			}
+			if !found {
+				p.refUnderflows.Add(1)
 			}
 			if remaining == 0 {
 				toUnlink = append(toUnlink, refs[i].Hash)
@@ -227,9 +233,12 @@ func (p *Persist) InvalidateChunkRange(path string, firstIdx, lastIdx int) error
 			if err := idx.Delete(key); err != nil {
 				return err
 			}
-			remaining, err := decRefTx(tx, ref.Hash)
+			remaining, found, err := decRefTx(tx, ref.Hash)
 			if err != nil {
 				return err
+			}
+			if !found {
+				p.refUnderflows.Add(1)
 			}
 			if remaining == 0 {
 				toUnlink = append(toUnlink, ref.Hash)
