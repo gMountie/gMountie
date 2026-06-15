@@ -18,6 +18,11 @@ import (
 // the sweep removes a chunk before its refcount is recorded.
 const orphanSweepBgAge = 60 * time.Second
 
+// testHookAfterCollect, when non-nil, runs between a sweeper's View-collect and
+// its Update-apply phases. Test-only (nil in production) — it lets a test land a
+// concurrent overwrite in the exact lost-update window.
+var testHookAfterCollect func()
+
 // stopRequested reports whether the background-goroutine stop signal has
 // fired. A nil channel never fires (the select falls through to default),
 // so callers that don't participate in lifecycle (tests) pass nil.
@@ -122,6 +127,9 @@ func (p *Persist) runGhostSweep(sampleFraction float64, stop <-chan struct{}) er
 	if err != nil {
 		return errors.Wrap(err, "ghost sweep scan")
 	}
+	if testHookAfterCollect != nil {
+		testHookAfterCollect()
+	}
 	// Shutdown signalled mid-scan: drop partial results rather than open a
 	// writable txn (Close is waiting on us, and db may close next).
 	if stopped || len(toDelete) == 0 {
@@ -131,18 +139,32 @@ func (p *Persist) runGhostSweep(sampleFraction float64, stop <-chan struct{}) er
 	err = p.db.Update(func(tx *bolt.Tx) error {
 		idx := tx.Bucket(bucketDataIdx)
 		for i, k := range toDelete {
-			if err := idx.Delete(k); err != nil {
-				return err
+			cur := idx.Get(k)
+			if cur == nil {
+				continue // key already deleted by a concurrent writer
 			}
-			remaining, found, err := decRefTx(tx, toDecRef[i])
-			if err != nil {
-				return err
+			curRef, derr := decodeChunkRef(cur)
+			if derr != nil {
+				return derr
+			}
+			if curRef.Hash != toDecRef[i] {
+				continue // key was overwritten since collect — not the ghost we saw
+			}
+			if _, statErr := os.Stat(p.chunkPath(curRef.Hash)); statErr == nil {
+				continue // chunk file reappeared since collect — no longer a ghost
+			}
+			if derr := idx.Delete(k); derr != nil {
+				return derr
+			}
+			remaining, found, derr := decRefTx(tx, curRef.Hash)
+			if derr != nil {
+				return derr
 			}
 			if !found {
 				p.refUnderflows.Add(1)
 			}
 			if remaining == 0 {
-				unlinks = append(unlinks, toDecRef[i])
+				unlinks = append(unlinks, curRef.Hash)
 			}
 		}
 		return nil
@@ -213,6 +235,9 @@ func (p *Persist) enforceDiskBudget() error {
 	if err != nil {
 		return errors.Wrap(err, "evict scan")
 	}
+	if testHookAfterCollect != nil {
+		testHookAfterCollect()
+	}
 	if len(toDeleteKeys) == 0 {
 		// data_idx is empty; remaining bytes are orphan chunks.
 		return nil
@@ -222,10 +247,21 @@ func (p *Persist) enforceDiskBudget() error {
 	err = p.db.Update(func(tx *bolt.Tx) error {
 		idx := tx.Bucket(bucketDataIdx)
 		for i, k := range toDeleteKeys {
+			cur := idx.Get(k)
+			if cur == nil {
+				continue
+			}
+			curRef, derr := decodeChunkRef(cur)
+			if derr != nil {
+				return derr
+			}
+			if curRef.Hash != toDeleteRefs[i].Hash {
+				continue // overwritten since collect; don't evict the new chunk
+			}
 			if derr := idx.Delete(k); derr != nil {
 				return derr
 			}
-			remaining, found, derr := decRefTx(tx, toDeleteRefs[i].Hash)
+			remaining, found, derr := decRefTx(tx, curRef.Hash)
 			if derr != nil {
 				return derr
 			}
@@ -233,7 +269,7 @@ func (p *Persist) enforceDiskBudget() error {
 				p.refUnderflows.Add(1)
 			}
 			if remaining == 0 {
-				toUnlink = append(toUnlink, toDeleteRefs[i].Hash)
+				toUnlink = append(toUnlink, curRef.Hash)
 			}
 		}
 		return nil
