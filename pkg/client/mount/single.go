@@ -10,6 +10,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/config"
 	"go.gmountie.dev/gmountie/pkg/client/grpc"
 	"go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 
@@ -104,7 +105,15 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 		io.WithPlusListings(m.cache.Enabled))
 	if m.cache.Enabled {
 		root := filepath.Join(m.cache.Path, volume)
-		p, err := persist.Open(persist.Options{Root: root, DiskMaxBytes: int64(m.cache.DiskMaxBytes)})
+		// Wire the persist GC/accounting observability sink to the client
+		// metrics. Guard nil: a client built without metrics leaves the sink
+		// nil, which persist.Open turns into its no-op (never wrap a nil
+		// *metrics.Metrics — the adapter would panic).
+		var gcMetrics persist.GCMetrics
+		if cm := m.client.Metrics(); cm != nil {
+			gcMetrics = persistGCMetrics{cm}
+		}
+		p, err := persist.Open(persist.Options{Root: root, DiskMaxBytes: int64(m.cache.DiskMaxBytes), Metrics: gcMetrics})
 		if err != nil {
 			return errors.Wrap(err, "open cache persist")
 		}
@@ -221,3 +230,17 @@ func (m *SingleVolumeMounterImpl) UnmountAll() error {
 func (m *SingleVolumeMounterImpl) Close() error {
 	return m.UnmountAll()
 }
+
+// persistGCMetrics adapts *metrics.Metrics to persist.GCMetrics. The adapter
+// lives here (not in persist, which must not import metrics, and not in
+// metrics, which would reverse the dependency). The embedded *Metrics must be
+// non-nil — the caller guards that before wrapping.
+type persistGCMetrics struct{ m *metrics.Metrics }
+
+func (a persistGCMetrics) ChunkUnlinked(reason string) { a.m.ChunkUnlinkedInc(reason) }
+func (a persistGCMetrics) GhostEntryDeleted()          { a.m.GhostEntryDeletedInc() }
+func (a persistGCMetrics) RefcountUnderflow()          { a.m.RefcountUnderflowInc() }
+func (a persistGCMetrics) OrphanReclaimed()            { a.m.OrphanReclaimedInc() }
+func (a persistGCMetrics) TmpReclaimed()               { a.m.TmpReclaimedInc() }
+func (a persistGCMetrics) BudgetEviction()             { a.m.BudgetEvictionInc() }
+func (a persistGCMetrics) DiskBytesUsed(n int64)       { a.m.DiskBytesUsedSet(n) }

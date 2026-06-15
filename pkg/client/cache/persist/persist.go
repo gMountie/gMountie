@@ -6,6 +6,7 @@
 package persist
 
 import (
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"sync"
@@ -14,7 +15,57 @@ import (
 
 	"github.com/pkg/errors"
 	bolt "go.etcd.io/bbolt"
+
+	"go.gmountie.dev/gmountie/pkg/utils/log"
+	"go.uber.org/zap"
 )
+
+// Chunk-unlink reasons threaded through unlinkChunk into ChunkUnlinked.
+// Named to avoid label typos across the call sites.
+const (
+	unlinkReasonRefcountZero = "refcount_zero" // Invalidate*/PutChunkRef-overwrite/DecChunkRef
+	unlinkReasonGhost        = "ghost"         // ghost sweep reclaimed a dangling chunk
+	unlinkReasonOrphan       = "orphan"        // orphan sweep reclaimed an unreferenced chunk
+	unlinkReasonBudget       = "budget"        // disk-budget eviction
+)
+
+// GCMetrics is the optional, nil-safe metrics sink for the persist GC and
+// disk-accounting paths. *metrics.Metrics satisfies it via a client-side
+// adapter (see pkg/client/mount). Defined here (not imported) so the persist
+// package stays decoupled from the metrics package and the sink is trivially
+// fakeable in tests. A nil Metrics on Options becomes noopGCMetrics, so every
+// internal call site stays nil-check-free.
+type GCMetrics interface {
+	// ChunkUnlinked is called once per successful on-disk chunk removal,
+	// labelled by reason (one of the unlinkReason* consts).
+	ChunkUnlinked(reason string)
+	// GhostEntryDeleted is called once per data_idx entry reclaimed by the
+	// ghost sweep (an index entry over a missing chunk file).
+	GhostEntryDeleted()
+	// RefcountUnderflow is called whenever a decrement lands on an absent
+	// refcount key (a corruption signal).
+	RefcountUnderflow()
+	// OrphanReclaimed is called once per orphan chunk file reclaimed.
+	OrphanReclaimed()
+	// TmpReclaimed is called once per stale crash-leftover .tmp- file reclaimed.
+	TmpReclaimed()
+	// BudgetEviction is called once per data_idx entry evicted under disk
+	// budget pressure.
+	BudgetEviction()
+	// DiskBytesUsed sets the gauge of currently-accounted bytes in chunks/.
+	DiskBytesUsed(n int64)
+}
+
+// noopGCMetrics is the zero-cost sink used when Options.Metrics is nil.
+type noopGCMetrics struct{}
+
+func (noopGCMetrics) ChunkUnlinked(string) {}
+func (noopGCMetrics) GhostEntryDeleted()   {}
+func (noopGCMetrics) RefcountUnderflow()   {}
+func (noopGCMetrics) OrphanReclaimed()     {}
+func (noopGCMetrics) TmpReclaimed()        {}
+func (noopGCMetrics) BudgetEviction()      {}
+func (noopGCMetrics) DiskBytesUsed(int64)  {}
 
 // ErrCacheLocked is returned by Open when another process already
 // holds the LOCK file in Root after LockAcquireTimeout has elapsed.
@@ -60,6 +111,9 @@ type Options struct {
 	// state). Sweep behaviour itself is covered by calling the sweep
 	// functions synchronously (see sweep_test.go).
 	DisableBackgroundSweeps bool
+	// Metrics is the optional GC/accounting observability sink. Nil becomes
+	// noopGCMetrics so all internal call sites stay nil-safe.
+	Metrics GCMetrics
 }
 
 // Persist owns the bbolt handle, chunks/ tree, and LOCK file for one
@@ -70,6 +124,7 @@ type Persist struct {
 	db        *bolt.DB
 	lock      *lockHandle
 	disk      *diskAccountant
+	metrics   GCMetrics      // GC/accounting sink; never nil (noopGCMetrics if unset)
 	stopCh    chan struct{}  // closed by Close to signal all background goroutines
 	bgWG      sync.WaitGroup // syncer + sweeps; Close waits on it before db.Close
 	closeOnce sync.Once
@@ -125,7 +180,11 @@ func Open(opts Options) (*Persist, error) {
 			return nil, err
 		}
 	}
-	p := &Persist{root: opts.Root, db: db, lock: lock, disk: newDiskAccountant(opts.DiskMaxBytes)}
+	m := opts.Metrics
+	if m == nil {
+		m = noopGCMetrics{}
+	}
+	p := &Persist{root: opts.Root, db: db, lock: lock, disk: newDiskAccountant(opts.DiskMaxBytes), metrics: m}
 	if err := p.seedDiskBytes(); err != nil {
 		_ = db.Close()
 		_ = lock.release()
@@ -190,3 +249,23 @@ func (p *Persist) Close() error {
 
 // Root returns the cache directory passed to Open.
 func (p *Persist) Root() string { return p.root }
+
+// recordRefUnderflow is the single sink for refcount underflows: a decrement
+// that landed on an absent key (double-decrement / corruption). It bumps the
+// atomic counter (kept for the test helper), emits the observability counter,
+// and warns — underflow is rare and a real corruption signal, so a plain Warn
+// (no throttling) is appropriate. Called from inside bbolt txns, which is fine.
+func (p *Persist) recordRefUnderflow(hash [16]byte) {
+	p.refUnderflows.Add(1)
+	p.metrics.RefcountUnderflow()
+	log.Log.Warn("chunk refcount underflow",
+		zap.String("hash", hex.EncodeToString(hash[:])))
+}
+
+// diskAdd is the single update point for the disk accountant: it mutates the
+// (atomic) byte total and republishes the gauge. The add is atomic, so this is
+// safe regardless of whether accMu is held.
+func (p *Persist) diskAdd(n int64) {
+	p.disk.add(n)
+	p.metrics.DiskBytesUsed(p.disk.Used())
+}

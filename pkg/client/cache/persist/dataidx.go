@@ -70,7 +70,7 @@ func (p *Persist) PutChunkRef(path string, chunkIndex int, ref ChunkRef) error {
 				return err
 			}
 			if !found {
-				p.refUnderflows.Add(1)
+				p.recordRefUnderflow(old.Hash)
 			}
 			if remaining == 0 {
 				priorHash = old.Hash
@@ -90,7 +90,7 @@ func (p *Persist) PutChunkRef(path string, chunkIndex int, ref ChunkRef) error {
 		return err
 	}
 	if unlinkPrior {
-		if err := p.unlinkChunk(priorHash); err != nil {
+		if err := p.unlinkChunk(priorHash, unlinkReasonRefcountZero); err != nil {
 			return err
 		}
 	}
@@ -165,7 +165,7 @@ func (p *Persist) InvalidatePathChunks(path string) error {
 				return err
 			}
 			if !found {
-				p.refUnderflows.Add(1)
+				p.recordRefUnderflow(refs[i].Hash)
 			}
 			if remaining == 0 {
 				toUnlink = append(toUnlink, refs[i].Hash)
@@ -189,7 +189,7 @@ func (p *Persist) InvalidatePathChunks(path string) error {
 		testHookBeforeUnlink()
 	}
 	for _, h := range toUnlink {
-		if err := p.unlinkChunk(h); err != nil {
+		if err := p.unlinkChunk(h, unlinkReasonRefcountZero); err != nil {
 			return err
 		}
 	}
@@ -241,7 +241,7 @@ func (p *Persist) InvalidateChunkRange(path string, firstIdx, lastIdx int) error
 				return err
 			}
 			if !found {
-				p.refUnderflows.Add(1)
+				p.recordRefUnderflow(ref.Hash)
 			}
 			if remaining == 0 {
 				toUnlink = append(toUnlink, ref.Hash)
@@ -260,7 +260,7 @@ func (p *Persist) InvalidateChunkRange(path string, firstIdx, lastIdx int) error
 		return errors.Wrap(err, "sync after InvalidateChunkRange")
 	}
 	for _, h := range toUnlink {
-		if err := p.unlinkChunk(h); err != nil {
+		if err := p.unlinkChunk(h, unlinkReasonRefcountZero); err != nil {
 			return err
 		}
 	}

@@ -32,7 +32,7 @@ func (p *Persist) DecChunkRef(hash [16]byte) (uint64, error) {
 			return err
 		}
 		if !found {
-			p.refUnderflows.Add(1)
+			p.recordRefUnderflow(hash)
 		}
 		return nil
 	})
@@ -40,7 +40,7 @@ func (p *Persist) DecChunkRef(hash [16]byte) (uint64, error) {
 		return 0, err
 	}
 	if remaining == 0 {
-		if err := p.unlinkChunk(hash); err != nil {
+		if err := p.unlinkChunk(hash, unlinkReasonRefcountZero); err != nil {
 			return 0, err
 		}
 	}
