@@ -830,6 +830,25 @@ func (s *CachedBackendTestSuite) TestLseekAndXattrPassThrough() {
 	s.Equal([]string{"user.k"}, names)
 }
 
+// TestJoinPathMatchesWirePath pins MN-L2: the cache key MUST equal the raw wire
+// path the io layer produces (parent + "/" + name, with empty-parent
+// passthrough). If this ever drifts back to path.Join normalization, a cache
+// key could stop matching a Subscribe event's path and invalidation would miss.
+func (s *CachedBackendTestSuite) TestJoinPathMatchesWirePath() {
+	cases := []struct{ parent, name, want string }{
+		{"", "child", "child"},        // root: passthrough, no leading slash
+		{"a", "b", "a/b"},             // simple
+		{"a/b", "c.txt", "a/b/c.txt"}, // nested
+		{"/abs", "x", "/abs/x"},       // absolute parent kept verbatim
+		{"a/", "b", "a//b"},           // raw form: NO normalization (mirrors io)
+		{"dir", "..", "dir/.."},       // raw form: dotdot not collapsed (mirrors io)
+	}
+	for _, c := range cases {
+		s.Assert().Equalf(c.want, joinPath(c.parent, c.name),
+			"joinPath(%q,%q) must equal the io-layer wire form", c.parent, c.name)
+	}
+}
+
 func TestCachedBackendTestSuite(t *testing.T) {
 	suite.Run(t, new(CachedBackendTestSuite))
 }
