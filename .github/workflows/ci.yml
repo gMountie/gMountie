@@ -71,7 +71,7 @@ jobs:
           cache-dependency-path: 'go.sum'
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
           govulncheck ./...
 
   test:
@@ -233,7 +233,7 @@ jobs:
       # Install cosign so the installer's signature-verification branch actually
       # runs here — otherwise that path (and the checksums.txt byte-exactness it
       # depends on) is never exercised in CI.
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
       - name: install via script
         env:
           BIN_DIR: ${{ github.workspace }}/bin
