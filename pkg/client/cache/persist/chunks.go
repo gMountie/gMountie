@@ -35,24 +35,17 @@ func (p *Persist) WriteChunk(data []byte) (hash [16]byte, dedup bool, err error)
 	hash[15] = byte(h.Lo)
 
 	final := p.chunkPath(hash)
-	if _, statErr := os.Stat(final); statErr == nil {
-		return hash, true, nil
+	if fi, statErr := os.Stat(final); statErr == nil {
+		if fi.Size() == int64(len(data)) {
+			return hash, true, nil // genuine dedup hit
+		}
+		// Existing file is torn/wrong-size (crash mid-write); fall through to rewrite.
 	}
 	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
 		return hash, false, errors.Wrap(err, "mkdir chunk shard")
 	}
-
-	var rnd [8]byte
-	if _, err := rand.Read(rnd[:]); err != nil {
-		return hash, false, errors.Wrap(err, "tmp suffix rand")
-	}
-	tmp := final + ".tmp-" + hex.EncodeToString(rnd[:])
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return hash, false, errors.Wrap(err, "write tmp chunk")
-	}
-	if err := os.Rename(tmp, final); err != nil {
-		_ = os.Remove(tmp)
-		return hash, false, errors.Wrap(err, "rename chunk")
+	if err := writeChunkFile(final, data); err != nil {
+		return hash, false, err
 	}
 	p.accMu.Lock()
 	p.disk.add(int64(len(data)))
@@ -61,6 +54,53 @@ func (p *Persist) WriteChunk(data []byte) (hash [16]byte, dedup bool, err error)
 		return hash, false, errors.Wrap(err, "enforce disk budget after WriteChunk")
 	}
 	return hash, false, nil
+}
+
+// writeChunkFile writes data to a temp file, fsyncs it, atomically renames it
+// into place, then fsyncs the parent dir — so both the bytes and the rename
+// survive a crash that precedes the ~1s background meta-sync which publishes
+// the index entry pointing at this chunk.
+func writeChunkFile(final string, data []byte) error {
+	var rnd [8]byte
+	if _, err := rand.Read(rnd[:]); err != nil {
+		return errors.Wrap(err, "tmp suffix rand")
+	}
+	tmp := final + ".tmp-" + hex.EncodeToString(rnd[:])
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return errors.Wrap(err, "create tmp chunk")
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return errors.Wrap(err, "write tmp chunk")
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return errors.Wrap(err, "fsync tmp chunk")
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return errors.Wrap(err, "close tmp chunk")
+	}
+	if err := os.Rename(tmp, final); err != nil {
+		_ = os.Remove(tmp)
+		return errors.Wrap(err, "rename chunk")
+	}
+	return fsyncDir(filepath.Dir(final))
+}
+
+func fsyncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return errors.Wrap(err, "open chunk dir for fsync")
+	}
+	if err := d.Sync(); err != nil {
+		_ = d.Close()
+		return errors.Wrap(err, "fsync chunk dir")
+	}
+	return errors.Wrap(d.Close(), "close chunk dir")
 }
 
 // ReadChunk loads the chunk at hash. Returns an error (wrapping
