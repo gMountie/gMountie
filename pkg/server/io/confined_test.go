@@ -21,6 +21,9 @@ func (s *ResolveBeneathSuite) SetupTest() {
 	s.rootDir = s.T().TempDir()
 	s.Require().NoError(os.Mkdir(filepath.Join(s.rootDir, "sub"), 0o755))
 	s.Require().NoError(os.WriteFile(filepath.Join(s.rootDir, "sub", "f.txt"), []byte("hi"), 0o644))
+	// A dotfile whose name merely STARTS with ".." — a legal in-tree file, not
+	// a traversal (CQ-L1).
+	s.Require().NoError(os.WriteFile(filepath.Join(s.rootDir, "..bashrc"), []byte("rc"), 0o644))
 	fd, err := unix.Open(s.rootDir, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	s.Require().NoError(err)
 	s.rootFd = fd
@@ -45,6 +48,24 @@ func (s *ResolveBeneathSuite) TestResolvesNestedReturnsParent() {
 func (s *ResolveBeneathSuite) TestRejectsDotDotEscape() {
 	_, _, err := resolveBeneath(s.rootFd, "../../etc/passwd")
 	s.Require().ErrorIs(err, unix.EXDEV)
+}
+
+// TestDotDotPrefixNameIsLegal: CQ-L1 — a name like "..bashrc" merely starts
+// with ".." but is not a traversal; it must resolve in-tree, not be rejected.
+func (s *ResolveBeneathSuite) TestDotDotPrefixNameIsLegal() {
+	parentFd, leaf, err := resolveBeneath(s.rootFd, "..bashrc")
+	s.Require().NoError(err)
+	defer unix.Close(parentFd)
+	s.Equal("..bashrc", leaf)
+}
+
+// TestRejectsGenuineTraversalForms: the tightened guard still rejects every
+// real traversal — a leading "../", an embedded "/../", and a bare "..".
+func (s *ResolveBeneathSuite) TestRejectsGenuineTraversalForms() {
+	for _, name := range []string{"../etc", "a/../b", "..", "/../etc"} {
+		_, _, err := resolveBeneath(s.rootFd, name)
+		s.Require().ErrorIs(err, unix.EXDEV, "name %q must be rejected", name)
+	}
 }
 
 // TestLeadingSlashIsRelative: gMountie's wire paths may carry a leading

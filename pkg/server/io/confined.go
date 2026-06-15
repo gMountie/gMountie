@@ -41,11 +41,15 @@ func resolveBeneath(rootFd int, name string) (parentFd int, leaf string, err err
 	// the slash up front so both forms address the same in-tree file.
 	name = strings.TrimPrefix(name, "/")
 
-	// Reject any path that attempts to escape via ".." before path.Clean has a
-	// chance to swallow the traversal. Without this guard, "../../etc/passwd"
-	// cleans to "etc/passwd" — a valid relative path the kernel would happily
-	// resolve within the root, silently defeating the security boundary.
-	if strings.HasPrefix(name, "..") || strings.Contains(name, "/../") {
+	// Reject genuine parent-traversal forms before path.Clean swallows them.
+	// Without this guard, "../../etc/passwd" cleans to "etc/passwd" — a valid
+	// in-tree path the kernel would happily resolve, defeating the boundary.
+	// Match ONLY real traversal (a ".." path COMPONENT): bare "..", a leading
+	// "../", or an embedded "/../". A HasPrefix(name, "..") over-rejects legal
+	// names like "..bashrc"; RESOLVE_BENEATH (resolveHow) is the actual
+	// boundary, so this guard only needs to catch the forms path.Clean would
+	// collapse into an escape (CQ-L1).
+	if name == ".." || strings.HasPrefix(name, "../") || strings.Contains(name, "/../") {
 		return -1, "", unix.EXDEV
 	}
 
