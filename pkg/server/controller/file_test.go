@@ -352,7 +352,7 @@ func (s *RpcFileServerTestSuite) TestWriteAndFlushWriteErrorSkipsFlush() {
 
 func (s *RpcFileServerTestSuite) TestWriteAndFlushEmitsMutationEventOnSuccess() {
 	// Subscribe to the bus BEFORE issuing the RPC so we don't miss the event.
-	events, cancel := s.bus.Subscribe("testVolume")
+	events, _, cancel := s.bus.Subscribe("testVolume")
 	defer cancel()
 
 	// Setup: register a writable file.
@@ -619,7 +619,7 @@ func (s *RpcFileServerTestSuite) TestCopyFileRange_Happy() {
 	// versionAfterPath consults GetVolumeFileSystem; failing it just
 	// yields version 0 on the event, which is fine here.
 	s.fsService.On("GetVolumeFileSystem", mock.Anything).Return(nil, status.Error(codes.NotFound, "no fs")).Maybe()
-	events, cancel := s.bus.Subscribe("testVolume")
+	events, _, cancel := s.bus.Subscribe("testVolume")
 	defer cancel()
 
 	srcFd := s.registerRawFile("src", []byte("0123456789"))
@@ -654,7 +654,7 @@ func (s *RpcFileServerTestSuite) TestWriteAndFlushCrossVolumeFdRejected() {
 	mockFile.EXPECT().Release().Return().Maybe()
 
 	// Watch volume B's bus: no event may be emitted there.
-	events, cancel := s.bus.Subscribe("otherVolume")
+	events, _, cancel := s.bus.Subscribe("otherVolume")
 	defer cancel()
 
 	reply, err := s.server.WriteAndFlush(testAuthedCtx("test-user"), &proto.WriteAndFlushRequest{

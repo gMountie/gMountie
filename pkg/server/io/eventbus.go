@@ -2,7 +2,6 @@ package io
 
 import (
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"go.gmountie.dev/gmountie/pkg/server/metrics"
@@ -39,7 +38,13 @@ type EventBus interface {
 	// note in pkg/server/controller/emit.go for the (deliberate) race
 	// semantics of that gate.
 	HasSubscribers(volume string) bool
-	Subscribe(volume string) (events <-chan Event, cancel func())
+	// Subscribe registers a subscriber for volume. It returns the event
+	// channel, a done channel that is closed when the subscription ends
+	// (cancel, bus Close, or a buffer-overflow drop), and a cancel func.
+	// The event channel is NEVER closed — consumers MUST select on done to
+	// detect termination (closing ch would race a concurrent fanout send and
+	// panic; SS-M1). Drain contract: read ch until done fires.
+	Subscribe(volume string) (events <-chan Event, done <-chan struct{}, cancel func())
 	Close()
 }
 
@@ -61,21 +66,37 @@ type EventBusOptions struct {
 }
 
 type subscriber struct {
-	ch     chan Event
-	closed atomic.Bool
+	ch chan Event
+	// done is closed exactly once (via closeOnce) when the subscription ends.
+	// The event channel ch is NEVER closed: closing it would race a concurrent
+	// fanout send and panic (SS-M1). trySend selects on done so a send in
+	// flight observes termination without the closer touching ch.
+	done      chan struct{}
+	closeOnce sync.Once
+}
+
+// terminate signals end-of-subscription. Idempotent and never closes ch, so
+// it is safe to call concurrently with a fanout send (SS-M1).
+func (s *subscriber) terminate() {
+	s.closeOnce.Do(func() { close(s.done) })
 }
 
 func (s *subscriber) trySend(ev Event) bool {
-	if s.closed.Load() {
+	select {
+	case <-s.done:
 		return false
+	default:
 	}
 	select {
+	case <-s.done:
+		return false
 	case s.ch <- ev:
 		return true
 	default:
-		if s.closed.CompareAndSwap(false, true) {
-			close(s.ch)
-		}
+		// Buffer full: this subscriber is too slow. Terminate it (signal done,
+		// never close ch) and report the drop so the caller can splice it out
+		// of the volume's subscriber slice (SS-L1).
+		s.terminate()
 		return false
 	}
 }
@@ -120,16 +141,16 @@ func (b *localEventBus) HasSubscribers(volume string) bool {
 	return len(b.subscribers[volume]) > 0
 }
 
-func (b *localEventBus) Subscribe(volume string) (<-chan Event, func()) {
+func (b *localEventBus) Subscribe(volume string) (<-chan Event, <-chan struct{}, func()) {
 	b.mu.Lock()
 	if b.closed {
-		// Return an already-closed channel so the caller can range/drain cleanly.
+		// Return an already-terminated subscriber so the caller drains cleanly.
 		b.mu.Unlock()
-		ch := make(chan Event)
-		close(ch)
-		return ch, func() {}
+		done := make(chan struct{})
+		close(done)
+		return make(chan Event), done, func() {}
 	}
-	s := &subscriber{ch: make(chan Event, b.opts.BufferSize)}
+	s := &subscriber{ch: make(chan Event, b.opts.BufferSize), done: make(chan struct{})}
 	b.subscribers[volume] = append(b.subscribers[volume], s)
 	b.mu.Unlock()
 	if b.opts.OnSubscribe != nil {
@@ -137,19 +158,23 @@ func (b *localEventBus) Subscribe(volume string) (<-chan Event, func()) {
 	}
 	cancel := func() {
 		b.mu.Lock()
-		defer b.mu.Unlock()
-		subs := b.subscribers[volume]
-		for i, x := range subs {
-			if x == s {
-				b.subscribers[volume] = append(subs[:i], subs[i+1:]...)
-				break
-			}
-		}
-		if s.closed.CompareAndSwap(false, true) {
-			close(s.ch)
+		b.removeLocked(volume, s)
+		b.mu.Unlock()
+		s.terminate()
+	}
+	return s.ch, s.done, cancel
+}
+
+// removeLocked splices s out of volume's subscriber slice. Caller holds b.mu.
+// A no-op when s is already gone (e.g. an overflow-drop removed it first).
+func (b *localEventBus) removeLocked(volume string, s *subscriber) {
+	subs := b.subscribers[volume]
+	for i, x := range subs {
+		if x == s {
+			b.subscribers[volume] = append(subs[:i], subs[i+1:]...)
+			return
 		}
 	}
-	return s.ch, cancel
 }
 
 func (b *localEventBus) Close() {
@@ -158,9 +183,7 @@ func (b *localEventBus) Close() {
 	defer b.mu.Unlock()
 	for _, subs := range b.subscribers {
 		for _, s := range subs {
-			if s.closed.CompareAndSwap(false, true) {
-				close(s.ch)
-			}
+			s.terminate()
 		}
 	}
 	b.subscribers = nil
@@ -190,10 +213,26 @@ func (b *localEventBus) fanout(volume string, ev Event) {
 	if b.opts.Metrics != nil && len(subs) > 0 {
 		b.opts.Metrics.SubscribeEventEmittedInc(eventKindString(ev.Kind))
 	}
+	var dropped []*subscriber
 	for _, s := range subs {
-		if !s.trySend(ev) && b.opts.Metrics != nil {
-			b.opts.Metrics.SubscribeDroppedSlowInc(volume)
+		if !s.trySend(ev) {
+			// trySend's overflow path already terminated s. Collect it so we
+			// can splice it out of the live slice — otherwise the dead
+			// subscriber is re-iterated and re-counted on every future fanout
+			// (SS-L1). A send that fails because s was already cancelled is
+			// harmless to re-remove (removeLocked is a no-op then).
+			dropped = append(dropped, s)
+			if b.opts.Metrics != nil {
+				b.opts.Metrics.SubscribeDroppedSlowInc(volume)
+			}
 		}
+	}
+	if len(dropped) > 0 {
+		b.mu.Lock()
+		for _, s := range dropped {
+			b.removeLocked(volume, s)
+		}
+		b.mu.Unlock()
 	}
 }
 
