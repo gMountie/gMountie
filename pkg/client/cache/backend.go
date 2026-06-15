@@ -118,13 +118,19 @@ type revalidateResult struct {
 // revalidate calls GetAttrIfChanged on inner and interprets the result,
 // updating the validity tracker and invalidating caches as appropriate.
 func (b *cachedBackend) revalidate(ctx context.Context, path string, cachedVersion uint64) revalidateResult {
+	// Capture the unverified epoch BEFORE the RPC. If a markGlobalUnverified
+	// races us (the subscriber dropping the stream while this revalidation is
+	// in flight), the stamp we later store carries this stale epoch and so is
+	// non-authoritative — closing the CQ-M2 lost-update where a prior-epoch
+	// stamp leaked into the new epoch and served stale attrs.
+	epoch := b.validity.currentEpoch()
 	attrs, notMod, st := b.inner.GetAttrIfChanged(ctx, path, cachedVersion)
 	if !st.Ok() && st != fuse.ENOENT {
 		metrics.CacheRevalidation("error")
 		return revalidateResult{fallback: true}
 	}
 	if notMod {
-		b.validity.markPathVerified(path)
+		b.validity.markPathVerified(path, epoch)
 		metrics.CacheRevalidation("not_modified")
 		return revalidateResult{notModified: true}
 	}
