@@ -22,6 +22,15 @@ type Metrics struct {
 	SubscribeEventsReceived     *prometheus.CounterVec
 	SubscribeStreamState        prometheus.Gauge
 	CacheUnverifiedDurationSecs prometheus.Counter
+
+	// Persist GC / disk-accounting observability (review blind spot #4).
+	ChunksUnlinked      *prometheus.CounterVec
+	GhostEntriesDeleted prometheus.Counter
+	RefcountUnderflows  prometheus.Counter
+	OrphansReclaimed    prometheus.Counter
+	TmpReclaimed        prometheus.Counter
+	BudgetEvictions     prometheus.Counter
+	DiskBytesUsed       prometheus.Gauge
 }
 
 // NewMetrics constructs the set of client collectors. They are NOT
@@ -64,6 +73,34 @@ func NewMetrics() *Metrics {
 			Name: "gmountie_cache_unverified_duration_seconds_total",
 			Help: "Cumulative time the cache spent in unverified mode.",
 		}),
+		ChunksUnlinked: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gmountie_cache_chunks_unlinked_total",
+			Help: "Persist chunk files removed from disk, labelled by reason (refcount_zero|ghost|orphan|budget).",
+		}, []string{"reason"}),
+		GhostEntriesDeleted: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gmountie_cache_ghost_entries_deleted_total",
+			Help: "data_idx entries reclaimed by the ghost sweep (index entry over a missing chunk file).",
+		}),
+		RefcountUnderflows: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gmountie_cache_refcount_underflows_total",
+			Help: "Chunk refcount decrements that landed on an absent key (corruption signal).",
+		}),
+		OrphansReclaimed: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gmountie_cache_orphans_reclaimed_total",
+			Help: "Unreferenced chunk files reclaimed by the orphan sweep.",
+		}),
+		TmpReclaimed: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gmountie_cache_tmp_reclaimed_total",
+			Help: "Crash-leftover .tmp- chunk files reclaimed by the orphan sweep.",
+		}),
+		BudgetEvictions: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gmountie_cache_budget_evictions_total",
+			Help: "data_idx entries evicted under disk-budget pressure.",
+		}),
+		DiskBytesUsed: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "gmountie_cache_disk_bytes_used",
+			Help: "Currently-accounted bytes in the persist chunks/ tree.",
+		}),
 	}
 }
 
@@ -73,6 +110,8 @@ func (m *Metrics) MustRegister(r prometheus.Registerer) {
 		m.RetryTotal, m.InFlight, m.CacheHits, m.CacheMisses, m.CacheDedupeHits,
 		m.CacheRevalidations, m.SubscribeEventsReceived, m.SubscribeStreamState,
 		m.CacheUnverifiedDurationSecs,
+		m.ChunksUnlinked, m.GhostEntriesDeleted, m.RefcountUnderflows,
+		m.OrphansReclaimed, m.TmpReclaimed, m.BudgetEvictions, m.DiskBytesUsed,
 	)
 }
 
@@ -85,6 +124,8 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 		m.RetryTotal, m.InFlight, m.CacheHits, m.CacheMisses, m.CacheDedupeHits,
 		m.CacheRevalidations, m.SubscribeEventsReceived, m.SubscribeStreamState,
 		m.CacheUnverifiedDurationSecs,
+		m.ChunksUnlinked, m.GhostEntriesDeleted, m.RefcountUnderflows,
+		m.OrphansReclaimed, m.TmpReclaimed, m.BudgetEvictions, m.DiskBytesUsed,
 	}
 	for _, c := range collectors {
 		if err := r.Register(c); err != nil {
@@ -107,6 +148,8 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 					m.CacheRevalidations = existing
 				case prometheus.Collector(m.SubscribeEventsReceived):
 					m.SubscribeEventsReceived = existing
+				case prometheus.Collector(m.ChunksUnlinked):
+					m.ChunksUnlinked = existing
 				}
 			case *prometheus.GaugeVec:
 				if c == prometheus.Collector(m.InFlight) {
@@ -116,8 +159,11 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 			// case must precede Counter — otherwise the Counter arm
 			// silently catches Gauges.
 			case prometheus.Gauge:
-				if c == prometheus.Collector(m.SubscribeStreamState) {
+				switch c {
+				case prometheus.Collector(m.SubscribeStreamState):
 					m.SubscribeStreamState = existing
+				case prometheus.Collector(m.DiskBytesUsed):
+					m.DiskBytesUsed = existing
 				}
 			case prometheus.Counter:
 				switch c {
@@ -125,6 +171,16 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 					m.CacheDedupeHits = existing
 				case prometheus.Collector(m.CacheUnverifiedDurationSecs):
 					m.CacheUnverifiedDurationSecs = existing
+				case prometheus.Collector(m.GhostEntriesDeleted):
+					m.GhostEntriesDeleted = existing
+				case prometheus.Collector(m.RefcountUnderflows):
+					m.RefcountUnderflows = existing
+				case prometheus.Collector(m.OrphansReclaimed):
+					m.OrphansReclaimed = existing
+				case prometheus.Collector(m.TmpReclaimed):
+					m.TmpReclaimed = existing
+				case prometheus.Collector(m.BudgetEvictions):
+					m.BudgetEvictions = existing
 				}
 			}
 		}
@@ -175,6 +231,30 @@ func (m *Metrics) SubscribeStreamStateSet(up bool) {
 func (m *Metrics) CacheUnverifiedAdd(seconds float64) {
 	m.CacheUnverifiedDurationSecs.Add(seconds)
 }
+
+// --- Persist GC / disk-accounting setters (blind spot #4) ---
+
+// ChunkUnlinkedInc bumps the chunks-unlinked counter for the given reason
+// (refcount_zero|ghost|orphan|budget).
+func (m *Metrics) ChunkUnlinkedInc(reason string) { m.ChunksUnlinked.WithLabelValues(reason).Inc() }
+
+// GhostEntryDeletedInc bumps the ghost-entries-deleted counter.
+func (m *Metrics) GhostEntryDeletedInc() { m.GhostEntriesDeleted.Inc() }
+
+// RefcountUnderflowInc bumps the refcount-underflow counter.
+func (m *Metrics) RefcountUnderflowInc() { m.RefcountUnderflows.Inc() }
+
+// OrphanReclaimedInc bumps the orphans-reclaimed counter.
+func (m *Metrics) OrphanReclaimedInc() { m.OrphansReclaimed.Inc() }
+
+// TmpReclaimedInc bumps the tmp-reclaimed counter.
+func (m *Metrics) TmpReclaimedInc() { m.TmpReclaimed.Inc() }
+
+// BudgetEvictionInc bumps the budget-evictions counter.
+func (m *Metrics) BudgetEvictionInc() { m.BudgetEvictions.Inc() }
+
+// DiskBytesUsedSet sets the disk-bytes-used gauge.
+func (m *Metrics) DiskBytesUsedSet(n int64) { m.DiskBytesUsed.Set(float64(n)) }
 
 // --- Per-instance hook registry ---
 //
