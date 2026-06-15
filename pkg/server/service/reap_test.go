@@ -27,6 +27,32 @@ type countingFile struct {
 
 func (f *countingFile) Release() { f.releases.Add(1) }
 
+// TestRegisterFileAfterReap_NoLeak covers CQ-M1: an in-flight handler that won
+// a *sessionImpl reference via Get before the session was reaped must not be
+// able to re-populate the drained fd table. RegisterFile on a reaped session
+// returns the 0 sentinel (an invalid fd the controller maps to EBADF),
+// Release()s the file it was handed so no nodefs.File leaks, and leaves the
+// open-files gauge untouched so it can't be permanently elevated.
+func (s *ReapSuite) TestRegisterFileAfterReap_NoLeak() {
+	fm := newFakeSessionMetrics()
+	m := NewSessionManager(SessionManagerOptions{Metrics: fm}).(*sessionManagerImpl)
+
+	id, _ := m.Create("alice", "dead")
+	sess, err := m.Get(id)
+	s.Require().NoError(err)
+
+	// Reap the session out from under the still-held *sessionImpl.
+	n := m.ReapIf(func(_, serial string) bool { return serial == "dead" })
+	s.Require().Equal(1, n)
+
+	var releases atomic.Int32
+	fd := sess.RegisterFile("vol", "/p", &countingFile{File: nodefs.NewDefaultFile(), releases: &releases})
+
+	s.EqualValues(0, fd, "RegisterFile on a reaped session must return the 0 sentinel")
+	s.EqualValues(1, releases.Load(), "the file handed to a reaped session must be Released, not leaked")
+	s.Equal(0, fm.openFor("vol"), "a reaped session must not increment the open-files gauge")
+}
+
 func (s *ReapSuite) TestReapIf_BlockedSerialReaped() {
 	m := s.newManager()
 	keepID, _ := m.Create("alice", "1111")
