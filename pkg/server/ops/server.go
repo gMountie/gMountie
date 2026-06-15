@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"time"
 
 	pkgerrors "github.com/pkg/errors"
 	"go.gmountie.dev/gmountie/pkg/server/config"
@@ -68,8 +69,20 @@ func NewServer(
 		mux.HandleFunc("/debug/pprof/", pprof.Index)
 	}
 	return &Server{
-		name:   "ops",
-		server: &http.Server{Addr: addr, Handler: auth.Wrap(mux)},
+		name: "ops",
+		// Timeouts guard the argon2-backed /ops/acl/reload (and the rest of the
+		// surface) against Slowloris. WriteTimeout is deliberately generous so a
+		// long pprof profile/trace capture (off by default) isn't truncated;
+		// ReadHeaderTimeout/ReadTimeout still bound a slow-header attacker
+		// (CQ-M3).
+		server: &http.Server{
+			Addr:              addr,
+			Handler:           auth.Wrap(mux),
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       15 * time.Second,
+			WriteTimeout:      120 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		},
 	}
 }
 
@@ -85,8 +98,14 @@ func NewMetricsServer(addr string) *Server {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 	return &Server{
-		name:   "metrics",
-		server: &http.Server{Addr: addr, Handler: mux},
+		name: "metrics",
+		// Slowloris guards for the unauthenticated scrape listener (CQ-M3).
+		server: &http.Server{
+			Addr:              addr,
+			Handler:           mux,
+			ReadHeaderTimeout: 5 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		},
 	}
 }
 
@@ -134,7 +153,14 @@ func (s *Server) tlsConfig() *tls.Config { return s.tls }
 // Used by tests; the production path is NewServer(...) followed by ApplyTLS in
 // app.go.
 func NewServerWithTLS(addr string, tlsCfg config.OpsTLSConfig) (*Server, error) {
-	s := &Server{server: &http.Server{Addr: addr, Handler: http.NewServeMux()}}
+	s := &Server{server: &http.Server{
+		Addr:              addr,
+		Handler:           http.NewServeMux(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      120 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}}
 	if err := s.ApplyTLS(tlsCfg); err != nil {
 		return nil, err
 	}
