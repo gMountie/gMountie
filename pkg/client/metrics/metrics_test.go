@@ -268,4 +268,77 @@ func (s *ClientMetricsTestSuite) TestUnregisterInstance_RefCounted() {
 		"a closed client set must no longer receive fan-out")
 }
 
+// --- Persist GC / disk-accounting counters (blind spot #4) ---
+
+func (s *ClientMetricsTestSuite) TestChunkUnlinkedInc() {
+	s.m.ChunkUnlinkedInc("refcount_zero")
+	s.m.ChunkUnlinkedInc("refcount_zero")
+	s.m.ChunkUnlinkedInc("ghost")
+	s.Assert().Equal(2, int(testutil.ToFloat64(s.m.ChunksUnlinked.WithLabelValues("refcount_zero"))))
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.ChunksUnlinked.WithLabelValues("ghost"))))
+	s.Assert().Equal(0, int(testutil.ToFloat64(s.m.ChunksUnlinked.WithLabelValues("orphan"))))
+}
+
+func (s *ClientMetricsTestSuite) TestGhostEntryDeletedInc() {
+	s.m.GhostEntryDeletedInc()
+	s.m.GhostEntryDeletedInc()
+	s.Assert().Equal(2, int(testutil.ToFloat64(s.m.GhostEntriesDeleted)))
+}
+
+func (s *ClientMetricsTestSuite) TestRefcountUnderflowInc() {
+	s.m.RefcountUnderflowInc()
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.RefcountUnderflows)))
+}
+
+func (s *ClientMetricsTestSuite) TestOrphanReclaimedInc() {
+	s.m.OrphanReclaimedInc()
+	s.m.OrphanReclaimedInc()
+	s.m.OrphanReclaimedInc()
+	s.Assert().Equal(3, int(testutil.ToFloat64(s.m.OrphansReclaimed)))
+}
+
+func (s *ClientMetricsTestSuite) TestTmpReclaimedInc() {
+	s.m.TmpReclaimedInc()
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.TmpReclaimed)))
+}
+
+func (s *ClientMetricsTestSuite) TestBudgetEvictionInc() {
+	s.m.BudgetEvictionInc()
+	s.m.BudgetEvictionInc()
+	s.Assert().Equal(2, int(testutil.ToFloat64(s.m.BudgetEvictions)))
+}
+
+func (s *ClientMetricsTestSuite) TestDiskBytesUsedSet() {
+	s.m.DiskBytesUsedSet(4096)
+	s.Assert().Equal(4096, int(testutil.ToFloat64(s.m.DiskBytesUsed)))
+	s.m.DiskBytesUsedSet(0)
+	s.Assert().Equal(0, int(testutil.ToFloat64(s.m.DiskBytesUsed)))
+}
+
+// TestGCMetrics_RegisterAdoptsGaugeBeforeCounter is the regression guard for
+// the adopt-switch ordering: a plain prometheus.Gauge also satisfies the
+// prometheus.Counter interface, so the new DiskBytesUsed gauge must be adopted
+// by the Gauge arm (which precedes Counter). Registering twice against one
+// registry makes the second set adopt the first's collectors; if the ordering
+// were wrong, the gauge would be miscast and increments would not land.
+func (s *ClientMetricsTestSuite) TestGCMetrics_RegisterAdoptsGaugeBeforeCounter() {
+	reg := prometheus.NewRegistry()
+	s.Require().NoError(s.m.Register(reg))
+	m2 := NewMetrics()
+	s.Require().NoError(m2.Register(reg)) // adopts s.m's collectors
+
+	// m2 must have adopted the SAME gauge instance as s.m.
+	m2.DiskBytesUsedSet(8192)
+	s.Assert().Equal(8192, int(testutil.ToFloat64(s.m.DiskBytesUsed)),
+		"adopted gauge must be the shared instance (Gauge arm before Counter)")
+
+	// And a plain Counter still adopts correctly.
+	m2.GhostEntryDeletedInc()
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.GhostEntriesDeleted)))
+
+	// The labelled vec adopts too.
+	m2.ChunkUnlinkedInc("budget")
+	s.Assert().Equal(1, int(testutil.ToFloat64(s.m.ChunksUnlinked.WithLabelValues("budget"))))
+}
+
 func TestClientMetricsTestSuite(t *testing.T) { suite.Run(t, new(ClientMetricsTestSuite)) }
