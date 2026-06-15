@@ -71,12 +71,36 @@ type mountFlags struct {
 	daemon     bool
 }
 
+// applyVerbose forces debug-level logging onto cfg when the global --verbose
+// flag is set, allocating cfg.Log if the config had no log block. Pure (no
+// process side effects) so the --verbose→config wiring is unit-testable. An
+// explicit log.level in the config is overridden: --verbose is a deliberate
+// per-invocation override.
+func applyVerbose(cfg *config.Config, verbose bool) {
+	if cfg == nil || !verbose {
+		return
+	}
+	if cfg.Log == nil {
+		cfg.Log = &log.LogConfig{}
+	}
+	cfg.Log.Level = "debug"
+}
+
 // applyClientLogConfig applies the parsed config's log block to the package
-// logger. This used to happen as a constructor side effect inside the client
-// factory (pkg/client/grpc); the CLI owns logger configuration now, so
-// library consumers of pkg/client keep their own logger (see pkg/utils/log).
+// logger, honoring the global --verbose flag first. This used to happen as a
+// constructor side effect inside the client factory (pkg/client/grpc); the CLI
+// owns logger configuration now, so library consumers of pkg/client keep their
+// own logger (see pkg/utils/log).
+//
+// --verbose must apply even when the config has no log block, so the nil-Log
+// early return is gated on it: applyVerbose allocates cfg.Log when verbose is
+// set, and only a still-nil Log (no verbose, no config block) short-circuits.
 func applyClientLogConfig(cfg *config.Config) error {
-	if cfg == nil || cfg.Log == nil {
+	if cfg == nil {
+		return nil
+	}
+	applyVerbose(cfg, verbose)
+	if cfg.Log == nil {
 		return nil
 	}
 	if err := log.Reconfigure(*cfg.Log, os.Stderr); err != nil {
