@@ -185,6 +185,9 @@ func (p *Persist) InvalidatePathChunks(path string) error {
 	if err := p.sync(); err != nil {
 		return errors.Wrap(err, "sync after InvalidatePathChunks")
 	}
+	if testHookBeforeUnlink != nil {
+		testHookBeforeUnlink()
+	}
 	for _, h := range toUnlink {
 		if err := p.unlinkChunk(h); err != nil {
 			return err
