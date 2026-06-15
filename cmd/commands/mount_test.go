@@ -6,9 +6,12 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"go.gmountie.dev/gmountie/pkg/client/config"
 	"go.gmountie.dev/gmountie/pkg/client/credentials"
@@ -452,6 +455,41 @@ func (s *MountCmdTestSuite) TestApplyVerbose_NoopWhenUnset() {
 	bare := &config.Config{}
 	applyVerbose(bare, false)
 	s.Nil(bare.Log, "no verbose and no config block leaves Log nil")
+}
+
+// TestStartClientMetrics_ServesWhenEnabled proves the OB-H2 fix: with
+// GMOUNTIE_METRICS_ADDR set, startClientMetricsIfEnabled brings up a /metrics
+// endpoint that returns 200. We bind an ephemeral port to avoid collisions.
+func (s *MountCmdTestSuite) TestStartClientMetrics_ServesWhenEnabled() {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	addr := ln.Addr().String()
+	s.Require().NoError(ln.Close()) // free the port for the metrics server
+
+	s.T().Setenv("GMOUNTIE_METRICS_ADDR", addr)
+	startClientMetricsIfEnabled()
+
+	url := "http://" + addr + "/metrics"
+	var resp *http.Response
+	// The listener comes up in a goroutine; poll briefly for it.
+	for i := 0; i < 50; i++ {
+		//nolint:noctx // short-lived test probe
+		resp, err = http.Get(url)
+		if err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	s.Require().NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	s.Equal(http.StatusOK, resp.StatusCode)
+}
+
+// TestStartClientMetrics_NoopWhenUnset proves nothing is served when the env
+// var is absent (no listener leaks into other tests).
+func (s *MountCmdTestSuite) TestStartClientMetrics_NoopWhenUnset() {
+	s.T().Setenv("GMOUNTIE_METRICS_ADDR", "")
+	s.NotPanics(startClientMetricsIfEnabled)
 }
 
 func TestMountCmdSuite(t *testing.T) {

@@ -17,6 +17,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/mount"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
@@ -41,6 +42,26 @@ func startPprofIfEnabled() {
 		log.Log.Sugar().Infof("pprof listening on %s/debug/pprof/", addr)
 		if err := http.ListenAndServe(addr, mux); err != nil {
 			log.Log.Error("pprof server stopped", zap.Error(err))
+		}
+	}()
+}
+
+// startClientMetricsIfEnabled starts a /metrics HTTP listener if the env var
+// GMOUNTIE_METRICS_ADDR is set (e.g. "127.0.0.1:9100"). The client's gRPC
+// collectors are registered on prometheus.DefaultRegisterer (factory.go), but
+// `gmountie mount` otherwise exposes nothing to scrape. Env-gated like pprof —
+// an observability hook, not a runtime feature, so no config knob.
+func startClientMetricsIfEnabled() {
+	addr := os.Getenv("GMOUNTIE_METRICS_ADDR")
+	if addr == "" {
+		return
+	}
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+	go func() {
+		log.Log.Sugar().Infof("client metrics listening on %s/metrics", addr)
+		if err := http.ListenAndServe(addr, mux); err != nil {
+			log.Log.Error("client metrics server stopped", zap.Error(err))
 		}
 	}()
 }
@@ -315,6 +336,7 @@ func buildMountConfig(cmd *cobra.Command, args []string, f *mountFlags) (*mountT
 // out-of-band.
 func runMount(t *mountTarget) error {
 	startPprofIfEnabled()
+	startClientMetricsIfEnabled()
 
 	// Fail fast (before minting a client cert / opening the cache) if this
 	// machine already has a live gMountie mount at this path — re-mounting the
