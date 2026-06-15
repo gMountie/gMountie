@@ -72,7 +72,7 @@ func (s *ConcurrencySuite) TestSweepRacesWritesPreservesInvariant() {
 			}
 			data, err := s.p.ReadChunk(ref.Hash)
 			s.Require().NoError(err, "live index entry must have a present chunk file")
-			s.Assert().Equal(int(ref.Size), len(data), "chunk length must match its ref")
+			s.Assert().Len(data, int(ref.Size), "chunk length must match its ref")
 			cnt, err := s.p.ChunkRefCount(ref.Hash)
 			s.Require().NoError(err)
 			s.Assert().GreaterOrEqual(cnt, uint64(1), "live entry's hash must keep refcount >= 1")
