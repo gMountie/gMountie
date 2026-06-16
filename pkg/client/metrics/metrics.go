@@ -31,6 +31,12 @@ type Metrics struct {
 	TmpReclaimed        prometheus.Counter
 	BudgetEvictions     prometheus.Counter
 	DiskBytesUsed       prometheus.Gauge
+
+	// CachePersistDropped counts chunks NOT written to the disk tier because
+	// the async write-back queue was full (streaming outran the disk). The
+	// chunk stays in the memory tier, so a drop is a future cache miss, never
+	// data loss — but a high rate means the disk cache isn't keeping up.
+	CachePersistDropped prometheus.Counter
 }
 
 // NewMetrics constructs the set of client collectors. They are NOT
@@ -56,6 +62,10 @@ func NewMetrics() *Metrics {
 		CacheDedupeHits: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "gmountie_cache_dedupe_hits_total",
 			Help: "Content-addressable chunks whose hash already existed on disk when WriteChunk ran.",
+		}),
+		CachePersistDropped: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gmountie_cache_persist_dropped_total",
+			Help: "Chunks dropped from the async disk-persist queue because it was full (disk couldn't keep up); served from memory, future miss.",
 		}),
 		CacheRevalidations: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gmountie_cache_revalidations_total",
@@ -108,6 +118,7 @@ func NewMetrics() *Metrics {
 func (m *Metrics) MustRegister(r prometheus.Registerer) {
 	r.MustRegister(
 		m.RetryTotal, m.InFlight, m.CacheHits, m.CacheMisses, m.CacheDedupeHits,
+		m.CachePersistDropped,
 		m.CacheRevalidations, m.SubscribeEventsReceived, m.SubscribeStreamState,
 		m.CacheUnverifiedDurationSecs,
 		m.ChunksUnlinked, m.GhostEntriesDeleted, m.RefcountUnderflows,
@@ -122,6 +133,7 @@ func (m *Metrics) MustRegister(r prometheus.Registerer) {
 func (m *Metrics) Register(r prometheus.Registerer) error {
 	collectors := []prometheus.Collector{
 		m.RetryTotal, m.InFlight, m.CacheHits, m.CacheMisses, m.CacheDedupeHits,
+		m.CachePersistDropped,
 		m.CacheRevalidations, m.SubscribeEventsReceived, m.SubscribeStreamState,
 		m.CacheUnverifiedDurationSecs,
 		m.ChunksUnlinked, m.GhostEntriesDeleted, m.RefcountUnderflows,
@@ -169,6 +181,8 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 				switch c {
 				case prometheus.Collector(m.CacheDedupeHits):
 					m.CacheDedupeHits = existing
+				case prometheus.Collector(m.CachePersistDropped):
+					m.CachePersistDropped = existing
 				case prometheus.Collector(m.CacheUnverifiedDurationSecs):
 					m.CacheUnverifiedDurationSecs = existing
 				case prometheus.Collector(m.GhostEntriesDeleted):
@@ -204,6 +218,9 @@ func (m *Metrics) CacheMissInc(cacheType string) {
 
 // CacheDedupeHitInc bumps the dedupe-hits counter.
 func (m *Metrics) CacheDedupeHitInc() { m.CacheDedupeHits.Inc() }
+
+// CachePersistDroppedInc bumps the async-persist drop counter.
+func (m *Metrics) CachePersistDroppedInc() { m.CachePersistDropped.Inc() }
 
 // CacheRevalidationInc bumps the revalidation counter for the given result label.
 // result is one of: "not_modified", "changed", "enoent", "error".
@@ -360,6 +377,15 @@ func CacheDedupeHit() {
 	defer instancesMu.RUnlock()
 	for _, e := range instances {
 		e.m.CacheDedupeHitInc()
+	}
+}
+
+// CachePersistDropped fires CachePersistDroppedInc on all registered instances.
+func CachePersistDropped() {
+	instancesMu.RLock()
+	defer instancesMu.RUnlock()
+	for _, e := range instances {
+		e.m.CachePersistDroppedInc()
 	}
 }
 

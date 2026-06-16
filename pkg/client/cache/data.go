@@ -12,6 +12,14 @@ import (
 	"go.uber.org/zap"
 )
 
+// dataPersistQueueDepth bounds the async write-back queue for chunk persist.
+// Each queued job references a chunk already held in the memory tier (no extra
+// copy), so the cost is ~queue-of-pointers. Deep enough to absorb readahead
+// bursts; when it overflows (disk can't keep up with streaming) the persist is
+// dropped — the chunk stays in memory, a future cache miss at worst. See
+// store.startAsyncPersist.
+const dataPersistQueueDepth = 256
+
 // dataCache stores file content as fixed-size chunks keyed by
 // (path, chunkIndex). No TTL: entries are valid until explicitly
 // invalidated by a Write/SetAttr(size)/Unlink/Rename on the path, or
@@ -29,6 +37,15 @@ func newDataCache(acct *accountant, chunkSizeBytes int) *dataCache {
 
 // ChunkSize returns the configured chunk size in bytes.
 func (c *dataCache) ChunkSize() int { return c.chunkSizeBytes }
+
+// Close flushes and stops the async persist worker (if started). Idempotent.
+// cachedBackend.Close must call this before closing the persist tier so the
+// worker's in-flight WriteChunk/PutChunkRef finish against an open DB.
+func (c *dataCache) Close() {
+	if c.st != nil {
+		c.st.Close()
+	}
+}
 
 // chunkKey returns the cache key for (path, chunkIndex). path is
 // the FUSE-side path; chunkIndex is the zero-based chunk number.
@@ -124,8 +141,10 @@ func newDataCacheWithChunkPersist(acct *accountant, chunkSizeBytes int, p chunkP
 	// poisoned tracks paths whose persist invalidation failed: while a path is
 	// poisoned the disk tier is not authoritative for it, so the loader refuses
 	// to serve disk chunks (avoids serving a stale hit after a write whose
-	// invalidation was lost — the #113 family). A later successful invalidation
-	// or write-through for the path clears the poison (self-healing).
+	// invalidation was lost — the #113 family). Only a later SUCCESSFUL
+	// invalidation clears the poison; write-through must not (persist is async,
+	// so a deferred or disk-promoted write-through could otherwise resurrect
+	// stale-serving — see the putter's NOTE).
 	var poisoned sync.Map // path -> struct{}
 	loader := func(key string) (any, int, bool) {
 		path, idx, ok := parseChunkKey(key)
@@ -171,14 +190,22 @@ func newDataCacheWithChunkPersist(acct *accountant, chunkSizeBytes int, p chunkP
 				zap.String("path", path), zap.Int("idx", idx), zap.Error(err))
 			return
 		}
-		// A successful write-through re-establishes disk as authoritative for
-		// this path: clear any prior poison.
-		poisoned.Delete(path)
+		// NOTE: a successful write-through does NOT clear poison. Persist is
+		// async (store.startAsyncPersist), so a deferred write-through can run
+		// AFTER an invalidation poisoned the path, and could even re-persist
+		// disk-sourced (stale) bytes from a promote — clearing poison here would
+		// resurrect stale-serving. Poison is cleared only by a SUCCESSFUL
+		// invalidation (persistCleaner/persistRangeCleaner below), which is the
+		// only event that definitively removes the stale disk data.
 	}
 	// Per-key Remover is a no-op for data: the bulk persistCleaner and
 	// persistRangeCleaner drive index+refcount invalidation efficiently.
 	// The memory tier's per-key remove is still cheap (map delete).
 	c.st = newStoreWithPersist(acct, loader, putter, func(string) {}, "data")
+	// Chunk persist does a per-chunk fsync (persist.WriteChunk); run it on a
+	// background worker so the read path never blocks on disk. cachedBackend.Close
+	// flushes this before closing the persist tier.
+	c.st.startAsyncPersist(dataPersistQueueDepth)
 	c.persistCleaner = func(path string) {
 		if err := p.InvalidatePathChunks(path); err != nil {
 			poisoned.Store(path, struct{}{})
