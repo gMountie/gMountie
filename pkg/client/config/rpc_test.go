@@ -51,6 +51,47 @@ func (s *RpcConfigSuite) TestEmptyTreeEqualsNil() {
 	s.Equal(defaultRpcConfig(), cfg)
 }
 
+// TestReadaheadWindowDefault guards the deeper-overlap default: a shallow window
+// stutters under WAN RTT (per the throughput investigation, window 4 ≈ 71% of a
+// 100Mbit link, window 16 ≈ 82%). The default must keep enough chunks overlapped.
+func (s *RpcConfigSuite) TestReadaheadWindowDefault() {
+	cfg, err := NewRpcConfig(nil)
+	s.Require().NoError(err)
+	s.Equal(16, cfg.ReadaheadWindow)
+}
+
+// TestInitialWindowDefaults guards the gRPC HTTP/2 flow-control windows: at high
+// BDP (1Gbit/50ms) gRPC's auto-tuned window is tighter than the link, so we pin
+// generous defaults (≥ worst-case BDP). Harmless on slow links (window is unused
+// receive credit), +31% on a 1Gbit single stream.
+func (s *RpcConfigSuite) TestInitialWindowDefaults() {
+	cfg, err := NewRpcConfig(nil)
+	s.Require().NoError(err)
+	s.Equal(16<<20, cfg.InitialConnWindowBytes)
+	s.Equal(8<<20, cfg.InitialStreamWindowBytes)
+}
+
+func (s *RpcConfigSuite) TestInitialWindowOverride() {
+	v := viper.New()
+	v.Set("initial_conn_window_bytes", 32<<20)
+	v.Set("initial_stream_window_bytes", 16<<20)
+	cfg, err := NewRpcConfig(v)
+	s.Require().NoError(err)
+	s.Equal(32<<20, cfg.InitialConnWindowBytes)
+	s.Equal(16<<20, cfg.InitialStreamWindowBytes)
+}
+
+// TestInitialWindowZeroAllowed: 0 means "leave gRPC BDP autotuning on" (don't pin).
+func (s *RpcConfigSuite) TestInitialWindowZeroAllowed() {
+	v := viper.New()
+	v.Set("initial_conn_window_bytes", 0)
+	v.Set("initial_stream_window_bytes", 0)
+	cfg, err := NewRpcConfig(v)
+	s.Require().NoError(err)
+	s.Equal(0, cfg.InitialConnWindowBytes)
+	s.Equal(0, cfg.InitialStreamWindowBytes)
+}
+
 func TestRpcConfigSuite(t *testing.T) {
 	suite.Run(t, new(RpcConfigSuite))
 }

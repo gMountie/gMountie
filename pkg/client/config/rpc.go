@@ -25,10 +25,26 @@ const (
 	// required before the client arms prefetches.
 	DefaultReadaheadThreshold = 3
 	// DefaultReadaheadWindow is the number of readahead chunks kept in flight
-	// ahead of the cursor. 4 is a bandwidth-delay-product start for ~50 ms RTT
-	// / 100 Mbit; the knob ranges [1,64] so operators on longer/fatter pipes
-	// raise it. Each in-flight chunk is one concurrent Read RPC.
-	DefaultReadaheadWindow = 4
+	// ahead of the cursor. Each in-flight chunk is one concurrent Read RPC, so
+	// the window is how many bytes stay overlapped over the link. A shallow
+	// window stutters under WAN RTT: the throughput investigation measured a
+	// window of 4 reaching only ~71% of a 100 Mbit / 50 ms link, vs ~82% at 16
+	// (32 gave no further gain). 16 × 1 MiB = 16 MiB in flight per sequential
+	// reader — harmless on LAN (RTT≈0 so little is actually in flight) and the
+	// sweet spot on WAN. The knob ranges [1,64] for operators on extreme pipes.
+	DefaultReadaheadWindow = 16
+	// DefaultInitialConnWindowBytes / DefaultInitialStreamWindowBytes pin the
+	// gRPC HTTP/2 flow-control windows (connection + per-stream). At high BDP
+	// (e.g. 1 Gbit / 50 ms ≈ 6.25 MB) gRPC-go's auto-tuned window stays tighter
+	// than the link — a single sustained stream measured ~36 MiB/s vs the ~52
+	// MiB/s a raw TCP flow achieves — so we pin generous windows that cover the
+	// worst-case BDP we target (~1 Gbit × ~130 ms). This lifted a 1 Gbit single
+	// stream +31% and left a 100 Mbit link unchanged (the window is unused
+	// receive credit there; actual buffering tracks in-flight bytes ≈ BDP, and
+	// the connection window caps the aggregate). 0 disables pinning and restores
+	// gRPC BDP autotuning. NB: gRPC ignores values below the 64 KiB HTTP/2 floor.
+	DefaultInitialConnWindowBytes   = 16 << 20
+	DefaultInitialStreamWindowBytes = 8 << 20
 	// DefaultWriteCoalesceBytes is the per-fd small-write coalescing
 	// threshold. Small contiguous writes accumulate until the buffer
 	// reaches this size (or Flush/Release/Fsync drains it). 0 disables
@@ -113,6 +129,14 @@ type RpcConfig struct {
 	// MaxMessageBytes caps both inbound and outbound gRPC message sizes on
 	// the client. Mirror of the server-side cap; same [64 KiB, 64 MiB] range.
 	MaxMessageBytes int `mapstructure:"max_message_bytes" validate:"min=65536,max=67108864"`
+	// InitialConnWindowBytes / InitialStreamWindowBytes pin the gRPC HTTP/2
+	// connection- and stream-level flow-control receive windows. Pinning a
+	// generous window (≥ the worst-case bandwidth-delay product) lets a single
+	// connection fill a high-BDP link that gRPC's autotuner under-serves; 0
+	// leaves autotuning on. Values below the 64 KiB HTTP/2 floor are ignored by
+	// gRPC. Capped at 1 GiB. See Default*WindowBytes for the why.
+	InitialConnWindowBytes   int `mapstructure:"initial_conn_window_bytes" validate:"min=0,max=1073741824"`
+	InitialStreamWindowBytes int `mapstructure:"initial_stream_window_bytes" validate:"min=0,max=1073741824"`
 	// Keepalive controls gRPC HTTP/2 keepalive pings on the client side.
 	Keepalive ClientKeepaliveConfig `mapstructure:"keepalive"`
 	// Compression names the gRPC compressor to apply to every RPC on this
@@ -132,13 +156,15 @@ type RpcConfig struct {
 // literal can never drift apart.
 func defaultRpcConfig() *RpcConfig {
 	return &RpcConfig{
-		TimeoutMeta:         DefaultRpcTimeoutMeta,
-		TimeoutIO:           DefaultRpcTimeoutIO,
-		ReadaheadChunkBytes: DefaultReadaheadChunkBytes,
-		ReadaheadThreshold:  DefaultReadaheadThreshold,
-		ReadaheadWindow:     DefaultReadaheadWindow,
-		WriteCoalesceBytes:  DefaultWriteCoalesceBytes,
-		MaxMessageBytes:     DefaultMaxMessageBytes,
+		TimeoutMeta:              DefaultRpcTimeoutMeta,
+		TimeoutIO:                DefaultRpcTimeoutIO,
+		ReadaheadChunkBytes:      DefaultReadaheadChunkBytes,
+		ReadaheadThreshold:       DefaultReadaheadThreshold,
+		ReadaheadWindow:          DefaultReadaheadWindow,
+		WriteCoalesceBytes:       DefaultWriteCoalesceBytes,
+		MaxMessageBytes:          DefaultMaxMessageBytes,
+		InitialConnWindowBytes:   DefaultInitialConnWindowBytes,
+		InitialStreamWindowBytes: DefaultInitialStreamWindowBytes,
 		Keepalive: ClientKeepaliveConfig{
 			Time:                DefaultKeepaliveTime,
 			Timeout:             DefaultKeepaliveTimeout,
@@ -163,6 +189,8 @@ func NewRpcConfig(v *viper.Viper) (*RpcConfig, error) {
 	v.SetDefault("readahead_window", DefaultReadaheadWindow)
 	v.SetDefault("write_coalesce_bytes", DefaultWriteCoalesceBytes)
 	v.SetDefault("max_message_bytes", DefaultMaxMessageBytes)
+	v.SetDefault("initial_conn_window_bytes", DefaultInitialConnWindowBytes)
+	v.SetDefault("initial_stream_window_bytes", DefaultInitialStreamWindowBytes)
 	v.SetDefault("keepalive.time", DefaultKeepaliveTime)
 	v.SetDefault("keepalive.timeout", DefaultKeepaliveTimeout)
 	v.SetDefault("keepalive.permit_without_stream", DefaultKeepalivePermitWithoutStream)
