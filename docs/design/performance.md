@@ -129,7 +129,7 @@ sequential reads it keeps up to `readahead_window` chunks of
 `readahead_chunk_bytes` in flight ahead of the consumer, each issued as its own
 streaming Read RPC. gRPC multiplexes these over the single HTTP/2 connection, so
 a deep window pipelines away the per-fetch round-trip latency — the WAN read
-win. Defaults: `readahead_window = 4`, `readahead_chunk_bytes = 1 MiB` (one
+win. Defaults: `readahead_window = 16`, `readahead_chunk_bytes = 1 MiB` (one
 server frame).
 
 `Serve` is **partial-consume, cross-chunk, partial-prefix**: it satisfies a
@@ -158,7 +158,8 @@ window of frame-sized fetches saturates the read pipe on a high-RTT link —
 measured ≈2× sequential-read throughput at `window=4` vs `window=1` over a
 50 ms / 100 Mbit profile, reaching ~70% of the link ceiling. Each retained
 chunk holds `readahead_chunk_bytes` until drained, so a deep window costs up to
-`window × chunk` per open fd (≈4 MiB at the defaults); pooling that buffer is a
+`window × chunk` per open fd (≈16 MiB at the defaults: window 16 × 1 MiB chunk);
+pooling that buffer is a
 deferred follow-up (§5.1).
 
 **Write coalescing:** `pkg/client/io/coalesce.go` accumulates contiguous small
@@ -501,7 +502,8 @@ The dashboard jumped — what to check:
 
 The partial-consume readahead (§2.5) retains each in-flight/ready chunk until it
 is fully drained or evicted, so a deep window holds up to `readahead_window ×
-readahead_chunk_bytes` per open fd, unpooled (≈4 MiB at the defaults). Each
+readahead_chunk_bytes` per open fd, unpooled (≈16 MiB at the defaults: window
+16 × 1 MiB chunk). Each
 chunk buffer is allocated per prefetch (`doPrefetch`) and freed on
 drain/eviction. If the Bencher read-path allocation series flags this, pool
 them: a `sync.Pool` of chunk-sized slices on `Readahead`, taken in `Store` and
@@ -523,8 +525,10 @@ The performance-relevant knobs, their defaults, and where they live:
 |---|---|---|
 | `rpc.readahead_chunk_bytes` | `1048576` (1 MiB) | Size of each prefetched chunk (one server frame) |
 | `rpc.readahead_threshold` | `3` | Strictly-sequential reads before arming prefetch |
-| `rpc.readahead_window` | `4` | Chunks kept prefetched/in-flight; deepen on high-BDP links (range 1–64) |
+| `rpc.readahead_window` | `16` | Chunks kept prefetched/in-flight; deepen on high-BDP links (range 1–64) |
 | `rpc.write_coalesce_bytes` | `1048576` (1 MiB) | Per-fd small-write coalescing buffer cap |
+| `rpc.initial_conn_window_bytes` | `16777216` (16 MiB) | Pins the gRPC HTTP/2 *connection* flow-control window so a single connection can fill a high-BDP link gRPC's autotuner under-serves. `0` (with the stream knob also `0`) restores BDP autotuning; set both together (range 0–1 GiB) |
+| `rpc.initial_stream_window_bytes` | `8388608` (8 MiB) | Pins the gRPC HTTP/2 *per-stream* flow-control window (companion to the connection window). `0` (with the connection knob also `0`) restores autotuning; setting either knob nonzero disables autotuning globally (range 0–1 GiB) |
 | `rpc.compression` | `none` | `none` or `snappy`; default off — see §2.7 |
 | `rpc.keepalive.time` | `30s` | Ping interval on idle connection |
 | `rpc.keepalive.timeout` | `10s` | Pong deadline |
@@ -550,7 +554,7 @@ The performance-relevant knobs, their defaults, and where they live:
 
 - **Readahead window** — the number of `readahead_chunk_bytes` chunks the client
   keeps prefetched or in-flight ahead of the sequential read cursor. Controlled by
-  `rpc.readahead_window` (default 4). A window of 1 = the legacy single-chunk-ahead
+  `rpc.readahead_window` (default 16). A window of 1 = the legacy single-chunk-ahead
   behaviour.
 
 - **Write coalescing** — the per-fd client-side buffer that accumulates contiguous

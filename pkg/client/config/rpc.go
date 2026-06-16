@@ -41,8 +41,9 @@ const (
 	// worst-case BDP we target (~1 Gbit × ~130 ms). This lifted a 1 Gbit single
 	// stream +31% and left a 100 Mbit link unchanged (the window is unused
 	// receive credit there; actual buffering tracks in-flight bytes ≈ BDP, and
-	// the connection window caps the aggregate). 0 disables pinning and restores
-	// gRPC BDP autotuning. NB: gRPC ignores values below the 64 KiB HTTP/2 floor.
+	// the connection window caps the aggregate). Setting BOTH to 0 disables
+	// pinning and restores gRPC BDP autotuning (setting either one nonzero
+	// disables it globally). NB: gRPC ignores values below the 64 KiB HTTP/2 floor.
 	DefaultInitialConnWindowBytes   = 16 << 20
 	DefaultInitialStreamWindowBytes = 8 << 20
 	// DefaultWriteCoalesceBytes is the per-fd small-write coalescing
@@ -130,11 +131,14 @@ type RpcConfig struct {
 	// the client. Mirror of the server-side cap; same [64 KiB, 64 MiB] range.
 	MaxMessageBytes int `mapstructure:"max_message_bytes" validate:"min=65536,max=67108864"`
 	// InitialConnWindowBytes / InitialStreamWindowBytes pin the gRPC HTTP/2
-	// connection- and stream-level flow-control receive windows. Pinning a
-	// generous window (≥ the worst-case bandwidth-delay product) lets a single
-	// connection fill a high-BDP link that gRPC's autotuner under-serves; 0
-	// leaves autotuning on. Values below the 64 KiB HTTP/2 floor are ignored by
-	// gRPC. Capped at 1 GiB. See Default*WindowBytes for the why.
+	// connection- and stream-level flow-control receive windows. Setting both
+	// to a generous value (≥ worst-case BDP) lets a single connection fill a
+	// high-BDP link that gRPC's autotuner under-serves. BDP autotuning is
+	// restored only when BOTH are 0 — setting either one nonzero disables
+	// autotuning globally and leaves the other dimension at gRPC's small
+	// default (~64 KiB), so set the two together or leave both at 0. Values
+	// below the 64 KiB HTTP/2 floor are silently ignored by gRPC. Capped at
+	// 1 GiB. See Default*WindowBytes for the measurements.
 	InitialConnWindowBytes   int `mapstructure:"initial_conn_window_bytes" validate:"min=0,max=1073741824"`
 	InitialStreamWindowBytes int `mapstructure:"initial_stream_window_bytes" validate:"min=0,max=1073741824"`
 	// Keepalive controls gRPC HTTP/2 keepalive pings on the client side.

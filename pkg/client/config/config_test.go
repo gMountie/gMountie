@@ -407,6 +407,25 @@ rpc:
 	s.Require().Error(err)
 }
 
+// TestParse_InitialConnWindowRejectsOverCap mirrors the readahead-window
+// rejection: an initial_conn_window_bytes above the 1 GiB cap must be rejected
+// by the full load+validate path.
+func (s *ConfigTestSuite) TestParse_InitialConnWindowRejectsOverCap() {
+	conf := `
+server:
+  address: 127.0.0.1
+  port: 9449
+auth:
+  type: basic
+  username: admin
+  password: admin
+rpc:
+  initial_conn_window_bytes: 2000000000
+`
+	_, err := LoadConfigFromString(conf)
+	s.Require().Error(err)
+}
+
 // TestParse_TLSInlinePEMFromYAML verifies the inline-PEM TLS keys parse onto
 // cfg.Server.TLS (the config layer stores the strings; verify.BuildConfig
 // validates them).

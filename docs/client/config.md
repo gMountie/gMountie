@@ -104,7 +104,9 @@ per-attempt deadline and exponential backoff (100 ms → 1 s).
 | retry\_window           | duration | 60s      | Wall-clock budget for retrying one FS op through transient failures. `0` = fail-fast (single attempt, no retry). Set high for hard-mount-style behaviour. |
 | readahead\_chunk\_bytes | integer  | 1048576  | Size of a single readahead fetch / prefetch chunk (0 disables readahead) |
 | readahead\_threshold    | integer  | 3        | Sequential reads required before a prefetch is armed        |
-| readahead\_window       | integer  | 4        | Prefetch chunks kept in flight ahead of the cursor (range 1–64) |
+| readahead\_window       | integer  | 16       | Prefetch chunks kept in flight ahead of the cursor (range 1–64) |
+| initial\_conn\_window\_bytes   | integer  | 16777216 | Pin gRPC HTTP/2 connection flow-control window; `0` (with stream=0) keeps autotuning (range 0–1 GiB) |
+| initial\_stream\_window\_bytes | integer  | 8388608  | Pin gRPC HTTP/2 per-stream flow-control window; set together with the conn window (range 0–1 GiB) |
 | write\_coalesce\_bytes  | integer  | 1048576  | Per-fd small-write coalescing threshold (0 disables)        |
 | max\_message\_bytes     | integer  | 16777216 | Cap on inbound/outbound gRPC message size (16 MiB default)  |
 | compression             | string   | none     | gRPC compressor for every RPC on the connection: `none` \| `snappy` |
@@ -133,6 +135,18 @@ high-RTT/high-bandwidth links to keep the read pipe full. Setting
 `readahead_chunk_bytes: 0` disables the readahead path entirely,
 regardless of threshold or window.
 
+`initial_conn_window_bytes` and `initial_stream_window_bytes` pin the
+gRPC HTTP/2 flow-control receive windows — the connection-level window
+(default 16 MiB) and the per-stream window (default 8 MiB). gRPC's BDP
+autotuner can hold these tighter than a high-bandwidth-delay link needs,
+capping a single connection below the wire; pinning generous windows
+(≥ the worst-case bandwidth-delay product) lets one connection fill the
+pipe. Both are validated to the range [0, 1073741824] (0 to 1 GiB).
+Autotuning is restored only when **both** are 0 — setting either one
+nonzero disables autotuning globally and leaves the other dimension at
+gRPC's small default, so set the two together or leave both at 0. Values
+below the 64 KiB HTTP/2 floor are silently ignored by gRPC.
+
 `write_coalesce_bytes` is validated to the range [0, 16777216] (0 to
 16 MiB). 0 disables coalescing entirely so every Write call hits the
 network; the default 1 MiB matches the streaming-frame size and absorbs
@@ -157,8 +171,8 @@ cancelled when the fd is released.
 The win shows up most clearly on high-RTT connections where each
 round-trip costs — a deeper `readahead_window` scales read throughput
 toward the link bandwidth until the pipe is full. Localhost is roughly
-neutral; the default window of 4 is a starting point for ~50 ms links,
-raise it for longer/fatter pipes.
+neutral; the default window of 16 keeps enough chunks overlapped to fill
+a ~50 ms link, raise it for longer/fatter pipes.
 
 ### Write Coalescing
 
@@ -205,6 +219,8 @@ rpc:
   retry_window: 60s       # 0 = fail-fast (single attempt)
   readahead_chunk_bytes: 131072  # 128 KiB
   readahead_threshold: 3
+  initial_conn_window_bytes: 16777216    # 16 MiB; 0 (with stream=0) restores autotuning
+  initial_stream_window_bytes: 8388608   # 8 MiB; set together with the conn window
   write_coalesce_bytes: 1048576  # 1 MiB
   max_message_bytes: 33554432  # 32 MiB
   keepalive:

@@ -101,7 +101,7 @@ One-line definitions. Cross-linked into the rest of the docs — when you hit an
 
 **Readahead chunk** — One prefetched chunk (`rpc.readahead_chunk_bytes`, default 1 MiB).
 
-**Readahead window** — Number of prefetched chunks the client keeps in flight ahead of the cursor (`rpc.readahead_window`, default 4).
+**Readahead window** — Number of prefetched chunks the client keeps in flight ahead of the cursor (`rpc.readahead_window`, default 16).
 
 **Readahead threshold** — Sequential reads required before prefetch arms (`rpc.readahead_threshold`, default 3).
 

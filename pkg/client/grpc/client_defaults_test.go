@@ -33,7 +33,7 @@ func (s *NewClientDefaultsSuite) TestPerFileConfigMatchesConfigDefaults() {
 	s.Equal(config.DefaultReadaheadThreshold, pf.ReadaheadThreshold,
 		"ReadaheadThreshold must match config default")
 	s.Equal(config.DefaultReadaheadWindow, pf.ReadaheadWindow,
-		"ReadaheadWindow must match config default (was 1 instead of 4 before the fix)")
+		"ReadaheadWindow must match config default (was hardcoded 1, not wired to the config default, before the fix)")
 	s.Equal(config.DefaultWriteCoalesceBytes, pf.WriteCoalesceBytes,
 		"WriteCoalesceBytes must match config default")
 }
