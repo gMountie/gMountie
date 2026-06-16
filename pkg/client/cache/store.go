@@ -36,6 +36,24 @@ type store struct {
 	putter    Putter
 	remover   Remover
 	cacheType string
+
+	// Async write-back persist (enabled per-store via startAsyncPersist;
+	// used by the data store, whose putter does per-chunk fsync). When
+	// asyncCh is non-nil, put() enqueues the putter to persistWorker
+	// instead of calling it inline, so a slow disk write never blocks the
+	// read path. nil => synchronous putter (attr/dir, and memory-only).
+	asyncCh   chan persistJob
+	asyncStop chan struct{}
+	asyncDone chan struct{}
+	closeOnce sync.Once
+}
+
+// persistJob is one deferred write-through enqueued by put when async
+// persist is enabled.
+type persistJob struct {
+	key   string
+	value any
+	size  int
 }
 
 // Loader returns a value loaded from a lower tier (disk persist).
@@ -113,9 +131,73 @@ func (s *store) put(key string, value any, size int) {
 		s.acct.remove(prior)
 	}
 	s.acct.insert(e)
-	if s.putter != nil {
+	switch {
+	case s.asyncCh != nil:
+		// Async write-back: hand the (fsync-heavy) putter to the background
+		// worker so the read path never blocks on disk. Drop on a full queue
+		// — the entry stays in the memory tier, so losing the disk copy is
+		// just a future cache miss, never data loss. asyncCh is never closed
+		// (Close signals via asyncStop), so this send can't panic.
+		select {
+		case s.asyncCh <- persistJob{key: key, value: value, size: size}:
+		default:
+			metrics.CachePersistDropped()
+		}
+	case s.putter != nil:
 		s.putter(key, value, size)
 	}
+}
+
+// startAsyncPersist enables async write-back for this store: put() enqueues the
+// putter onto a bounded background worker instead of calling it inline, so a
+// slow (fsync-heavy) disk write never blocks the read path. depth bounds the
+// queue; an overflowing queue drops the persist (the entry stays in the memory
+// tier — a lost disk copy is just a future miss). No-op if the store has no
+// putter or async is already started. Call Close to flush+stop the worker.
+func (s *store) startAsyncPersist(depth int) {
+	if s.putter == nil || s.asyncCh != nil {
+		return
+	}
+	if depth < 1 {
+		depth = 1
+	}
+	s.asyncCh = make(chan persistJob, depth)
+	s.asyncStop = make(chan struct{})
+	s.asyncDone = make(chan struct{})
+	go s.persistWorker()
+}
+
+// persistWorker drains the async persist queue, calling the putter for each
+// job. On stop it drains whatever is still buffered (flush) and exits.
+func (s *store) persistWorker() {
+	defer close(s.asyncDone)
+	for {
+		select {
+		case job := <-s.asyncCh:
+			s.putter(job.key, job.value, job.size)
+		case <-s.asyncStop:
+			for {
+				select {
+				case job := <-s.asyncCh:
+					s.putter(job.key, job.value, job.size)
+				default:
+					return
+				}
+			}
+		}
+	}
+}
+
+// Close stops the async persist worker (if started) after flushing buffered
+// jobs. Idempotent; a no-op for synchronous (memory-only or inline-putter)
+// stores. Must be called before the underlying persist tier is closed.
+func (s *store) Close() {
+	s.closeOnce.Do(func() {
+		if s.asyncStop != nil {
+			close(s.asyncStop)
+			<-s.asyncDone
+		}
+	})
 }
 
 // remove deletes the entry for key from the memory tier and forwards

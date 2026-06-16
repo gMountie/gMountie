@@ -84,14 +84,19 @@ func NewCachedBackend(inner io.FileSystemBackend, cfg Config, p *persist.Persist
 	return b
 }
 
-// Close stops the subscriber goroutine (if running), closes the persist
-// tier (if owned), and closes the inner backend. Mount code calls Close
-// before discarding a backend on Unmount.
+// Close stops the subscriber goroutine (if running), flushes the data cache's
+// async persist worker, closes the persist tier (if owned), and closes the
+// inner backend. Mount code calls Close before discarding a backend on Unmount.
 func (b *cachedBackend) Close() error {
 	if b.subCancel != nil {
 		b.subCancel()
 	}
 	var errs []error
+	// Flush the data cache's async persist worker BEFORE closing the persist
+	// tier, so any in-flight WriteChunk/PutChunkRef complete against an open DB.
+	if b.data != nil {
+		b.data.Close()
+	}
 	if b.persist != nil {
 		if err := b.persist.Close(); err != nil {
 			errs = append(errs, err)

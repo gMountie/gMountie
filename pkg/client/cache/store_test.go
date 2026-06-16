@@ -1,7 +1,9 @@
 package cache
 
 import (
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 )
@@ -128,3 +130,88 @@ func (s *PersistedStoreSuite) TestRemoveForwardsToRemover() {
 }
 
 func TestPersistedStoreSuite(t *testing.T) { suite.Run(t, new(PersistedStoreSuite)) }
+
+// AsyncPersistStoreSuite exercises the async write-back persist path: when a
+// store has startAsyncPersist enabled, put() must populate the memory tier
+// synchronously but dispatch the (slow, fsync-heavy) putter to a background
+// worker so the read path never blocks on disk. Close() flushes pending jobs.
+type AsyncPersistStoreSuite struct {
+	suite.Suite
+}
+
+func newAsyncStore(putter Putter, depth int) *store {
+	st := newStoreWithPersist(newAccountant(0, 0), func(string) (any, int, bool) { return nil, 0, false }, putter, nil, "data")
+	st.startAsyncPersist(depth)
+	return st
+}
+
+// TestPutDoesNotBlockOnSlowPutter: a put must return even while the putter is
+// still running (the whole point — the cold-read regression was put() blocking
+// on a per-chunk fsync).
+func (s *AsyncPersistStoreSuite) TestPutDoesNotBlockOnSlowPutter() {
+	release := make(chan struct{})
+	var calls int32
+	putter := func(string, any, int) {
+		<-release
+		atomic.AddInt32(&calls, 1)
+	}
+	st := newAsyncStore(putter, 8)
+
+	done := make(chan struct{})
+	go func() { st.put("k", "v", 1); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		s.FailNow("put blocked on the slow putter")
+	}
+	s.Equal(int32(0), atomic.LoadInt32(&calls), "putter must not have completed before put returned")
+
+	close(release)
+	st.Close() // drains the one in-flight job
+	s.Equal(int32(1), atomic.LoadInt32(&calls))
+}
+
+// TestMemoryTierPopulatedSynchronously: hits must stay fast — the value is in
+// the memory tier immediately, before the async persist runs.
+func (s *AsyncPersistStoreSuite) TestMemoryTierPopulatedSynchronously() {
+	release := make(chan struct{})
+	st := newAsyncStore(func(string, any, int) { <-release }, 8)
+	st.put("k", "v", 1)
+	e := st.get("k")
+	s.Require().NotNil(e, "memory tier must hold the entry synchronously")
+	s.Equal("v", e.value)
+	close(release)
+	st.Close()
+}
+
+// TestCloseFlushesPending: Close must drain buffered jobs so a clean unmount
+// still persists what was cached (cross-mount cache effectiveness).
+func (s *AsyncPersistStoreSuite) TestCloseFlushesPending() {
+	var calls int32
+	st := newAsyncStore(func(string, any, int) { atomic.AddInt32(&calls, 1) }, 64)
+	for i := 0; i < 20; i++ {
+		st.put(string(rune('a'+i)), "v", 1)
+	}
+	st.Close()
+	s.Equal(int32(20), atomic.LoadInt32(&calls), "Close must flush all buffered persists")
+}
+
+// TestDropOnFullNeverBlocks: when the worker can't keep up (streaming overload),
+// puts must drop the persist rather than block the read path.
+func (s *AsyncPersistStoreSuite) TestDropOnFullNeverBlocks() {
+	release := make(chan struct{})
+	st := newAsyncStore(func(string, any, int) { <-release }, 2) // tiny buffer; worker wedged
+	for i := 0; i < 50; i++ {
+		done := make(chan struct{})
+		go func() { st.put("k", "v", 1); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			s.FailNow("put blocked when the persist queue was full")
+		}
+	}
+	close(release)
+	st.Close()
+}
+
+func TestAsyncPersistStoreSuite(t *testing.T) { suite.Run(t, new(AsyncPersistStoreSuite)) }
