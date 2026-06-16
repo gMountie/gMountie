@@ -65,7 +65,7 @@ func setupBenchEnv(b *testing.B) *benchEnv {
 	// but the e2e harness builds the client from explicit clientOptions and
 	// does NOT read those config defaults — so without this the "baseline"
 	// would run readahead-off and misrepresent production. Wire the same
-	// default knobs (1 MiB chunk, window 4) so the baseline Bencher series
+	// default knobs (1 MiB chunk, window 16) so the baseline Bencher series
 	// reflects the shipped default and tracks the SP5 readahead win.
 	return setupBenchEnvWith(b,
 		utils.WithReadahead(

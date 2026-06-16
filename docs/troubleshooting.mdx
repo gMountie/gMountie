@@ -149,7 +149,7 @@ The readahead window is sized for ~50 ms RTT by default. On longer links, raise 
 
 ```yaml
 rpc:
-  readahead_window: 8        # default 4; range 1–64
+  readahead_window: 32       # default 16; range 1–64 (raise for fatter/longer pipes)
   readahead_chunk_bytes: 1048576  # 1 MiB — match the server's frame_size_bytes
 ```
 

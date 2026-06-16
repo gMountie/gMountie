@@ -75,7 +75,7 @@ On a **cold** cache, step 1 is also one RPC and step 3 is all RPCs — that's th
 
 Hot caches help re-reads. **Readahead** helps first reads of sequential files: after a few in-order reads, the client speculatively fetches the next N chunks in parallel, so the subsequent reads land in cache before the syscalls arrive.
 
-The defaults (1 MiB chunks, window of 4) target ~50 ms RTT. Tune in `rpc.readahead_*` — see [Client config — Readahead](../client/config.md#readahead).
+The defaults (1 MiB chunks, window of 16) target ~50 ms RTT. Tune in `rpc.readahead_*` — see [Client config — Readahead](../client/config.md#readahead).
 
 ## Turning the cache off
 

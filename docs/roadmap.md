@@ -286,7 +286,7 @@ These items post-date the original spec and are the most valuable remaining WAN 
 
 ### SP5 — Partial-consume readahead redesign (WAN read throughput win) — **Done**
 
-The readahead engine now serves partial/cross-chunk sub-ranges and retains the unconsumed tail, so a deep window of frame-sized fetches actually pipelines sequential reads over a high-RTT link (≈2× sequential-read throughput at the new default `readahead_window = 4` / `readahead_chunk_bytes = 1 MiB`). See [Performance § 2.5](design/performance.md). Remaining follow-up: pool the per-fd prefetch buffers if the allocation cost is flagged.
+The readahead engine now serves partial/cross-chunk sub-ranges and retains the unconsumed tail, so a deep window of frame-sized fetches actually pipelines sequential reads over a high-RTT link (the SP5 redesign measured ≈2× sequential-read throughput at `window=4` vs `window=1`; the shipped default is now `readahead_window = 16` / `readahead_chunk_bytes = 1 MiB`). See [Performance § 2.5](design/performance.md). Remaining follow-up: pool the per-fd prefetch buffers if the allocation cost is flagged.
 
 ### Zero-copy `CodecV2` gRPC marshaling
 
