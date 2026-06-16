@@ -143,6 +143,16 @@ func buildUnconnectedClient(cfg *config.Config, endpoint string, parts renewPart
 			}),
 			grpc.WithDefaultCallOptions(defaultCallOptions(cfg.Rpc)...),
 		}
+		// Pin the HTTP/2 flow-control windows when configured (>0). gRPC-go's
+		// BDP autotuner under-serves a single connection on high-BDP links, so a
+		// generous static window lets reads fill a fat pipe; 0 leaves autotuning
+		// on. See RpcConfig.InitialConnWindowBytes for the measurements.
+		if cfg.Rpc.InitialConnWindowBytes > 0 {
+			dialOpts = append(dialOpts, grpc.WithInitialConnWindowSize(int32(cfg.Rpc.InitialConnWindowBytes)))
+		}
+		if cfg.Rpc.InitialStreamWindowBytes > 0 {
+			dialOpts = append(dialOpts, grpc.WithInitialWindowSize(int32(cfg.Rpc.InitialStreamWindowBytes)))
+		}
 		opts = append(opts, WithDialOptions(dialOpts))
 	}
 
