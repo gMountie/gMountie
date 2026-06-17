@@ -240,6 +240,7 @@ server's `frame_size_bytes` is larger.
 | max\_write\_bytes   | integer  | 1048576  | Ceiling for FUSE WRITE/READ size in bytes (1 MiB default)        |
 | max\_background     | integer  | 64       | Max async background requests the kernel may have in flight      |
 | writeback\_cache    | boolean  | false    | Enable the kernel's writeback page cache for the mount           |
+| handle\_kill\_priv | boolean  | true     | Advertise `CAP_HANDLE_KILLPRIV_V2`; eliminates the per-write `security.capability` getxattr RPC (env: `GMOUNTIE_FUSE_HANDLE_KILL_PRIV`) |
 | attr\_timeout       | duration | 1s       | How long the kernel caches inode attributes (size, mode, timestamps) before issuing a GETATTR |
 | entry\_timeout      | duration | 1s       | How long the kernel caches dentry (name→inode) mappings before issuing a LOOKUP |
 
@@ -261,6 +262,22 @@ mount is not gated on the negotiation.
 workloads over high-latency links. The client-side cache, readahead, and
 write coalescing work independently of this kernel knob; see
 [Caching & consistency](../design/caching-and-consistency.md).
+
+`handle_kill_priv` defaults to on. Advertising `CAP_HANDLE_KILLPRIV_V2`
+tells the kernel that the FUSE server handles privilege stripping on
+modify — so the kernel skips the `security.capability` getxattr it would
+otherwise issue on **every write** to decide whether to strip setuid,
+setgid, or file-capability bits. Over a FUSE mount that getxattr is one
+extra round-trip RPC per write, which caps single-file write throughput on
+high-RTT links. With the capability advertised, the kernel marks the inode
+`S_NOSEC` and instead sends a `setattr` when modify requires stripping; the
+identity-bound server applies it as the resolved principal, so the bits
+**are still stripped** — the capability removes the per-write xattr probe,
+not the stripping itself. Leave this on unless a backing filesystem
+mishandles the capability; set `GMOUNTIE_FUSE_HANDLE_KILL_PRIV=false` or
+`fuse.handle_kill_priv: false` to opt out. See [§10 in
+security-and-transport](../design/security-and-transport.md#per-write-privilege-stripping-handle_killpriv_v2)
+for the security model.
 
 `direct_io` defaults to off. When on, every file handle is opened with
 `FOPEN_DIRECT_IO`: the kernel bypasses its page cache for reads/writes and
@@ -298,6 +315,7 @@ fuse:
   max_write_bytes: 2097152  # 2 MiB
   max_background: 128
   writeback_cache: false
+  handle_kill_priv: true    # default on; set false only if the backing fs mishandles CAP_HANDLE_KILLPRIV_V2
   direct_io: false    # set true only for MAP_SHARED mmap workloads (LMDB, SQLite mmap_size>0)
   attr_timeout: 5s    # raise on read-only / sole-writer mounts to cut GETATTR traffic
   entry_timeout: 5s   # same tradeoff for dentry (name→inode) lookups

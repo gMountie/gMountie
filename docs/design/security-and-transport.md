@@ -337,7 +337,27 @@ the first file op, and rejected at the handshake once its serial is blocked.
 - An operator with config write access (can always reset creds / disable
   TLS).
 
-## 10. Deferred follow-ups
+## 10. Per-write privilege stripping (HANDLE_KILLPRIV_V2)
+
+The client advertises the FUSE `CAP_HANDLE_KILLPRIV_V2` capability by default
+(`fuse.handle_kill_priv`, env `GMOUNTIE_FUSE_HANDLE_KILL_PRIV`). Without it,
+the kernel issues a `security.capability` getxattr on every write to decide
+whether to strip setuid/setgid/file-caps on modify; over a FUSE mount that is
+one GetXattr RPC per write and caps single-file write throughput on high-RTT
+links. With the cap, the kernel marks the inode `S_NOSEC` and instead sends a
+setattr that clears the privilege bits, which the identity-bound server applies
+as the resolved principal. The privilege bits are therefore still stripped on
+modify (verified across squash/static/system/passthrough mappings on the test
+VM); the cap removes the per-write getxattr, not the stripping. The kernel
+still performs `file_remove_privs` in the writing process's context, so a
+write by a `CAP_FSETID`-holding (root) process is exempt from stripping exactly
+as on a local filesystem.
+
+Opt out with `fuse.handle_kill_priv: false` if the backing filesystem
+mishandles the capability. See [`fuse.handle_kill_priv` — client
+config](../client/config.md#fuse-options) for the config-reference entry.
+
+## 11. Deferred follow-ups
 
 - **OIDC / JWT** auth (JWKS cache, key rotation, audience) — schedule
   once mTLS has real-deployment mileage.
@@ -346,7 +366,7 @@ the first file op, and rejected at the handshake once its serial is blocked.
 - **OS-keyring client credential storage** (libsecret) — today the client
   reads passwords from YAML; shares the desktop-UI scope problem (Phase 8).
 
-## 11. North-star acceptance
+## 12. North-star acceptance
 
 A server bound to `0.0.0.0:9449`, TLS-terminated, `default_allow: false`,
 operated under steady authenticated traffic plus `nmap`/`testssl.sh` and
