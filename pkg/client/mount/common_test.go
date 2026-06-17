@@ -102,7 +102,6 @@ func TestLazyUnmountSuite(t *testing.T) {
 // directly (suite already imports it via the package's other tests).
 var _ = errors.New
 
-
 // BuildFSOptionsSuite tests the pure buildFSOptions helper that assembles
 // gofs.Options from a fuse.MountOptions and a FUSEConfig. Testing this
 // function directly avoids needing a real FUSE mount while still verifying
