@@ -30,6 +30,11 @@ type dataCache struct {
 	chunkSizeBytes      int
 	persistCleaner      func(path string)
 	persistRangeCleaner func(path string, firstIdx, lastIdx int)
+	// curGenFn returns a path's current invalidation generation (nil for a
+	// memory-only data cache). Callers that sample bytes from a lower tier
+	// capture it BEFORE the sample and thread it into putGen so a deferred
+	// persist whose path was invalidated since the sample is dropped.
+	curGenFn func(path string) uint64
 }
 
 func newDataCache(acct *accountant, chunkSizeBytes int) *dataCache {
@@ -77,7 +82,25 @@ func (c *dataCache) get(path string, chunkIndex int) []byte {
 // put stores chunk bytes under (path, chunkIndex). data is stored by
 // reference — caller is responsible for not mutating it afterwards.
 func (c *dataCache) put(path string, chunkIndex int, data []byte) {
-	c.st.put(chunkKey(path, chunkIndex), data, len(data))
+	c.putGen(path, chunkIndex, data, c.currentGen(path))
+}
+
+// putGen caches a chunk, stamping the persist job with gen — the path's
+// invalidation generation captured by the caller at byte-sample time. The async
+// write-through (onPersist) drops or undoes the job if the generation has since
+// advanced, so a chunk sampled before an invalidation cannot be resurrected on
+// disk after it.
+func (c *dataCache) putGen(path string, chunkIndex int, data []byte, gen uint64) {
+	c.st.putGen(chunkKey(path, chunkIndex), data, len(data), gen)
+}
+
+// currentGen returns path's current invalidation generation, or 0 for a
+// memory-only data cache (no persist tier, so no resurrection to guard against).
+func (c *dataCache) currentGen(path string) uint64 {
+	if c.curGenFn == nil {
+		return 0
+	}
+	return c.curGenFn(path)
 }
 
 // invalidatePath removes every chunk cached under any chunkIndex for
@@ -247,6 +270,7 @@ func newDataCacheWithChunkPersist(acct *accountant, chunkSizeBytes int, p chunkP
 	// is nil because data write-through goes through onPersist so it can honour
 	// the per-path generation.
 	c.st = newStoreWithPersist(acct, loader, nil, func(string) {}, "data")
+	c.curGenFn = curGen
 	c.st.genOf = func(key string) uint64 {
 		path, _, ok := parseChunkKey(key)
 		if !ok {
