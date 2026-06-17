@@ -428,6 +428,11 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 		if spanChunks > 1 {
 			finishSpan = ch.beginSpanFetch(chunkIndex, spanChunks)
 		}
+		// Capture the path's invalidation generation BEFORE sampling the server,
+		// so the chunks cached below carry the generation as-of the read. If an
+		// invalidation lands during/after the fetch, the persist of these chunks
+		// is dropped (or undone) rather than resurrecting stale bytes on disk.
+		spanGen := b.data.currentGen(ch.path)
 		buf := make([]byte, spanChunks*int(chunkSize))
 		n, st := b.inner.Read(ctx, ch.inner, chunkStart, buf)
 		if st != fuse.OK {
@@ -455,7 +460,7 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 			}
 			cbuf := make([]byte, ce-cs)
 			copy(cbuf, buf[cs:ce])
-			b.data.put(ch.path, chunkIndex+j, cbuf)
+			b.data.putGen(ch.path, chunkIndex+j, cbuf, spanGen)
 		}
 		// Chunks cached; wake any waiters so they serve from cache.
 		if finishSpan != nil {

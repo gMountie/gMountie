@@ -109,6 +109,32 @@ func (s *PersistedStoreSuite) TestMemoryMissFallsThroughToLoader() {
 	s.Assert().Equal(1, loaderCalls, "loader must not be called for memory hit")
 }
 
+// TestPromoteDoesNotWriteThrough pins the variant-A half of the async-persist
+// stale-read fix: a loader (disk) hit promotes into the MEMORY tier only and
+// must NOT write back through the putter. Re-persisting disk-sourced bytes is
+// pointless (they are already on disk) and, under a racing invalidation, would
+// resurrect a chunk the cleaner just removed.
+func (s *PersistedStoreSuite) TestPromoteDoesNotWriteThrough() {
+	var putCalls int
+	loader := func(key string) (any, int, bool) {
+		if key == "k1" {
+			return "from-disk", 9, true
+		}
+		return nil, 0, false
+	}
+	putter := func(string, any, int) { putCalls++ }
+	st := newStoreWithPersist(newAccountant(0, 0), loader, putter, nil, "attr")
+
+	e := st.get("k1") // memory miss -> loader hit -> promote
+	s.Require().NotNil(e)
+	s.Assert().Equal("from-disk", e.value)
+	s.Assert().Equal(0, putCalls, "loader-promote must be memory-only (no write-through)")
+
+	e2 := st.get("k1") // now a memory hit (promote populated the memory tier)
+	s.Require().NotNil(e2)
+	s.Assert().Equal("from-disk", e2.value)
+}
+
 func (s *PersistedStoreSuite) TestPutAlsoWritesThrough() {
 	var putCalls int
 	loader := func(string) (any, int, bool) { return nil, 0, false }

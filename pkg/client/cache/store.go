@@ -118,24 +118,84 @@ func (s *store) get(key string) *entry {
 		// so that expiry-invalidated entries also count correctly.
 		return nil
 	}
+	// Capture the path's invalidation generation BEFORE sampling the lower
+	// tier, then re-check after. The loader may read an MVCC snapshot that still
+	// holds bytes a concurrent invalidation is removing; if the generation moved
+	// during the read, those bytes may be stale — treat it as a miss so the
+	// caller refetches from the authoritative source. (genOf is nil for stores
+	// without per-path generations, e.g. attr/dir — then this is a plain load.)
+	gen0 := uint64(0)
+	if s.genOf != nil {
+		gen0 = s.genOf(key)
+	}
 	value, size, hit := s.loader(key)
 	if !hit {
 		// Both tiers missed; caller (backend.go) bumps CacheMiss.
 		return nil
 	}
+	if s.genOf != nil && s.genOf(key) != gen0 {
+		// Invalidated mid-read; do not promote possibly-stale bytes.
+		return nil
+	}
 	metrics.CacheHit("disk", s.cacheType)
-	s.put(key, value, size)
+	// Promote into the MEMORY tier only: the value came FROM the lower (disk)
+	// tier, so it is already persisted there. Re-persisting it would, under a
+	// racing invalidation, resurrect a chunk the cleaner just removed (the
+	// async-persist stale-read race); a memory-only promotion never can.
+	s.putMemoryOnly(key, value, size)
 	s.mu.RLock()
 	e = s.entries[key]
 	s.mu.RUnlock()
 	return e
 }
 
-// put inserts or replaces the entry for key. If a prior entry existed,
-// it is removed from the accountant first (so bytes don't double-count).
-// Write-throughs to the putter after the memory work, outside the
-// store lock so a slow disk write does not block reads.
+// put inserts or replaces the entry for key and write-throughs (sync putter or
+// async enqueue). It stamps the persist job with generation 0; stores with
+// per-path invalidation generations (the data cache) use putGen instead so they
+// can capture the generation at byte-sample time. attr/dir have synchronous
+// putters, so the generation is irrelevant for them.
 func (s *store) put(key string, value any, size int) {
+	s.putGen(key, value, size, 0)
+}
+
+// putGen is put with an explicit invalidation generation stamped onto the async
+// persist job (persistJob.gen). The data cache captures the generation at
+// byte-sample time and threads it here, so a deferred persist whose path was
+// invalidated since the sample is dropped (or undone) by onPersist rather than
+// resurrecting a chunk on disk. The write-through runs outside the store lock so
+// a slow disk write does not block reads.
+func (s *store) putGen(key string, value any, size int, gen uint64) {
+	s.insertMem(key, value, size)
+	switch {
+	case s.asyncCh != nil:
+		// Async write-back: hand the (fsync-heavy) putter to the background
+		// worker so the read path never blocks on disk. Drop on a full queue
+		// — the entry stays in the memory tier, so losing the disk copy is
+		// just a future cache miss, never data loss. asyncCh is never closed
+		// (Close signals via asyncStop), so this send can't panic.
+		select {
+		case s.asyncCh <- persistJob{key: key, value: value, size: size, gen: gen}:
+		default:
+			metrics.CachePersistDropped()
+		}
+	case s.putter != nil:
+		s.putter(key, value, size)
+	}
+}
+
+// putMemoryOnly inserts or replaces key in the memory tier with no
+// write-through. Used by the loader-promote path: the value already lives in the
+// lower tier, so re-persisting it is pointless and, under a racing
+// invalidation, unsafe (it could resurrect a just-removed chunk).
+func (s *store) putMemoryOnly(key string, value any, size int) {
+	s.insertMem(key, value, size)
+}
+
+// insertMem inserts or replaces the entry in the memory tier and updates the
+// accountant. If a prior entry existed it is removed from the accountant first
+// (so bytes don't double-count). The accountant work runs outside the store
+// lock. Shared by put/putGen/putMemoryOnly.
+func (s *store) insertMem(key string, value any, size int) {
 	e := &entry{key: key, value: value, size: size, remove: s.removeKey}
 	s.mu.Lock()
 	prior, hadPrior := s.entries[key]
@@ -145,27 +205,6 @@ func (s *store) put(key string, value any, size int) {
 		s.acct.remove(prior)
 	}
 	s.acct.insert(e)
-	switch {
-	case s.asyncCh != nil:
-		// Async write-back: hand the (fsync-heavy) putter to the background
-		// worker so the read path never blocks on disk. Drop on a full queue
-		// — the entry stays in the memory tier, so losing the disk copy is
-		// just a future cache miss, never data loss. asyncCh is never closed
-		// (Close signals via asyncStop), so this send can't panic.
-		job := persistJob{key: key, value: value, size: size}
-		if s.genOf != nil {
-			// Stamp the path's current invalidation generation so the worker can
-			// drop this job if an invalidation lands before it runs.
-			job.gen = s.genOf(key)
-		}
-		select {
-		case s.asyncCh <- job:
-		default:
-			metrics.CachePersistDropped()
-		}
-	case s.putter != nil:
-		s.putter(key, value, size)
-	}
 }
 
 // startAsyncPersist enables async write-back for this store: put() enqueues the
