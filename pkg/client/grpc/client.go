@@ -107,18 +107,18 @@ type PerFileConfig struct {
 
 // ClientImpl is a struct that holds the gRPC ClientImpl
 type ClientImpl struct {
-	endpoint          string
-	conn              *grpc.ClientConn
+	endpoint string
+	conn     *grpc.ClientConn
 	// conns is the connection pool; conns[0] == conn is the primary (session
 	// handshake, keepalive, Subscribe, metadata RPCs). dataFileClients has one
 	// RpcFileClient per connection; DataFileClient picks the least-in-flight
 	// connection (ties favour conn 0 so sequential single-stream workloads stay
 	// on one warm connection while concurrent streams spread). inflight tracks
 	// per-connection data-stream in-flight counts for the load-aware picker.
-	conns           []*grpc.ClientConn
-	dataFileClients []proto.RpcFileClient
-	inflight        []atomic.Int64
-	connections     int
+	conns             []*grpc.ClientConn
+	dataFileClients   []proto.RpcFileClient
+	inflight          []atomic.Int64
+	connections       int
 	dialOptions       []grpc.DialOption
 	extraInterceptors []grpc.UnaryClientInterceptor
 	fs                proto.RpcFsClient
