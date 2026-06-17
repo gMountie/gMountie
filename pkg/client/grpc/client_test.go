@@ -1,6 +1,7 @@
 package grpc
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,33 +40,97 @@ func TestClientRetryWindowAndLifetime(t *testing.T) {
 
 type ClientPoolSuite struct{ suite.Suite }
 
-func (s *ClientPoolSuite) TestDataFileClientRoundRobins() {
+// makePool builds a ClientImpl with n mock connections and an initialised inflight slice.
+func (s *ClientPoolSuite) makePool(mocks ...proto.RpcFileClient) *ClientImpl {
+	c := &ClientImpl{
+		file:            mocks[0],
+		dataFileClients: mocks,
+		inflight:        make([]atomic.Int64, len(mocks)),
+	}
+	return c
+}
+
+// TestSequentialAffinityStaysOnPrimary is the key regression guard: a
+// sequential single-stream workload (pick→release→pick→release) must always
+// land on conn 0 (the primary/warm connection) because ties resolve to the
+// lowest index and each release resets the counter.
+func (s *ClientPoolSuite) TestSequentialAffinityStaysOnPrimary() {
 	m0 := protomocks.NewMockRpcFileClient(s.T())
 	m1 := protomocks.NewMockRpcFileClient(s.T())
 	m2 := protomocks.NewMockRpcFileClient(s.T())
-	c := &ClientImpl{file: m0, dataFileClients: []proto.RpcFileClient{m0, m1, m2}}
-	counts := map[proto.RpcFileClient]int{}
-	for i := 0; i < 9; i++ {
-		counts[c.DataFileClient()]++
+	c := s.makePool(m0, m1, m2)
+	for i := 0; i < 6; i++ {
+		got, release := c.DataFileClient()
+		s.Same(m0, got, "sequential pick %d must return the primary (conn 0)", i)
+		release()
 	}
-	s.Equal(3, counts[m0])
-	s.Equal(3, counts[m1])
-	s.Equal(3, counts[m2])
+}
+
+// TestFanOutUnderConcurrentLoad verifies that picking N connections without
+// releasing any in between distributes across all connections once (each conn
+// gets exactly one stream before any counter is decremented).
+func (s *ClientPoolSuite) TestFanOutUnderConcurrentLoad() {
+	m0 := protomocks.NewMockRpcFileClient(s.T())
+	m1 := protomocks.NewMockRpcFileClient(s.T())
+	m2 := protomocks.NewMockRpcFileClient(s.T())
+	c := s.makePool(m0, m1, m2)
+	var releases []func()
+	counts := map[proto.RpcFileClient]int{}
+	// Pick 3 times without releasing; each pick finds the next least-loaded conn.
+	for i := 0; i < 3; i++ {
+		got, release := c.DataFileClient()
+		counts[got]++
+		releases = append(releases, release)
+	}
+	s.Equal(1, counts[m0], "each conn should be picked once during fan-out")
+	s.Equal(1, counts[m1])
+	s.Equal(1, counts[m2])
+	// Release all; in-flight counts return to 0.
+	for _, r := range releases {
+		r()
+	}
+	// After release the primary wins ties again.
+	got, release := c.DataFileClient()
+	s.Same(m0, got, "after releasing all, primary should win tie again")
+	release()
+}
+
+// TestReleaseDecrements verifies that release actually decrements the counter
+// so a second pick on a formerly-loaded conn returns to contention.
+func (s *ClientPoolSuite) TestReleaseDecrements() {
+	m0 := protomocks.NewMockRpcFileClient(s.T())
+	m1 := protomocks.NewMockRpcFileClient(s.T())
+	c := s.makePool(m0, m1)
+	// Pick conn0 (wins tie), don't release → conn0 has 1 in-flight.
+	_, release0 := c.DataFileClient()
+	// Next pick must choose conn1 (least loaded = 0).
+	got, release1 := c.DataFileClient()
+	s.Same(m1, got, "conn1 should win when conn0 has an unreleased stream")
+	// Release conn0; it drops to 0, tying with conn1 (1). Next pick: conn0.
+	release0()
+	got2, release2 := c.DataFileClient()
+	s.Same(m0, got2, "conn0 should win tie after its release decrements back to 0")
+	release1()
+	release2()
 }
 
 func (s *ClientPoolSuite) TestDataFileClientSingleConnReturnsPrimary() {
 	m0 := protomocks.NewMockRpcFileClient(s.T())
 	c := &ClientImpl{file: m0, dataFileClients: []proto.RpcFileClient{m0}}
+	// n=1 path: no inflight slice needed (returns c.file directly).
 	for i := 0; i < 4; i++ {
-		s.Same(m0, c.DataFileClient())
+		got, release := c.DataFileClient()
+		s.Same(m0, got)
+		release() // no-op; must not panic
 	}
 }
 
-func (s *ClientPoolSuite) TestFilePinsToPrimaryRegardlessOfRotation() {
+func (s *ClientPoolSuite) TestFilePinsToPrimaryRegardlessOfPick() {
 	m0 := protomocks.NewMockRpcFileClient(s.T())
 	m1 := protomocks.NewMockRpcFileClient(s.T())
-	c := &ClientImpl{file: m0, dataFileClients: []proto.RpcFileClient{m0, m1}}
-	_ = c.DataFileClient()
+	c := s.makePool(m0, m1)
+	_, release := c.DataFileClient()
+	defer release()
 	s.Same(m0, c.File(), "File() must always return the primary stub")
 }
 

@@ -1,7 +1,7 @@
 # Client Connection Pool — Design
 
 **Status:** Approved (brainstorm 2026-06-18)
-**Goal:** Open N gRPC connections per mount (sharing one session) and round-robin Read/Write streams across them, so read and write throughput can exceed the single-connection TCP single-flow ceiling (~48 MiB/s observed) on high-BDP (1Gbit/WAN) links.
+**Goal:** Open N gRPC connections per mount (sharing one session) and spread Read/Write streams across them (load-aware: least-in-flight, ties to the primary), so read and write throughput can exceed the single-connection TCP single-flow ceiling (~48 MiB/s observed) on high-BDP (1Gbit/WAN) links while sequential single-stream workloads stay on the warm primary connection.
 
 ---
 
@@ -17,7 +17,7 @@ The server resolves a session by the `session_id` in request metadata and binds 
 
 - The client opens **N** `grpc.ClientConn` to the same endpoint, where N = `rpc.connections` (default 4). All share **one session**.
 - **Connection 0 is the primary.** It carries: the session handshake (`Connect`), the keepalive stream, the `Subscribe` stream, and ALL metadata RPCs (`Fs()`, `File()` Open/Create/Release/locks, `Volume()`, `Version()`).
-- **Read and Write streams round-robin across all N connections, per stream.** The spread is per-stream (not per-handle) so a single large file's concurrent streams spread across flows: the kernel's per-inode writeback issues ~8 concurrent Write streams, and readahead issues concurrent prefetch Read streams — each picks the next connection. Per-handle affinity would pin one big file to one flow and is explicitly NOT used.
+- **Read and Write streams spread across all N connections using a load-aware (least-in-flight) picker; ties resolve to conn 0 (primary).** The spread is per-stream (not per-handle) so a single large file's concurrent streams fan out across flows: the kernel's per-inode writeback issues ~8 concurrent Write streams, and readahead issues concurrent prefetch Read streams — each picks the least-loaded connection. A sequential single-stream workload (write→drain→write→drain) always stays on the primary (warm congestion window) because every tie resolves to conn 0. Per-handle affinity would pin one big file to one flow regardless of load and is explicitly NOT used.
 - Each connection is dialed with the same options as today (TLS, auth interceptors, optional snappy, the #138 `InitialConnWindowBytes`/`InitialStreamWindowBytes`, keepalive, max message size). N connections × per-conn windows multiplies in-flight capacity.
 
 ## Components
@@ -34,13 +34,13 @@ The server resolves a session by the `session_id` in request metadata and binds 
 `ClientImpl` currently holds `conn *grpc.ClientConn`. Change to hold a pool:
 
 - `conns []*grpc.ClientConn` (len N; `conns[0]` is the primary).
-- An atomic counter for round-robin selection.
+- Per-connection in-flight counters (`inflight []atomic.Int64`) for load-aware picking.
 - `primaryConn()` returns `conns[0]` (used by handshake/keepalive/subscribe and the existing `File()/Fs()/Volume()/Version()` accessors — they keep returning stubs on the primary).
-- `DataFileClient() proto.RpcFileClient` returns an `RpcFileClient` bound to the next round-robin connection (`conns[atomic.Add % N]`). This is the ONLY new spread accessor; it is used solely for Read/Write streams.
+- `DataFileClient() (proto.RpcFileClient, func())` returns the `RpcFileClient` for the least-in-flight connection and a release func that MUST be deferred. This is the ONLY new spread accessor; it is used solely for Read/Write streams.
 - The session-id / keepalive interceptors apply to ALL connections (every connection must stamp `session_id` so the shared session resolves). The dial options (including interceptors) are identical per connection.
 - `Close()` closes all N connections.
 
-Keep `DataFileClient` minimal: round-robin index, build (or cache per-conn) the `proto.NewRpcFileClient(conns[i])` stub. Per-conn stubs may be precomputed at construction (`fileClients []proto.RpcFileClient`, one per conn) so `DataFileClient` is just an indexed read — cheaper and lock-free.
+Per-conn stubs are precomputed at construction (`dataFileClients []proto.RpcFileClient`, one per conn). `DataFileClient` scans the inflight counters, increments the winner, and returns the stub + a decrement closure — O(N) but N ≤ 16 and lock-free.
 
 ### 3. Factory — `pkg/client/grpc/factory.go`
 

@@ -31,11 +31,12 @@ type Client interface {
 	Close() error
 	// File returns the gRPC File client.
 	File() proto.RpcFileClient
-	// DataFileClient returns an RpcFileClient bound to the next connection in
-	// the pool (round-robin). Used only for Read/Write streams so a single
-	// file's concurrent streams spread across connections. With one connection
-	// it returns the primary File() client.
-	DataFileClient() proto.RpcFileClient
+	// DataFileClient returns an RpcFileClient bound to the least-in-flight pool
+	// connection (ties favour the primary, conn 0, so a sequential single-stream
+	// workload stays on one warm connection while concurrent streams spread).
+	// The returned release func MUST be called exactly once when the stream is
+	// done (defer it) so the connection's in-flight count is decremented.
+	DataFileClient() (proto.RpcFileClient, func())
 	// Fs returns the gRPC Fs client.
 	Fs() proto.RpcFsClient
 	// Volume returns the gRPC Volume client.
@@ -110,11 +111,13 @@ type ClientImpl struct {
 	conn              *grpc.ClientConn
 	// conns is the connection pool; conns[0] == conn is the primary (session
 	// handshake, keepalive, Subscribe, metadata RPCs). dataFileClients has one
-	// RpcFileClient per connection; DataFileClient round-robins it for
-	// Read/Write streams. rrCounter drives the round-robin.
+	// RpcFileClient per connection; DataFileClient picks the least-in-flight
+	// connection (ties favour conn 0 so sequential single-stream workloads stay
+	// on one warm connection while concurrent streams spread). inflight tracks
+	// per-connection data-stream in-flight counts for the load-aware picker.
 	conns           []*grpc.ClientConn
 	dataFileClients []proto.RpcFileClient
-	rrCounter       atomic.Uint64
+	inflight        []atomic.Int64
 	connections     int
 	dialOptions       []grpc.DialOption
 	extraInterceptors []grpc.UnaryClientInterceptor
@@ -281,6 +284,7 @@ func NewClient(endpoint string, options ...ClientOption) (Client, error) {
 	c.conns = conns
 	c.conn = conns[0] // primary
 	c.dataFileClients = fileClients
+	c.inflight = make([]atomic.Int64, len(conns))
 	c.file = fileClients[0] // primary File() stub
 	c.fs = proto.NewRpcFsClient(conns[0])
 	c.volume = proto.NewVolumeServiceClient(conns[0])
@@ -322,16 +326,28 @@ func (c *ClientImpl) File() proto.RpcFileClient {
 	return c.file
 }
 
-// DataFileClient returns an RpcFileClient bound to the next pool connection
-// (round-robin). See the Client interface doc. With <=1 connection it returns
-// the primary client (no atomic churn).
-func (c *ClientImpl) DataFileClient() proto.RpcFileClient {
+// DataFileClient returns the RpcFileClient for the least-in-flight pool
+// connection and a release func that MUST be called exactly once when the
+// stream finishes (use defer). See the Client interface doc for the full
+// contract. With <=1 connection it returns the primary client with a no-op
+// release (no atomic churn).
+func (c *ClientImpl) DataFileClient() (proto.RpcFileClient, func()) {
 	n := len(c.dataFileClients)
 	if n <= 1 {
-		return c.file
+		return c.file, func() {}
 	}
-	i := c.rrCounter.Add(1) % uint64(n)
-	return c.dataFileClients[i]
+	// Pick the least-in-flight connection; ties resolve to the lowest index, so
+	// a sequential (one-stream-at-a-time) workload always reuses conn 0 (warm
+	// congestion window) while concurrent streams fan out to idle connections.
+	best := 0
+	bestLoad := c.inflight[0].Load()
+	for i := 1; i < n; i++ {
+		if l := c.inflight[i].Load(); l < bestLoad {
+			best, bestLoad = i, l
+		}
+	}
+	c.inflight[best].Add(1)
+	return c.dataFileClients[best], func() { c.inflight[best].Add(-1) }
 }
 
 // Fs returns the gRPC Fs client
