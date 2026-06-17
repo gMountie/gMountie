@@ -67,6 +67,16 @@ func createMountOptions(endpoint, volume string, cfg *config.FUSEConfig, maxWrit
 	} else {
 		opts.DisabledCapabilities |= fuse.CAP_WRITEBACK_CACHE
 	}
+	// Advertise HANDLE_KILLPRIV_V2 so the kernel marks files S_NOSEC and stops
+	// issuing a security.capability getxattr on every write (one GetXattr RPC
+	// per write — a WAN throughput killer). The kernel still strips
+	// setuid/setgid/file-caps on modify via a setattr the server applies, so
+	// there is no loss of privilege-stripping. Kernels without the cap ignore
+	// it. No DisabledCapabilities branch is needed: the bit is absent from
+	// go-fuse's default capability allowlist, so "unset" already means off.
+	if cfg.HandleKillPriv {
+		opts.ExtraCapabilities |= fuse.CAP_HANDLE_KILLPRIV_V2
+	}
 	return opts
 }
 
