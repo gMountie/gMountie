@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/suite"
 )
@@ -90,6 +91,41 @@ func (s *RpcConfigSuite) TestInitialWindowZeroAllowed() {
 	s.Require().NoError(err)
 	s.Equal(0, cfg.InitialConnWindowBytes)
 	s.Equal(0, cfg.InitialStreamWindowBytes)
+}
+
+func (s *RpcConfigSuite) TestConnectionsDefault() {
+	cfg, err := NewRpcConfig(nil)
+	s.Require().NoError(err)
+	s.Equal(DefaultRpcConnections, cfg.Connections)
+
+	cfg, err = NewRpcConfig(viper.New())
+	s.Require().NoError(err)
+	s.Equal(DefaultRpcConnections, cfg.Connections, "empty viper sub-tree must default connections")
+}
+
+func (s *RpcConfigSuite) TestConnectionsOverride() {
+	v := viper.New()
+	v.Set("connections", 8)
+	cfg, err := NewRpcConfig(v)
+	s.Require().NoError(err)
+	s.Equal(8, cfg.Connections)
+}
+
+// TestConnectionsValidationRejectsZeroAndTooMany verifies that connections=0
+// and connections=17 fail the validate tags (min=1,max=16).
+// NOTE: NewRpcConfig does not run the validator; validation is done at the
+// Config level via Config.Validate(). We invoke the validator directly here,
+// matching the only validation pattern in this package.
+func (s *RpcConfigSuite) TestConnectionsValidationRejectsZeroAndTooMany() {
+	validate := validator.New()
+	for _, bad := range []int{0, 17} {
+		v := viper.New()
+		v.Set("connections", bad)
+		cfg, err := NewRpcConfig(v)
+		s.Require().NoError(err, "connections=%d: parse must succeed", bad)
+		err = validate.Struct(cfg)
+		s.Require().Error(err, "connections=%d must be rejected by validator", bad)
+	}
 }
 
 func TestRpcConfigSuite(t *testing.T) {

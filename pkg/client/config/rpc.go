@@ -79,6 +79,11 @@ const (
 	// disables retrying (a single attempt — fail fast). Aligned with the server
 	// session grace period so transparent resume holds for the whole window.
 	DefaultRpcRetryWindow = 60 * time.Second
+	// DefaultRpcConnections is the number of gRPC connections per mount. Each
+	// connection is one TCP flow; Read/Write streams round-robin across them so
+	// throughput can exceed a single flow's ceiling on high-BDP links. 1 = the
+	// historical single-connection behavior.
+	DefaultRpcConnections = 4
 )
 
 // Valid values for RpcConfig.Compression.
@@ -151,6 +156,10 @@ type RpcConfig struct {
 	// RetryWindow bounds how long a single FS op retries transient failures
 	// (Unavailable / DeadlineExceeded) before the error surfaces. 0 = fail fast.
 	RetryWindow time.Duration `mapstructure:"retry_window" validate:"gte=0"`
+	// Connections is the number of gRPC connections in the client pool.
+	// Read/Write streams round-robin across them; metadata RPCs and the
+	// session-control streams stay on the primary connection.
+	Connections int `mapstructure:"connections" validate:"min=1,max=16"`
 }
 
 // defaultRpcConfig returns an RpcConfig seeded entirely from the Default*
@@ -176,6 +185,7 @@ func defaultRpcConfig() *RpcConfig {
 		},
 		Compression: DefaultCompression,
 		RetryWindow: DefaultRpcRetryWindow,
+		Connections: DefaultRpcConnections,
 	}
 }
 
@@ -200,6 +210,7 @@ func NewRpcConfig(v *viper.Viper) (*RpcConfig, error) {
 	v.SetDefault("keepalive.permit_without_stream", DefaultKeepalivePermitWithoutStream)
 	v.SetDefault("compression", DefaultCompression)
 	v.SetDefault("retry_window", DefaultRpcRetryWindow)
+	v.SetDefault("connections", DefaultRpcConnections)
 	if err := v.UnmarshalExact(cfg, viper.DecodeHook(mapstructure.StringToTimeDurationHookFunc())); err != nil {
 		return nil, err
 	}
