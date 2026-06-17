@@ -330,6 +330,20 @@ func plusFromEntries(entries []io.DirEntry) []io.DirEntryPlus {
 	return out
 }
 
+const (
+	// prefetchSpanChunks is how many chunks a sequential cache miss over-reads
+	// in ONE inner Read RPC. The server streams the span as a single sustained
+	// stream (which fills the link — see the single-Read-RPC probe); fetching
+	// chunks one per RPC instead stalls ~1 RTT each and defeats pipelining at
+	// WAN. 16 * 1 MiB = 16 MiB per sequential reader, well within the memory
+	// tier budget. The extra chunks are cached for the upcoming sequential reads.
+	prefetchSpanChunks = 16
+	// prefetchSeqThreshold is the consecutive in-order read count before the
+	// over-read kicks in (mirrors the io-layer readahead threshold), so random
+	// reads don't amplify bandwidth.
+	prefetchSeqThreshold = 3
+)
+
 func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, dest []byte) (int, fuse.Status) {
 	ch, ok := fh.(*cachedHandle)
 	if !ok {
@@ -353,6 +367,10 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 		// On notModified / fallback: continue to existing chunk-loop path.
 	}
 	chunkSize := int64(b.cfg.ChunkSizeBytes)
+	// Decide once per FUSE read whether this is a sequential stream: if so, a
+	// miss over-reads a span of chunks in one sustained inner Read RPC instead
+	// of one-chunk-per-RPC (the WAN readahead-defeat fix).
+	prefetch := ch.recordRead(int(off/chunkSize), prefetchSeqThreshold)
 	total := 0
 	for total < len(dest) {
 		fileOff := off + int64(total)
@@ -387,9 +405,17 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 			}
 			continue
 		}
-		// Miss: fetch this chunk from inner. Read full-chunk-aligned.
+		// Miss: fetch from inner. On a sequential stream, over-read a span of
+		// chunks in ONE inner Read RPC (a single sustained server-stream fills
+		// the link; per-chunk RPCs stall ~1 RTT each — the WAN readahead-defeat).
+		// chunkStart is the requested chunk's start, so it's the first chunk of
+		// the span; the extra chunks are cached for the upcoming sequential reads.
 		metrics.CacheMiss("data")
-		buf := make([]byte, chunkSize)
+		spanChunks := 1
+		if prefetch {
+			spanChunks = prefetchSpanChunks
+		}
+		buf := make([]byte, spanChunks*int(chunkSize))
 		n, st := b.inner.Read(ctx, ch.inner, chunkStart, buf)
 		if st != fuse.OK {
 			return total, st
@@ -397,27 +423,39 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 		if n == 0 {
 			return total, fuse.OK
 		}
-		filled := buf[:n]
-		b.data.put(ch.path, chunkIndex, filled)
-		if insideOff >= n {
+		// Cache every chunk the span returned: full chunks plus a final short
+		// chunk (EOF). Copy each into its own buffer so evicting one chunk does
+		// not pin the whole span's backing array. inner.Read only short-reads at
+		// EOF (BackendClient's streaming Recv loop), so a short return ends the
+		// file — the same invariant the single-chunk path relied on.
+		for j := 0; j*int(chunkSize) < n; j++ {
+			cs := j * int(chunkSize)
+			ce := cs + int(chunkSize)
+			if ce > n {
+				ce = n
+			}
+			cbuf := make([]byte, ce-cs)
+			copy(cbuf, buf[cs:ce])
+			b.data.put(ch.path, chunkIndex+j, cbuf)
+		}
+		// Serve the requested chunk — the first in the span, buf[0:served].
+		served := n
+		if served > int(chunkSize) {
+			served = int(chunkSize)
+		}
+		if insideOff >= served {
 			// EOF before our requested offset.
 			return total, fuse.OK
 		}
-		avail := n - insideOff
+		avail := served - insideOff
 		if avail < want {
 			want = avail
 		}
-		copied := copy(dest[total:total+want], filled[insideOff:insideOff+want])
+		copied := copy(dest[total:total+want], buf[insideOff:insideOff+want])
 		total += copied
-		// Short chunk = last chunk of file; otherwise continue to next
-		// chunk. This assumes inner.Read only short-reads at EOF.
-		// Today's BackendClient.Read (streaming Recv loop) holds that
-		// invariant. If a future inner ever short-reads for a different
-		// reason (partial-payload retry assembly, etc.), this branch
-		// would truncate the cached chunk and the user-visible Read —
-		// in that case, loop the inner fetch until full-or-EOF before
-		// caching.
-		if int64(n) < chunkSize {
+		// Short first chunk = file ends here; otherwise continue to the next
+		// chunk (now served from the over-read cache).
+		if served < int(chunkSize) {
 			return total, fuse.OK
 		}
 	}
