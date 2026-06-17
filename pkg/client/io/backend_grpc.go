@@ -49,6 +49,11 @@ type BackendClient struct {
 	// plusListings makes ListDir request per-entry attributes (the
 	// READDIRPLUS win). Set via WithPlusListings; default false.
 	plusListings bool
+	// noReadahead disables per-fd readahead on this backend's handles. Set via
+	// WithoutReadahead; default false. Used when a cache decorator does its own
+	// sequential prefetch — two prefetchers on one connection halve WAN
+	// throughput.
+	noReadahead bool
 }
 
 // BackendOption customizes a BackendClient at construction.
@@ -61,6 +66,25 @@ type BackendOption func(*BackendClient)
 // default is false and the mount factory enables it iff the cache is on.
 func WithPlusListings(enabled bool) BackendOption {
 	return func(b *BackendClient) { b.plusListings = enabled }
+}
+
+// WithoutReadahead disables this backend's per-fd readahead. The cache decorator
+// does its own sequential prefetch (a span over-read on a miss); leaving the
+// io-layer readahead armed underneath it makes TWO prefetchers compete for the
+// single gRPC connection and roughly halves WAN read throughput (measured). The
+// mount factory sets this iff the cache is enabled.
+func WithoutReadahead() BackendOption {
+	return func(b *BackendClient) { b.noReadahead = true }
+}
+
+// perFileConfig returns the client's per-fd tuning, with readahead zeroed when
+// WithoutReadahead was set so newGrpcFileHandle builds no readahead ring.
+func (b *BackendClient) perFileConfig() grpcclient.PerFileConfig {
+	cfg := b.client.PerFileConfig()
+	if b.noReadahead {
+		cfg.ReadaheadChunkBytes = 0
+	}
+	return cfg
 }
 
 // NewBackendClient returns a BackendClient that talks to client on volume.
@@ -662,7 +686,7 @@ func (b *BackendClient) Open(ctx context.Context, path string, flags uint32) (Fi
 	return newGrpcFileHandle(
 		b.client, b.volume, path, res.Fd, flags, caller,
 		b.client.IOTimeout(), b.client.SessionID(), b.client.BootEpoch(),
-		b.client.PerFileConfig(),
+		b.perFileConfig(),
 	), fuse.OK
 }
 
@@ -701,7 +725,7 @@ func (b *BackendClient) Create(ctx context.Context, parent, name string, flags, 
 	h := newGrpcFileHandle(
 		b.client, b.volume, path, res.Fd, flags, caller,
 		b.client.IOTimeout(), b.client.SessionID(), b.client.BootEpoch(),
-		b.client.PerFileConfig(),
+		b.perFileConfig(),
 	)
 	return h, attrFromProto(res.Attributes), fuse.OK
 }
