@@ -101,8 +101,15 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 	// Plus listings (per-entry attrs on ReadDir) only pay off when the cache
 	// decorator below can prime its attr cache from them — without a cache
 	// the extra attrs are wasted bytes, so the knob tracks cache.Enabled.
-	var backend io.FileSystemBackend = io.NewBackendClient(m.client, volume,
-		io.WithPlusListings(m.cache.Enabled))
+	// With the cache on, also disable the io-layer readahead: the cache does its
+	// own sequential prefetch (span over-read), and two prefetchers on one gRPC
+	// connection halve WAN read throughput (measured). Without the cache, the
+	// io-layer readahead stays on — it's the prefetcher in that path.
+	backendOpts := []io.BackendOption{io.WithPlusListings(m.cache.Enabled)}
+	if m.cache.Enabled {
+		backendOpts = append(backendOpts, io.WithoutReadahead())
+	}
+	var backend io.FileSystemBackend = io.NewBackendClient(m.client, volume, backendOpts...)
 	if m.cache.Enabled {
 		root := filepath.Join(m.cache.Path, volume)
 		// Wire the persist GC/accounting observability sink to the client
