@@ -107,6 +107,29 @@ func (s *FUSEConfigSuite) TestDirectIOOverride() {
 	s.True(cfg.DirectIO)
 }
 
+// TestHandleKillPrivDefaultsOn verifies the cap defaults ON (nil and empty
+// viper sub-trees), so every mount gets the per-write-getxattr fix without
+// configuration.
+func (s *FUSEConfigSuite) TestHandleKillPrivDefaultsOn() {
+	cfg, err := NewFUSEConfig(nil)
+	s.Require().NoError(err)
+	s.True(cfg.HandleKillPriv, "handle_kill_priv must default on")
+
+	cfg, err = NewFUSEConfig(viper.New())
+	s.Require().NoError(err)
+	s.True(cfg.HandleKillPriv, "empty viper sub-tree must default handle_kill_priv on")
+}
+
+// TestHandleKillPrivOverride verifies fuse.handle_kill_priv: false round-trips
+// (an explicit opt-out is honored, not clobbered by the default).
+func (s *FUSEConfigSuite) TestHandleKillPrivOverride() {
+	v := viper.New()
+	v.Set("handle_kill_priv", false)
+	cfg, err := NewFUSEConfig(v)
+	s.Require().NoError(err)
+	s.False(cfg.HandleKillPriv)
+}
+
 func TestFUSEConfigSuite(t *testing.T) {
 	suite.Run(t, new(FUSEConfigSuite))
 }
