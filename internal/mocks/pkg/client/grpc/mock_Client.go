@@ -173,6 +173,52 @@ func (_c *MockClient_Connect_Call) RunAndReturn(run func() error) *MockClient_Co
 	return _c
 }
 
+// DataFileClient provides a mock function for the type MockClient
+func (_mock *MockClient) DataFileClient() proto.RpcFileClient {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for DataFileClient")
+	}
+
+	var r0 proto.RpcFileClient
+	if returnFunc, ok := ret.Get(0).(func() proto.RpcFileClient); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(proto.RpcFileClient)
+		}
+	}
+	return r0
+}
+
+// MockClient_DataFileClient_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DataFileClient'
+type MockClient_DataFileClient_Call struct {
+	*mock.Call
+}
+
+// DataFileClient is a helper method to define mock.On call
+func (_e *MockClient_Expecter) DataFileClient() *MockClient_DataFileClient_Call {
+	return &MockClient_DataFileClient_Call{Call: _e.mock.On("DataFileClient")}
+}
+
+func (_c *MockClient_DataFileClient_Call) Run(run func()) *MockClient_DataFileClient_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockClient_DataFileClient_Call) Return(rpcFileClient proto.RpcFileClient) *MockClient_DataFileClient_Call {
+	_c.Call.Return(rpcFileClient)
+	return _c
+}
+
+func (_c *MockClient_DataFileClient_Call) RunAndReturn(run func() proto.RpcFileClient) *MockClient_DataFileClient_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // File provides a mock function for the type MockClient
 func (_mock *MockClient) File() proto.RpcFileClient {
 	ret := _mock.Called()
