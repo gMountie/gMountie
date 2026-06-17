@@ -73,7 +73,7 @@ func (s *ConnPoolFSSuite) TestLargeFileReadWriteAcrossPool() {
 	s.Require().NoError(os.WriteFile(path, want, 0o644))
 	got, err := os.ReadFile(path)
 	s.Require().NoError(err)
-	s.Require().Equal(len(want), len(got))
+	s.Require().Len(got, len(want))
 	s.Require().True(bytes.Equal(want, got), "large-file round-trip mismatch across pool")
 }
 
