@@ -22,9 +22,19 @@ type cachedHandle struct {
 	// Sequential-read detection for prefetch over-read (cachedBackend.Read).
 	// A caching FUSE fs rarely sees the kernel fan reads out concurrently, so a
 	// small mutex over the heuristic counters is cheap and keeps -race clean.
+	// seqMu also guards the in-flight over-read range below.
 	seqMu   sync.Mutex
 	seqLast int // last chunk index read (-1 = none yet)
 	seqRun  int // consecutive in-order reads
+
+	// In-flight over-read dedup: when one read is over-reading a span of chunks,
+	// concurrent reads whose chunk falls in that span WAIT on inflightDone and
+	// serve from cache once it lands, instead of launching a duplicate (and
+	// overlapping) span fetch. [inflightStart,inflightEnd) is the span; nil
+	// inflightDone means no over-read is in flight.
+	inflightStart int
+	inflightEnd   int
+	inflightDone  chan struct{}
 }
 
 // newCachedHandle wraps an inner handle.
@@ -48,6 +58,39 @@ func (h *cachedHandle) recordRead(chunkIndex, threshold int) (prefetch bool) {
 	}
 	h.seqLast = chunkIndex
 	return h.seqRun >= threshold
+}
+
+// waitInflight reports whether chunkIndex is covered by an in-flight over-read;
+// if so it returns that fetch's done-channel to wait on. The caller waits, then
+// re-checks the cache (the span will have landed) instead of duplicating the
+// fetch.
+func (h *cachedHandle) waitInflight(chunkIndex int) (<-chan struct{}, bool) {
+	h.seqMu.Lock()
+	defer h.seqMu.Unlock()
+	if h.inflightDone != nil && chunkIndex >= h.inflightStart && chunkIndex < h.inflightEnd {
+		return h.inflightDone, true
+	}
+	return nil, false
+}
+
+// beginSpanFetch registers [start,start+span) as the in-flight over-read so
+// concurrent reads covered by it wait (waitInflight) rather than duplicating the
+// fetch. It returns a finish func the caller MUST call once the span's chunks
+// are cached (or the fetch failed) to wake the waiters and clear the range.
+func (h *cachedHandle) beginSpanFetch(start, span int) (finish func()) {
+	ch := make(chan struct{})
+	h.seqMu.Lock()
+	h.inflightStart, h.inflightEnd, h.inflightDone = start, start+span, ch
+	h.seqMu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			h.seqMu.Lock()
+			h.inflightStart, h.inflightEnd, h.inflightDone = 0, 0, nil
+			h.seqMu.Unlock()
+			close(ch)
+		})
+	}
 }
 
 // Path returns the path the wrapper was constructed with. This is the

@@ -410,17 +410,36 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 		// the link; per-chunk RPCs stall ~1 RTT each — the WAN readahead-defeat).
 		// chunkStart is the requested chunk's start, so it's the first chunk of
 		// the span; the extra chunks are cached for the upcoming sequential reads.
+		// If a concurrent over-read is already fetching this chunk, wait for it
+		// and retry from cache rather than launching a duplicate, overlapping
+		// span fetch (the bandwidth-amplification the goroutine dump exposed).
+		if doneCh, waiting := ch.waitInflight(chunkIndex); waiting {
+			<-doneCh
+			continue
+		}
 		metrics.CacheMiss("data")
 		spanChunks := 1
 		if prefetch {
 			spanChunks = prefetchSpanChunks
 		}
+		// For an over-read, publish the in-flight span so concurrent reads
+		// covered by it wait (above) instead of duplicating the fetch.
+		var finishSpan func()
+		if spanChunks > 1 {
+			finishSpan = ch.beginSpanFetch(chunkIndex, spanChunks)
+		}
 		buf := make([]byte, spanChunks*int(chunkSize))
 		n, st := b.inner.Read(ctx, ch.inner, chunkStart, buf)
 		if st != fuse.OK {
+			if finishSpan != nil {
+				finishSpan()
+			}
 			return total, st
 		}
 		if n == 0 {
+			if finishSpan != nil {
+				finishSpan()
+			}
 			return total, fuse.OK
 		}
 		// Cache every chunk the span returned: full chunks plus a final short
@@ -437,6 +456,10 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 			cbuf := make([]byte, ce-cs)
 			copy(cbuf, buf[cs:ce])
 			b.data.put(ch.path, chunkIndex+j, cbuf)
+		}
+		// Chunks cached; wake any waiters so they serve from cache.
+		if finishSpan != nil {
+			finishSpan()
 		}
 		// Serve the requested chunk — the first in the span, buf[0:served].
 		served := n
