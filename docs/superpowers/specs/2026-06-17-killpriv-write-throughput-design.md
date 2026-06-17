@@ -104,23 +104,30 @@ allowlist plus `ExtraCapabilities`.)
 
 ### 5. e2e security gate — `test/e2e/fs/` (new test, runs in CI which has /dev/fuse)
 
-For **each** mapping mode `{squash, static, system, passthrough}`: mount a volume
-configured in that mode, create a file, `chmod` it suid (4755), sgid (2755), and
-suid+sgid (6755), perform a write, and assert the privilege bits are **stripped**
-on the **backing file** (server side), not merely as seen through the mount.
+**Scope (decided 2026-06-17):** assert suid/sgid stripping with the cap on, using
+the default **passthrough** mapping + a **non-root** writer. NOT a per-mapping-mode
+matrix — the strip is mapping-mode-independent (kernel issues a `setattr`; the
+server just applies the chmod), and the only environment where the strip is
+observable (non-root) is the one where mapping modes aren't enforced anyway, so a
+4-mode loop would add code without signal. Existing identity tests cover the
+mapping modes; this test covers the killpriv strip property.
+
+The test: mount a passthrough volume, create a file, `chmod` it suid (4755),
+sgid (2755), and suid+sgid (6755), perform a write through the mount, and assert
+the privilege bits are **stripped on the backing file** (server side), not merely
+as seen through the mount.
 
 **The sharp edge (must be honored):** the kernel only strips privilege bits when
-the writing process **lacks `CAP_FSETID`** — i.e. a *non-root* writer. CI test
-processes typically run as **root**, which retains `CAP_FSETID`, so a naive write
-would never trigger stripping and the test would falsely pass. The test MUST
-perform the privileged-bit write as an **unprivileged uid** (e.g. drop fsuid /
-run the write in a child with a non-root identity, or skip with a clear message
-when the test cannot drop privileges). Without this, the test asserts nothing.
+the writing process **lacks `CAP_FSETID`** — i.e. a *non-root* writer. A root
+process retains `CAP_FSETID`, so a write by root would never trigger stripping and
+the assertion would be meaningless. The test MUST therefore **skip with an
+explicit logged reason when `os.Geteuid() == 0`** (root), and run the real
+assertion when non-root (the CI case — GitHub runners and the local VM run the
+test process non-root, where the strip is observable). This is the inverse of the
+identity suites, which skip when non-root.
 
-Follow the env-gating convention: this suite really mounts in CI (CI has FUSE),
-so it should NOT be VM-gated; but the privilege-drop requirement may need a
-capability check that skips cleanly (with an explicit logged reason) where it
-cannot be satisfied.
+This suite really mounts in CI (CI has FUSE), so it is NOT VM-gated; the
+skip-if-root guard is the only gate.
 
 ### 6. Docs
 
@@ -147,7 +154,7 @@ cannot be satisfied.
 ## Testing summary
 
 - Unit: cap-bit wiring + config default/parse.
-- e2e: suid/sgid/suid+sgid stripping on the backing file across all 4 mapping
-  modes, with a non-root writer.
+- e2e: suid/sgid/suid+sgid stripping on the backing file (passthrough mapping,
+  non-root writer; skip-if-root).
 - Manual (already done, recorded above): VM throughput a/b proving +~75% and the
-  security gate.
+  security gate across all four mapping modes.
