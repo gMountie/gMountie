@@ -207,6 +207,64 @@ func (s *CachedBackendTestSuite) TestReadFetchesAndCachesOnMiss() {
 	s.Assert().Equal(dest, dest2)
 }
 
+// fillReturn fills buf with deterministic bytes and reports a full read.
+func fillReturn(_ context.Context, _ io.FileHandle, _ int64, buf []byte) (int, fuse.Status) {
+	for i := range buf {
+		buf[i] = byte(i % 251)
+	}
+	return len(buf), fuse.OK
+}
+
+// TestSequentialReadOverReadsSpan is the WAN readahead-defeat fix: once a read
+// stream is detected sequential (after prefetchSeqThreshold), a miss fetches a
+// whole span of chunks in ONE inner Read RPC, and the upcoming sequential reads
+// are served from cache (no further inner.Read). The .Once() expectations fail
+// if the cache instead issues a per-chunk RPC.
+func (s *CachedBackendTestSuite) TestSequentialReadOverReadsSpan() {
+	h, innerH := s.openCachedHandle("/seq")
+	const cs = 1024
+	// Reads below the threshold: single-chunk fetches.
+	for i := 0; i < prefetchSeqThreshold-1; i++ {
+		s.inner.EXPECT().Read(mock.Anything, innerH, int64(i*cs),
+			mock.MatchedBy(func(b []byte) bool { return len(b) == cs })).
+			RunAndReturn(fillReturn).Once()
+	}
+	// The threshold-hitting read over-reads exactly one span in one RPC.
+	thIdx := prefetchSeqThreshold - 1
+	span := prefetchSpanChunks
+	s.inner.EXPECT().Read(mock.Anything, innerH, int64(thIdx*cs),
+		mock.MatchedBy(func(b []byte) bool { return len(b) == span*cs })).
+		RunAndReturn(fillReturn).Once()
+
+	// Drive a sequential stream over the whole over-read span. Only the calls
+	// expected above may reach inner; the span-covered chunks must hit cache.
+	for i := 0; i < thIdx+span; i++ {
+		dest := make([]byte, cs)
+		n, st := s.b.Read(context.Background(), h, int64(i*cs), dest)
+		s.Require().Equal(fuse.OK, st)
+		s.Require().Equal(cs, n)
+	}
+}
+
+// TestRandomReadDoesNotOverRead guards the gating: non-sequential reads must NOT
+// over-read (else random access amplifies bandwidth W×). Each miss fetches one
+// chunk; MatchedBy(len==cs) fails if a span read is issued.
+func (s *CachedBackendTestSuite) TestRandomReadDoesNotOverRead() {
+	h, innerH := s.openCachedHandle("/rand")
+	const cs = 1024
+	for _, ci := range []int{0, 5, 2, 9} {
+		s.inner.EXPECT().Read(mock.Anything, innerH, int64(ci*cs),
+			mock.MatchedBy(func(b []byte) bool { return len(b) == cs })).
+			RunAndReturn(fillReturn).Once()
+	}
+	for _, ci := range []int{0, 5, 2, 9} {
+		dest := make([]byte, cs)
+		n, st := s.b.Read(context.Background(), h, int64(ci*cs), dest)
+		s.Require().Equal(fuse.OK, st)
+		s.Require().Equal(cs, n)
+	}
+}
+
 func (s *CachedBackendTestSuite) TestReadHandlesEOFMidStream() {
 	// File is shorter than a chunk — inner returns 500 bytes for a 1024-byte
 	// read request. The cached backend should propagate that as a short
