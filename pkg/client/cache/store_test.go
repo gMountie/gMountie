@@ -214,4 +214,53 @@ func (s *AsyncPersistStoreSuite) TestDropOnFullNeverBlocks() {
 	st.Close()
 }
 
+// TestGenCapturedAtEnqueue pins the core of the async-persist stale-read fix:
+// the persist job must carry the path generation seen at ENQUEUE time, so that
+// an invalidation which advances the generation before the worker runs is
+// detectable (the data cache drops/undoes such a job in onPersist). We hold the
+// worker, advance the generation after the put, then release: the job's gen must
+// still be the pre-advance value, not the current one.
+func (s *AsyncPersistStoreSuite) TestGenCapturedAtEnqueue() {
+	var gen atomic.Uint64
+	release := make(chan struct{})
+	gotGen := make(chan uint64, 1)
+	st := newStoreWithPersist(newAccountant(0, 0),
+		func(string) (any, int, bool) { return nil, 0, false }, nil, nil, "data")
+	st.genOf = func(string) uint64 { return gen.Load() }
+	st.onPersist = func(job persistJob) {
+		<-release
+		gotGen <- job.gen
+	}
+	st.startAsyncPersist(8)
+
+	st.put("k", "v", 1) // enqueued while gen == 0
+	gen.Add(1)          // an invalidation advances the generation before the worker runs
+	close(release)
+	st.Close() // drains the in-flight job
+
+	select {
+	case g := <-gotGen:
+		s.Equal(uint64(0), g,
+			"job must carry the generation captured at enqueue (0), not the post-invalidation value (1)")
+	default:
+		s.FailNow("onPersist was never called")
+	}
+}
+
+// TestOnPersistReplacesPutter: when onPersist is set, the worker must route jobs
+// through it (not the plain putter), so the data cache's generation-aware
+// write-through is actually used.
+func (s *AsyncPersistStoreSuite) TestOnPersistReplacesPutter() {
+	var putterCalls, onPersistCalls int32
+	st := newStoreWithPersist(newAccountant(0, 0),
+		func(string) (any, int, bool) { return nil, 0, false },
+		func(string, any, int) { atomic.AddInt32(&putterCalls, 1) }, nil, "data")
+	st.onPersist = func(persistJob) { atomic.AddInt32(&onPersistCalls, 1) }
+	st.startAsyncPersist(8)
+	st.put("k", "v", 1)
+	st.Close()
+	s.Equal(int32(1), atomic.LoadInt32(&onPersistCalls), "onPersist must handle the job")
+	s.Equal(int32(0), atomic.LoadInt32(&putterCalls), "putter must not be called when onPersist is set")
+}
+
 func TestAsyncPersistStoreSuite(t *testing.T) { suite.Run(t, new(AsyncPersistStoreSuite)) }

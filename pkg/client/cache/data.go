@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
 	"go.gmountie.dev/gmountie/pkg/client/metrics"
@@ -146,6 +147,28 @@ func newDataCacheWithChunkPersist(acct *accountant, chunkSizeBytes int, p chunkP
 	// so a deferred or disk-promoted write-through could otherwise resurrect
 	// stale-serving — see the putter's NOTE).
 	var poisoned sync.Map // path -> struct{}
+	// gen tracks each path's invalidation generation. The cleaners below bump it
+	// BEFORE clearing the disk tier; a queued persist carries the generation it
+	// saw at enqueue (persistJob.gen), and the write-through (onPersist) drops or
+	// undoes a write whose generation has since advanced. This closes the
+	// async-persist stale-read race: a deferred persist can no longer land a
+	// chunk on disk after its invalidation already ran.
+	var (
+		genMu sync.Mutex
+		gens  = map[string]*atomic.Uint64{} // path -> generation counter
+	)
+	genCounter := func(path string) *atomic.Uint64 {
+		genMu.Lock()
+		defer genMu.Unlock()
+		c := gens[path]
+		if c == nil {
+			c = new(atomic.Uint64)
+			gens[path] = c
+		}
+		return c
+	}
+	curGen := func(path string) uint64 { return genCounter(path).Load() }
+	bumpGen := func(path string) { genCounter(path).Add(1) }
 	loader := func(key string) (any, int, bool) {
 		path, idx, ok := parseChunkKey(key)
 		if !ok {
@@ -170,12 +193,22 @@ func newDataCacheWithChunkPersist(acct *accountant, chunkSizeBytes int, p chunkP
 		}
 		return data, len(data), true
 	}
-	putter := func(key string, value any, _ int) {
-		path, idx, ok := parseChunkKey(key)
+	// onPersist is the invalidation-aware write-through: the store calls it from
+	// the async worker with the full job (including the generation captured at
+	// enqueue). It drops a job whose path was invalidated since enqueue, and
+	// undoes a write that raced an invalidation, so a deferred persist can never
+	// resurrect a stale chunk on disk.
+	onPersist := func(job persistJob) {
+		path, idx, ok := parseChunkKey(job.key)
 		if !ok {
 			return
 		}
-		data, _ := value.([]byte) // data store only holds []byte
+		// Drop if the path was invalidated after this job was queued: writing now
+		// would re-add a chunk the invalidation already removed from disk.
+		if curGen(path) != job.gen {
+			return
+		}
+		data, _ := job.value.([]byte) // data store only holds []byte
 		hash, dedup, err := p.WriteChunk(data)
 		if err != nil {
 			log.Log.Warn("persist chunk write-through failed; serving from memory only",
@@ -190,23 +223,46 @@ func newDataCacheWithChunkPersist(acct *accountant, chunkSizeBytes int, p chunkP
 				zap.String("path", path), zap.Int("idx", idx), zap.Error(err))
 			return
 		}
-		// NOTE: a successful write-through does NOT clear poison. Persist is
-		// async (store.startAsyncPersist), so a deferred write-through can run
-		// AFTER an invalidation poisoned the path, and could even re-persist
-		// disk-sourced (stale) bytes from a promote — clearing poison here would
-		// resurrect stale-serving. Poison is cleared only by a SUCCESSFUL
-		// invalidation (persistCleaner/persistRangeCleaner below), which is the
-		// only event that definitively removes the stale disk data.
+		// TOCTOU close: an invalidation may have run between the generation check
+		// above and the ref write just now — its disk clean would have executed
+		// before our PutChunkRef, leaving our (now stale) chunk behind. If the
+		// generation moved, undo our write so the disk tier cannot serve it; if
+		// the undo itself fails, poison the path so the loader refuses the disk
+		// tier until a later successful invalidation.
+		//
+		// NOTE: a successful write-through never CLEARS poison — only a
+		// successful invalidation (persistCleaner/persistRangeCleaner) does, the
+		// only event that definitively removes stale disk data.
+		if curGen(path) != job.gen {
+			if err := p.InvalidateChunkRange(path, idx, idx); err != nil {
+				poisoned.Store(path, struct{}{})
+				log.Log.Warn("persist write-vs-invalidation race undo failed; poisoning path",
+					zap.String("path", path), zap.Int("idx", idx), zap.Error(err))
+			}
+		}
 	}
 	// Per-key Remover is a no-op for data: the bulk persistCleaner and
 	// persistRangeCleaner drive index+refcount invalidation efficiently.
-	// The memory tier's per-key remove is still cheap (map delete).
-	c.st = newStoreWithPersist(acct, loader, putter, func(string) {}, "data")
+	// The memory tier's per-key remove is still cheap (map delete). The putter
+	// is nil because data write-through goes through onPersist so it can honour
+	// the per-path generation.
+	c.st = newStoreWithPersist(acct, loader, nil, func(string) {}, "data")
+	c.st.genOf = func(key string) uint64 {
+		path, _, ok := parseChunkKey(key)
+		if !ok {
+			return 0
+		}
+		return curGen(path)
+	}
+	c.st.onPersist = onPersist
 	// Chunk persist does a per-chunk fsync (persist.WriteChunk); run it on a
 	// background worker so the read path never blocks on disk. cachedBackend.Close
 	// flushes this before closing the persist tier.
 	c.st.startAsyncPersist(dataPersistQueueDepth)
 	c.persistCleaner = func(path string) {
+		// Advance the generation BEFORE clearing disk so a persist queued with the
+		// old generation is dropped (or, if mid-flight, undone) by onPersist.
+		bumpGen(path)
 		if err := p.InvalidatePathChunks(path); err != nil {
 			poisoned.Store(path, struct{}{})
 			log.Log.Warn("persist path invalidation failed; poisoning path to avoid serving stale cache",
@@ -216,6 +272,8 @@ func newDataCacheWithChunkPersist(acct *accountant, chunkSizeBytes int, p chunkP
 		poisoned.Delete(path)
 	}
 	c.persistRangeCleaner = func(path string, firstIdx, lastIdx int) {
+		// Advance the generation BEFORE clearing disk (see persistCleaner).
+		bumpGen(path)
 		if err := p.InvalidateChunkRange(path, firstIdx, lastIdx); err != nil {
 			poisoned.Store(path, struct{}{})
 			log.Log.Warn("persist range invalidation failed; poisoning path to avoid serving stale cache",

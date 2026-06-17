@@ -46,14 +46,28 @@ type store struct {
 	asyncStop chan struct{}
 	asyncDone chan struct{}
 	closeOnce sync.Once
+
+	// genOf and onPersist make async write-back invalidation-aware (set by the
+	// data cache; nil for synchronous stores). genOf returns the current
+	// invalidation generation for a key's path, captured into persistJob.gen at
+	// enqueue. onPersist, when set, replaces the plain putter in the worker: it
+	// receives the full job (including gen) so it can drop or undo a write whose
+	// path was invalidated after the job was queued.
+	genOf     func(key string) uint64
+	onPersist func(job persistJob)
 }
 
 // persistJob is one deferred write-through enqueued by put when async
-// persist is enabled.
+// persist is enabled. gen is the path's invalidation generation captured at
+// enqueue time (via store.genOf): the worker compares it against the current
+// generation and drops the job if the path was invalidated since enqueue, so a
+// deferred persist cannot resurrect a chunk on disk after its invalidation
+// already ran (the async-persist stale-read race).
 type persistJob struct {
 	key   string
 	value any
 	size  int
+	gen   uint64
 }
 
 // Loader returns a value loaded from a lower tier (disk persist).
@@ -138,8 +152,14 @@ func (s *store) put(key string, value any, size int) {
 		// — the entry stays in the memory tier, so losing the disk copy is
 		// just a future cache miss, never data loss. asyncCh is never closed
 		// (Close signals via asyncStop), so this send can't panic.
+		job := persistJob{key: key, value: value, size: size}
+		if s.genOf != nil {
+			// Stamp the path's current invalidation generation so the worker can
+			// drop this job if an invalidation lands before it runs.
+			job.gen = s.genOf(key)
+		}
 		select {
-		case s.asyncCh <- persistJob{key: key, value: value, size: size}:
+		case s.asyncCh <- job:
 		default:
 			metrics.CachePersistDropped()
 		}
@@ -155,7 +175,7 @@ func (s *store) put(key string, value any, size int) {
 // tier — a lost disk copy is just a future miss). No-op if the store has no
 // putter or async is already started. Call Close to flush+stop the worker.
 func (s *store) startAsyncPersist(depth int) {
-	if s.putter == nil || s.asyncCh != nil {
+	if (s.putter == nil && s.onPersist == nil) || s.asyncCh != nil {
 		return
 	}
 	if depth < 1 {
@@ -174,18 +194,29 @@ func (s *store) persistWorker() {
 	for {
 		select {
 		case job := <-s.asyncCh:
-			s.putter(job.key, job.value, job.size)
+			s.runPersist(job)
 		case <-s.asyncStop:
 			for {
 				select {
 				case job := <-s.asyncCh:
-					s.putter(job.key, job.value, job.size)
+					s.runPersist(job)
 				default:
 					return
 				}
 			}
 		}
 	}
+}
+
+// runPersist executes one queued persist job. When onPersist is set (the data
+// cache's invalidation-aware write-through), it receives the full job so it can
+// honour persistJob.gen; otherwise the plain putter is called.
+func (s *store) runPersist(job persistJob) {
+	if s.onPersist != nil {
+		s.onPersist(job)
+		return
+	}
+	s.putter(job.key, job.value, job.size)
 }
 
 // Close stops the async persist worker (if started) after flushing buffered
