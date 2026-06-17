@@ -31,6 +31,11 @@ type Client interface {
 	Close() error
 	// File returns the gRPC File client.
 	File() proto.RpcFileClient
+	// DataFileClient returns an RpcFileClient bound to the next connection in
+	// the pool (round-robin). Used only for Read/Write streams so a single
+	// file's concurrent streams spread across connections. With one connection
+	// it returns the primary File() client.
+	DataFileClient() proto.RpcFileClient
 	// Fs returns the gRPC Fs client.
 	Fs() proto.RpcFsClient
 	// Volume returns the gRPC Volume client.
@@ -103,6 +108,14 @@ type PerFileConfig struct {
 type ClientImpl struct {
 	endpoint          string
 	conn              *grpc.ClientConn
+	// conns is the connection pool; conns[0] == conn is the primary (session
+	// handshake, keepalive, Subscribe, metadata RPCs). dataFileClients has one
+	// RpcFileClient per connection; DataFileClient round-robins it for
+	// Read/Write streams. rrCounter drives the round-robin.
+	conns           []*grpc.ClientConn
+	dataFileClients []proto.RpcFileClient
+	rrCounter       atomic.Uint64
+	connections     int
 	dialOptions       []grpc.DialOption
 	extraInterceptors []grpc.UnaryClientInterceptor
 	fs                proto.RpcFsClient
@@ -216,6 +229,17 @@ func WithMetrics(m *metrics.Metrics) ClientOption {
 	}
 }
 
+// WithConnections sets the gRPC connection-pool size (>=1). Values below 1 are
+// clamped to 1. The factory sets this from rpc.connections.
+func WithConnections(n int) ClientOption {
+	return func(c *ClientImpl) {
+		if n < 1 {
+			n = 1
+		}
+		c.connections = n
+	}
+}
+
 // ---------------------- Constructor ----------------------
 
 // NewClient creates a new gRPC ClientImpl
@@ -236,20 +260,32 @@ func NewClient(endpoint string, options ...ClientOption) (Client, error) {
 	for _, opt := range options {
 		opt(&c)
 	}
-	conn, err := grpc.NewClient(
-		endpoint,
-		c.getDialOptions()...,
-	)
-	if err != nil {
-		c.lifeCancel()
-		return nil, err
+	n := c.connections
+	if n < 1 {
+		n = 1
 	}
-	c.conn = conn
-	c.file = proto.NewRpcFileClient(conn)
-	c.fs = proto.NewRpcFsClient(conn)
-	c.volume = proto.NewVolumeServiceClient(conn)
-	c.version = proto.NewVersionServiceClient(conn)
-	c.session = proto.NewSessionServiceClient(conn)
+	conns := make([]*grpc.ClientConn, 0, n)
+	fileClients := make([]proto.RpcFileClient, 0, n)
+	for i := 0; i < n; i++ {
+		conn, err := grpc.NewClient(endpoint, c.getDialOptions()...)
+		if err != nil {
+			for _, cc := range conns {
+				_ = cc.Close()
+			}
+			c.lifeCancel()
+			return nil, err
+		}
+		conns = append(conns, conn)
+		fileClients = append(fileClients, proto.NewRpcFileClient(conn))
+	}
+	c.conns = conns
+	c.conn = conns[0] // primary
+	c.dataFileClients = fileClients
+	c.file = fileClients[0] // primary File() stub
+	c.fs = proto.NewRpcFsClient(conns[0])
+	c.volume = proto.NewVolumeServiceClient(conns[0])
+	c.version = proto.NewVersionServiceClient(conns[0])
+	c.session = proto.NewSessionServiceClient(conns[0])
 	c.handshake = NewSessionHandshake(c.session)
 	// Launch registered background tasks on the client lifecycle context.
 	// Close cancels lifeCtx, so each task returns on teardown.
@@ -286,6 +322,18 @@ func (c *ClientImpl) File() proto.RpcFileClient {
 	return c.file
 }
 
+// DataFileClient returns an RpcFileClient bound to the next pool connection
+// (round-robin). See the Client interface doc. With <=1 connection it returns
+// the primary client (no atomic churn).
+func (c *ClientImpl) DataFileClient() proto.RpcFileClient {
+	n := len(c.dataFileClients)
+	if n <= 1 {
+		return c.file
+	}
+	i := c.rrCounter.Add(1) % uint64(n)
+	return c.dataFileClients[i]
+}
+
 // Fs returns the gRPC Fs client
 func (c *ClientImpl) Fs() proto.RpcFsClient {
 	return c.fs
@@ -305,7 +353,9 @@ func (c *ClientImpl) Version() proto.VersionServiceClient {
 // Returns the handshake error so callers can fail fast instead of discovering
 // the broken state via SessionID() == "".
 func (c *ClientImpl) Connect() error {
-	c.conn.Connect()
+	for _, cc := range c.conns {
+		cc.Connect()
+	}
 	// Bound session establishment: 3×metaTimeout covers TLS negotiation and the
 	// unary SessionService/Create RPC against a slow or half-open server —
 	// without letting gmountie mount hang forever. The Keepalive stream is
@@ -339,7 +389,13 @@ func (c *ClientImpl) Close() error {
 	if c.handshake != nil {
 		_ = c.handshake.Close()
 	}
-	return c.conn.Close()
+	var firstErr error
+	for _, cc := range c.conns {
+		if err := cc.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // SessionID returns the server-assigned session id obtained during Connect.
