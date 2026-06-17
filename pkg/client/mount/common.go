@@ -74,8 +74,12 @@ func createMountOptions(endpoint, volume string, cfg *config.FUSEConfig, maxWrit
 	// there is no loss of privilege-stripping. Kernels without the cap ignore
 	// it. No DisabledCapabilities branch is needed: the bit is absent from
 	// go-fuse's default capability allowlist, so "unset" already means off.
+	//
+	// The cap bit lives in go-fuse's types_linux.go, so the wiring is behind a
+	// build tag (enableKillPrivCap); on the non-Linux CLI builds (macFUSE /
+	// FUSE-T) it is a no-op.
 	if cfg.HandleKillPriv {
-		opts.ExtraCapabilities |= fuse.CAP_HANDLE_KILLPRIV_V2
+		enableKillPrivCap(opts)
 	}
 	return opts
 }
