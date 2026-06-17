@@ -132,6 +132,7 @@ func buildUnconnectedClient(cfg *config.Config, endpoint string, parts renewPart
 		opts = append(opts, WithRetryWindow(cfg.Rpc.RetryWindow))
 		opts = append(opts, WithReadahead(cfg.Rpc.ReadaheadChunkBytes, cfg.Rpc.ReadaheadThreshold, cfg.Rpc.ReadaheadWindow))
 		opts = append(opts, WithWriteCoalesce(cfg.Rpc.WriteCoalesceBytes))
+		opts = append(opts, WithConnections(cfg.Rpc.Connections))
 		// Wire keepalive + message-size caps from RpcConfig. Matching the
 		// server's keepalive params lets the client detect dead connections
 		// within ~Time+Timeout instead of hanging until TCP gives up.
