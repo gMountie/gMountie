@@ -102,6 +102,39 @@ func TestLazyUnmountSuite(t *testing.T) {
 // directly (suite already imports it via the package's other tests).
 var _ = errors.New
 
+// CreateMountOptionsSuite tests capability-bit wiring in createMountOptions.
+type CreateMountOptionsSuite struct{ suite.Suite }
+
+func (s *CreateMountOptionsSuite) baseCfg() *config.FUSEConfig {
+	return &config.FUSEConfig{
+		MaxWriteBytes:  config.DefaultFUSEMaxWriteBytes,
+		MaxBackground:  config.DefaultFUSEMaxBackground,
+		WritebackCache: false,
+		AttrTimeout:    config.DefaultFUSEAttrTimeout,
+		EntryTimeout:   config.DefaultFUSEEntryTimeout,
+	}
+}
+
+func (s *CreateMountOptionsSuite) TestHandleKillPrivOnSetsCap() {
+	cfg := s.baseCfg()
+	cfg.HandleKillPriv = true
+	opts := createMountOptions("127.0.0.1:9449", "vol", cfg, config.DefaultFUSEMaxWriteBytes)
+	s.NotZero(opts.ExtraCapabilities&fuse.CAP_HANDLE_KILLPRIV_V2,
+		"HandleKillPriv=true must set CAP_HANDLE_KILLPRIV_V2 in ExtraCapabilities")
+}
+
+func (s *CreateMountOptionsSuite) TestHandleKillPrivOffLeavesCapUnset() {
+	cfg := s.baseCfg()
+	cfg.HandleKillPriv = false
+	opts := createMountOptions("127.0.0.1:9449", "vol", cfg, config.DefaultFUSEMaxWriteBytes)
+	s.Zero(opts.ExtraCapabilities&fuse.CAP_HANDLE_KILLPRIV_V2,
+		"HandleKillPriv=false must leave CAP_HANDLE_KILLPRIV_V2 unset")
+}
+
+func TestCreateMountOptionsSuite(t *testing.T) {
+	suite.Run(t, new(CreateMountOptionsSuite))
+}
+
 // BuildFSOptionsSuite tests the pure buildFSOptions helper that assembles
 // gofs.Options from a fuse.MountOptions and a FUSEConfig. Testing this
 // function directly avoids needing a real FUSE mount while still verifying
