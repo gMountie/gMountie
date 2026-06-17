@@ -107,6 +107,7 @@ per-attempt deadline and exponential backoff (100 ms → 1 s).
 | readahead\_window       | integer  | 16       | Prefetch chunks kept in flight ahead of the cursor (range 1–64) |
 | initial\_conn\_window\_bytes   | integer  | 16777216 | Pin gRPC HTTP/2 connection flow-control window; `0` (with stream=0) keeps autotuning (range 0–1 GiB) |
 | initial\_stream\_window\_bytes | integer  | 8388608  | Pin gRPC HTTP/2 per-stream flow-control window; set together with the conn window (range 0–1 GiB) |
+| connections             | integer  | 4        | Number of gRPC connections opened per mount (range 1–16). Each is a separate TCP flow; Read/Write streams round-robin across them so throughput can exceed a single flow's ceiling on high-BDP links (1 Gbit WAN, high-RTT). Metadata RPCs and the session keepalive/Subscribe streams use the primary connection. Set to `1` for single-connection behaviour. |
 | write\_coalesce\_bytes  | integer  | 1048576  | Per-fd small-write coalescing threshold (0 disables)        |
 | max\_message\_bytes     | integer  | 16777216 | Cap on inbound/outbound gRPC message size (16 MiB default)  |
 | compression             | string   | none     | gRPC compressor for every RPC on the connection: `none` \| `snappy` |
@@ -147,6 +148,17 @@ nonzero disables autotuning globally and leaves the other dimension at
 gRPC's small default, so set the two together or leave both at 0. Values
 below the 64 KiB HTTP/2 floor are silently ignored by gRPC.
 
+`connections` is validated to the range [1, 16]. The default of 4 opens
+four gRPC connections to the server — each a distinct TCP flow — and
+round-robins Read/Write streams across them. On a high-bandwidth-delay
+link (1 Gbit WAN, inter-datacenter) a single TCP flow is often limited by
+its congestion window, so multiple flows let the client aggregate bandwidth
+from each. Metadata RPCs (Lookup, GetAttr, Readdir, …) and the
+session-lifecycle RPCs (Establish, Resume, keepalive pings, Subscribe)
+always use the primary (first) connection; only data-plane streams are
+distributed. Set `connections: 1` to restore the historical
+single-connection behaviour.
+
 `write_coalesce_bytes` is validated to the range [0, 16777216] (0 to
 16 MiB). 0 disables coalescing entirely so every Write call hits the
 network; the default 1 MiB matches the streaming-frame size and absorbs
@@ -157,9 +169,9 @@ the common "many tiny appends" pattern (logs, build outputs, etc.).
 When sequential reads are detected on an fd (after `readahead_threshold`
 in-order reads), the client keeps up to `readahead_window`
 `readahead_chunk_bytes`-sized chunks in flight ahead of the cursor, each
-its own streaming Read RPC. gRPC multiplexes them over the one
-connection, so a deep window hides the per-fetch round-trip latency and
-keeps the read pipe full. Reads are served from the in-flight chunks
+its own streaming Read RPC. gRPC multiplexes them across the available
+connections (see `connections`), so a deep window hides the per-fetch
+round-trip latency and keeps the read pipe full. Reads are served from the in-flight chunks
 without touching the network: a read of any size is satisfied by copying
 across one or more contiguous ready chunks, and a partially-read chunk
 is retained so the next sequential read continues from its tail. A read
@@ -221,6 +233,7 @@ rpc:
   readahead_threshold: 3
   initial_conn_window_bytes: 16777216    # 16 MiB; 0 (with stream=0) restores autotuning
   initial_stream_window_bytes: 8388608   # 8 MiB; set together with the conn window
+  connections: 4          # TCP flows per mount; raise on high-BDP (WAN) links, set 1 for single-conn
   write_coalesce_bytes: 1048576  # 1 MiB
   max_message_bytes: 33554432  # 32 MiB
   keepalive:
