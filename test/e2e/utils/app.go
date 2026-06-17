@@ -341,6 +341,15 @@ func WithReadahead(chunkBytes, threshold, window int) TestOptions {
 	}
 }
 
+// WithConnections sets the number of gRPC connections in the client pool.
+// The default harness client has a single connection; pass n>1 to exercise
+// the connection pool (e.g. n=4 to match the production default).
+func WithConnections(n int) TestOptions {
+	return func(c *AppTestingContext) {
+		c.clientOptions = append(c.clientOptions, grpcClient.WithConnections(n))
+	}
+}
+
 // WithRandomTestVolume creates random test volume.
 // e2ePassthroughMapping returns the mapping used for e2e volumes: passthrough
 // with no_root_squash, i.e. the server assumes the wire caller's uid/gid
