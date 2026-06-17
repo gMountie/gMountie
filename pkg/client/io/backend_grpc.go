@@ -806,7 +806,7 @@ func (b *BackendClient) readLive(ctx context.Context, h *grpcFileHandle, off int
 			return readResult{}, errFromStatus(st)
 		}
 		snap := h.state.Load()
-		stream, err := h.fileClient.Read(ctx, &proto.ReadRequest{
+		stream, err := h.client.DataFileClient().Read(ctx, &proto.ReadRequest{
 			Volume:    h.volume,
 			Fd:        snap.fd,
 			Offset:    off,
@@ -885,7 +885,7 @@ func (b *BackendClient) doPrefetch(h *grpcFileHandle, off int64) {
 		return // prefetch errors are swallowed; next synchronous Read will refetch
 	}
 	st := h.state.Load()
-	stream, err := h.fileClient.Read(ctx, &proto.ReadRequest{
+	stream, err := h.client.DataFileClient().Read(ctx, &proto.ReadRequest{
 		Volume:    h.volume,
 		Fd:        st.fd,
 		Offset:    off,
@@ -951,7 +951,7 @@ func (b *BackendClient) streamingWrite(h *grpcFileHandle, data []byte, off int64
 				return nil, errFromStatus(st)
 			}
 			snap := h.state.Load()
-			stream, err := h.fileClient.Write(ctx, grpc.WaitForReady(true))
+			stream, err := h.client.DataFileClient().Write(ctx, grpc.WaitForReady(true))
 			if err != nil {
 				return nil, err
 			}
