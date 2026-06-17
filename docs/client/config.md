@@ -107,7 +107,7 @@ per-attempt deadline and exponential backoff (100 ms → 1 s).
 | readahead\_window       | integer  | 16       | Prefetch chunks kept in flight ahead of the cursor (range 1–64) |
 | initial\_conn\_window\_bytes   | integer  | 16777216 | Pin gRPC HTTP/2 connection flow-control window; `0` (with stream=0) keeps autotuning (range 0–1 GiB) |
 | initial\_stream\_window\_bytes | integer  | 8388608  | Pin gRPC HTTP/2 per-stream flow-control window; set together with the conn window (range 0–1 GiB) |
-| connections             | integer  | 4        | Number of gRPC connections opened per mount (range 1–16). Each is a separate TCP flow; Read/Write streams round-robin across them so throughput can exceed a single flow's ceiling on high-BDP links (1 Gbit WAN, high-RTT). Metadata RPCs and the session keepalive/Subscribe streams use the primary connection. Set to `1` for single-connection behaviour. |
+| connections             | integer  | 4        | Number of gRPC connections opened per mount (range 1–16). Each is a separate TCP flow; Read/Write streams spread across them (least-in-flight, sequential streams stay on the primary connection) so throughput can exceed a single flow's ceiling on high-BDP links (1 Gbit WAN, high-RTT). Metadata RPCs and the session keepalive/Subscribe streams use the primary connection. Set to `1` for single-connection behaviour. |
 | write\_coalesce\_bytes  | integer  | 1048576  | Per-fd small-write coalescing threshold (0 disables)        |
 | max\_message\_bytes     | integer  | 16777216 | Cap on inbound/outbound gRPC message size (16 MiB default)  |
 | compression             | string   | none     | gRPC compressor for every RPC on the connection: `none` \| `snappy` |
@@ -150,7 +150,7 @@ below the 64 KiB HTTP/2 floor are silently ignored by gRPC.
 
 `connections` is validated to the range [1, 16]. The default of 4 opens
 four gRPC connections to the server — each a distinct TCP flow — and
-round-robins Read/Write streams across them. On a high-bandwidth-delay
+spreads Read/Write streams across them (least-in-flight; a sequential single-stream workload stays on the primary connection). On a high-bandwidth-delay
 link (1 Gbit WAN, inter-datacenter) a single TCP flow is often limited by
 its congestion window, so multiple flows let the client aggregate bandwidth
 from each. Metadata RPCs (Lookup, GetAttr, Readdir, …) and the

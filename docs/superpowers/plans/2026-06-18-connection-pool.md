@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Open N gRPC connections per mount (sharing one session) and round-robin Read/Write streams across them, so read/write throughput can exceed the single-connection TCP single-flow ceiling on high-BDP links.
+**Goal:** Open N gRPC connections per mount (sharing one session) and spread Read/Write streams across them (load-aware: least-in-flight, ties→primary), so read/write throughput can exceed the single-connection TCP single-flow ceiling on high-BDP links.
 
-**Architecture:** `ClientImpl` holds a pool of N `*grpc.ClientConn` (conn 0 = primary). Metadata RPCs and the session handshake/keepalive/Subscribe stay on the primary; a new `DataFileClient()` round-robins an `RpcFileClient` across all N connections and is used only by the Read/Write stream sites. The server is session-keyed (by `session_id` metadata + principal), so one session works across all connections — no server change.
+**Architecture:** `ClientImpl` holds a pool of N `*grpc.ClientConn` (conn 0 = primary). Metadata RPCs and the session handshake/keepalive/Subscribe stay on the primary; `DataFileClient()` picks the least-in-flight connection (ties→conn 0) and returns `(RpcFileClient, release)` — used only by the Read/Write stream sites. The server is session-keyed (by `session_id` metadata + principal), so one session works across all connections — no server change.
 
 **Tech Stack:** Go, `google.golang.org/grpc`, Viper config, testify suites, mockery (`task gen:mocks`).
 
