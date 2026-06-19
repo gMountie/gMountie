@@ -13,7 +13,7 @@
   </g>
 
   
-  <text x="80" y="86" font-family="&#39;Geist Mono&#39;, &#39;JetBrains Mono&#39;, monospace" font-size="16" letter-spacing="2" fill="#B14C12" font-weight="500" text-transform="uppercase">— gMountie · v0.9.2</text>
+  <text x="80" y="86" font-family="&#39;Geist Mono&#39;, &#39;JetBrains Mono&#39;, monospace" font-size="16" letter-spacing="2" fill="#B14C12" font-weight="500" text-transform="uppercase">— gMountie · network filesystem</text>
 
   
   <g transform="translate(80, 200)">
@@ -35,16 +35,16 @@
   
   <g transform="translate(80, 470)" font-family="&#39;Newsreader&#39;, Georgia, serif">
     <g>
-      <text x="0" y="50" font-size="64" font-weight="320" letter-spacing="-1.8" fill="#15120D"><tspan fill="#D9641C" font-style="italic">12</tspan><tspan font-family="&#39;Geist Mono&#39;, monospace" font-size="20" font-style="normal" fill="#6B6151"> ms</tspan></text>
-      <text x="0" y="78" font-family="&#39;Geist Mono&#39;, monospace" font-size="13" letter-spacing="1.4" fill="#6B6151" font-weight="500">COLD READDIR</text>
+      <text x="0" y="48" font-size="52" font-weight="320" font-style="italic" letter-spacing="-1.5" fill="#D9641C">no VPN</text>
+      <text x="0" y="78" font-family="&#39;Geist Mono&#39;, monospace" font-size="13" letter-spacing="1.4" fill="#6B6151" font-weight="500">OVER THE INTERNET</text>
     </g>
-    <g transform="translate(220, 0)">
-      <text x="0" y="50" font-size="64" font-weight="320" letter-spacing="-1.8" fill="#15120D"><tspan fill="#D9641C" font-style="italic">1.4</tspan><tspan font-family="&#39;Geist Mono&#39;, monospace" font-size="20" font-style="normal" fill="#6B6151"> gb/s</tspan></text>
-      <text x="0" y="78" font-family="&#39;Geist Mono&#39;, monospace" font-size="13" letter-spacing="1.4" fill="#6B6151" font-weight="500">SUSTAINED READ</text>
+    <g transform="translate(330, 0)">
+      <text x="0" y="48" font-size="52" font-weight="320" font-style="italic" letter-spacing="-1.5" fill="#D9641C">mTLS</text>
+      <text x="0" y="78" font-family="&#39;Geist Mono&#39;, monospace" font-size="13" letter-spacing="1.4" fill="#6B6151" font-weight="500">ENCRYPTED TRANSPORT</text>
     </g>
-    <g transform="translate(460, 0)">
-      <text x="0" y="50" font-size="64" font-weight="320" letter-spacing="-1.8" fill="#15120D"><tspan fill="#D9641C" font-style="italic">12</tspan><tspan font-family="&#39;Geist Mono&#39;, monospace" font-size="20" font-style="normal" fill="#6B6151"> kb</tspan></text>
-      <text x="0" y="78" font-family="&#39;Geist Mono&#39;, monospace" font-size="13" letter-spacing="1.4" fill="#6B6151" font-weight="500">SINGLE BINARY</text>
+    <g transform="translate(640, 0)">
+      <text x="0" y="48" font-size="52" font-weight="320" font-style="italic" letter-spacing="-1.5" fill="#D9641C">one binary</text>
+      <text x="0" y="78" font-family="&#39;Geist Mono&#39;, monospace" font-size="13" letter-spacing="1.4" fill="#6B6151" font-weight="500">SERVER + CLIENT</text>
     </g>
   </g>
 
