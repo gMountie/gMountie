@@ -38,7 +38,7 @@ func (h *cgofuseHandle) Unmount(mountPath string) error {
 // Init fires (mount live) or a timeout elapses. Same signature as the go-fuse
 // establishMount so single.go is platform-agnostic.
 func establishMount(mountPath, volume, endpoint string, backend io.FileSystemBackend, rewriter *io.IDRewriter, cfg *config.FUSEConfig, maxWrite int, metaTimeout time.Duration) (mountHandle, error) {
-	opts, providerLabel, err := cgofuseMountSetup(volume, cfg)
+	opts, providerLabel, err := cgofuseMountSetup(volume, cfg, maxWrite)
 	if err != nil {
 		return nil, err
 	}
@@ -76,13 +76,13 @@ func establishMount(mountPath, volume, endpoint string, backend io.FileSystemBac
 // WinFsp later — those macOS options are invalid (libfuse rejects volname), so
 // the portable Linux options are used instead. Keyed on runtime.GOOS because
 // this file builds for both darwin and any platform with -tags cgofuse.
-func cgofuseMountSetup(volume string, cfg *config.FUSEConfig) (opts []string, providerLabel string, err error) {
+func cgofuseMountSetup(volume string, cfg *config.FUSEConfig, maxWrite int) (opts []string, providerLabel string, err error) {
 	if runtime.GOOS == "darwin" {
 		provider, derr := detectProvider(fuseProvider(cfg.Provider), pathExists)
 		if derr != nil {
 			return nil, "", derr
 		}
-		return macOSMountOptions(volume, provider), string(provider), nil
+		return macOSMountOptions(volume, provider, maxWrite), string(provider), nil
 	}
-	return linuxCgofuseOptions(volume), "libfuse", nil
+	return linuxCgofuseOptions(maxWrite), "libfuse", nil
 }
