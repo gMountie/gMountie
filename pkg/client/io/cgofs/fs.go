@@ -214,3 +214,66 @@ func (fs *MountieCgoFS) Truncate(path string, size int64, fh uint64) int {
 	_, st := fs.backend.SetAttr(ctx, clean(path), in)
 	return errc(st)
 }
+
+func (fs *MountieCgoFS) Mkdir(path string, mode uint32) int {
+	ctx, cancel := fs.opCtx()
+	defer cancel()
+	_, st := fs.backend.Mkdir(ctx, clean(path), mode)
+	return errc(st)
+}
+
+func (fs *MountieCgoFS) Rmdir(path string) int {
+	ctx, cancel := fs.opCtx()
+	defer cancel()
+	return errc(fs.backend.Rmdir(ctx, clean(path)))
+}
+
+func (fs *MountieCgoFS) Unlink(path string) int {
+	ctx, cancel := fs.opCtx()
+	defer cancel()
+	return errc(fs.backend.Unlink(ctx, clean(path)))
+}
+
+func (fs *MountieCgoFS) Rename(oldpath string, newpath string) int {
+	ctx, cancel := fs.opCtx()
+	defer cancel()
+	return errc(fs.backend.Rename(ctx, clean(oldpath), clean(newpath)))
+}
+
+func (fs *MountieCgoFS) Symlink(target string, newpath string) int {
+	ctx, cancel := fs.opCtx()
+	defer cancel()
+	_, st := fs.backend.Symlink(ctx, target, clean(newpath))
+	return errc(st)
+}
+
+func (fs *MountieCgoFS) Chmod(path string, mode uint32) int {
+	ctx, cancel := fs.opCtx()
+	defer cancel()
+	in := gio.SetAttrIn{Valid: uint32(fuse.FATTR_MODE), Mode: mode}
+	_, st := fs.backend.SetAttr(ctx, clean(path), in)
+	return errc(st)
+}
+
+func (fs *MountieCgoFS) Chown(path string, uid uint32, gid uint32) int {
+	ctx, cancel := fs.opCtx()
+	defer cancel()
+	suid, sgid := fs.rewriter.Outbound(uid, gid)
+	in := gio.SetAttrIn{Valid: uint32(fuse.FATTR_UID | fuse.FATTR_GID), Uid: suid, Gid: sgid}
+	_, st := fs.backend.SetAttr(ctx, clean(path), in)
+	return errc(st)
+}
+
+func (fs *MountieCgoFS) Utimens(path string, tmsp []cgofuse.Timespec) int {
+	ctx, cancel := fs.opCtx()
+	defer cancel()
+	in := gio.SetAttrIn{Valid: uint32(fuse.FATTR_ATIME | fuse.FATTR_MTIME)}
+	if len(tmsp) >= 2 {
+		at := tmsp[0].Time()
+		mt := tmsp[1].Time()
+		in.Atime = &at
+		in.Mtime = &mt
+	}
+	_, st := fs.backend.SetAttr(ctx, clean(path), in)
+	return errc(st)
+}

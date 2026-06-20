@@ -26,17 +26,17 @@ type fakeBackend struct {
 	readlink   string
 	readlinkSt fuse.Status
 
-	openFH   gio.FileHandle
-	openSt   fuse.Status
-	createFH gio.FileHandle
+	openFH     gio.FileHandle
+	openSt     fuse.Status
+	createFH   gio.FileHandle
 	createAttr *gio.Attr
-	createSt fuse.Status
-	readData []byte
-	readSt   fuse.Status
-	wroteData []byte
-	writeSt  fuse.Status
-	released []string
-	setAttrIn gio.SetAttrIn
+	createSt   fuse.Status
+	readData   []byte
+	readSt     fuse.Status
+	wroteData  []byte
+	writeSt    fuse.Status
+	released   []string
+	setAttrIn  gio.SetAttrIn
 }
 
 func (f *fakeBackend) Stat(ctx context.Context, path string) (*gio.Attr, fuse.Status) {
@@ -52,7 +52,9 @@ func (f *fakeBackend) Lookup(ctx context.Context, parent, name string) (*gio.Att
 func (f *fakeBackend) ListDir(ctx context.Context, path string) ([]gio.DirEntryPlus, fuse.Status) {
 	return f.listEntries, f.listSt
 }
-func (f *fakeBackend) Access(ctx context.Context, path string, mode uint32) fuse.Status { return fuse.OK }
+func (f *fakeBackend) Access(ctx context.Context, path string, mode uint32) fuse.Status {
+	return fuse.OK
+}
 func (f *fakeBackend) StatFs(ctx context.Context, path string) (*gio.StatFs, fuse.Status) {
 	return f.statfs, f.statfsSt
 }
@@ -84,7 +86,7 @@ func (f *fakeBackend) Release(ctx context.Context, fh gio.FileHandle) fuse.Statu
 	f.released = append(f.released, fh.Path())
 	return fuse.OK
 }
-func (f *fakeBackend) Flush(ctx context.Context, fh gio.FileHandle) fuse.Status   { return fuse.OK }
+func (f *fakeBackend) Flush(ctx context.Context, fh gio.FileHandle) fuse.Status { return fuse.OK }
 func (f *fakeBackend) Fsync(ctx context.Context, fh gio.FileHandle, flags int64) fuse.Status {
 	return fuse.OK
 }
