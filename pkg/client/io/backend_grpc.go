@@ -96,6 +96,21 @@ func NewBackendClient(client grpcclient.Client, volume string, opts ...BackendOp
 	return b
 }
 
+// callerCtxKey carries a kernel caller for backends that don't run under a
+// go-fuse context. The Linux go-fuse path populates ctx via fuse.FromContext;
+// the cgofuse/macOS adapter has no such context, so it stamps the caller it
+// reads from fuse.Getcontext() under this key instead.
+type callerCtxKey struct{}
+
+// WithCaller attaches the kernel-reported caller (uid/gid/pid) to ctx for the
+// cgofuse adapter. callerFromCtx reads it when no go-fuse context is present.
+func WithCaller(ctx context.Context, uid, gid, pid uint32) context.Context {
+	return context.WithValue(ctx, callerCtxKey{}, &proto.Caller{
+		Owner: &proto.Owner{Uid: uid, Gid: gid},
+		Pid:   pid,
+	})
+}
+
 // callerFromCtx returns a proto.Caller for the request, pulled from the
 // per-op ctx that go-fuse populates with the kernel-reported caller
 // (uid/gid/pid of the syscalling process). Stamping this correctly is
@@ -113,6 +128,9 @@ func callerFromCtx(ctx context.Context) *proto.Caller {
 			Owner: &proto.Owner{Uid: c.Uid, Gid: c.Gid},
 			Pid:   c.Pid,
 		}
+	}
+	if c, ok := ctx.Value(callerCtxKey{}).(*proto.Caller); ok {
+		return c
 	}
 	return &proto.Caller{Owner: &proto.Owner{}}
 }
