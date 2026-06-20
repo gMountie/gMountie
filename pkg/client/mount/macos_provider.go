@@ -55,3 +55,12 @@ func macOSMountOptions(volume string, provider fuseProvider) []string {
 	}
 	return opts
 }
+
+// linuxCgofuseOptions returns the cgofuse mount options for the Linux libfuse
+// backend (the cgofuse-on-linux benchmark and the future "unify Linux" path).
+// The macOS options (volname/local/noappledouble) are macFUSE-specific and
+// libfuse rejects them (e.g. "unknown option volname"), so the Linux path
+// mounts with libfuse defaults. Named helper so the platform split is explicit.
+func linuxCgofuseOptions(_ string) []string {
+	return nil
+}

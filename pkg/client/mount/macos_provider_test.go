@@ -47,6 +47,13 @@ func (s *MacProviderSuite) TestOptionsIncludeLocalForMacFUSE() {
 	s.Contains(opts, "volname=photos")
 }
 
+func (s *MacProviderSuite) TestLinuxCgofuseOptionsAreEmpty() {
+	// On Linux, cgofuse mounts via libfuse, which rejects the macOS options
+	// (volname/local/noappledouble) — so the Linux path passes none. Regression
+	// guard for the "fuse: unknown option volname" mount failure on linux+cgofuse.
+	s.Empty(linuxCgofuseOptions("photos"))
+}
+
 func (s *MacProviderSuite) TestPathExists() {
 	// A path that cannot exist returns false; the test binary itself exists.
 	s.False(pathExists("/nonexistent/gmountie/probe/path"))
