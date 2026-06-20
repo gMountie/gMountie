@@ -25,6 +25,18 @@ type fakeBackend struct {
 
 	readlink   string
 	readlinkSt fuse.Status
+
+	openFH   gio.FileHandle
+	openSt   fuse.Status
+	createFH gio.FileHandle
+	createAttr *gio.Attr
+	createSt fuse.Status
+	readData []byte
+	readSt   fuse.Status
+	wroteData []byte
+	writeSt  fuse.Status
+	released []string
+	setAttrIn gio.SetAttrIn
 }
 
 func (f *fakeBackend) Stat(ctx context.Context, path string) (*gio.Attr, fuse.Status) {
@@ -55,18 +67,23 @@ func (f *fakeBackend) ListXAttr(ctx context.Context, path string) ([]string, fus
 	return nil, fuse.OK
 }
 func (f *fakeBackend) Open(ctx context.Context, path string, flags uint32) (gio.FileHandle, fuse.Status) {
-	return nil, fuse.OK
+	return f.openFH, f.openSt
 }
 func (f *fakeBackend) Create(ctx context.Context, parent, name string, flags, mode uint32) (gio.FileHandle, *gio.Attr, fuse.Status) {
-	return nil, nil, fuse.OK
+	return f.createFH, f.createAttr, f.createSt
 }
 func (f *fakeBackend) Read(ctx context.Context, fh gio.FileHandle, off int64, dest []byte) (int, fuse.Status) {
-	return 0, fuse.OK
+	n := copy(dest, f.readData)
+	return n, f.readSt
 }
 func (f *fakeBackend) Write(ctx context.Context, fh gio.FileHandle, off int64, data []byte) (uint32, fuse.Status) {
-	return 0, fuse.OK
+	f.wroteData = append([]byte(nil), data...)
+	return uint32(len(data)), f.writeSt
 }
-func (f *fakeBackend) Release(ctx context.Context, fh gio.FileHandle) fuse.Status { return fuse.OK }
+func (f *fakeBackend) Release(ctx context.Context, fh gio.FileHandle) fuse.Status {
+	f.released = append(f.released, fh.Path())
+	return fuse.OK
+}
 func (f *fakeBackend) Flush(ctx context.Context, fh gio.FileHandle) fuse.Status   { return fuse.OK }
 func (f *fakeBackend) Fsync(ctx context.Context, fh gio.FileHandle, flags int64) fuse.Status {
 	return fuse.OK
@@ -104,6 +121,7 @@ func (f *fakeBackend) Symlink(ctx context.Context, target, linkPath string) (*gi
 	return f.statAttr, f.statSt
 }
 func (f *fakeBackend) SetAttr(ctx context.Context, path string, in gio.SetAttrIn) (*gio.Attr, fuse.Status) {
+	f.setAttrIn = in
 	return f.statAttr, f.statSt
 }
 func (f *fakeBackend) Close() error { return nil }
