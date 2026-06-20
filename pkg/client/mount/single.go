@@ -14,8 +14,6 @@ import (
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 
-	gofs "github.com/hanwen/go-fuse/v2/fs"
-	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pkg/errors"
 	"github.com/puzpuzpuz/xsync/v3"
 	"go.uber.org/zap"
@@ -39,7 +37,7 @@ type SingleVolumeMounterImpl struct {
 	cache  config.CacheConfig
 	// rawIDs disables WhoAmI-based UID/GID rewriting when true.
 	rawIDs bool
-	mounts *xsync.MapOf[string, *fuse.Server]
+	mounts *xsync.MapOf[string, mountHandle]
 	// mountPaths tracks the local mountpoint per volume so Unmount
 	// can request a lazy fusermount3 -uz fallback if the regular
 	// unmount keeps failing with EBUSY.
@@ -60,7 +58,7 @@ func NewSingleVolumeMounter(client grpc.Client, fuseCfg *config.FUSEConfig, cach
 		fuse:       fuseCfg,
 		cache:      cacheCfg,
 		rawIDs:     rawIDs,
-		mounts:     xsync.NewMapOf[string, *fuse.Server](),
+		mounts:     xsync.NewMapOf[string, mountHandle](),
 		mountPaths: xsync.NewMapOf[string, string](),
 		persists:   xsync.NewMapOf[string, *persist.Persist](),
 		backends:   xsync.NewMapOf[string, io.FileSystemBackend](),
@@ -143,18 +141,11 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 		}
 	}
 
-	root := io.NewMountieRoot(backend, rewriter, m.fuse.DirectIO)
-	mountOpts := createMountOptions(m.client.GetEndpoint(), volume, m.fuse, maxWrite)
-	fsOpts := buildFSOptions(mountOpts, m.fuse)
-	// gofs.Mount is self-contained: it constructs the raw FS via
-	// NewNodeFS, spawns the Serve goroutine, and blocks on WaitMount
-	// before returning. No explicit go server.Serve()/WaitMount needed.
-	server, err := gofs.Mount(mountPath, root, fsOpts)
-	err = wrapMountError(err)
+	handle, err := establishMount(mountPath, volume, m.client.GetEndpoint(), backend, rewriter, m.fuse, maxWrite, m.client.MetaTimeout())
 	if err != nil {
-		return errors.Wrap(err, "mount fail")
+		return err
 	}
-	m.mounts.Store(volume, server)
+	m.mounts.Store(volume, handle)
 	m.mountPaths.Store(volume, mountPath)
 	return nil
 }
@@ -168,7 +159,7 @@ func (m *SingleVolumeMounterImpl) IsVolumeMounted(volume string) bool {
 // GetMounts returns the mounts
 func (m *SingleVolumeMounterImpl) GetMounts() []string {
 	mounts := make([]string, 0)
-	m.mounts.Range(func(volume string, _ *fuse.Server) bool {
+	m.mounts.Range(func(volume string, _ mountHandle) bool {
 		mounts = append(mounts, volume)
 		return true
 	})
@@ -181,24 +172,24 @@ func (m *SingleVolumeMounterImpl) GetMounts() []string {
 // so a foreground mount can use this to exit on an external unmount rather than
 // blocking on its signal wait forever. No-op if the volume isn't mounted.
 func (m *SingleVolumeMounterImpl) Wait(volume string) {
-	server, ok := m.mounts.Load(volume)
+	handle, ok := m.mounts.Load(volume)
 	if !ok {
 		return
 	}
-	server.Wait()
-	// The server is gone; drop bookkeeping so a later Unmount/Close is a clean
+	handle.Wait()
+	// The handle is gone; drop bookkeeping so a later Unmount/Close is a clean
 	// no-op (and we don't redundantly fusermount an already-detached path).
 	m.releaseVolume(volume)
 }
 
 // Unmount unmounts a volume
 func (m *SingleVolumeMounterImpl) Unmount(volume string) error {
-	server, ok := m.mounts.Load(volume)
+	handle, ok := m.mounts.Load(volume)
 	if !ok {
 		return errors.Errorf("volume %s is not mounted", volume)
 	}
 	mountPath, _ := m.mountPaths.Load(volume)
-	if err := stopServer(server, mountPath); err != nil {
+	if err := handle.Unmount(mountPath); err != nil {
 		return err
 	}
 	m.releaseVolume(volume)
