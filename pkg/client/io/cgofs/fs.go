@@ -6,7 +6,6 @@ import (
 	"context"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	cgofuse "github.com/winfsp/cgofuse/fuse"
@@ -20,26 +19,24 @@ import (
 // handles to io.FileHandle objects.
 type MountieCgoFS struct {
 	cgofuse.FileSystemBase
-	backend     gio.FileSystemBackend
-	rewriter    *gio.IDRewriter
-	handles     *handleTable
-	metaTimeout time.Duration
-	ready       chan struct{}
-	done        chan struct{}
-	readyOnce   sync.Once
-	doneOnce    sync.Once
+	backend   gio.FileSystemBackend
+	rewriter  *gio.IDRewriter
+	handles   *handleTable
+	ready     chan struct{}
+	done      chan struct{}
+	readyOnce sync.Once
+	doneOnce  sync.Once
 }
 
 // New builds an adapter over backend. rw may be nil (raw_ids / no rewrite).
-// metaTimeout bounds metadata ops (mirrors the client MetaTimeout).
-func New(backend gio.FileSystemBackend, rw *gio.IDRewriter, metaTimeout time.Duration) *MountieCgoFS {
+// Per-op deadlines are owned by the gRPC backend (retryOp), not the adapter.
+func New(backend gio.FileSystemBackend, rw *gio.IDRewriter) *MountieCgoFS {
 	return &MountieCgoFS{
-		backend:     backend,
-		rewriter:    rw,
-		handles:     newHandleTable(),
-		metaTimeout: metaTimeout,
-		ready:       make(chan struct{}),
-		done:        make(chan struct{}),
+		backend:  backend,
+		rewriter: rw,
+		handles:  newHandleTable(),
+		ready:    make(chan struct{}),
+		done:     make(chan struct{}),
 	}
 }
 
@@ -48,12 +45,19 @@ func New(backend gio.FileSystemBackend, rw *gio.IDRewriter, metaTimeout time.Dur
 // root "/" becomes "".
 func clean(p string) string { return strings.TrimPrefix(p, "/") }
 
+// noopCancel is returned by opCtx, which no longer builds a cancelable context.
+var noopCancel = func() {}
+
 // opCtx builds a per-op context carrying the kernel caller (uid/gid/pid from
-// cgofuse) so the gRPC backend stamps proto.Caller correctly, with a timeout.
+// cgofuse) so the gRPC backend stamps proto.Caller correctly. It deliberately
+// adds NO deadline: the backend's retryOp strips the incoming deadline
+// (context.WithoutCancel) and applies its own per-attempt timeout, so a
+// WithTimeout here only allocated a timer + timerCtx that were immediately
+// discarded — pure per-op overhead on the hot path. The go-fuse adapter
+// likewise passes no app-level deadline; the backend owns op timeouts.
 func (fs *MountieCgoFS) opCtx() (context.Context, context.CancelFunc) {
 	uid, gid, pid := cgofuse.Getcontext()
-	ctx := gio.WithCaller(context.Background(), uid, gid, uint32(pid))
-	return context.WithTimeout(ctx, fs.metaTimeout)
+	return gio.WithCaller(context.Background(), uid, gid, uint32(pid)), noopCancel
 }
 
 func (fs *MountieCgoFS) Getattr(path string, stat *cgofuse.Stat_t, fh uint64) int {

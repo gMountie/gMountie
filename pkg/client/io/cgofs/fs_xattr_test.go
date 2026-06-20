@@ -4,7 +4,6 @@ package cgofs
 
 import (
 	"testing"
-	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/suite"
@@ -20,7 +19,7 @@ func TestXattrSuite(t *testing.T) { suite.Run(t, new(XattrSuite)) }
 
 func (s *XattrSuite) SetupTest() {
 	s.be = &fakeBackend{}
-	s.fs = New(s.be, nil, time.Second)
+	s.fs = New(s.be, nil)
 }
 
 func (s *XattrSuite) TestGetxattr() {
