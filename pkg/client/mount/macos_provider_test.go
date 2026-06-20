@@ -13,25 +13,25 @@ func TestMacProviderSuite(t *testing.T) { suite.Run(t, new(MacProviderSuite)) }
 
 func (s *MacProviderSuite) TestAutoPrefersMacFUSEWhenBothPresent() {
 	p, err := detectProvider(providerAuto, func(string) bool { return true })
-	s.NoError(err)
+	s.Require().NoError(err)
 	s.Equal(providerMacFUSE, p)
 }
 
 func (s *MacProviderSuite) TestAutoFallsBackToFuseT() {
 	exists := func(path string) bool { return path == fuseTLibPath }
 	p, err := detectProvider(providerAuto, exists)
-	s.NoError(err)
+	s.Require().NoError(err)
 	s.Equal(providerFuseT, p)
 }
 
 func (s *MacProviderSuite) TestAutoErrorsWhenNeitherPresent() {
 	_, err := detectProvider(providerAuto, func(string) bool { return false })
-	s.Error(err)
+	s.Require().Error(err)
 }
 
 func (s *MacProviderSuite) TestExplicitOverrideHonored() {
 	p, err := detectProvider(providerFuseT, func(string) bool { return false })
-	s.NoError(err)
+	s.Require().NoError(err)
 	s.Equal(providerFuseT, p)
 }
 
