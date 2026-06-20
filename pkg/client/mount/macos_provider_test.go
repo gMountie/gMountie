@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -44,4 +45,12 @@ func (s *MacProviderSuite) TestOptionsIncludeLocalForMacFUSE() {
 	opts := macOSMountOptions("photos", providerMacFUSE)
 	s.Contains(opts, "local")
 	s.Contains(opts, "volname=photos")
+}
+
+func (s *MacProviderSuite) TestPathExists() {
+	// A path that cannot exist returns false; the test binary itself exists.
+	s.False(pathExists("/nonexistent/gmountie/probe/path"))
+	exe, err := os.Executable()
+	s.Require().NoError(err)
+	s.True(pathExists(exe))
 }
