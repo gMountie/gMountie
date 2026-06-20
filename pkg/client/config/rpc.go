@@ -8,10 +8,12 @@ import (
 )
 
 const (
-	// DefaultRpcTimeoutMeta is the default per-RPC timeout for metadata
-	// operations (Lookup, GetAttr, Readdir, etc.). Small ops over the network
-	// should be cheap.
-	DefaultRpcTimeoutMeta = 5 * time.Second
+	// DefaultRpcTimeoutMeta is the default per-RPC timeout for steady-state
+	// metadata operations (Lookup, GetAttr, Readdir, etc.). Small ops over the
+	// network should be cheap, but 5s proved too tight on slower internet links,
+	// so the default is 10s. The one-time pre-session connect/Resolve has its own
+	// larger floor (grpc.resolveConnectFloor) and is not bounded by this.
+	DefaultRpcTimeoutMeta = 10 * time.Second
 	// DefaultRpcTimeoutIO is the default per-RPC timeout for data operations
 	// (Read, Write). Tuned for moderate-sized payloads over an internet link.
 	DefaultRpcTimeoutIO = 30 * time.Second

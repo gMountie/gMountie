@@ -295,9 +295,15 @@ func ListVolumes(cfg *config.Config) ([]string, error) {
 	return names, nil
 }
 
-// resolveTimeout bounds the pre-session Resolve RPC when the config carries no
-// explicit meta timeout. A referral lookup is one cheap round-trip.
-const resolveTimeout = 5 * time.Second
+// resolveConnectFloor is the minimum budget for the one-time pre-session
+// connect + Resolve (and the pre-session VolumeList). Unlike a steady-state
+// metadata op, this leg pays the full cold-start cost — TCP + a fresh mTLS
+// handshake to the mount endpoint — which over a slow/high-latency internet link
+// routinely needs more than the per-op timeout_meta (5–10s was observed to be
+// too little). So the lookup gets a generous floor independent of timeout_meta:
+// a stuck routine GetAttr shouldn't wait this long, but a one-time mount-setup
+// dial can. An explicitly larger timeout_meta still wins (see resolveMetaTimeout).
+const resolveConnectFloor = 30 * time.Second
 
 // annotateMetaErr enriches a failed pre-session resolver RPC (Resolve or
 // VolumeList). A DeadlineExceeded here is almost never a slow server — it means
@@ -432,13 +438,16 @@ func NewClientForVolume(cfg *config.Config, volume string) (Client, string, erro
 	return data, volume, nil
 }
 
-// resolveMetaTimeout picks the per-RPC timeout for the Resolve lookup: the
-// configured meta timeout when present, else resolveTimeout.
+// resolveMetaTimeout picks the timeout for the pre-session connect/Resolve
+// lookup: at least resolveConnectFloor, but a larger configured timeout_meta
+// wins (a user who widened it for an extreme link gets that). The floor means a
+// small per-op timeout_meta never starves the one-time cold mTLS dial.
 func resolveMetaTimeout(cfg *config.Config) time.Duration {
-	if cfg.Rpc != nil && cfg.Rpc.TimeoutMeta > 0 {
-		return cfg.Rpc.TimeoutMeta
+	d := resolveConnectFloor
+	if cfg.Rpc != nil && cfg.Rpc.TimeoutMeta > d {
+		d = cfg.Rpc.TimeoutMeta
 	}
-	return resolveTimeout
+	return d
 }
 
 // createEndpoint creates the endpoint from the client config
