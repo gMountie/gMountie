@@ -21,6 +21,7 @@ func fillStat(dst *cgofuse.Stat_t, a *gio.Attr, rw *gio.IDRewriter) {
 	dst.Atim = cgofuse.Timespec{Sec: int64(a.Atime), Nsec: int64(a.Atimensec)}
 	dst.Mtim = cgofuse.Timespec{Sec: int64(a.Mtime), Nsec: int64(a.Mtimensec)}
 	dst.Ctim = cgofuse.Timespec{Sec: int64(a.Ctime), Nsec: int64(a.Ctimensec)}
+	// rw.Inbound is nil-receiver-safe (nil rewriter = identity); no guard needed, mirroring node.go setAttrFromBackend.
 	dst.Uid, dst.Gid = rw.Inbound(a.Uid, a.Gid)
 }
 
