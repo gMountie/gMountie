@@ -12,6 +12,10 @@
 #   EXPECT_BENCHER_VERSION  optional pinned versions; mismatch fails the run
 #   BENCHER      "1" to run bencher upload    (default unset = skip)
 #   BENCHER_PROJECT / BENCHER_TESTBED / BENCHER_BRANCH / GIT_HASH
+#   FUSE_BINDING gofuse|cgofuse  select the FUSE adapter for go test
+#                (default: gofuse — pure Go, CGO_ENABLED=0)
+#                cgofuse requires libfuse-dev; sets CGO_ENABLED=1 -tags cgofuse.
+#                See docs/design/benchmarks/cgofuse-vs-gofuse.md.
 #
 # Requires: go, fio, iperf3, ping, tc, ss, and a built perfbmf at $PERFBMF
 # (default: built into $WORKDIR).
@@ -32,6 +36,15 @@ export TMPDIR="$WORKDIR/data"
 export SUBSTRATE_DIR="${SUBSTRATE_DIR:-$TMPDIR}"
 IFACE="${IFACE:-lo}"
 PERFBMF="${PERFBMF:-$WORKDIR/perfbmf}"
+# FUSE_BINDING selects the FUSE adapter compiled into the go test binary.
+# Default is gofuse (pure Go, no cgo). Set to "cgofuse" to compile with
+# CGO_ENABLED=1 and -tags cgofuse for the comparison run.
+FUSE_BINDING="${FUSE_BINDING:-gofuse}"
+case "$FUSE_BINDING" in
+  gofuse)  _CGO_ENABLED=0; _TAGS="";;
+  cgofuse) _CGO_ENABLED=1; _TAGS="-tags cgofuse";;
+  *) echo "FUSE_BINDING must be gofuse or cgofuse (got '$FUSE_BINDING')" >&2; exit 1;;
+esac
 
 mkdir -p "$WORKDIR" "$TMPDIR" "$SUBSTRATE_DIR"
 
@@ -96,8 +109,9 @@ run_net_probe() { # $1=profile $2=iperf seconds
 
 run_bench() { # $1=profile
   local p="$1"
-  GMOUNTIE_BENCH_TCP=1 go test -run=^$ -bench=. -benchmem \
-    -count="$COUNT" -benchtime="$BENCHTIME" ./test/e2e/perf/ \
+  # CGO_ENABLED and build tags come from FUSE_BINDING (gofuse default, cgofuse opt-in).
+  GMOUNTIE_BENCH_TCP=1 CGO_ENABLED="$_CGO_ENABLED" go test -run=^$ -bench=. -benchmem \
+    -count="$COUNT" -benchtime="$BENCHTIME" ${_TAGS} ./test/e2e/perf/ \
     | tee "$WORKDIR/bench-$p.txt"
 }
 
