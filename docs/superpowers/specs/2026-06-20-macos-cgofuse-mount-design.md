@@ -153,6 +153,15 @@ unaffected and keeps server-forwarded locking. This is consistent with FUSE-T's 
 best-effort anyway; revisit only if a real workload needs cross-client server-side locking on
 macOS. (Verified against winfsp/cgofuse `fuse/fsop.go`, 2026-06-20.)
 
+### Utimens UTIME_OMIT / UTIME_NOW parity gap
+
+The cgofuse adapter's `Utimens` sets both ATIME and MTIME whenever timestamps are provided and
+does not interpret the `UTIME_OMIT`/`UTIME_NOW` sentinels the way the Linux go-fuse `Setattr`
+does (which sets each half only when the kernel's per-field "ok" bit is set). Consequence: a
+macOS `touch -a` (atime-only update) may also rewrite mtime to the current time. This is a
+known macOS-path parity gap, low-frequency in practice, and tracked alongside the locking
+limitation above; revisit if it bites real workflows.
+
 ### Honest FUSE-T caveats (documented, not blockers)
 
 NFSv4-backed: some operations (certain xattrs, fine-grained timestamps, locking edge cases)
