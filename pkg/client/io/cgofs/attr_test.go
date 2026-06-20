@@ -26,9 +26,13 @@ func (s *AttrSuite) TestFillStatCopiesFieldsAndTimes() {
 	s.Equal(int64(1024), st.Size)
 	s.Equal(uint32(0o100644), st.Mode)
 	s.Equal(uint32(1000), st.Uid)
+	s.Equal(uint32(1000), st.Gid)
 	s.Equal(int64(100), st.Atim.Sec)
 	s.Equal(int64(5), st.Atim.Nsec)
 	s.Equal(int64(200), st.Mtim.Sec)
+	s.Equal(int64(6), st.Mtim.Nsec)
+	s.Equal(int64(300), st.Ctim.Sec)
+	s.Equal(int64(7), st.Ctim.Nsec)
 }
 
 func (s *AttrSuite) TestFillStatAppliesRewriter() {
