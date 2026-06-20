@@ -99,7 +99,7 @@ per-attempt deadline and exponential backoff (100 ms → 1 s).
 
 | Option                  | Type     | Default  | Description                                                 |
 |-------------------------|----------|----------|-------------------------------------------------------------|
-| timeout\_meta           | duration | 5s       | Deadline for a single metadata-op attempt (Lookup, GetAttr, Readdir, …) |
+| timeout\_meta           | duration | 10s      | Deadline for a single metadata-op attempt (Lookup, GetAttr, Readdir, …). The one-time pre-session connect/resolve uses at least 30s regardless, so a cold mTLS dial on a slow link isn't bounded by this. |
 | timeout\_io             | duration | 30s      | Deadline for a single data-op attempt (Read, Write, …)      |
 | retry\_window           | duration | 60s      | Wall-clock budget for retrying one FS op through transient failures. `0` = fail-fast (single attempt, no retry). Set high for hard-mount-style behaviour. |
 | readahead\_chunk\_bytes | integer  | 1048576  | Size of a single readahead fetch / prefetch chunk (0 disables readahead) |
@@ -226,7 +226,7 @@ Example:
 
 ```yaml
 rpc:
-  timeout_meta: 5s
+  timeout_meta: 10s
   timeout_io: 30s
   retry_window: 60s       # 0 = fail-fast (single attempt)
   readahead_chunk_bytes: 131072  # 128 KiB

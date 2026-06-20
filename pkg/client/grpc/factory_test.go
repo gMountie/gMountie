@@ -359,6 +359,26 @@ func (s *FactoryTestSuite) TestKeepalive_DetectsDeadConnectionWithinTimeoutBudge
 	s.LessOrEqualf(elapsed, maxBudget, "dead-conn detection took %s, want <= %s", elapsed, maxBudget)
 }
 
+// TestResolveMetaTimeout_FloorAndOverride proves the pre-session connect/resolve
+// budget never drops below resolveConnectFloor (a cold mTLS dial over a slow link
+// needs more than the per-op metadata timeout), yet an explicitly larger
+// timeout_meta still wins.
+func (s *FactoryTestSuite) TestResolveMetaTimeout_FloorAndOverride() {
+	// nil rpc: floor.
+	s.Equal(resolveConnectFloor, resolveMetaTimeout(&config.Config{}))
+	// default-sized per-op meta (below the floor): floor wins so the cold dial
+	// isn't starved.
+	s.Equal(resolveConnectFloor, resolveMetaTimeout(&config.Config{
+		Rpc: &config.RpcConfig{TimeoutMeta: config.DefaultRpcTimeoutMeta},
+	}))
+	// zero is treated as unset: floor.
+	s.Equal(resolveConnectFloor, resolveMetaTimeout(&config.Config{Rpc: &config.RpcConfig{}}))
+	// an explicit larger value wins (user widened it for an even slower link).
+	s.Equal(45*time.Second, resolveMetaTimeout(&config.Config{
+		Rpc: &config.RpcConfig{TimeoutMeta: 45 * time.Second},
+	}))
+}
+
 func TestFactoryTestSuite(t *testing.T) {
 	suite.Run(t, new(FactoryTestSuite))
 }
