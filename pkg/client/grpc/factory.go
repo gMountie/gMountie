@@ -16,8 +16,10 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 )
 
 // newRefresherFn builds the certificate refresher; indirected through a
@@ -276,7 +278,8 @@ func ListVolumes(cfg *config.Config) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := newUnconnectedClientFn(cfg, createEndpoint(cfg.Server), parts, true)
+	endpoint := createEndpoint(cfg.Server)
+	client, err := newUnconnectedClientFn(cfg, endpoint, parts, true)
 	if err != nil {
 		return nil, err
 	}
@@ -285,12 +288,44 @@ func ListVolumes(cfg *config.Config) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), resolveMetaTimeout(cfg))
 	defer cancel()
 
-	return listVolumes(ctx, client)
+	names, err := listVolumes(ctx, client)
+	if err != nil {
+		return nil, annotateMetaErr(endpoint, resolveMetaTimeout(cfg), parts.enabled(), err)
+	}
+	return names, nil
 }
 
 // resolveTimeout bounds the pre-session Resolve RPC when the config carries no
 // explicit meta timeout. A referral lookup is one cheap round-trip.
 const resolveTimeout = 5 * time.Second
+
+// annotateMetaErr enriches a failed pre-session resolver RPC (Resolve or
+// VolumeList). A DeadlineExceeded here is almost never a slow server — it means
+// the gRPC connection to the mount endpoint never came up: the bytes are dropped
+// before the server by a firewall, proxy, or VPN (a black hole, not a refusal).
+// Naming the endpoint and the likely cause turns an opaque "context deadline
+// exceeded" into something the user can act on. Non-timeout errors (auth denied,
+// NotFound, …) carry their own meaning and pass through unchanged.
+//
+// exchanged reports whether a certificate exchange ran first (token mode). When
+// it did, it ruled out an auth/credential problem AND proves a different host
+// was reachable, so the diagnosis is sharper; with a static cert we only state
+// the observable fact and stay honest.
+func annotateMetaErr(endpoint string, timeout time.Duration, exchanged bool, err error) error {
+	if status.Code(err) != codes.DeadlineExceeded {
+		return err
+	}
+	detail := "the mount endpoint did not respond"
+	if exchanged {
+		detail = "the credential exchange succeeded, so the mount endpoint is not responding"
+	}
+	return errors.Wrapf(err,
+		"could not reach the mount endpoint %q within %s: %s — check that "+
+			"outbound TCP to it is not blocked by a firewall, proxy "+
+			"(HTTP(S)_PROXY), or VPN, or raise rpc.timeout_meta for a "+
+			"high-latency link",
+		endpoint, timeout, detail)
+}
 
 // newUnconnectedClientFn is the un-connected client builder, indirected through
 // a package var so referral orchestration tests can stub the dial. It carries
@@ -323,7 +358,8 @@ func NewClientForVolume(cfg *config.Config, volume string) (Client, string, erro
 	if err != nil {
 		return nil, "", err
 	}
-	resolver, err := newUnconnectedClientFn(cfg, createEndpoint(cfg.Server), parts, false)
+	endpoint := createEndpoint(cfg.Server)
+	resolver, err := newUnconnectedClientFn(cfg, endpoint, parts, false)
 	if err != nil {
 		return nil, "", err
 	}
@@ -339,7 +375,7 @@ func NewClientForVolume(cfg *config.Config, volume string) (Client, string, erro
 		names, err := listVolumes(ctx, resolver)
 		if err != nil {
 			_ = resolver.Close()
-			return nil, "", errors.Wrap(err, "list volumes for this credential")
+			return nil, "", errors.Wrap(annotateMetaErr(endpoint, resolveMetaTimeout(cfg), parts.enabled(), err), "list volumes for this credential")
 		}
 		switch len(names) {
 		case 1:
@@ -356,7 +392,7 @@ func NewClientForVolume(cfg *config.Config, volume string) (Client, string, erro
 	location, err := resolveLocation(ctx, resolver, volume)
 	if err != nil {
 		_ = resolver.Close()
-		return nil, "", errors.Wrap(err, "resolve volume location")
+		return nil, "", errors.Wrap(annotateMetaErr(endpoint, resolveMetaTimeout(cfg), parts.enabled(), err), "resolve volume location")
 	}
 
 	if location == "" {
