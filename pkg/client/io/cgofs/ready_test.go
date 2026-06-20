@@ -14,7 +14,7 @@ type ReadySuite struct{ suite.Suite }
 func TestReadySuite(t *testing.T) { suite.Run(t, new(ReadySuite)) }
 
 func (s *ReadySuite) TestInitClosesReady() {
-	fs := New(&fakeBackend{}, nil, time.Second)
+	fs := New(&fakeBackend{}, nil)
 	select {
 	case <-fs.Ready():
 		s.Fail("ready closed before Init")
@@ -29,7 +29,7 @@ func (s *ReadySuite) TestInitClosesReady() {
 }
 
 func (s *ReadySuite) TestDestroyClosesDone() {
-	fs := New(&fakeBackend{}, nil, time.Second)
+	fs := New(&fakeBackend{}, nil)
 	fs.Destroy()
 	select {
 	case <-fs.Done():

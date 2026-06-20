@@ -4,7 +4,6 @@ package cgofs
 
 import (
 	"testing"
-	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/suite"
@@ -24,7 +23,7 @@ func (s *MutSuite) SetupTest() {
 	s.be = &fakeBackend{statAttr: &gio.Attr{}, statSt: fuse.OK}
 	// rewriter: local uid 501 -> server uid 1000
 	rw := gio.NewIDRewriter(&gio.Identity{Uid: 1000, Gid: 1000}, 501, 20)
-	s.fs = New(s.be, rw, time.Second)
+	s.fs = New(s.be, rw)
 }
 
 func (s *MutSuite) TestChmodSetsModeBit() {

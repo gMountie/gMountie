@@ -42,7 +42,7 @@ func establishMount(mountPath, volume, endpoint string, backend io.FileSystemBac
 	if err != nil {
 		return nil, err
 	}
-	adapter := cgofs.New(backend, rewriter, metaTimeout)
+	adapter := cgofs.New(backend, rewriter)
 	host := cgofuse.NewFileSystemHost(adapter)
 
 	go func() {

@@ -4,7 +4,6 @@ package cgofs
 
 import (
 	"testing"
-	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/suite"
@@ -22,7 +21,7 @@ func TestMetaSuite(t *testing.T) { suite.Run(t, new(MetaSuite)) }
 
 func (s *MetaSuite) SetupTest() {
 	s.be = &fakeBackend{}
-	s.fs = New(s.be, nil, time.Second)
+	s.fs = New(s.be, nil)
 }
 
 func (s *MetaSuite) TestGetattrOK() {
