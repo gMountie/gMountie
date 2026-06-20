@@ -106,3 +106,10 @@ func (fs *MountieCgoFS) Statfs(path string, stat *cgofuse.Statfs_t) int {
 	fillStatfs(stat, s)
 	return 0
 }
+
+// Opendir is a no-op success: directory reads go through Readdir(path,...)
+// directly; we keep no per-dir handle.
+func (fs *MountieCgoFS) Opendir(path string) (int, uint64) { return 0, 0 }
+
+// Releasedir is a no-op success (no per-dir handle to release).
+func (fs *MountieCgoFS) Releasedir(path string, fh uint64) int { return 0 }

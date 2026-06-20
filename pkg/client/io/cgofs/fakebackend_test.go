@@ -25,8 +25,6 @@ type fakeBackend struct {
 
 	readlink   string
 	readlinkSt fuse.Status
-
-	lastCallerUID uint32
 }
 
 func (f *fakeBackend) Stat(ctx context.Context, path string) (*gio.Attr, fuse.Status) {
