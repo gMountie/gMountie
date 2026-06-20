@@ -186,6 +186,62 @@ jobs:
             exit 1
           }
 
+  build-nocgo:
+    # Guard the no-cgo Linux build invariant: the cgofuse adapter files are
+    # gated //go:build darwin || cgofuse so they must never leak into the
+    # default CGO_ENABLED=0 build. Fails immediately if a new file is missing
+    # the build tag.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+          cache-dependency-path: 'go.sum'
+      - name: Verify no-cgo Linux build
+        run: CGO_ENABLED=0 go build ./...
+
+  cgofs-conformance:
+    # Build and run the cgofuse adapter suites on Linux with libfuse-dev.
+    # The suites call adapter methods directly — they do not mount — so only
+    # the FUSE2 headers are needed (no FUSE device, no kext).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+          cache-dependency-path: 'go.sum'
+      - name: Install libfuse (FUSE2 headers for cgofuse)
+        run: sudo apt-get update && sudo apt-get install -y libfuse-dev
+      - name: Run cgofs adapter suites (no mount)
+        run: CGO_ENABLED=1 go test -tags cgofuse ./pkg/client/io/cgofs/... -v
+
+  macos-build:
+    # Build the darwin client with cgo on a real macOS runner. The cgofuse
+    # adapter is selected by the darwin build tag (establish_cgofuse.go is
+    # //go:build darwin || cgofuse), so no explicit tag is needed — cmd/...
+    # pulls it in automatically on darwin. The macFUSE kext cannot load in
+    # the CI sandbox (SIP), but headers are present after the brew install,
+    # which is sufficient to prove the build compiles end-to-end.
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+          cache-dependency-path: 'go.sum'
+      - name: Install macFUSE
+        run: brew install --cask macfuse
+      - name: Build darwin client (cgo)
+        run: CGO_ENABLED=1 go build ./cmd/...
+
   build-darwin:
     # Cross-compile regression guard for the macOS client. cmd/ compiles on
     # darwin because cmd/commands/serve.go is //go:build linux — the server
