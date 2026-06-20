@@ -37,6 +37,11 @@ type fakeBackend struct {
 	writeSt    fuse.Status
 	released   []string
 	setAttrIn  gio.SetAttrIn
+
+	xattrData   []byte
+	xattrGetSt  fuse.Status
+	xattrNames  []string
+	xattrListSt fuse.Status
 }
 
 func (f *fakeBackend) Stat(ctx context.Context, path string) (*gio.Attr, fuse.Status) {
@@ -59,14 +64,14 @@ func (f *fakeBackend) StatFs(ctx context.Context, path string) (*gio.StatFs, fus
 	return f.statfs, f.statfsSt
 }
 func (f *fakeBackend) GetXAttr(ctx context.Context, path, attr string) ([]byte, fuse.Status) {
-	return nil, fuse.ENOATTR
+	return f.xattrData, f.xattrGetSt
 }
 func (f *fakeBackend) SetXAttr(ctx context.Context, path, attr string, data []byte, flags uint32) fuse.Status {
 	return fuse.OK
 }
 func (f *fakeBackend) RemoveXAttr(ctx context.Context, path, attr string) fuse.Status { return fuse.OK }
 func (f *fakeBackend) ListXAttr(ctx context.Context, path string) ([]string, fuse.Status) {
-	return nil, fuse.OK
+	return f.xattrNames, f.xattrListSt
 }
 func (f *fakeBackend) Open(ctx context.Context, path string, flags uint32) (gio.FileHandle, fuse.Status) {
 	return f.openFH, f.openSt

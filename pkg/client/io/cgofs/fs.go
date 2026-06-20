@@ -277,3 +277,44 @@ func (fs *MountieCgoFS) Utimens(path string, tmsp []cgofuse.Timespec) int {
 	_, st := fs.backend.SetAttr(ctx, clean(path), in)
 	return errc(st)
 }
+
+func (fs *MountieCgoFS) Getxattr(path string, name string) (int, []byte) {
+	ctx, cancel := fs.opCtx()
+	defer cancel()
+	data, st := fs.backend.GetXAttr(ctx, clean(path), name)
+	if !st.Ok() {
+		return errc(st), nil
+	}
+	return 0, data
+}
+
+func (fs *MountieCgoFS) Setxattr(path string, name string, value []byte, flags int) int {
+	ctx, cancel := fs.opCtx()
+	defer cancel()
+	return errc(fs.backend.SetXAttr(ctx, clean(path), name, value, uint32(flags)))
+}
+
+func (fs *MountieCgoFS) Removexattr(path string, name string) int {
+	ctx, cancel := fs.opCtx()
+	defer cancel()
+	return errc(fs.backend.RemoveXAttr(ctx, clean(path), name))
+}
+
+func (fs *MountieCgoFS) Listxattr(path string, fill func(name string) bool) int {
+	ctx, cancel := fs.opCtx()
+	defer cancel()
+	names, st := fs.backend.ListXAttr(ctx, clean(path))
+	if !st.Ok() {
+		return errc(st)
+	}
+	for _, n := range names {
+		if !fill(n) {
+			break
+		}
+	}
+	return 0
+}
+
+// Compile-time guard: the adapter must satisfy cgofuse's interface. If a
+// signature drifts upstream, the build breaks here, not at mount time.
+var _ cgofuse.FileSystemInterface = (*MountieCgoFS)(nil)
