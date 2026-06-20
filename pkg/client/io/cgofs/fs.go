@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hanwen/go-fuse/v2/fuse"
 	cgofuse "github.com/winfsp/cgofuse/fuse"
 	gio "go.gmountie.dev/gmountie/pkg/client/io"
 )
@@ -113,3 +114,103 @@ func (fs *MountieCgoFS) Opendir(path string) (int, uint64) { return 0, 0 }
 
 // Releasedir is a no-op success (no per-dir handle to release).
 func (fs *MountieCgoFS) Releasedir(path string, fh uint64) int { return 0 }
+
+// splitPath splits a cleaned path into (parent, name) for Create. "f" -> ("","f").
+func splitPath(p string) (parent, name string) {
+	i := strings.LastIndex(p, "/")
+	if i < 0 {
+		return "", p
+	}
+	return p[:i], p[i+1:]
+}
+
+func (fs *MountieCgoFS) Open(path string, flags int) (int, uint64) {
+	ctx, cancel := fs.opCtx()
+	defer cancel()
+	fh, st := fs.backend.Open(ctx, clean(path), uint32(flags))
+	if !st.Ok() {
+		return errc(st), ^uint64(0)
+	}
+	return 0, fs.handles.add(fh)
+}
+
+func (fs *MountieCgoFS) Create(path string, flags int, mode uint32) (int, uint64) {
+	ctx, cancel := fs.opCtx()
+	defer cancel()
+	parent, name := splitPath(clean(path))
+	fh, _, st := fs.backend.Create(ctx, parent, name, uint32(flags), mode)
+	if !st.Ok() {
+		return errc(st), ^uint64(0)
+	}
+	return 0, fs.handles.add(fh)
+}
+
+func (fs *MountieCgoFS) Read(path string, buff []byte, ofst int64, fh uint64) int {
+	h, ok := fs.handles.get(fh)
+	if !ok {
+		return -int(fuse.EBADF)
+	}
+	ctx, cancel := fs.opCtx()
+	defer cancel()
+	n, st := fs.backend.Read(ctx, h, ofst, buff)
+	if !st.Ok() {
+		return errc(st)
+	}
+	return n
+}
+
+func (fs *MountieCgoFS) Write(path string, buff []byte, ofst int64, fh uint64) int {
+	h, ok := fs.handles.get(fh)
+	if !ok {
+		return -int(fuse.EBADF)
+	}
+	ctx, cancel := fs.opCtx()
+	defer cancel()
+	n, st := fs.backend.Write(ctx, h, ofst, buff)
+	if !st.Ok() {
+		return errc(st)
+	}
+	return int(n)
+}
+
+func (fs *MountieCgoFS) Flush(path string, fh uint64) int {
+	h, ok := fs.handles.get(fh)
+	if !ok {
+		return -int(fuse.EBADF)
+	}
+	ctx, cancel := fs.opCtx()
+	defer cancel()
+	return errc(fs.backend.Flush(ctx, h))
+}
+
+func (fs *MountieCgoFS) Fsync(path string, datasync bool, fh uint64) int {
+	h, ok := fs.handles.get(fh)
+	if !ok {
+		return -int(fuse.EBADF)
+	}
+	ctx, cancel := fs.opCtx()
+	defer cancel()
+	var flags int64
+	if datasync {
+		flags = 1
+	}
+	return errc(fs.backend.Fsync(ctx, h, flags))
+}
+
+func (fs *MountieCgoFS) Release(path string, fh uint64) int {
+	h, ok := fs.handles.remove(fh)
+	if !ok {
+		return -int(fuse.EBADF)
+	}
+	ctx, cancel := fs.opCtx()
+	defer cancel()
+	return errc(fs.backend.Release(ctx, h))
+}
+
+func (fs *MountieCgoFS) Truncate(path string, size int64, fh uint64) int {
+	ctx, cancel := fs.opCtx()
+	defer cancel()
+	in := gio.SetAttrIn{Valid: uint32(fuse.FATTR_SIZE), Size: uint64(size)}
+	_, st := fs.backend.SetAttr(ctx, clean(path), in)
+	return errc(st)
+}
