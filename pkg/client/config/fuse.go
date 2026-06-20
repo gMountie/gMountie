@@ -8,6 +8,10 @@ import (
 )
 
 const (
+	// DefaultFUSEProvider is the default FUSE provider selection. "auto"
+	// probes known install paths and picks macFUSE if present, falling back
+	// to FUSE-T. Set to "macfuse" or "fuse-t" to skip auto-detection.
+	DefaultFUSEProvider = "auto"
 	// DefaultFUSEMaxWriteBytes is the default ceiling for FUSE MaxWrite.
 	// go-fuse sets the kernel's max_read to the same value, so this knob
 	// drives both directions of FUSE-kernel transfer size. 1 MiB matches
@@ -120,6 +124,11 @@ type FUSEConfig struct {
 	// inside the kernel's dentry cache, so values above ~1 s trade
 	// coherence for fewer LOOKUP RPCs.
 	EntryTimeout time.Duration `validate:"gte=0" mapstructure:"entry_timeout"`
+	// Provider selects the macOS FUSE implementation: "auto" (default)
+	// probes known install paths and picks macFUSE if present, falling back
+	// to FUSE-T. Pin to "macfuse" or "fuse-t" to skip auto-detection.
+	// Has no effect on Linux without -tags cgofuse.
+	Provider string `mapstructure:"provider"`
 }
 
 // NewFUSEConfig parses a FUSEConfig from a viper sub-tree. A nil v
@@ -134,6 +143,7 @@ func NewFUSEConfig(v *viper.Viper) (*FUSEConfig, error) {
 		DirectIO:       DefaultFUSEDirectIO,
 		AttrTimeout:    DefaultFUSEAttrTimeout,
 		EntryTimeout:   DefaultFUSEEntryTimeout,
+		Provider:       DefaultFUSEProvider,
 	}
 	if v == nil {
 		return cfg, nil
@@ -145,6 +155,7 @@ func NewFUSEConfig(v *viper.Viper) (*FUSEConfig, error) {
 	v.SetDefault("direct_io", DefaultFUSEDirectIO)
 	v.SetDefault("attr_timeout", DefaultFUSEAttrTimeout)
 	v.SetDefault("entry_timeout", DefaultFUSEEntryTimeout)
+	v.SetDefault("provider", DefaultFUSEProvider)
 	if err := v.UnmarshalExact(cfg, viper.DecodeHook(mapstructure.StringToTimeDurationHookFunc())); err != nil {
 		return nil, err
 	}

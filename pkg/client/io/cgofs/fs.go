@@ -5,6 +5,7 @@ package cgofs
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -23,6 +24,10 @@ type MountieCgoFS struct {
 	rewriter    *gio.IDRewriter
 	handles     *handleTable
 	metaTimeout time.Duration
+	ready       chan struct{}
+	done        chan struct{}
+	readyOnce   sync.Once
+	doneOnce    sync.Once
 }
 
 // New builds an adapter over backend. rw may be nil (raw_ids / no rewrite).
@@ -33,6 +38,8 @@ func New(backend gio.FileSystemBackend, rw *gio.IDRewriter, metaTimeout time.Dur
 		rewriter:    rw,
 		handles:     newHandleTable(),
 		metaTimeout: metaTimeout,
+		ready:       make(chan struct{}),
+		done:        make(chan struct{}),
 	}
 }
 
