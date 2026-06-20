@@ -4,15 +4,15 @@ import (
 	"sync"
 	"testing"
 
-	gio "go.gmountie.dev/gmountie/pkg/client/io"
 	"github.com/stretchr/testify/suite"
+	gio "go.gmountie.dev/gmountie/pkg/client/io"
 )
 
 // stubHandle is a minimal io.FileHandle for table tests.
 type stubHandle struct{ p string }
 
-func (h *stubHandle) Path() string            { return h.p }
-func (h *stubHandle) Unwrap() gio.FileHandle  { return h }
+func (h *stubHandle) Path() string           { return h.p }
+func (h *stubHandle) Unwrap() gio.FileHandle { return h }
 
 type HandleTableSuite struct{ suite.Suite }
 

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
-	gio "go.gmountie.dev/gmountie/pkg/client/io"
 	"github.com/stretchr/testify/suite"
+	gio "go.gmountie.dev/gmountie/pkg/client/io"
 )
 
 // recHandle is an io.FileHandle that records its path.

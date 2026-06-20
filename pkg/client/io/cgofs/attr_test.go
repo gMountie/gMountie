@@ -5,9 +5,9 @@ package cgofs
 import (
 	"testing"
 
+	"github.com/stretchr/testify/suite"
 	cgofuse "github.com/winfsp/cgofuse/fuse"
 	gio "go.gmountie.dev/gmountie/pkg/client/io"
-	"github.com/stretchr/testify/suite"
 )
 
 type AttrSuite struct{ suite.Suite }
