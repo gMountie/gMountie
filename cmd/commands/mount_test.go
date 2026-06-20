@@ -473,10 +473,51 @@ func (s *MountCmdTestSuite) buildTargetFromArgs(args ...string) (*mountTarget, e
 	cmd.PersistentFlags().StringVarP(&f.volumeName, "volume", "n", "", "volume name")
 	addAuthFlags(cmd, &f.auth)
 	addCredentialsFlag(cmd)
+	addRpcTimeoutFlags(cmd, &f.rpc)
 	cmd.PersistentFlags().BoolVar(&f.rawIDs, "raw-ids", false, "")
 	cmd.PersistentFlags().BoolVar(&f.daemon, "daemon", false, "")
 	s.Require().NoError(cmd.ParseFlags(args))
 	return buildMountConfig(cmd, cmd.Flags().Args(), f)
+}
+
+// rpcTimeoutCfgYAML is a minimal valid client config (no rpc block) so the rpc
+// timeout tests exercise the flag-vs-default precedence, not config parsing.
+const rpcTimeoutCfgYAML = `server:
+  address: 192.168.11.11
+  port: 9449
+auth:
+  type: basic
+  username: demo
+  password: demo
+mount:
+  type: single
+  volume: shared
+`
+
+// TestRpcTimeoutFlags_Override proves --rpc-timeout-meta / --rpc-timeout-io land
+// on the resolved config, overriding the built-in defaults.
+func (s *MountCmdTestSuite) TestRpcTimeoutFlags_Override() {
+	cfgPath := filepath.Join(s.tempDir, "client.yaml")
+	s.Require().NoError(os.WriteFile(cfgPath, []byte(rpcTimeoutCfgYAML), 0o600))
+	t, err := s.buildTargetFromArgs(
+		"--config", cfgPath,
+		"--rpc-timeout-meta", "12s",
+		"--rpc-timeout-io", "90s",
+		s.mountPath,
+	)
+	s.Require().NoError(err)
+	s.Equal(12*time.Second, t.cfg.Rpc.TimeoutMeta)
+	s.Equal(90*time.Second, t.cfg.Rpc.TimeoutIO)
+}
+
+// TestRpcTimeoutFlags_DefaultWhenUnset proves an unset flag never clobbers the
+// resolved config — the built-in default meta timeout stands.
+func (s *MountCmdTestSuite) TestRpcTimeoutFlags_DefaultWhenUnset() {
+	cfgPath := filepath.Join(s.tempDir, "client.yaml")
+	s.Require().NoError(os.WriteFile(cfgPath, []byte(rpcTimeoutCfgYAML), 0o600))
+	t, err := s.buildTargetFromArgs("--config", cfgPath, s.mountPath)
+	s.Require().NoError(err)
+	s.Equal(config.DefaultRpcTimeoutMeta, t.cfg.Rpc.TimeoutMeta)
 }
 
 // TestRawIDs_FromConfig proves mount.raw_ids: true in the config enables raw
