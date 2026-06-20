@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -267,10 +268,11 @@ func NewClient(endpoint string, options ...ClientOption) (Client, error) {
 	if n < 1 {
 		n = 1
 	}
+	dialTarget := resolverDialTarget(endpoint)
 	conns := make([]*grpc.ClientConn, 0, n)
 	fileClients := make([]proto.RpcFileClient, 0, n)
 	for i := 0; i < n; i++ {
-		conn, err := grpc.NewClient(endpoint, c.getDialOptions()...)
+		conn, err := grpc.NewClient(dialTarget, c.getDialOptions()...)
 		if err != nil {
 			for _, cc := range conns {
 				_ = cc.Close()
@@ -538,6 +540,23 @@ func (c *ClientImpl) getInterceptors() []grpc.UnaryClientInterceptor {
 
 // getDialOptions returns the dial options. Transport credentials must be
 // provided via WithDialOptions (see factory.go); there is no insecure fallback.
+// resolverDialTarget returns the gRPC dial target for endpoint. A bare
+// host:port is forced onto the passthrough resolver: gRPC's default "dns"
+// resolver can stall ~20s per dial on some platforms (notably macOS, where
+// Go's resolver path doesn't use the fast system resolver), paid on the first
+// RPC of every freshly-dialed channel. passthrough hands the endpoint straight
+// to the dialer (OS getaddrinfo at connect, ~ms). TLS ServerName is set
+// explicitly in the transport credentials (built from the endpoint), so
+// bypassing gRPC name resolution does not affect mTLS SNI. An endpoint that
+// already carries a resolver scheme (e.g. "passthrough:///..." in tests) is
+// returned unchanged.
+func resolverDialTarget(endpoint string) string {
+	if strings.Contains(endpoint, "://") {
+		return endpoint
+	}
+	return "passthrough:///" + endpoint
+}
+
 func (c *ClientImpl) getDialOptions() []grpc.DialOption {
 	opts := []grpc.DialOption{
 		grpc.WithChainUnaryInterceptor(
