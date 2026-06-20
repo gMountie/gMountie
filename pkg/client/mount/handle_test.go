@@ -22,6 +22,6 @@ func TestHandleSuite(t *testing.T) { suite.Run(t, new(HandleSuite)) }
 func (s *HandleSuite) TestMountHandleInterfaceShape() {
 	var h mountHandle = &fakeHandle{}
 	h.Wait()
-	s.NoError(h.Unmount("/mnt/x"))
+	s.Require().NoError(h.Unmount("/mnt/x"))
 	s.Equal("/mnt/x", h.(*fakeHandle).unmounted)
 }
