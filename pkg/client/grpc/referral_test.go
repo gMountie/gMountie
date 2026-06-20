@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"testing"
+	"time"
 
 	protomocks "go.gmountie.dev/gmountie/internal/mocks/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/client/config"
@@ -11,6 +12,8 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type ReferralSuite struct{ suite.Suite }
@@ -184,6 +187,76 @@ func (s *ReferralSuite) TestNewClientForVolume_ResolveErrorIsFatal() {
 		s.Require().Error(err) // no fallback; resolve failure fails the mount
 		s.True(resolver.closed)
 		s.False(resolver.connected)
+		// A non-timeout failure (auth denied, NotFound, …) keeps its own message
+		// and must NOT be dressed up as a connectivity problem.
+		s.Contains(err.Error(), "denied")
+		s.NotContains(err.Error(), "firewall")
+	})
+}
+
+// TestNewClientForVolume_ResolveTimeoutIsActionable proves a DeadlineExceeded on
+// the pre-session Resolve — the classic "cert exchange worked but the mount
+// endpoint black-holes" failure (firewall/proxy/VPN) — is reported with the
+// unreachable endpoint and a connectivity hint, not an opaque "context deadline
+// exceeded".
+func (s *ReferralSuite) TestNewClientForVolume_ResolveTimeoutIsActionable() {
+	cfg := baseConfig()
+	vc := protomocks.NewMockVolumeServiceClient(s.T())
+	vc.On("Resolve", mock.Anything, mock.Anything).
+		Return((*proto.VolumeResolveReply)(nil), status.Error(codes.DeadlineExceeded, "context deadline exceeded"))
+	resolver := &fakeClient{vc: vc}
+
+	s.withStubbedBuilder(func(_ *config.Config, _ string, _ renewParts, _ bool) (Client, error) {
+		return resolver, nil
+	}, func() {
+		_, _, err := NewClientForVolume(cfg, "photos")
+		s.Require().Error(err)
+		s.Contains(err.Error(), createEndpoint(cfg.Server), "names the unreachable endpoint")
+		s.Contains(err.Error(), "firewall", "points at connectivity, not a vague timeout")
+		s.True(resolver.closed)
+	})
+}
+
+// TestAnnotateMetaErr covers the classifier directly: only DeadlineExceeded is
+// rewritten, the exchanged flag sharpens the wording, and other codes pass
+// through untouched.
+func (s *ReferralSuite) TestAnnotateMetaErr() {
+	const ep = "mount.example.com:443"
+	dl := status.Error(codes.DeadlineExceeded, "context deadline exceeded")
+
+	// Token mode: the exchange ran, so the message rules out an auth problem.
+	tok := annotateMetaErr(ep, 5*time.Second, true, dl)
+	s.Contains(tok.Error(), ep)
+	s.Contains(tok.Error(), "firewall")
+	s.Contains(tok.Error(), "credential exchange succeeded")
+
+	// Static cert: no exchange happened — stay honest, don't claim one did.
+	stat := annotateMetaErr(ep, 5*time.Second, false, dl)
+	s.Contains(stat.Error(), "firewall")
+	s.NotContains(stat.Error(), "credential exchange succeeded")
+
+	// Non-timeout errors are returned verbatim.
+	denied := status.Error(codes.PermissionDenied, "nope")
+	s.Equal(denied, annotateMetaErr(ep, 5*time.Second, true, denied))
+}
+
+// TestListVolumes_TimeoutIsActionable proves the same actionable diagnosis on the
+// other pre-session leg: bare `gmountie ls` over a black-holed mount endpoint.
+func (s *ReferralSuite) TestListVolumes_TimeoutIsActionable() {
+	cfg := baseConfig()
+	vc := protomocks.NewMockVolumeServiceClient(s.T())
+	vc.On("List", mock.Anything, mock.Anything).
+		Return((*proto.VolumeListReply)(nil), status.Error(codes.DeadlineExceeded, "context deadline exceeded"))
+	client := &fakeClient{vc: vc}
+
+	s.withStubbedBuilder(func(_ *config.Config, _ string, _ renewParts, _ bool) (Client, error) {
+		return client, nil
+	}, func() {
+		_, err := ListVolumes(cfg)
+		s.Require().Error(err)
+		s.Contains(err.Error(), createEndpoint(cfg.Server))
+		s.Contains(err.Error(), "firewall")
+		s.True(client.closed)
 	})
 }
 

@@ -88,6 +88,7 @@ type mountFlags struct {
 	serverAddr string
 	volumeName string
 	auth       authFlags
+	rpc        rpcTimeoutFlags
 	rawIDs     bool
 	daemon     bool
 }
@@ -285,6 +286,7 @@ func buildMountConfig(cmd *cobra.Command, args []string, f *mountFlags) (*mountT
 	if err := resolveAuth(cmd, v, &f.auth); err != nil {
 		return nil, err
 	}
+	applyRpcTimeoutFlags(cmd, v, &f.rpc)
 
 	cfg, err := config.ParseConfig(v)
 	if err != nil {
@@ -512,6 +514,7 @@ func newMountCmd() *cobra.Command {
 	cmd.PersistentFlags().StringVarP(&f.volumeName, "volume", "n", "", "volume name")
 	addAuthFlags(cmd, &f.auth)
 	addCredentialsFlag(cmd)
+	addRpcTimeoutFlags(cmd, &f.rpc)
 	cmd.PersistentFlags().BoolVar(&f.rawIDs, "raw-ids", false, "expose server-side uids/gids unchanged (for backups/admin tooling)")
 	cmd.PersistentFlags().BoolVar(&f.daemon, "daemon", false, "mount in the background (detach after the mount is ready)")
 	return cmd

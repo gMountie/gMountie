@@ -18,6 +18,7 @@ import (
 // pattern), so ls and mount no longer share mutable package-level globals.
 func newLsCmd() *cobra.Command {
 	f := &authFlags{}
+	tf := &rpcTimeoutFlags{}
 	cmd := &cobra.Command{
 		Use:   "ls [user@host[:port]]",
 		Short: "List the volumes a gMountie server exposes",
@@ -26,12 +27,13 @@ func newLsCmd() *cobra.Command {
 			"  gmountie ls -c client.yaml",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runLs(cmd, args, f)
+			return runLs(cmd, args, f, tf)
 		},
 	}
 	addProfileFlag(cmd)
 	addAuthFlags(cmd, f)
 	addCredentialsFlag(cmd)
+	addRpcTimeoutFlags(cmd, tf)
 	return cmd
 }
 
@@ -39,7 +41,7 @@ func init() {
 	rootCmd.AddCommand(newLsCmd())
 }
 
-func runLs(cmd *cobra.Command, args []string, f *authFlags) error {
+func runLs(cmd *cobra.Command, args []string, f *authFlags, tf *rpcTimeoutFlags) error {
 	profilePath, err := resolveProfilePath()
 	if err != nil {
 		return err
@@ -77,6 +79,7 @@ func runLs(cmd *cobra.Command, args []string, f *authFlags) error {
 	if err := resolveAuth(cmd, v, f); err != nil {
 		return err
 	}
+	applyRpcTimeoutFlags(cmd, v, tf)
 
 	cfg, err := config.ParseConfig(v)
 	if err != nil {
