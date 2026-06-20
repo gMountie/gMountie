@@ -4,6 +4,7 @@ package mount
 
 import (
 	"fmt"
+	"runtime"
 	"time"
 
 	"github.com/pkg/errors"
@@ -37,13 +38,12 @@ func (h *cgofuseHandle) Unmount(mountPath string) error {
 // Init fires (mount live) or a timeout elapses. Same signature as the go-fuse
 // establishMount so single.go is platform-agnostic.
 func establishMount(mountPath, volume, endpoint string, backend io.FileSystemBackend, rewriter *io.IDRewriter, cfg *config.FUSEConfig, maxWrite int, metaTimeout time.Duration) (mountHandle, error) {
-	provider, err := detectProvider(fuseProvider(cfg.Provider), pathExists)
+	opts, providerLabel, err := cgofuseMountSetup(volume, cfg)
 	if err != nil {
 		return nil, err
 	}
 	adapter := cgofs.New(backend, rewriter, metaTimeout)
 	host := cgofuse.NewFileSystemHost(adapter)
-	opts := macOSMountOptions(volume, provider)
 
 	go func() {
 		// Mount blocks until the volume is unmounted; ok==false means the
@@ -58,13 +58,31 @@ func establishMount(mountPath, volume, endpoint string, backend io.FileSystemBac
 	select {
 	case <-adapter.Ready():
 		log.Log.Info("cgofuse mount live",
-			zap.String("volume", volume), zap.String("provider", string(provider)))
+			zap.String("volume", volume), zap.String("provider", providerLabel))
 		return &cgofuseHandle{host: host, fs: adapter}, nil
 	case <-adapter.Done():
 		// Mount returned false without ever calling Init — fail promptly.
-		return nil, fmt.Errorf("cgofuse mount of %s failed to start (provider=%s)", volume, provider)
+		return nil, fmt.Errorf("cgofuse mount of %s failed to start (provider=%s)", volume, providerLabel)
 	case <-time.After(15 * time.Second):
 		host.Unmount()
-		return nil, fmt.Errorf("cgofuse mount of %s did not become ready within 15s (provider=%s)", volume, provider)
+		return nil, fmt.Errorf("cgofuse mount of %s did not become ready within 15s (provider=%s)", volume, providerLabel)
 	}
+}
+
+// cgofuseMountSetup resolves the platform-specific FUSE provider and mount
+// options. On macOS it detects macFUSE/FUSE-T and builds macOS mount options
+// (volname/local/noappledouble). On other platforms — Linux libfuse (the
+// cgofuse-on-linux benchmark and the future "unify Linux" path) and Windows
+// WinFsp later — those macOS options are invalid (libfuse rejects volname), so
+// the portable Linux options are used instead. Keyed on runtime.GOOS because
+// this file builds for both darwin and any platform with -tags cgofuse.
+func cgofuseMountSetup(volume string, cfg *config.FUSEConfig) (opts []string, providerLabel string, err error) {
+	if runtime.GOOS == "darwin" {
+		provider, derr := detectProvider(fuseProvider(cfg.Provider), pathExists)
+		if derr != nil {
+			return nil, "", derr
+		}
+		return macOSMountOptions(volume, provider), string(provider), nil
+	}
+	return linuxCgofuseOptions(volume), "libfuse", nil
 }
