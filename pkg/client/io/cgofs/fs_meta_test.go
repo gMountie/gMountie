@@ -29,7 +29,7 @@ func (s *MetaSuite) TestGetattrOK() {
 	s.be.statAttr = &gio.Attr{Ino: 9, Size: 42, Mode: 0o100644}
 	s.be.statSt = fuse.OK
 	var st cgofuse.Stat_t
-	rc := s.fs.Getattr("dir/file", &st, ^uint64(0))
+	rc := s.fs.Getattr("/dir/file", &st, ^uint64(0))
 	s.Equal(0, rc)
 	s.Equal(uint64(9), st.Ino)
 	s.Equal(int64(42), st.Size)
@@ -74,4 +74,11 @@ func (s *MetaSuite) TestStatfs() {
 	rc := s.fs.Statfs("/", &out)
 	s.Equal(0, rc)
 	s.Equal(uint64(10), out.Blocks)
+}
+
+func (s *MetaSuite) TestOpendirReleasedirAreNoopSuccess() {
+	rc, fh := s.fs.Opendir("/")
+	s.Equal(0, rc)
+	s.Equal(uint64(0), fh)
+	s.Equal(0, s.fs.Releasedir("/", fh))
 }
