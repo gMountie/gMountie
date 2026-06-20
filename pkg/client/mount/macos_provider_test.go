@@ -36,22 +36,31 @@ func (s *MacProviderSuite) TestExplicitOverrideHonored() {
 }
 
 func (s *MacProviderSuite) TestOptionsIncludeVolnameAlways() {
-	opts := macOSMountOptions("photos", providerFuseT)
+	opts := macOSMountOptions("photos", providerFuseT, 1<<20)
 	s.Contains(opts, "volname=photos")
 	s.NotContains(opts, "local") // FUSE-T rejects unknown opts
+	// FUSE-T accepts libfuse-style max_write; large value avoids write
+	// fragmentation (each fragment crosses cgo).
+	s.Contains(opts, "max_write=1048576")
 }
 
 func (s *MacProviderSuite) TestOptionsIncludeLocalForMacFUSE() {
-	opts := macOSMountOptions("photos", providerMacFUSE)
+	opts := macOSMountOptions("photos", providerMacFUSE, 1<<20)
 	s.Contains(opts, "local")
 	s.Contains(opts, "volname=photos")
+	// macFUSE sizes I/O via iosize, not libfuse max_write.
+	s.Contains(opts, "iosize=1048576")
 }
 
-func (s *MacProviderSuite) TestLinuxCgofuseOptionsAreEmpty() {
-	// On Linux, cgofuse mounts via libfuse, which rejects the macOS options
-	// (volname/local/noappledouble) — so the Linux path passes none. Regression
-	// guard for the "fuse: unknown option volname" mount failure on linux+cgofuse.
-	s.Empty(linuxCgofuseOptions("photos"))
+func (s *MacProviderSuite) TestLinuxCgofuseOptionsSetMaxWrite() {
+	// On Linux, cgofuse mounts via libfuse: the macOS options (volname/local/
+	// noappledouble) are rejected, but big_writes + max_write are required to
+	// stop libfuse fragmenting writes into tiny cgo-crossing ops.
+	opts := linuxCgofuseOptions(1 << 20)
+	s.Contains(opts, "big_writes")
+	s.Contains(opts, "max_write=1048576")
+	// No negotiated value -> defer to libfuse defaults (no -o options).
+	s.Empty(linuxCgofuseOptions(0))
 }
 
 func (s *MacProviderSuite) TestPathExists() {

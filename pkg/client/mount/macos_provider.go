@@ -45,13 +45,23 @@ func pathExists(p string) bool {
 // set (Finder needs a name). "local" is macFUSE-only — it makes Finder treat
 // the mount as a browsable local device (fixes "terminal sees files, Finder
 // doesn't"); FUSE-T rejects unknown options, so it is omitted there.
-func macOSMountOptions(volume string, provider fuseProvider) []string {
+func macOSMountOptions(volume string, provider fuseProvider, maxWrite int) []string {
 	opts := []string{
 		"-o", "volname=" + volume,
 		"-o", "noappledouble",
 	}
 	if provider == providerMacFUSE {
 		opts = append(opts, "-o", "local")
+		// macFUSE sizes I/O via the iosize mount option. Without a large value
+		// the kernel fragments writes into small FUSE ops (each crossing cgo),
+		// crippling write throughput — go-fuse's MaxWrite equivalent.
+		if maxWrite > 0 {
+			opts = append(opts, "-o", fmt.Sprintf("iosize=%d", maxWrite))
+		}
+	} else if maxWrite > 0 {
+		// FUSE-T accepts libfuse-style max_write ("-o max_write=N: set maximum
+		// size of write requests") — same write-fragmentation fix.
+		opts = append(opts, "-o", fmt.Sprintf("max_write=%d", maxWrite))
 	}
 	return opts
 }
@@ -59,8 +69,13 @@ func macOSMountOptions(volume string, provider fuseProvider) []string {
 // linuxCgofuseOptions returns the cgofuse mount options for the Linux libfuse
 // backend (the cgofuse-on-linux benchmark and the future "unify Linux" path).
 // The macOS options (volname/local/noappledouble) are macFUSE-specific and
-// libfuse rejects them (e.g. "unknown option volname"), so the Linux path
-// mounts with libfuse defaults. Named helper so the platform split is explicit.
-func linuxCgofuseOptions(_ string) []string {
-	return nil
+// libfuse rejects them (e.g. "unknown option volname"), so they are omitted.
+// big_writes + max_write are go-fuse's MountOptions.MaxWrite equivalent: without
+// them libfuse fragments writes into tiny ops (each crossing cgo), which
+// collapsed write throughput ~3-20x in benchmarks.
+func linuxCgofuseOptions(maxWrite int) []string {
+	if maxWrite <= 0 {
+		return nil
+	}
+	return []string{"-o", "big_writes", "-o", fmt.Sprintf("max_write=%d", maxWrite)}
 }
