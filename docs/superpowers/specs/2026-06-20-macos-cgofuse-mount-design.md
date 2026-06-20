@@ -145,9 +145,13 @@ server) and untouched. macOS identity works via the same path go-fuse-on-mac use
 
 ### Locking
 
-`FileSystemBackend` exposes `GetLk/SetLk/SetLkw`; cgofuse/libfuse supports `lock` ops, so we
-wire them through. **Caveat (documented):** FUSE-T's NFSv4-backed locking semantics differ
-from macFUSE's; FUSE-T locking is best-effort.
+`FileSystemBackend` exposes `GetLk/SetLk/SetLkw`, but **cgofuse's high-level
+`FileSystemInterface` does not expose byte-range lock callbacks** (no `Getlk/Setlk/Setlkw`).
+So on the macOS/cgofuse path, POSIX byte-range locks are **not forwarded to the server** —
+advisory locking is handled kernel-locally within the mount only. The Linux go-fuse path is
+unaffected and keeps server-forwarded locking. This is consistent with FUSE-T's locking being
+best-effort anyway; revisit only if a real workload needs cross-client server-side locking on
+macOS. (Verified against winfsp/cgofuse `fuse/fsop.go`, 2026-06-20.)
 
 ### Honest FUSE-T caveats (documented, not blockers)
 
