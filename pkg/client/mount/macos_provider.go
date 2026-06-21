@@ -22,8 +22,8 @@ const (
 type adapterKind int
 
 const (
-	adapterGoFuse adapterKind = iota // macFUSE: hanwen/go-fuse (cgo-free, full node.go features)
-	adapterCgoFuse                   // FUSE-T: winfsp/cgofuse (kextless)
+	adapterGoFuse  adapterKind = iota // macFUSE: hanwen/go-fuse (cgo-free, full node.go features)
+	adapterCgoFuse                    // FUSE-T: winfsp/cgofuse (kextless)
 )
 
 // detectProvider resolves which FUSE provider to use. override wins unless it
