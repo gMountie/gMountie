@@ -28,6 +28,7 @@ type cachedBackend struct {
 	attr       *attrCache
 	dir        *dirCache
 	data       *dataCache
+	xattr      *xattrCache
 	validity   *validityTracker
 	subscriber *subscribeConsumer
 	subCancel  context.CancelFunc
@@ -61,6 +62,7 @@ func NewCachedBackend(inner io.FileSystemBackend, cfg Config, p *persist.Persist
 		attr:     newAttrCacheWithPersist(acct, cfg.AttrTTL, cfg.NegativeTTL, nil, p),
 		dir:      newDirCacheWithPersist(acct, cfg.DirTTL, nil, p),
 		data:     newDataCacheWithPersist(acct, cfg.ChunkSizeBytes, p),
+		xattr:    newXAttrCache(acct, cfg.XAttrTTL, nil),
 		validity: newValidityTracker(),
 		persist:  p,
 	}
@@ -308,6 +310,11 @@ func (b *cachedBackend) listDirFromInner(ctx context.Context, p string) ([]io.Di
 			if e.Attr != nil {
 				b.attr.putPositive(joinPath(p, e.Name), e.Attr)
 			}
+			if e.XattrListed {
+				// Cache the names (empty == "no xattrs"), so the kernel's per-file
+				// listxattr after this readdir is a local hit — the cold-pass win.
+				b.xattr.put(joinPath(p, e.Name), e.XattrNames)
+			}
 		}
 		// The dir cache keeps the plain dirent shape: per-path attrs live in
 		// the attr cache only (one source of truth — duplicating them in the
@@ -529,20 +536,40 @@ func (b *cachedBackend) GetXAttr(ctx context.Context, p, attr string) ([]byte, f
 	return b.inner.GetXAttr(ctx, p, attr)
 }
 
-// SetXAttr stores an extended attribute. Xattrs are not cached and
-// don't affect the stat-shaped attr cache.
+// SetXAttr stores an extended attribute, then drops the cached names list and
+// the attr entry: an xattr write bumps the inode ctime, so the cached attr
+// version is now stale too.
 func (b *cachedBackend) SetXAttr(ctx context.Context, p, attr string, data []byte, flags uint32) fuse.Status {
-	return b.inner.SetXAttr(ctx, p, attr, data, flags)
+	st := b.inner.SetXAttr(ctx, p, attr, data, flags)
+	if st == fuse.OK {
+		b.xattr.invalidate(p)
+		b.attr.invalidate(p)
+	}
+	return st
 }
 
-// RemoveXAttr deletes an extended attribute. Pass-through like GetXAttr.
+// RemoveXAttr deletes an extended attribute; same invalidation as SetXAttr.
 func (b *cachedBackend) RemoveXAttr(ctx context.Context, p, attr string) fuse.Status {
-	return b.inner.RemoveXAttr(ctx, p, attr)
+	st := b.inner.RemoveXAttr(ctx, p, attr)
+	if st == fuse.OK {
+		b.xattr.invalidate(p)
+		b.attr.invalidate(p)
+	}
+	return st
 }
 
-// ListXAttr returns extended-attribute names. Pass-through like GetXAttr.
+// ListXAttr is read-through against the advisory xattr cache. It serves on
+// TTL + invalidation only (no GetAttrIfChanged revalidation): a stale names
+// list is at worst a wrong ls "+" indicator, never an enforcement decision.
 func (b *cachedBackend) ListXAttr(ctx context.Context, p string) ([]string, fuse.Status) {
-	return b.inner.ListXAttr(ctx, p)
+	if names, hit := b.xattr.get(p); hit {
+		return names, fuse.OK
+	}
+	names, st := b.inner.ListXAttr(ctx, p)
+	if st == fuse.OK {
+		b.xattr.put(p, names)
+	}
+	return names, st
 }
 
 func (b *cachedBackend) GetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) fuse.Status {

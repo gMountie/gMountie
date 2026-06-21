@@ -888,6 +888,57 @@ func (s *CachedBackendTestSuite) TestLseekAndXattrPassThrough() {
 	s.Equal([]string{"user.k"}, names)
 }
 
+// --- xattr cache tests ---
+
+// TestListXAttrServesFromCacheAfterFirstCall verifies that the second ListXAttr
+// call for the same path is served from the xattr cache without hitting inner
+// (the .Once() expectation on inner would fail if inner were called twice).
+func (s *CachedBackendTestSuite) TestListXAttrServesFromCacheAfterFirstCall() {
+	s.inner.EXPECT().ListXAttr(mock.Anything, "f").Return([]string{"user.a"}, fuse.OK).Once()
+	n1, st1 := s.b.ListXAttr(context.Background(), "f")
+	s.Require().Equal(fuse.OK, st1)
+	s.Equal([]string{"user.a"}, n1)
+	// Second call must NOT hit inner (Once() above would fail on a 2nd call).
+	n2, st2 := s.b.ListXAttr(context.Background(), "f")
+	s.Require().Equal(fuse.OK, st2)
+	s.Equal([]string{"user.a"}, n2)
+}
+
+// TestListDirPrimesXattrCache verifies that entries with XattrListed=true returned
+// by ListDir prime the xattr cache, so a follow-up ListXAttr on a child path is
+// served without any inner.ListXAttr call (the cold-pass readdir win).
+func (s *CachedBackendTestSuite) TestListDirPrimesXattrCache() {
+	s.inner.EXPECT().ListDir(mock.Anything, "d").Return([]io.DirEntryPlus{{
+		DirEntry:    io.DirEntry{Name: "child"},
+		XattrListed: true,
+		XattrNames:  []string{"user.k"},
+	}}, fuse.OK).Once()
+	_, st := s.b.ListDir(context.Background(), "d")
+	s.Require().Equal(fuse.OK, st)
+	// ListXAttr on the primed child must be served from cache (no inner call).
+	names, xst := s.b.ListXAttr(context.Background(), "d/child")
+	s.Require().Equal(fuse.OK, xst)
+	s.Equal([]string{"user.k"}, names)
+	// no inner.ListXAttr expectation set → mock auto-asserts no unexpected calls
+}
+
+// TestSetXAttrInvalidatesXattrAndAttr verifies that a successful SetXAttr drops
+// both the xattr name-list cache (forcing re-fetch) and the attr cache (an xattr
+// write bumps inode ctime, making the cached attr stale).
+func (s *CachedBackendTestSuite) TestSetXAttrInvalidatesXattrAndAttr() {
+	// Prime both caches.
+	s.inner.EXPECT().ListXAttr(mock.Anything, "f").Return([]string{"user.a"}, fuse.OK).Times(2)
+	_, _ = s.b.ListXAttr(context.Background(), "f")
+	s.b.attr.putPositive("f", &io.Attr{Ino: 1})
+	s.inner.EXPECT().SetXAttr(mock.Anything, "f", "user.b", []byte("v"), uint32(0)).Return(fuse.OK).Once()
+	s.Require().Equal(fuse.OK, s.b.SetXAttr(context.Background(), "f", "user.b", []byte("v"), 0))
+	// Attr must be invalidated (xattr write bumps ctime).
+	_, hit, _ := s.b.attr.get("f")
+	s.Assert().False(hit)
+	// Next ListXAttr must re-hit inner (Times(2) allows the second call).
+	_, _ = s.b.ListXAttr(context.Background(), "f")
+}
+
 // TestJoinPathMatchesWirePath pins MN-L2: the cache key MUST equal the raw wire
 // path the io layer produces (parent + "/" + name, with empty-parent
 // passthrough). If this ever drifts back to path.Join normalization, a cache
