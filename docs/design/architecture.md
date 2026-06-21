@@ -264,13 +264,25 @@ Two layers of error stack on the wire:
 - **gRPC status codes** (`InvalidArgument`, `NotFound`, `Unavailable`,
   `DeadlineExceeded`, `Internal`) for protocol-level failures: empty
   session_id, unknown session, stalled call, transport hiccup.
-- **FUSE status integers** carried in the reply struct for filesystem
-  errors: `ENOENT`, `EACCES`, `EEXIST`, etc. — the server runs the FUSE
-  op against the loopback FS and propagates its return code through.
+- **A canonical `FsError` enum** (`api/proto/common.proto`) carried in the
+  reply struct for filesystem errors: `FS_ENOENT`, `FS_EACCES`,
+  `FS_ENOTEMPTY`, etc. It is **OS-neutral** — the wire never carries a raw OS
+  errno number. The server maps its native errno → `FsError`; each client
+  mount adapter maps `FsError` → its own host kernel's errno.
 
-The client distinguishes the two: a gRPC error is the wire failing
-(retry candidate); a non-OK FUSE status is the filesystem refusing
-(propagate to the kernel as the corresponding errno).
+The mapping lives in `pkg/common/fserr`, built on Go's `syscall.Errno` (whose
+`E*` constants are already per-GOOS-correct), so one table serves both the
+go-fuse (Linux) and cgofuse (macOS) adapters host-correctly; only codes whose
+*name* differs across OSes need a build-tagged shim (`FS_ENO_XATTR` → Linux
+`ENODATA` / Darwin `ENOATTR`). This is why errno *numbers* never go on the wire:
+a Linux `ENOTEMPTY` (39) must reach the macFUSE kernel as Darwin's 66, not as
+Darwin errno 39. The model mirrors NFS `NFSERR_*` / gRPC's canonical codes — and
+means a non-Linux server would map *its* native errno into the same enum with no
+client change.
+
+The client distinguishes the two layers: a gRPC error is the wire failing
+(retry candidate); a non-OK `FsError` is the filesystem refusing (propagate to
+the kernel as the corresponding host errno).
 
 ## 7. Authentication and identity
 
