@@ -24,6 +24,18 @@ import (
 // handled gracefully).
 const fskitModulePath = "/Applications/fuse-t.app/Contents/Extensions/FskitSrvModule.appex"
 
+const (
+	// cgofuseMountTimeout bounds how long establishCgoFuse waits for a mount to
+	// become ready before giving up.
+	cgofuseMountTimeout = 15 * time.Second
+	// fskitProbeTimeout is the shorter wait used for an FSKit attempt that may
+	// fall back to NFS ("auto" mode). A hung FSKit mount (e.g. the extension is
+	// installed but not enabled) should fall back to NFS quickly rather than
+	// block for the full mount timeout. A healthy FSKit mount becomes ready in
+	// ~1-2s, well within this window.
+	fskitProbeTimeout = 5 * time.Second
+)
+
 // cgofuseHandle wraps a cgofuse FileSystemHost goroutine as a mountHandle.
 type cgofuseHandle struct {
 	host *cgofuse.FileSystemHost
@@ -51,7 +63,13 @@ func establishCgoFuse(mountPath, volume, endpoint string, fsBackend io.FileSyste
 	if err != nil {
 		return nil, err
 	}
-	h, mErr := mountCgoFuseOnce(mountPath, volume, fsBackend, rewriter, opts, label)
+	// An FSKit attempt that can fall back (auto mode) gets a short timeout so a
+	// hung mount falls back to NFS quickly; everything else gets the full wait.
+	timeout := cgofuseMountTimeout
+	if allowFallback {
+		timeout = fskitProbeTimeout
+	}
+	h, mErr := mountCgoFuseOnce(mountPath, volume, fsBackend, rewriter, opts, label, timeout)
 	if mErr != nil && allowFallback {
 		log.Log.Warn("FSKit FUSE-T mount failed; falling back to the NFS backend",
 			zap.String("volume", volume), zap.Error(mErr))
@@ -59,7 +77,7 @@ func establishCgoFuse(mountPath, volume, endpoint string, fsBackend io.FileSyste
 		if serr != nil {
 			return nil, serr
 		}
-		return mountCgoFuseOnce(mountPath, volume, fsBackend, rewriter, nfsOpts, nfsLabel)
+		return mountCgoFuseOnce(mountPath, volume, fsBackend, rewriter, nfsOpts, nfsLabel, cgofuseMountTimeout)
 	}
 	return h, mErr
 }
@@ -68,7 +86,7 @@ func establishCgoFuse(mountPath, volume, endpoint string, fsBackend io.FileSyste
 // adapter's Init fires (mount live), the mount exits without starting, or a
 // timeout elapses. Returns a non-nil error on the latter two so the caller can
 // decide whether to fall back to another backend.
-func mountCgoFuseOnce(mountPath, volume string, fsBackend io.FileSystemBackend, rewriter *io.IDRewriter, opts []string, label string) (mountHandle, error) {
+func mountCgoFuseOnce(mountPath, volume string, fsBackend io.FileSystemBackend, rewriter *io.IDRewriter, opts []string, label string, readyTimeout time.Duration) (mountHandle, error) {
 	adapter := cgofs.New(fsBackend, rewriter)
 	host := cgofuse.NewFileSystemHost(adapter)
 
@@ -91,9 +109,9 @@ func mountCgoFuseOnce(mountPath, volume string, fsBackend io.FileSystemBackend, 
 	case <-adapter.Done():
 		// Mount returned false without ever calling Init — fail promptly.
 		return nil, fmt.Errorf("cgofuse mount of %s failed to start (%s)", volume, label)
-	case <-time.After(15 * time.Second):
+	case <-time.After(readyTimeout):
 		host.Unmount()
-		return nil, fmt.Errorf("cgofuse mount of %s did not become ready within 15s (%s)", volume, label)
+		return nil, fmt.Errorf("cgofuse mount of %s did not become ready within %s (%s)", volume, readyTimeout, label)
 	}
 }
 
