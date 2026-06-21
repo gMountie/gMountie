@@ -66,7 +66,7 @@ message GetAttrRequest {
 
 message GetAttrReply {
   Attr attributes = 1;
-  int32 status = 2;
+  FsError status = 2;
 }
 
 message GetAttrIfChangedRequest {
@@ -116,7 +116,7 @@ message UnlinkRequest {
 }
 
 message UnlinkReply {
-  int32 status = 1;
+  FsError status = 1;
 }
 
 message AccessRequest {
@@ -127,7 +127,7 @@ message AccessRequest {
 }
 
 message AccessReply {
-  int32 status = 1;
+  FsError status = 1;
 }
 
 // ReadlinkRequest reads the target string of a symbolic link. Read-only:
@@ -140,7 +140,7 @@ message ReadlinkRequest {
 
 message ReadlinkReply {
   string target = 1;
-  int32 status = 2;
+  FsError status = 2;
 }
 
 // SetAttrRequest applies any combination of settable attributes in ONE RPC.
@@ -166,7 +166,7 @@ message SetAttrRequest {
 
 message SetAttrReply {
   Attr  attributes = 1;  // final attrs on success — no trailing GetAttr
-  int32 status     = 2;
+  FsError status     = 2;
 }
 
 // ReadDirRequest streams the directory in batches, optionally with per-entry
@@ -195,7 +195,7 @@ message DirEntryPlus {
 
 message ReadDirBatch {
   repeated DirEntryPlus entries = 1;
-  int32 status = 2;  // non-zero only on a terminal error batch
+  FsError status = 2;  // non-zero only on a terminal error batch
 }
 
 message MkdirRequest {
@@ -208,7 +208,7 @@ message MkdirRequest {
 }
 
 message MkdirReply {
-  int32 status     = 1;
+  FsError status     = 1;
   Attr  attributes = 2;  // fills EntryOut without a post-create GetAttr (mirrors CreateReply)
 }
 
@@ -221,7 +221,7 @@ message RmdirRequest {
 }
 
 message RmdirReply {
-  int32 status = 1;
+  FsError status = 1;
 }
 
 message RenameRequest {
@@ -234,7 +234,7 @@ message RenameRequest {
 }
 
 message RenameReply {
-  int32 status = 1;
+  FsError status = 1;
 }
 
 // SymlinkRequest creates a new symbolic link `link_path` whose target is
@@ -250,7 +250,7 @@ message SymlinkRequest {
 }
 
 message SymlinkReply {
-  int32 status     = 1;
+  FsError status     = 1;
   Attr  attributes = 2;  // fills EntryOut without a post-create GetAttr (mirrors CreateReply)
 }
 
@@ -263,7 +263,7 @@ message GetXAttrRequest {
 
 message GetXAttrReply {
   bytes data = 1;
-  int32 status = 2;
+  FsError status = 2;
 }
 
 message SetXAttrRequest {
@@ -278,7 +278,7 @@ message SetXAttrRequest {
 }
 
 message SetXAttrReply {
-  int32 status = 1;
+  FsError status = 1;
 }
 
 message RemoveXAttrRequest {
@@ -291,7 +291,7 @@ message RemoveXAttrRequest {
 }
 
 message RemoveXAttrReply {
-  int32 status = 1;
+  FsError status = 1;
 }
 
 message ListXAttrRequest {
@@ -302,7 +302,7 @@ message ListXAttrRequest {
 
 message ListXAttrReply {
   repeated string attributes = 1;
-  int32 status = 2;
+  FsError status = 2;
 }
 
 // Protocol v-next BREAKING CHANGE: the OpenDir, Truncate, Chmod, Chown,
