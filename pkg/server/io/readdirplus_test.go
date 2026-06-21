@@ -53,7 +53,7 @@ func (s *StatFailureSuite) TestStatFailureContinues() {
 		return unix.Fstatat(dirfd, path, stat, flags)
 	}
 
-	entries, st := fs.ReadDirPlus("", nil)
+	entries, st := fs.ReadDirPlus("", false, nil)
 	s.Require().Equal(fuse.OK, st)
 	s.Require().Len(entries, 3, "all 3 entries must be returned despite one stat failure")
 
@@ -116,7 +116,7 @@ func entriesByName(entries []DirEntryPlus) map[string]DirEntryPlus {
 // TestAttrsMatchLstat: every entry carries non-nil attrs whose ino/mode/size
 // agree with an independent os.Lstat of the same path.
 func (s *ReadDirPlusSuite) TestAttrsMatchLstat() {
-	entries, st := s.fs.ReadDirPlus("", nil)
+	entries, st := s.fs.ReadDirPlus("", false, nil)
 	s.Require().Equal(fuse.OK, st)
 	byName := entriesByName(entries)
 	s.Require().Len(byName, 5, "small.txt, big.txt, sub, link, dangling")
@@ -138,7 +138,7 @@ func (s *ReadDirPlusSuite) TestAttrsMatchLstat() {
 // TestDanglingSymlinkGetsLinkAttrs: AT_SYMLINK_NOFOLLOW means a dangling
 // symlink yields the attrs of the LINK itself, not ENOENT from following it.
 func (s *ReadDirPlusSuite) TestDanglingSymlinkGetsLinkAttrs() {
-	entries, st := s.fs.ReadDirPlus("", nil)
+	entries, st := s.fs.ReadDirPlus("", false, nil)
 	s.Require().Equal(fuse.OK, st)
 	e, ok := entriesByName(entries)["dangling"]
 	s.Require().True(ok)
@@ -150,7 +150,7 @@ func (s *ReadDirPlusSuite) TestDanglingSymlinkGetsLinkAttrs() {
 // TestSubdirectoryListing: ReadDirPlus on a subdirectory path resolves
 // beneath the root like any other wire path.
 func (s *ReadDirPlusSuite) TestSubdirectoryListing() {
-	entries, st := s.fs.ReadDirPlus("/sub", nil)
+	entries, st := s.fs.ReadDirPlus("/sub", false, nil)
 	s.Require().Equal(fuse.OK, st)
 	s.Require().Len(entries, 1)
 	s.Equal("child.txt", entries[0].Entry.Name)
@@ -161,7 +161,7 @@ func (s *ReadDirPlusSuite) TestSubdirectoryListing() {
 // TestEmptyDirectory: an empty directory lists successfully with no entries.
 func (s *ReadDirPlusSuite) TestEmptyDirectory() {
 	s.Require().NoError(os.Mkdir(filepath.Join(s.rootDir, "empty"), 0o755))
-	entries, st := s.fs.ReadDirPlus("empty", nil)
+	entries, st := s.fs.ReadDirPlus("empty", false, nil)
 	s.Equal(fuse.OK, st)
 	s.Empty(entries)
 }
@@ -171,14 +171,14 @@ func (s *ReadDirPlusSuite) TestEmptyDirectory() {
 // not weaken the confinement contract.
 func (s *ReadDirPlusSuite) TestConfinementMatchesOpenDir() {
 	_, odStatus := s.fs.OpenDir("../../etc", nil)
-	_, rdpStatus := s.fs.ReadDirPlus("../../etc", nil)
+	_, rdpStatus := s.fs.ReadDirPlus("../../etc", false, nil)
 	s.Equal(odStatus, rdpStatus)
 	s.Equal(fuse.EACCES, rdpStatus)
 }
 
 // TestMissingDirectory: ENOENT passes through unchanged, like OpenDir.
 func (s *ReadDirPlusSuite) TestMissingDirectory() {
-	_, st := s.fs.ReadDirPlus("no-such-dir", nil)
+	_, st := s.fs.ReadDirPlus("no-such-dir", false, nil)
 	s.Equal(fuse.ENOENT, st)
 }
 
@@ -242,7 +242,7 @@ func (s *BoundReadDirPlusSuite) TestForwardsUnderCredentialSwitch() {
 	rdp, ok := bound.(ReadDirPlusser)
 	s.Require().True(ok, "identity-bound wrapper must expose ReadDirPlus")
 
-	entries, st := rdp.ReadDirPlus("", nil)
+	entries, st := rdp.ReadDirPlus("", false, nil)
 	s.Require().Equal(fuse.OK, st)
 	s.Require().Len(entries, 1)
 	s.Require().NotNil(entries[0].Attr, "attrs must pass through the wrapper")
@@ -262,7 +262,7 @@ func (s *BoundReadDirPlusSuite) TestFallsBackWhenInnerLacksCapability() {
 
 	id := s.identity()
 	bound := NewIdentityBoundFS(inner, &id)
-	entries, st := bound.(ReadDirPlusser).ReadDirPlus("", nil)
+	entries, st := bound.(ReadDirPlusser).ReadDirPlus("", false, nil)
 	s.Require().Equal(fuse.OK, st)
 	s.Require().Len(entries, 1)
 	s.Equal("a.txt", entries[0].Entry.Name)
@@ -280,7 +280,39 @@ func (s *BoundReadDirPlusSuite) TestResolveErrorReturnsEPERM() {
 	bound := NewResolverBoundFS(inner, func(string) (Identity, error) {
 		return Identity{}, syscall.ENOENT
 	}, "ghost")
-	entries, st := bound.(ReadDirPlusser).ReadDirPlus("", nil)
+	entries, st := bound.(ReadDirPlusser).ReadDirPlus("", false, nil)
 	s.Equal(fuse.EPERM, st)
 	s.Nil(entries)
+}
+
+func (s *ReadDirPlusSuite) TestReadDirPlusWithXattrNames() {
+	// s.rootDir is the volume root used by the suite's fs (see existing setup).
+	path := filepath.Join(s.rootDir, "withxattr.txt")
+	s.Require().NoError(os.WriteFile(path, []byte("x"), 0o644))
+	s.Require().NoError(unix.Setxattr(path, "user.test", []byte("v"), 0))
+
+	entries, st := s.fs.ReadDirPlus("", true, nil)
+	s.Require().Equal(fuse.OK, st)
+
+	var got *DirEntryPlus
+	for i := range entries {
+		if entries[i].Entry.Name == "withxattr.txt" {
+			got = &entries[i]
+		}
+	}
+	s.Require().NotNil(got)
+	s.True(got.XattrListed)
+	s.Contains(got.XattrNames, "user.test")
+}
+
+func (s *ReadDirPlusSuite) TestReadDirPlusWithoutXattrSkipsListing() {
+	path := filepath.Join(s.rootDir, "plain.txt")
+	s.Require().NoError(os.WriteFile(path, []byte("x"), 0o644))
+
+	entries, st := s.fs.ReadDirPlus("", false, nil)
+	s.Require().Equal(fuse.OK, st)
+	for i := range entries {
+		s.False(entries[i].XattrListed, "xattr must not be listed when withXattr=false")
+		s.Nil(entries[i].XattrNames)
+	}
 }

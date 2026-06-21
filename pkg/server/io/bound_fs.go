@@ -468,14 +468,14 @@ func (r *resolverBoundFS) OpenDir(name string, context *fuse.Context) ([]fuse.Di
 // When the wrapped FS lacks the capability, fall back to its OpenDir with nil
 // attrs (still under the switched credentials) so the wrapper satisfies
 // ReadDirPlusser unconditionally without inventing attributes.
-func (r *resolverBoundFS) ReadDirPlus(name string, context *fuse.Context) ([]DirEntryPlus, fuse.Status) {
+func (r *resolverBoundFS) ReadDirPlus(name string, withXattr bool, context *fuse.Context) ([]DirEntryPlus, fuse.Status) {
 	var (
 		out []DirEntryPlus
 		st  fuse.Status
 	)
 	if rs := r.runAs(func(*Identity) {
 		if rdp, ok := r.FileSystem.(ReadDirPlusser); ok {
-			out, st = rdp.ReadDirPlus(name, context)
+			out, st = rdp.ReadDirPlus(name, withXattr, context)
 			return
 		}
 		// Inner FS lacks the capability: degrade to OpenDir with nil attrs

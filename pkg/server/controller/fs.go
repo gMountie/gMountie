@@ -183,7 +183,7 @@ func (r *RpcServerImpl) ReadDir(req *proto.ReadDirRequest, stream proto.RpcFs_Re
 	// is go-fuse's, so the capability is type-asserted with a graceful
 	// fallback to plain OpenDir + nil attrs.
 	if rdp, ok := fs.(serverio.ReadDirPlusser); ok && req.Plus {
-		entries, st = rdp.ReadDirPlus(req.Path, fctx)
+		entries, st = rdp.ReadDirPlus(req.Path, req.WithXattr, fctx)
 	} else {
 		var dirs []fuse.DirEntry
 		dirs, st = fs.OpenDir(req.Path, fctx)
@@ -211,7 +211,9 @@ func (r *RpcServerImpl) ReadDir(req *proto.ReadDirRequest, stream proto.RpcFs_Re
 					Ino:  e.Entry.Ino,
 					Off:  e.Entry.Off,
 				},
-				Attributes: toProtoAttr(e.Attr, &id), // nil Attr -> nil Attributes
+				Attributes:  toProtoAttr(e.Attr, &id), // nil Attr -> nil Attributes
+				XattrListed: e.XattrListed,
+				XattrNames:  e.XattrNames,
 			}
 		}
 		if err := stream.Send(batch); err != nil {
