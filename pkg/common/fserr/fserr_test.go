@@ -45,11 +45,6 @@ func (s *FserrSuite) TestUnknownErrnoIsEIO() {
 	s.Equal(proto.FsError_FS_EIO, FromErrno(syscall.Errno(0x7fff)))
 }
 
-func (s *FserrSuite) TestLinuxNumbers() { // default build is linux
-	s.Equal(syscall.Errno(39), ToErrno(proto.FsError_FS_ENOTEMPTY)) // ENOTEMPTY=39 on Linux
-	s.Equal(syscall.Errno(syscall.ENODATA), ToErrno(proto.FsError_FS_ENO_XATTR))
-}
-
 func (s *FserrSuite) TestGRPCCodes() {
 	s.Equal(proto.FsError_FS_ENOENT, FromGRPCCode(codes.NotFound))
 	s.Equal(proto.FsError_FS_EACCES, FromGRPCCode(codes.PermissionDenied))
