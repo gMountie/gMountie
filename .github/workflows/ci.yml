@@ -34,11 +34,12 @@ jobs:
           go-version-file: 'go.mod'
           cache-dependency-path: 'go.sum'
       - name: Install Task
-        # `go install` goes through proxy.golang.org and reuses the
-        # setup-go module cache — sidesteps the unauthenticated
-        # GitHub release API rate limit that arduino/setup-task hits
-        # on busy shared runners.
-        run: go install github.com/go-task/task/v3/cmd/task@v3.51.1
+        uses: go-task/setup-task@v1
+        with:
+          version: 3.51.1
+          # Authenticate the release fetch so we don't hit the unauthenticated
+          # GitHub release API rate limit on busy shared runners.
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       # golangci-lint maintains its own per-package incremental analysis
       # cache, independent of Go's build cache. Without persisting it
       # across runs every CI invocation re-analyses every package from
@@ -98,11 +99,12 @@ jobs:
           go-version-file: 'go.mod'
           cache-dependency-path: 'go.sum'
       - name: Install Task
-        # `go install` goes through proxy.golang.org and reuses the
-        # setup-go module cache — sidesteps the unauthenticated
-        # GitHub release API rate limit that arduino/setup-task hits
-        # on busy shared runners.
-        run: go install github.com/go-task/task/v3/cmd/task@v3.51.1
+        uses: go-task/setup-task@v1
+        with:
+          version: 3.51.1
+          # Authenticate the release fetch so we don't hit the unauthenticated
+          # GitHub release API rate limit on busy shared runners.
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Run tests
         run: |
           task test:coverage
@@ -133,11 +135,12 @@ jobs:
           go-version-file: 'go.mod'
           cache-dependency-path: 'go.sum'
       - name: Install Task
-        # `go install` goes through proxy.golang.org and reuses the
-        # setup-go module cache — sidesteps the unauthenticated
-        # GitHub release API rate limit that arduino/setup-task hits
-        # on busy shared runners.
-        run: go install github.com/go-task/task/v3/cmd/task@v3.51.1
+        uses: go-task/setup-task@v1
+        with:
+          version: 3.51.1
+          # Authenticate the release fetch so we don't hit the unauthenticated
+          # GitHub release API rate limit on busy shared runners.
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       # Scoped to the concurrent logic packages plus test/e2e/api (see
       # Taskfile test:race) — no fio apt deps needed since the fio e2e
       # suites stay excluded; the api cache suites FUSE-mount, which works
@@ -159,7 +162,10 @@ jobs:
           go-version-file: 'go.mod'
           cache-dependency-path: 'go.sum'
       - name: Install Task
-        run: go install github.com/go-task/task/v3/cmd/task@v3.51.1
+        uses: go-task/setup-task@v1
+        with:
+          version: 3.51.1
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       # protoc is the one unpinned variable in proto generation (the Go
       # plugins are pinned via go.mod's tool block), so install the exact
       # release the committed stubs were generated with (see the
