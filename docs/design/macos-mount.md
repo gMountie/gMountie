@@ -76,6 +76,32 @@ Mount options are provider-specific:
   `iosize=N` (passed via `MountOptions.MaxWrite` on go-fuse; `-o iosize=N` on
   cgofuse). FUSE-T takes `max_write=N` via cgofuse.
 
+## FUSE-T backend: NFS vs FSKit
+
+FUSE-T can serve a mount two ways, selected with `-o backend=`:
+
+- **NFS** (default) — FUSE-T runs an in-process NFSv4 server and macOS mounts it
+  via the kernel NFS client. Universally available, but the NFS client amplifies
+  metadata over a high-RTT link: it polls `statfs` on nearly every operation
+  (26 of 39 RPCs in a single `ls`), issues a `GETATTR` after each write while a
+  file grows (~28k for a 1 GB copy), and stores xattrs in `._` AppleDouble
+  sidecars it opens once per probe. None of this happens on Linux/go-fuse, where
+  the kernel FUSE attr cache absorbs it.
+- **FSKit** (`backend=fskit`) — FUSE-T's Apple FSKit backend (`FskitSrvModule`
+  extension; macOS 15+) mounts natively, not through NFS, and does **not**
+  generate that amplification (measured: `ls` 39→4 RPCs, 1 GB write GETATTR
+  ~2,600→10). It requires the extension to be installed **and** enabled in
+  *System Settings → General → Login Items & Extensions*.
+
+`fuse.fuset_backend` (`auto` default | `nfs` | `fskit`) picks the backend, and
+only applies to the FUSE-T path. `auto` prefers FSKit when the module is present
+and **falls back to NFS if the FSKit mount fails** (so an installed-but-not-
+enabled extension degrades gracefully rather than failing the mount); `fskit`
+forces it with a clear error when unavailable; `nfs` forces the NFS backend. The
+client cache's StatFs/optimistic-attr mitigations (see
+[caching-and-consistency](caching-and-consistency.md)) blunt the NFS backend's
+amplification for macs without FSKit.
+
 ## Errno correctness
 
 Error codes are correct on both paths via the errno-canonical work (already

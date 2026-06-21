@@ -53,7 +53,7 @@ func pathExists(p string) bool {
 // set (Finder needs a name). "local" is macFUSE-only — it makes Finder treat
 // the mount as a browsable local device (fixes "terminal sees files, Finder
 // doesn't"); FUSE-T rejects unknown options, so it is omitted there.
-func macOSMountOptions(volume string, provider fuseProvider, maxWrite int) []string {
+func macOSMountOptions(volume string, provider fuseProvider, maxWrite int, ftBackend string) []string {
 	opts := []string{
 		"-o", "volname=" + volume,
 		"-o", "noappledouble",
@@ -66,10 +66,18 @@ func macOSMountOptions(volume string, provider fuseProvider, maxWrite int) []str
 		if maxWrite > 0 {
 			opts = append(opts, "-o", fmt.Sprintf("iosize=%d", maxWrite))
 		}
-	} else if maxWrite > 0 {
+	} else {
+		// FUSE-T. "backend=fskit" selects the native Apple FSKit backend instead
+		// of the default NFSv4 one (which amplifies metadata RPCs); omitted for
+		// "nfs"/"" so FUSE-T uses its default backend.
+		if ftBackend == "fskit" {
+			opts = append(opts, "-o", "backend=fskit")
+		}
 		// FUSE-T accepts libfuse-style max_write ("-o max_write=N: set maximum
 		// size of write requests") — same write-fragmentation fix.
-		opts = append(opts, "-o", fmt.Sprintf("max_write=%d", maxWrite))
+		if maxWrite > 0 {
+			opts = append(opts, "-o", fmt.Sprintf("max_write=%d", maxWrite))
+		}
 	}
 	return opts
 }

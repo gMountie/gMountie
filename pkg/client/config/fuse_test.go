@@ -23,6 +23,9 @@ func (s *FUSEConfigSuite) TestAttrEntryTimeoutDefaults() {
 		"AttrTimeout default must equal DefaultFUSEAttrTimeout (1s)")
 	s.Equal(DefaultFUSEEntryTimeout, cfg.EntryTimeout,
 		"EntryTimeout default must equal DefaultFUSEEntryTimeout (1s)")
+	s.Equal(DefaultFUSETBackend, cfg.FuseTBackend,
+		"FuseTBackend default must be \"auto\"")
+	s.Equal("auto", cfg.FuseTBackend)
 }
 
 // TestAttrEntryTimeoutEmptyViper verifies that an empty viper sub-tree
