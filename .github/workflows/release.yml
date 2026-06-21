@@ -52,7 +52,9 @@ jobs:
         RELEASE_TYPE: ${{ github.event.inputs.type }}
       run: |
         set -euo pipefail
-        export PATH="$PATH:$(go env GOPATH)/bin"
+        # Split declare/assign so $() exit status isn't masked (shellcheck SC2155).
+        GOPATH_BIN="$(go env GOPATH)/bin"
+        export PATH="$PATH:$GOPATH_BIN"
         # Compute the same tag the release job will (svu is deterministic for a
         # given history), so the darwin archive name + version ldflags match the
         # Linux artifacts. Snapshot is best-effort (it is not published).
@@ -79,15 +81,15 @@ jobs:
           cp LICENSE README.md CHANGELOG.md stage/
           # examples/ is optional — goreleaser's archive skips it when absent;
           # match that so the archive contents stay in lockstep with Linux.
-          EXTRA=""
-          if [ -d examples ]; then cp -R examples stage/examples; EXTRA="examples"; fi
+          contents=(gmountie LICENSE README.md CHANGELOG.md)
+          if [ -d examples ]; then cp -R examples stage/examples; contents+=(examples); fi
           tar -C stage -czf "dist-darwin/gMountie_${VERSION}_darwin_${arch}.tar.gz" \
-            gmountie LICENSE README.md CHANGELOG.md $EXTRA
+            "${contents[@]}"
         done
         echo "== darwin archives ==" && ls -la dist-darwin/
 
     - name: Upload darwin archives
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: darwin-archives
         path: dist-darwin/
@@ -186,7 +188,7 @@ jobs:
     # release.extra_files globs expect them (dist-darwin/), so they land in the
     # single signed checksums.txt and the release.
     - name: Download darwin archives
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         name: darwin-archives
         path: dist-darwin
