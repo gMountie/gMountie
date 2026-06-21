@@ -379,18 +379,21 @@ func (s *CachedBackendTestSuite) TestWriteGrowsCachedSize() {
 	s.Assert().Equal(uint64(150), a.Size, "append bumps cached size to off+n (acknowledged bytes)")
 }
 
-func (s *CachedBackendTestSuite) TestReleaseAfterWriteReconcilesAttr() {
+func (s *CachedBackendTestSuite) TestReleaseKeepsAttrForRevalidation() {
+	// Release must NOT evict the written file's attr: on a cold restart the
+	// persisted (optimistic, pre-write-version) attr must still be a hit so the
+	// next Stat runs GetAttrIfChanged and invalidates stale data on a version
+	// mismatch. Evicting here made restart serve stale chunks (regression in
+	// e2e TestRestartRevalidatesAfterMutation).
 	s.b.attr.putPositive("/f", &io.Attr{Ino: 1, Size: 100})
 	h, innerH := s.openCachedHandle("/f")
 	s.inner.EXPECT().Write(mock.Anything, innerH, int64(0), mock.Anything).
 		Return(uint32(4), proto.FsError_FS_OK).Once()
 	s.inner.EXPECT().Release(mock.Anything, innerH).Return(proto.FsError_FS_OK).Once()
 	_, _ = s.b.Write(context.Background(), h, 0, []byte("NEW!"))
-	_, hit, _ := s.b.attr.get("/f")
-	s.Require().True(hit, "attr kept after write")
 	s.b.Release(context.Background(), h)
-	_, hit, _ = s.b.attr.get("/f")
-	s.Assert().False(hit, "Release of a written handle drops attrs to reconcile with the server")
+	_, hit, _ := s.b.attr.get("/f")
+	s.Assert().True(hit, "attr must survive Release so a cold restart can revalidate")
 }
 
 func (s *CachedBackendTestSuite) TestWriteOnlyInvalidatesOverlappingChunks() {

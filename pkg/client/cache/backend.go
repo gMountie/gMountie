@@ -617,7 +617,6 @@ func (b *cachedBackend) Write(ctx context.Context, fh io.FileHandle, off int64, 
 		return n, st
 	}
 	if ch, ok := fh.(*cachedHandle); ok {
-		ch.wrote.Store(true)
 		b.data.invalidateRange(ch.path, off, int64(len(data)))
 		// Optimistic attr update instead of eviction. We just wrote n bytes at
 		// off, so we are authoritative on the file's new minimum size: bump the
@@ -634,13 +633,15 @@ func (b *cachedBackend) Write(ctx context.Context, fh io.FileHandle, off int64, 
 }
 
 func (b *cachedBackend) Release(ctx context.Context, fh io.FileHandle) proto.FsError {
-	st := b.inner.Release(ctx, unwrapHandle(fh))
-	if ch, ok := fh.(*cachedHandle); ok && ch.wrote.Load() {
-		// The file was written with optimistic attrs (see Write); drop them so
-		// the next Stat fetches the server's authoritative size/mtime/blocks.
-		b.attr.invalidate(ch.path)
-	}
-	return st
+	// Deliberately does NOT invalidate the attr for written handles. The
+	// optimistic write-time attr (see Write) carries the pre-write version, so
+	// the next unverified Stat's GetAttrIfChanged already detects the change and
+	// refetches; Subscribe push reconciles when verified. Invalidating here
+	// instead *removed* the persisted attr, so a cold restart saw an attr miss
+	// (full GetAttr, not revalidation) and served stale data chunks that the
+	// revalidation path would have invalidated (regression in e2e
+	// TestRestartRevalidatesAfterMutation).
+	return b.inner.Release(ctx, unwrapHandle(fh))
 }
 
 func (b *cachedBackend) Flush(ctx context.Context, fh io.FileHandle) proto.FsError {
@@ -657,7 +658,6 @@ func (b *cachedBackend) Allocate(ctx context.Context, fh io.FileHandle, off, siz
 		return st
 	}
 	if ch, ok := fh.(*cachedHandle); ok {
-		ch.wrote.Store(true)
 		b.data.invalidateRange(ch.path, int64(off), int64(size))
 		// Same optimistic-update rationale as Write: allocation can grow the
 		// file, so bump the cached size and keep the entry verified rather than
