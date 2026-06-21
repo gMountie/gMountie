@@ -21,7 +21,7 @@ func (s *SessionOriginSuite) TestReadsSessionFromIncomingMetadata() {
 }
 
 func (s *SessionOriginSuite) TestEmptyWhenAbsent() {
-	s.Equal("", sessionIDFromContext(context.Background()))
+	s.Empty(sessionIDFromContext(context.Background()))
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.MD{})
-	s.Equal("", sessionIDFromContext(ctx))
+	s.Empty(sessionIDFromContext(ctx))
 }
