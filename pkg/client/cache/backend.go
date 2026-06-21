@@ -134,7 +134,23 @@ func (a *subscribeBackendAdapter) invalidateXAttr(p string) {
 	a.b.xattr.invalidate(p)
 	a.b.getxattr.invalidate(p)
 }
-func (a *subscribeBackendAdapter) putNegative(p string) { a.b.attr.putNegative(p) }
+func (a *subscribeBackendAdapter) putNegative(p string)       { a.b.attr.putNegative(p) }
+func (a *subscribeBackendAdapter) invalidateSubtree(p string) { a.b.invalidateSubtree(p) }
+
+// invalidateSubtree drops every cached entry for path and all its descendants
+// across all sub-caches. A single directory rename or recursive delete moves or
+// removes a whole subtree in one op; per-key invalidation leaves descendant
+// entries behind, which then resurface as phantom "already exists" results (and
+// potentially stale data) when a path of the same name is recreated (issue
+// #159).
+func (b *cachedBackend) invalidateSubtree(path string) {
+	b.attr.invalidatePrefix(path)
+	b.dir.invalidatePrefix(path)
+	b.data.invalidatePrefix(path)
+	b.xattr.invalidatePrefix(path)
+	b.getxattr.invalidatePrefix(path)
+	b.access.invalidatePrefix(path)
+}
 
 // revalidateResult carries the outcome of a GetAttrIfChanged revalidation
 // call made by the gating logic in Stat/Lookup/ListDir/Read.
@@ -543,7 +559,7 @@ func (b *cachedBackend) Symlink(ctx context.Context, target, linkPath string) (*
 	}
 	parent := pathParent(linkPath)
 	b.dir.invalidate(parent)
-	b.attr.invalidate(parent)
+	b.attr.bumpParentEntryAdded(parent) // #158: symlink create doesn't change parent nlink (see Create)
 	b.attr.invalidate(linkPath)
 	b.access.invalidate(linkPath)
 	if a != nil {
@@ -641,9 +657,19 @@ func (b *cachedBackend) Create(ctx context.Context, parent, name string, flags, 
 		return nil, nil, st
 	}
 	b.dir.invalidate(parent)
-	b.attr.invalidate(parent)
+	// #158: refresh the parent's mtime/ctime instead of evicting it. Adding a
+	// regular-file entry doesn't change the parent's mode/uid/gid (what
+	// default_permissions checks) or nlink, so the cached parent stays correct
+	// and the kernel's ancestor permission checks + the app's dir stats keep
+	// hitting cache rather than taking a full GetAttr per created child.
+	b.attr.bumpParentEntryAdded(parent)
 	b.attr.invalidate(full) // drop any negative entry from a prior failed Stat
 	b.access.invalidate(full)
+	// #160: a brand-new file provably has no file capabilities, so prime a
+	// negative security.capability so the kernel's per-write killpriv probe is a
+	// local cache hit instead of one RPC per written file. A later SetXAttr on
+	// this path invalidates the getxattr cache, so this can't go stale.
+	b.getxattr.put(full, securityCapabilityXAttr, nil, proto.FsError_FS_ENO_XATTR)
 	if a != nil {
 		b.attr.putPositive(full, a)
 	}
@@ -794,14 +820,14 @@ func (b *cachedBackend) Rename(ctx context.Context, oldPath, newPath string) pro
 	if st != proto.FsError_FS_OK {
 		return st
 	}
-	b.attr.invalidate(oldPath)
-	b.attr.invalidate(newPath)
-	b.access.invalidate(oldPath)
-	b.access.invalidate(newPath)
-	b.getxattr.invalidate(oldPath)
-	b.getxattr.invalidate(newPath)
-	b.data.invalidatePath(oldPath)
-	b.data.invalidatePath(newPath)
+	// #159: a rename moves a whole subtree in one op. Invalidate the full
+	// subtree under BOTH old and new paths across every cache (memory + disk),
+	// not just the two path keys — otherwise descendants like oldPath/.git
+	// survive and resurface as phantom "already exists" when a directory of the
+	// same name is recreated. Cheap O(n) here is fine: renames are rare relative
+	// to the per-entry ops (unlink/create) that must stay O(1).
+	b.invalidateSubtree(oldPath)
+	b.invalidateSubtree(newPath)
 	oldParent := pathParent(oldPath)
 	newParent := pathParent(newPath)
 	b.dir.invalidate(oldParent)

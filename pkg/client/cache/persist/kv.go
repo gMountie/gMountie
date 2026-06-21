@@ -1,6 +1,8 @@
 package persist
 
 import (
+	"bytes"
+
 	"github.com/pkg/errors"
 	bolt "go.etcd.io/bbolt"
 )
@@ -52,6 +54,45 @@ func (p *Persist) kvDelete(bucket []byte, key string) error {
 	// the unverified-startup revalidation the subscribe path provides).
 	return errors.Wrap(p.sync(), "sync after kvDelete")
 }
+
+// kvDeletePrefix deletes every key in bucket that is the path `prefix` itself
+// or a descendant of it (prefix + "/..."). It deliberately does NOT delete
+// sibling keys that merely share a string prefix (e.g. prefix "a" must not
+// touch "ab"), so it matches `k == prefix || hasPrefix(k, prefix+"/")`. One
+// writable cursor pass; syncs once at the end so a subtree invalidation
+// (directory rename / recursive delete) is durable like kvDelete. Returns the
+// count deleted so the caller can skip the sync when nothing matched.
+func (p *Persist) kvDeletePrefix(bucket []byte, prefix string) error {
+	pb := []byte(prefix)
+	slash := append(append([]byte{}, pb...), '/')
+	deleted := 0
+	if err := p.db.Update(func(tx *bolt.Tx) error {
+		c := tx.Bucket(bucket).Cursor()
+		// Seek to prefix; iterate while the key still shares the prefix bytes
+		// (bounds the scan), deleting only exact-or-descendant keys.
+		for k, _ := c.Seek(pb); k != nil && bytes.HasPrefix(k, pb); k, _ = c.Next() {
+			if bytes.Equal(k, pb) || bytes.HasPrefix(k, slash) {
+				if err := c.Delete(); err != nil {
+					return err
+				}
+				deleted++
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if deleted == 0 {
+		return nil
+	}
+	return errors.Wrap(p.sync(), "sync after kvDeletePrefix")
+}
+
+// DeleteAttrPrefix / DeleteDirPrefix delete a whole path subtree from the attr
+// and dir buckets — used by the cache layer to invalidate descendants on a
+// directory rename or recursive delete, which the per-key facades cannot do.
+func (p *Persist) DeleteAttrPrefix(prefix string) error { return p.kvDeletePrefix(bucketAttr, prefix) }
+func (p *Persist) DeleteDirPrefix(prefix string) error  { return p.kvDeletePrefix(bucketDir, prefix) }
 
 // PutAttrBytes / GetAttrBytes / DeleteAttrBytes: attr bucket facade.
 func (p *Persist) PutAttrBytes(key string, value []byte) error {

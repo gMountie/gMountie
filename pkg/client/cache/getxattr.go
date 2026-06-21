@@ -14,6 +14,12 @@ import (
 // exist — caches a nil-data negative, well under the cap.
 const maxCachedXAttrValueBytes = 4096
 
+// securityCapabilityXAttr is the file-capability xattr the kernel probes before
+// the first write to a file (killpriv). Create primes a negative for it (a fresh
+// file provably has none) so the probe is a local cache hit, not one RPC per
+// written file.
+const securityCapabilityXAttr = "security.capability"
+
 // getXAttrEntry is a cached GetXAttr(path, attr) result with an expiry.
 type getXAttrEntry struct {
 	data      []byte

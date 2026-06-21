@@ -20,6 +20,7 @@ type fakeBackendForSubscriber struct {
 	dirInvals     []string
 	attrNegatives []string
 	xattrInvals   []string
+	subtreeInvals []string
 }
 
 func (b *fakeBackendForSubscriber) invalidateAttr(p string) {
@@ -46,6 +47,11 @@ func (b *fakeBackendForSubscriber) invalidateXAttr(p string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.xattrInvals = append(b.xattrInvals, p)
+}
+func (b *fakeBackendForSubscriber) invalidateSubtree(p string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.subtreeInvals = append(b.subtreeInvals, p)
 }
 
 type SubscribeConsumerSuite struct{ suite.Suite }
