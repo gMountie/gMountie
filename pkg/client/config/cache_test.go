@@ -62,10 +62,6 @@ func (s *CacheConfigSuite) TestZeroAttrTTLPreserved() {
 // viper sub-tree (defaults come from the SetDefault block) must yield exactly
 // the same config as the v==nil literal-defaults path, proving the two default
 // sources agree.
-// TestEmptyTreeEqualsNil guards the AR-L2 de-duplication: parsing an empty
-// viper sub-tree (defaults come from the SetDefault block) must yield exactly
-// the same config as the v==nil literal-defaults path, proving the two default
-// sources agree.
 func (s *CacheConfigSuite) TestEmptyTreeEqualsNil() {
 	nilCfg, err := config.NewCacheConfig(nil)
 	s.Require().NoError(err)

@@ -52,8 +52,8 @@ scenarios, offline mode).
 
 ## 2. Cache tiers
 
-There are four logical caches. Three are persistent (attr, dir, data); one
-is memory-only (negative).
+There are five logical caches. Three are persistent (attr, dir, data); two
+are memory-only (negative, xattr names).
 
 ### 2.1 Attribute cache
 
@@ -93,7 +93,23 @@ with zero RPCs. The dir cache itself still stores only the dirent shape
 (name + mode + ino); per-path attrs live exclusively in the attr cache so
 invalidation has a single source of truth.
 
-### 2.3 Data cache
+### 2.3 XAttr names cache
+
+Per-entry xattr names are folded into the `ReadDir` reply when the cache is
+enabled — gated by the `with_xattr` flag set in `ListDirRequest`, which the
+client backend sets only when `cache.enabled = true`. This means a cold
+`ls -la` on a directory costs one `ListDir` RPC instead of N per-file
+`ListXAttr` calls, eliminating the O(N) RPC fan-out that is otherwise a
+throughput cliff on high-latency links. The xattr names cache is
+advisory/display-only: ACL enforcement remains server-side and kernel-native,
+so the cache is served on TTL (`cache.xattr_ttl`, default 5 min) plus
+Subscribe MUTATED/DELETED/RENAMED push invalidation — no per-path
+revalidation is needed. The cache stores names only; `GetXAttr` values are
+not cached (values are large, content-dependent, and their caching is deferred
+to a future phase). For the full design rationale see
+`docs/superpowers/specs/2026-06-21-xattr-names-cache-design.md`.
+
+### 2.4 Data cache
 
 Caches file content in fixed-size chunks keyed by `(path, chunkIndex)`.
 Chunk size is configurable (`cache.chunk_size_bytes`, default 1 MiB). Reads
@@ -113,7 +129,7 @@ covering `[off, off+len)`.
 - **Persistence:** yes — chunk bytes stored content-addressed in `chunks/`
   tree; index entries in `data_idx` bbolt bucket (see §6).
 
-### 2.4 Negative cache
+### 2.5 Negative cache
 
 Caches ENOENT results so subsequent `Stat`/`Lookup` on non-existent paths
 return immediately without hitting the server.
@@ -129,7 +145,7 @@ return immediately without hitting the server.
 - **Persistence:** no. Negative entries are memory-only. A restart defaults to
   a fresh pass to the server for previously-negative paths.
 
-### 2.5 Write-through semantics
+### 2.6 Write-through semantics
 
 The cache is **not write-back**. Writes always go through to the server first;
 only after a successful `inner.Write` does the cache invalidate the
@@ -627,6 +643,7 @@ All keys are under the `cache` prefix. Env vars use `GMOUNTIE_CACHE_*`.
 | `cache.attr_ttl` | `5m` | Positive attr cache TTL. `0` = no expiry. |
 | `cache.dir_ttl` | `5m` | Dir listing cache TTL. `0` = no expiry. |
 | `cache.negative_ttl` | `30s` | Negative (ENOENT) attr cache TTL. `0` = no expiry. |
+| `cache.xattr_ttl` | `5m` | XAttr names cache TTL per entry. `0` = no expiry. |
 
 ### 9.2 Server config keys (`server.*`)
 
@@ -675,7 +692,12 @@ All keys are under the `cache` prefix. Env vars use `GMOUNTIE_CACHE_*`.
 
 - **`SetXAttr` / `RemoveXAttr` in the cache.** These operations are not yet
   on `FileSystemBackend`. When they are added, they will need invalidation
-  entries in the table in §5.
+  entries in the table in §5. Note: xattr *names* (via `ListXAttr`) are now
+  cached as of §2.3; it is xattr *write* operations that remain unimplemented.
+
+- **XAttr value caching.** `GetXAttr` values are large and content-dependent;
+  only the names list from `ListXAttr` is cached (§2.3). Value caching is
+  deferred until profiling shows it is a hot path.
 
 ## 11. Glossary
 

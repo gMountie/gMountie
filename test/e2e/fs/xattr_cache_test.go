@@ -170,7 +170,7 @@ func (s *XAttrCacheE2ESuite) TestSetXAttrInvalidatesCache() {
 	// local cache) and reflect the new name.
 	sz, err := unix.Listxattr(p, nil)
 	s.Require().NoError(err)
-	s.Require().Greater(sz, 0, "listxattr after setxattr must return at least one name")
+	s.Require().Positive(sz, "listxattr after setxattr must return at least one name")
 
 	buf := make([]byte, sz)
 	n, err := unix.Listxattr(p, buf)
