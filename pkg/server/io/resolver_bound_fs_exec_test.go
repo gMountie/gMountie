@@ -276,7 +276,7 @@ func (s *ResolverBoundFSExecSuite) TestExecPathReadDirPlusForwardsToPlusser() {
 	s.Require().True(inner.Mkdir("hello", 0o755, nil).Ok())
 	s.resetCounters()
 
-	entries, st := r.ReadDirPlus("", nil)
+	entries, st := r.ReadDirPlus("", false, nil)
 	s.Require().True(st.Ok())
 	s.Require().Len(entries, 1)
 	s.Equal("hello", entries[0].Entry.Name)
@@ -305,7 +305,7 @@ func (s *ResolverBoundFSExecSuite) TestExecPathReadDirPlusFallbackWhenInnerLacks
 	s.Require().NoError(os.WriteFile(filepath.Join(dir, "item.txt"), []byte("x"), 0o644))
 	s.resetCounters()
 
-	entries, st := r.ReadDirPlus("", nil)
+	entries, st := r.ReadDirPlus("", false, nil)
 	s.Require().True(st.Ok())
 	s.Require().Len(entries, 1)
 	s.Equal("item.txt", entries[0].Entry.Name)
