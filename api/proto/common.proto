@@ -51,4 +51,6 @@ enum FsError {
   FS_ENO_XATTR = 29;  // missing xattr: Linux ENODATA, Darwin ENOATTR
   FS_EINTR = 30;
   FS_ETXTBSY = 31;
+  FS_EDEADLK = 32;  // lock op would deadlock (fcntl F_SETLKW)
+  FS_ENOLCK = 33;   // no locks available
 }

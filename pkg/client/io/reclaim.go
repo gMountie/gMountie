@@ -4,6 +4,7 @@ import (
 	"context"
 	"syscall"
 
+	fserr "go.gmountie.dev/gmountie/pkg/common/fserr"
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 
@@ -89,7 +90,9 @@ func (h *grpcFileHandle) reclaimIfStale(ctx context.Context) proto.FsError {
 // error so retryOp short-circuits and the status reaches userspace unchanged.
 type reclaimError struct{ st proto.FsError }
 
-func (e reclaimError) Error() string { return "reclaim failed: " + e.st.String() }
+// Error renders the host errno's human-readable string ("stale file handle")
+// rather than the bare enum name ("FS_ESTALE"), so logs stay readable.
+func (e reclaimError) Error() string { return "reclaim failed: " + fserr.ToErrno(e.st).Error() }
 
 func errFromStatus(st proto.FsError) error { return reclaimError{st} }
 
