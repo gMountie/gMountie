@@ -256,6 +256,7 @@ server's `frame_size_bytes` is larger.
 | handle\_kill\_priv | boolean  | true     | Advertise `CAP_HANDLE_KILLPRIV_V2`; eliminates the per-write `security.capability` getxattr RPC (env: `GMOUNTIE_FUSE_HANDLE_KILL_PRIV`) |
 | attr\_timeout       | duration | 1s       | How long the kernel caches inode attributes (size, mode, timestamps) before issuing a GETATTR |
 | entry\_timeout      | duration | 1s       | How long the kernel caches dentry (name→inode) mappings before issuing a LOOKUP |
+| fuset\_backend      | string   | auto     | macOS/FUSE-T only: `auto` (prefer Apple FSKit, fall back to NFS), `nfs`, or `fskit` |
 
 `max_write_bytes` is validated to the range [4096, 16777216] (4 KiB to
 16 MiB). go-fuse sets the kernel's `max_read` equal to `MaxWrite`, so
@@ -320,6 +321,18 @@ Both fields are validated to `gte=0`; `0` (or unset) means **use the
 default**, never cache-off — a non-nil zero would turn every kernel op
 into a fresh round-trip (~1000× metadata amplification). To approximate
 disabling a tier, set a tiny value such as `1ms`.
+
+`fuset_backend` applies only on macOS when the resolved provider is FUSE-T
+(it is ignored for macFUSE and on Linux). FUSE-T's default **NFS** backend
+makes the macOS NFS client amplify metadata RPCs over a high-RTT link
+(free-space polling, GETATTR-during-write, `._` AppleDouble sidecars).
+FUSE-T's **FSKit** backend (Apple FSKit, macOS 15+) mounts natively and avoids
+that amplification. `auto` (the default) uses FSKit when its `FskitSrvModule`
+extension is installed and **transparently falls back to NFS** if the FSKit
+mount fails (e.g. the extension is installed but not enabled in *System
+Settings → General → Login Items & Extensions*). `fskit` forces it and fails
+with a clear error if unavailable; `nfs` forces the NFS backend. See
+[macOS mount](../design/macos-mount.md).
 
 Example:
 

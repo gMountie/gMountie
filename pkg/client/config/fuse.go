@@ -12,6 +12,18 @@ const (
 	// probes known install paths and picks macFUSE if present, falling back
 	// to FUSE-T. Set to "macfuse" or "fuse-t" to skip auto-detection.
 	DefaultFUSEProvider = "auto"
+	// DefaultFUSETBackend selects FUSE-T's mount backend:
+	//   "auto"  (default) — use Apple FSKit when the FskitSrvModule extension is
+	//           present, otherwise NFS. If the FSKit mount fails (e.g. the
+	//           extension is installed but not enabled in System Settings) the
+	//           mount transparently falls back to NFS.
+	//   "fskit" — force FSKit; the mount fails with a clear error if the module
+	//           is missing or the FSKit mount does not succeed (no fallback).
+	//   "nfs"   — force FUSE-T's NFSv4 backend (universally available).
+	// FSKit (macOS 15+) is a native mount that avoids the NFS backend's metadata
+	// amplification (free-space polling, getattr-during-write, AppleDouble
+	// sidecars). FUSE-T only — ignored on the macFUSE (go-fuse) path.
+	DefaultFUSETBackend = "auto"
 	// DefaultFUSEMaxWriteBytes is the default ceiling for FUSE MaxWrite.
 	// go-fuse sets the kernel's max_read to the same value, so this knob
 	// drives both directions of FUSE-kernel transfer size. 1 MiB matches
@@ -129,6 +141,12 @@ type FUSEConfig struct {
 	// to FUSE-T. Pin to "macfuse" or "fuse-t" to skip auto-detection.
 	// Has no effect on Linux without -tags cgofuse.
 	Provider string `mapstructure:"provider"`
+	// FuseTBackend selects FUSE-T's backend: "auto" (default), "nfs", or
+	// "fskit". Only applies when the resolved provider is FUSE-T; ignored for
+	// macFUSE and on Linux. "auto" prefers FSKit when available and falls back
+	// to NFS; "fskit" forces it (macOS 15+ with the FskitSrvModule extension
+	// installed and enabled, else the mount fails clearly).
+	FuseTBackend string `validate:"omitempty,oneof=auto nfs fskit" mapstructure:"fuset_backend"`
 }
 
 // NewFUSEConfig parses a FUSEConfig from a viper sub-tree. A nil v
@@ -144,6 +162,7 @@ func NewFUSEConfig(v *viper.Viper) (*FUSEConfig, error) {
 		AttrTimeout:    DefaultFUSEAttrTimeout,
 		EntryTimeout:   DefaultFUSEEntryTimeout,
 		Provider:       DefaultFUSEProvider,
+		FuseTBackend:   DefaultFUSETBackend,
 	}
 	if v == nil {
 		return cfg, nil
@@ -156,6 +175,7 @@ func NewFUSEConfig(v *viper.Viper) (*FUSEConfig, error) {
 	v.SetDefault("attr_timeout", DefaultFUSEAttrTimeout)
 	v.SetDefault("entry_timeout", DefaultFUSEEntryTimeout)
 	v.SetDefault("provider", DefaultFUSEProvider)
+	v.SetDefault("fuset_backend", DefaultFUSETBackend)
 	if err := v.UnmarshalExact(cfg, viper.DecodeHook(mapstructure.StringToTimeDurationHookFunc())); err != nil {
 		return nil, err
 	}

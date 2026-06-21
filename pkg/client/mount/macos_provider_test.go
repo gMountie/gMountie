@@ -36,20 +36,30 @@ func (s *MacProviderSuite) TestExplicitOverrideHonored() {
 }
 
 func (s *MacProviderSuite) TestOptionsIncludeVolnameAlways() {
-	opts := macOSMountOptions("photos", providerFuseT, 1<<20)
+	opts := macOSMountOptions("photos", providerFuseT, 1<<20, "nfs")
 	s.Contains(opts, "volname=photos")
 	s.NotContains(opts, "local") // FUSE-T rejects unknown opts
 	// FUSE-T accepts libfuse-style max_write; large value avoids write
 	// fragmentation (each fragment crosses cgo).
 	s.Contains(opts, "max_write=1048576")
+	// nfs backend adds no backend= option (FUSE-T uses its default).
+	s.NotContains(opts, "backend=fskit")
+}
+
+func (s *MacProviderSuite) TestFuseTFskitBackendOption() {
+	opts := macOSMountOptions("photos", providerFuseT, 1<<20, "fskit")
+	s.Contains(opts, "backend=fskit") // selects FUSE-T's native FSKit backend
+	s.Contains(opts, "max_write=1048576")
 }
 
 func (s *MacProviderSuite) TestOptionsIncludeLocalForMacFUSE() {
-	opts := macOSMountOptions("photos", providerMacFUSE, 1<<20)
+	opts := macOSMountOptions("photos", providerMacFUSE, 1<<20, "")
 	s.Contains(opts, "local")
 	s.Contains(opts, "volname=photos")
 	// macFUSE sizes I/O via iosize, not libfuse max_write.
 	s.Contains(opts, "iosize=1048576")
+	// macFUSE uses go-fuse; the FUSE-T backend option never applies.
+	s.NotContains(opts, "backend=fskit")
 }
 
 func (s *MacProviderSuite) TestLinuxCgofuseOptionsSetMaxWrite() {
