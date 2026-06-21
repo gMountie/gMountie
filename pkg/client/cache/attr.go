@@ -25,6 +25,12 @@ type attrCache struct {
 	now         func() time.Time
 	attrTTL     time.Duration
 	negativeTTL time.Duration
+	// prefixRemover, when non-nil, deletes a whole path subtree from the disk
+	// tier (set only for the persist-backed cache). The memory tier is handled
+	// by st.removeMatching; the disk tier needs a separate prefix delete because
+	// removeMatching only sees memory-resident keys — a descendant evicted to
+	// disk would otherwise be loaded back stale after an ancestor rename.
+	prefixRemover func(prefix string)
 }
 
 func newAttrCache(acct *accountant, attrTTL, negativeTTL time.Duration, now func() time.Time) *attrCache {
@@ -91,6 +97,46 @@ func (c *attrCache) putNegative(path string) {
 // invalidate drops the cached entry for path (positive or negative).
 func (c *attrCache) invalidate(path string) {
 	c.st.remove(path)
+}
+
+// invalidatePrefix drops the cached entry for path AND every descendant
+// (path + "/..."), across both tiers. Used when a directory is moved/removed
+// as one operation (rename, recursive delete): the per-key invalidate would
+// leave descendant entries behind, which then resurface as phantom
+// "already exists" results when a directory of the same name is recreated.
+func (c *attrCache) invalidatePrefix(path string) {
+	c.st.removeMatching(subtreePred(path))
+	if c.prefixRemover != nil {
+		c.prefixRemover(path)
+	}
+}
+
+// bumpParentEntryAdded refreshes a cached parent directory's attr after a child
+// was created under it, instead of evicting it. Adding an entry advances the
+// directory's mtime and ctime but leaves mode/uid/gid (what default_permissions
+// checks) and nlink (regular-file/symlink children don't change a dir's link
+// count) untouched — so the cached entry stays correct and the kernel's
+// permission checks + the app's dir stats keep hitting cache instead of taking
+// a full GetAttr per child. No-op when no positive entry is cached (the next
+// Stat populates it). NOTE: only safe for file/symlink creates; a Mkdir bumps
+// the parent's nlink, so callers keep evicting the parent there.
+func (c *attrCache) bumpParentEntryAdded(path string) {
+	e := c.st.get(path)
+	if e == nil {
+		return
+	}
+	ae, _ := e.value.(*attrEntry)
+	if ae == nil || ae.negative || ae.attr == nil {
+		return
+	}
+	updated := *ae.attr // copy; never mutate the pointer get() shares with readers
+	now := c.now()
+	updated.Mtime = uint64(now.Unix())
+	updated.Mtimensec = uint32(now.Nanosecond())
+	updated.Ctime = uint64(now.Unix())
+	updated.Ctimensec = uint32(now.Nanosecond())
+	ne := &attrEntry{attr: &updated, expiresAt: now.Add(c.attrTTL)}
+	c.st.put(path, ne, attrEntrySize(path, ne))
 }
 
 // bumpSize optimistically updates a cached positive entry after a local write
@@ -191,5 +237,6 @@ func newAttrCacheWithPersist(acct *accountant, attrTTL, negativeTTL time.Duratio
 	}
 	remover := func(key string) { _ = p.DeleteAttrBytes(key) }
 	c.st = newStoreWithPersist(acct, loader, putter, remover, "attr")
+	c.prefixRemover = func(prefix string) { _ = p.DeleteAttrPrefix(prefix) }
 	return c
 }

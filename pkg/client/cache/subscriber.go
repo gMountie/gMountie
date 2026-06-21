@@ -24,6 +24,7 @@ type subscribeBackendOps interface {
 	invalidateData(path string)
 	invalidateDir(path string)
 	invalidateXAttr(path string)
+	invalidateSubtree(path string)
 	putNegative(path string)
 }
 
@@ -157,11 +158,16 @@ func (c *subscribeConsumer) handle(ev *proto.SubscribeEvent) {
 	case proto.SubscribeEvent_DELETED:
 		metrics.SubscribeEventReceived("deleted")
 		c.invalidatePathAndParent(ev.Path)
+		// The deleted path may be a directory whose descendants are cached (a
+		// server-side recursive delete). Drop the whole subtree so a stale
+		// descendant can't resurface if the path is recreated (issue #159).
+		c.cache.invalidateSubtree(ev.Path)
 		c.cache.putNegative(ev.Path)
 	case proto.SubscribeEvent_RENAMED:
 		metrics.SubscribeEventReceived("renamed")
 		for _, p := range []string{ev.Path, ev.NewPath} {
 			c.invalidatePathAndParent(p)
+			c.cache.invalidateSubtree(p) // a renamed directory moves its whole subtree (issue #159)
 		}
 		c.cache.putNegative(ev.Path)
 	case proto.SubscribeEvent_HEARTBEAT:

@@ -46,4 +46,27 @@ func (s *KVSuite) TestDirPutGetDelete() {
 	s.Assert().False(ok)
 }
 
+// TestDeleteAttrPrefixSubtreeOnly: a prefix delete removes the directory itself
+// and its descendants, but MUST NOT touch siblings that merely share a string
+// prefix ("d" vs "d2", "d.bak") — the boundary that makes #159's subtree
+// invalidation safe.
+func (s *KVSuite) TestDeleteAttrPrefixSubtreeOnly() {
+	keys := []string{"d", "d/.git", "d/.git/config", "d/src/main.go", "d2", "d.bak", "e"}
+	for _, k := range keys {
+		s.Require().NoError(s.p.PutAttrBytes(k, []byte("v")))
+	}
+	s.Require().NoError(s.p.DeleteAttrPrefix("d"))
+
+	for _, k := range []string{"d", "d/.git", "d/.git/config", "d/src/main.go"} {
+		_, ok, err := s.p.GetAttrBytes(k)
+		s.Require().NoError(err)
+		s.Assert().Falsef(ok, "%q should be deleted by the subtree prefix", k)
+	}
+	for _, k := range []string{"d2", "d.bak", "e"} {
+		_, ok, err := s.p.GetAttrBytes(k)
+		s.Require().NoError(err)
+		s.Assert().Truef(ok, "sibling %q must survive a subtree prefix delete", k)
+	}
+}
+
 func TestKVSuite(t *testing.T) { suite.Run(t, new(KVSuite)) }

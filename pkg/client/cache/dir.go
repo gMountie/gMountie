@@ -18,6 +18,9 @@ type dirCache struct {
 	st     *store
 	now    func() time.Time
 	dirTTL time.Duration
+	// prefixRemover deletes a path subtree from the disk tier (persist-backed
+	// cache only); see attrCache.prefixRemover for the rationale.
+	prefixRemover func(prefix string)
 }
 
 func newDirCache(acct *accountant, dirTTL time.Duration, now func() time.Time) *dirCache {
@@ -55,6 +58,16 @@ func (c *dirCache) put(path string, entries []io.DirEntry) {
 }
 
 func (c *dirCache) invalidate(path string) { c.st.remove(path) }
+
+// invalidatePrefix drops the listing for path and every descendant directory,
+// across both tiers — the dir-cache half of subtree invalidation on a directory
+// rename / recursive delete.
+func (c *dirCache) invalidatePrefix(path string) {
+	c.st.removeMatching(subtreePred(path))
+	if c.prefixRemover != nil {
+		c.prefixRemover(path)
+	}
+}
 
 // dirPerEntryOverheadBytes is the non-name resident cost of one cached
 // io.DirEntry (struct fields + the name string header).
@@ -111,5 +124,6 @@ func newDirCacheWithPersist(acct *accountant, dirTTL time.Duration, now func() t
 	}
 	remover := func(key string) { _ = p.DeleteDirBytes(key) }
 	c.st = newStoreWithPersist(acct, loader, putter, remover, "dir")
+	c.prefixRemover = func(prefix string) { _ = p.DeleteDirPrefix(prefix) }
 	return c
 }

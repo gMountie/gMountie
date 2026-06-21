@@ -6,6 +6,7 @@ import (
 	"time"
 
 	iomocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
 	"go.gmountie.dev/gmountie/pkg/client/io"
 	"go.gmountie.dev/gmountie/pkg/proto"
 
@@ -412,10 +413,16 @@ func (s *CachedBackendTestSuite) TestWriteOnlyInvalidatesOverlappingChunks() {
 	s.Assert().NotNil(s.b.data.get("/f", 2))
 }
 
-func (s *CachedBackendTestSuite) TestCreateInvalidatesParentDirAndDropsNegative() {
-	// Prior negative-cached attr at the create path; cached parent listing.
+// TestCreateBumpsParentDirAndDropsNegative: #158 — the parent dir LISTING is
+// still invalidated (the new child must appear on the next readdir), but the
+// parent ATTR is refreshed in place (mtime/ctime bumped) rather than evicted,
+// so the kernel's ancestor permission checks + the app's dir stats keep hitting
+// cache instead of taking a full GetAttr per created child. Identity
+// (Ino/mode/uid/gid) is preserved.
+func (s *CachedBackendTestSuite) TestCreateBumpsParentDirAndDropsNegative() {
+	// Prior negative-cached attr at the create path; cached parent listing + attr.
 	s.b.attr.putNegative("/d/new")
-	s.b.attr.putPositive("/d", &io.Attr{Ino: 1})
+	s.b.attr.putPositive("/d", &io.Attr{Ino: 1, Mtime: 1000})
 	s.b.dir.put("/d", []io.DirEntry{{Name: "x"}})
 	innerH := iomocks.NewMockFileHandle(s.T())
 	innerH.EXPECT().Unwrap().Return(innerH).Maybe()
@@ -425,11 +432,15 @@ func (s *CachedBackendTestSuite) TestCreateInvalidatesParentDirAndDropsNegative(
 	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Nil(a)
 	s.Assert().NotNil(h)
-	// Parent dir + parent attr invalidated.
+	// Parent dir listing invalidated.
 	_, dirHit := s.b.dir.get("/d")
 	s.Assert().False(dirHit)
-	_, parentHit, _ := s.b.attr.get("/d")
-	s.Assert().False(parentHit)
+	// Parent attr KEPT (not evicted) with identity preserved and mtime advanced.
+	pa, parentHit, pos := s.b.attr.get("/d")
+	s.Require().True(parentHit)
+	s.Require().True(pos)
+	s.Assert().Equal(uint64(1), pa.Ino)
+	s.Assert().Greater(pa.Mtime, uint64(1000))
 	// Negative attr for the new path dropped.
 	_, hit, _ := s.b.attr.get("/d/new")
 	s.Assert().False(hit)
@@ -483,12 +494,12 @@ func (s *CachedBackendTestSuite) TestMkdirPrimesAttrCacheFromReply() {
 	s.Assert().Equal(uint64(21), cached.Ino)
 }
 
-// TestSymlinkInvalidatesParentAndPrimes: parent dir+attr invalidation stays
-// (a new dirent bumps the parent's mtime) and the reply attrs prime the
-// link's attr entry — a follow-up Stat is a zero-RPC hit (absence proof via
-// the strict mock).
-func (s *CachedBackendTestSuite) TestSymlinkInvalidatesParentAndPrimes() {
-	s.b.attr.putPositive("/d", &io.Attr{Ino: 1}) // parent attr cached
+// TestSymlinkBumpsParentAndPrimes: #158 — the parent listing is invalidated (a
+// new dirent) but the parent attr is refreshed in place (symlink create doesn't
+// change parent nlink), and the reply attrs prime the link's attr entry — a
+// follow-up Stat is a zero-RPC hit (absence proof via the strict mock).
+func (s *CachedBackendTestSuite) TestSymlinkBumpsParentAndPrimes() {
+	s.b.attr.putPositive("/d", &io.Attr{Ino: 1, Mtime: 1000}) // parent attr cached
 	s.b.dir.put("/d", []io.DirEntry{})
 	returned := &io.Attr{Ino: 31, Mode: 0o120777}
 	s.inner.EXPECT().Symlink(mock.Anything, "/target", "/d/lnk").Return(returned, proto.FsError_FS_OK).Once()
@@ -496,8 +507,9 @@ func (s *CachedBackendTestSuite) TestSymlinkInvalidatesParentAndPrimes() {
 	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().NotNil(a)
 
-	_, parentHit, _ := s.b.attr.get("/d")
-	s.Assert().False(parentHit) // parent attr invalidated
+	pa, parentHit, _ := s.b.attr.get("/d")
+	s.Require().True(parentHit) // parent attr kept (bumped, not evicted)
+	s.Assert().Greater(pa.Mtime, uint64(1000))
 	_, dirHit := s.b.dir.get("/d")
 	s.Assert().False(dirHit) // parent listing invalidated
 
@@ -1082,6 +1094,78 @@ func (s *CachedBackendTestSuite) TestSetXAttrInvalidatesGetXAttrCache() {
 	data, st := be.GetXAttr(context.Background(), "/f", "user.k")
 	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Equal([]byte("v"), data)
+}
+
+// TestRenameInvalidatesDescendantsAcrossDiskTier is the protective property of
+// the #159 fix and the one that discriminates a real fix from a memory-only
+// one: it forces the descendant entry to be DISK-resident before the rename, so
+// a fix that only scans the memory tier would leave it behind and the loader
+// would resurrect it (the phantom "already exists" bug). Persist-backed.
+func (s *CachedBackendTestSuite) TestRenameInvalidatesDescendantsAcrossDiskTier() {
+	p, err := persist.Open(persist.Options{Root: s.T().TempDir()})
+	s.Require().NoError(err)
+	inner := iomocks.NewMockFileSystemBackend(s.T())
+	inner.EXPECT().Close().Return(nil).Maybe()
+	be := NewCachedBackend(inner, Config{AttrTTL: time.Hour, DirTTL: time.Hour, ChunkSizeBytes: 1024}, p, nil, "").(*cachedBackend)
+	defer be.Close()
+	be.validity.markGlobalVerified()
+
+	// Prime a descendant attr; the synchronous putter writes it through to disk.
+	be.attr.putPositive("d/.git", &io.Attr{Ino: 7})
+	// Evict it from the MEMORY tier so only the disk copy remains — the case a
+	// memory-only invalidation misses.
+	be.attr.st.removeKey("d/.git")
+	// Precondition: it is disk-resident — get() resurrects it via the loader.
+	_, hit, _ := be.attr.get("d/.git")
+	s.Require().True(hit, "precondition: descendant must be disk-resident before rename")
+	be.attr.st.removeKey("d/.git") // re-evict the copy the loader just promoted
+
+	// Rename the ancestor directory away (the server op succeeds).
+	inner.EXPECT().Rename(mock.Anything, "d", "trash").Return(proto.FsError_FS_OK).Once()
+	s.Require().Equal(proto.FsError_FS_OK, be.Rename(context.Background(), "d", "trash"))
+
+	// The descendant must be gone from BOTH tiers — no phantom resurrection from
+	// disk when "d" is later recreated.
+	_, hit2, _ := be.attr.get("d/.git")
+	s.Assert().False(hit2, "descendant attr must not survive an ancestor rename on the disk tier (#159)")
+}
+
+// TestCreatePrimesSecurityCapabilityNegative: #160 — after Create, the kernel's
+// per-write security.capability probe is served from cache (no inner GetXAttr).
+// The strict mock has no GetXAttr expectation, so an RPC would fail the test.
+func (s *CachedBackendTestSuite) TestCreatePrimesSecurityCapabilityNegative() {
+	inner := iomocks.NewMockFileSystemBackend(s.T())
+	be := newXAttrBackend(s.T(), inner) // suite default has XAttrTTL=0 (cache off); this enables it
+	innerH := iomocks.NewMockFileHandle(s.T())
+	innerH.EXPECT().Unwrap().Return(innerH).Maybe()
+	inner.EXPECT().Create(mock.Anything, "/d", "f", mock.Anything, mock.Anything).
+		Return(innerH, &io.Attr{Ino: 9}, proto.FsError_FS_OK).Once()
+	_, _, st := be.Create(context.Background(), "/d", "f", 0, 0o644)
+	s.Require().Equal(proto.FsError_FS_OK, st)
+
+	// No inner.GetXAttr expectation: the primed negative must serve this locally.
+	data, gst := be.GetXAttr(context.Background(), "/d/f", "security.capability")
+	s.Assert().Equal(proto.FsError_FS_ENO_XATTR, gst)
+	s.Assert().Empty(data)
+}
+
+// TestCreateThenStatParentHitsCache: #158 — after creating a child, a Stat of
+// the parent is served from cache (no inner Stat), because Create refreshes the
+// parent attr in place rather than evicting it.
+func (s *CachedBackendTestSuite) TestCreateThenStatParentHitsCache() {
+	s.b.attr.putPositive("/d", &io.Attr{Ino: 1, Mode: 0o40755, Mtime: 1000})
+	innerH := iomocks.NewMockFileHandle(s.T())
+	innerH.EXPECT().Unwrap().Return(innerH).Maybe()
+	s.inner.EXPECT().Create(mock.Anything, "/d", "f", mock.Anything, mock.Anything).
+		Return(innerH, &io.Attr{Ino: 9}, proto.FsError_FS_OK).Once()
+	_, _, st := s.b.Create(context.Background(), "/d", "f", 0, 0o644)
+	s.Require().Equal(proto.FsError_FS_OK, st)
+
+	// No inner.Stat expectation: a cache miss here would fail the strict mock.
+	a, st2 := s.b.Stat(context.Background(), "/d")
+	s.Require().Equal(proto.FsError_FS_OK, st2)
+	s.Assert().Equal(uint64(1), a.Ino)
+	s.Assert().Greater(a.Mtime, uint64(1000))
 }
 
 func TestCachedBackendTestSuite(t *testing.T) {
