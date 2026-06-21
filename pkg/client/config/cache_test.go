@@ -48,6 +48,7 @@ func (s *CacheConfigSuite) TestTTLDefaultsAreRelaxed() {
 	s.Assert().Equal(5*time.Minute, c.AttrTTL)
 	s.Assert().Equal(5*time.Minute, c.DirTTL)
 	s.Assert().Equal(30*time.Second, c.NegativeTTL)
+	s.Assert().Equal(10*time.Second, c.StatFsTTL)
 }
 
 func (s *CacheConfigSuite) TestZeroAttrTTLPreserved() {

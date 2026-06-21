@@ -93,6 +93,36 @@ func (c *attrCache) invalidate(path string) {
 	c.st.remove(path)
 }
 
+// bumpSize optimistically updates a cached positive entry after a local write
+// whose highest touched offset is writtenEnd (off+n): it grows Size to at least
+// writtenEnd and advances Mtime to now, WITHOUT an RPC — the writer is
+// authoritative on the file's new minimum size. It writes a fresh entry rather
+// than mutating the shared *io.Attr that get() hands out (whose contract forbids
+// mutation). It is a no-op (returns false) when no positive entry is cached; the
+// next Stat then populates it and later writes bump that. Returns true when an
+// entry was updated, so the caller can stamp the path verified to keep the
+// post-write GetAttr served from cache.
+func (c *attrCache) bumpSize(path string, writtenEnd int64) bool {
+	e := c.st.get(path)
+	if e == nil {
+		return false
+	}
+	ae, _ := e.value.(*attrEntry)
+	if ae == nil || ae.negative || ae.attr == nil {
+		return false
+	}
+	updated := *ae.attr // copy; never mutate the pointer get() shares with readers
+	if writtenEnd > 0 && uint64(writtenEnd) > updated.Size {
+		updated.Size = uint64(writtenEnd)
+	}
+	now := c.now()
+	updated.Mtime = uint64(now.Unix())
+	updated.Mtimensec = uint32(now.Nanosecond())
+	ne := &attrEntry{attr: &updated, expiresAt: now.Add(c.attrTTL)}
+	c.st.put(path, ne, attrEntrySize(path, ne))
+	return true
+}
+
 // attrFixedOverheadBytes approximates the per-entry resident cost that does
 // NOT scale with the path: the io.Attr value, the attrEntry struct, the store
 // entry struct, the container/list node, and amortised Go map bucket overhead.

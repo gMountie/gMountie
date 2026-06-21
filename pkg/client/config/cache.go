@@ -44,6 +44,15 @@ const (
 	// lists. Advisory/display-only (ACL enforcement is server-side), so it
 	// mirrors the attr TTL and TTL+invalidation are the only freshness signals.
 	DefaultCacheXAttrTTL = 5 * time.Minute
+	// DefaultCacheStatFsTTL is the lifetime for cached StatFs (free-space)
+	// results. macOS/FUSE-T issues a statfs alongside nearly every op (free-
+	// space polling) — 26 of the 39 RPCs in a single `ls`. Free space is
+	// advisory (the OS attempts writes and handles ENOSPC at write time, rather
+	// than gating on statfs), so a generous TTL is safe: the only effect of
+	// staleness is the displayed free space lagging by up to this long. 10s
+	// nearly eliminates the flood while keeping the display reasonable. Zero
+	// disables StatFs caching.
+	DefaultCacheStatFsTTL = 10 * time.Second
 )
 
 // defaultCachePath returns the XDG-default cache directory.
@@ -92,6 +101,9 @@ type CacheConfig struct {
 	// XAttrTTL is the per-entry lifetime for cached xattr-name lists. Zero
 	// disables time-based expiry for this tier.
 	XAttrTTL time.Duration `mapstructure:"xattr_ttl"`
+	// StatFsTTL is the lifetime for cached StatFs (free-space) results. Zero
+	// disables StatFs caching (every statfs becomes a round-trip).
+	StatFsTTL time.Duration `mapstructure:"statfs_ttl"`
 }
 
 // defaultCacheConfig returns a CacheConfig seeded entirely from the
@@ -110,6 +122,7 @@ func defaultCacheConfig() *CacheConfig {
 		DirTTL:           DefaultCacheDirTTL,
 		NegativeTTL:      DefaultCacheNegativeTTL,
 		XAttrTTL:         DefaultCacheXAttrTTL,
+		StatFsTTL:        DefaultCacheStatFsTTL,
 	}
 }
 
@@ -131,6 +144,7 @@ func NewCacheConfig(v *viper.Viper) (*CacheConfig, error) {
 	v.SetDefault("dir_ttl", DefaultCacheDirTTL)
 	v.SetDefault("negative_ttl", DefaultCacheNegativeTTL)
 	v.SetDefault("xattr_ttl", DefaultCacheXAttrTTL)
+	v.SetDefault("statfs_ttl", DefaultCacheStatFsTTL)
 	if err := v.UnmarshalExact(cfg, viper.DecodeHook(mapstructure.StringToTimeDurationHookFunc())); err != nil {
 		return nil, err
 	}

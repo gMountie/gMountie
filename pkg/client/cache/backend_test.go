@@ -348,7 +348,7 @@ func (s *CachedBackendTestSuite) TestReadAcrossChunkBoundaryOnMiss() {
 
 // --- Invalidation table ---
 
-func (s *CachedBackendTestSuite) TestWriteInvalidatesDataAndAttr() {
+func (s *CachedBackendTestSuite) TestWriteUpdatesAttrAndInvalidatesData() {
 	s.b.attr.putPositive("/f", &io.Attr{Ino: 1, Size: 100})
 	s.b.data.put("/f", 0, []byte("OLD-CONTENT"))
 	h, innerH := s.openCachedHandle("/f")
@@ -356,10 +356,44 @@ func (s *CachedBackendTestSuite) TestWriteInvalidatesDataAndAttr() {
 		Return(uint32(4), proto.FsError_FS_OK).Once()
 	_, st := s.b.Write(context.Background(), h, 0, []byte("NEW!"))
 	s.Require().Equal(proto.FsError_FS_OK, st)
-	// Cache invalidated:
+	// Data range invalidated (a later read re-fetches):
 	s.Assert().Nil(s.b.data.get("/f", 0))
+	// Attr is NOT evicted — optimistically kept and stamped verified so the
+	// GetAttr macOS/FUSE-T fires after the write is served from cache, not a RPC.
+	a, hit, pos := s.b.attr.get("/f")
+	s.Require().True(hit)
+	s.Require().True(pos)
+	s.Assert().Equal(uint64(100), a.Size, "in-file write keeps the larger cached size")
+	s.Assert().True(s.b.validity.isPathVerified("/f"), "write stamps the path verified")
+}
+
+func (s *CachedBackendTestSuite) TestWriteGrowsCachedSize() {
+	s.b.attr.putPositive("/f", &io.Attr{Ino: 1, Size: 100})
+	h, innerH := s.openCachedHandle("/f")
+	s.inner.EXPECT().Write(mock.Anything, innerH, int64(100), mock.Anything).
+		Return(uint32(50), proto.FsError_FS_OK).Once()
+	_, st := s.b.Write(context.Background(), h, 100, make([]byte, 50))
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	a, hit, _ := s.b.attr.get("/f")
+	s.Require().True(hit)
+	s.Assert().Equal(uint64(150), a.Size, "append bumps cached size to off+n (acknowledged bytes)")
+}
+
+func (s *CachedBackendTestSuite) TestReleaseKeepsAttrForRevalidation() {
+	// Release must NOT evict the written file's attr: on a cold restart the
+	// persisted (optimistic, pre-write-version) attr must still be a hit so the
+	// next Stat runs GetAttrIfChanged and invalidates stale data on a version
+	// mismatch. Evicting here made restart serve stale chunks (regression in
+	// e2e TestRestartRevalidatesAfterMutation).
+	s.b.attr.putPositive("/f", &io.Attr{Ino: 1, Size: 100})
+	h, innerH := s.openCachedHandle("/f")
+	s.inner.EXPECT().Write(mock.Anything, innerH, int64(0), mock.Anything).
+		Return(uint32(4), proto.FsError_FS_OK).Once()
+	s.inner.EXPECT().Release(mock.Anything, innerH).Return(proto.FsError_FS_OK).Once()
+	_, _ = s.b.Write(context.Background(), h, 0, []byte("NEW!"))
+	s.b.Release(context.Background(), h)
 	_, hit, _ := s.b.attr.get("/f")
-	s.Assert().False(hit)
+	s.Assert().True(hit, "attr must survive Release so a cold restart can revalidate")
 }
 
 func (s *CachedBackendTestSuite) TestWriteOnlyInvalidatesOverlappingChunks() {
@@ -649,7 +683,7 @@ func (s *CachedBackendTestSuite) TestSetAttrFailureStillInvalidates() {
 	s.Assert().False(hit)
 }
 
-func (s *CachedBackendTestSuite) TestAllocateInvalidatesDataRangeAndAttr() {
+func (s *CachedBackendTestSuite) TestAllocateInvalidatesDataRangeAndKeepsAttr() {
 	// Pre-populate 3 chunks. Allocate covers only chunks 0 and 1.
 	s.b.data.put("/f", 0, make([]byte, 1024))
 	s.b.data.put("/f", 1, make([]byte, 1024))
@@ -664,9 +698,10 @@ func (s *CachedBackendTestSuite) TestAllocateInvalidatesDataRangeAndAttr() {
 	s.Assert().Nil(s.b.data.get("/f", 0))
 	s.Assert().Nil(s.b.data.get("/f", 1))
 	s.Assert().NotNil(s.b.data.get("/f", 2))
-	// Attr invalidated.
-	_, hit, _ := s.b.attr.get("/f")
-	s.Assert().False(hit)
+	// Attr kept (optimistic update), not evicted; in-file alloc keeps the size.
+	a, hit, _ := s.b.attr.get("/f")
+	s.Require().True(hit)
+	s.Assert().Equal(uint64(3072), a.Size)
 }
 
 // --- Pass-through ops (no cache mutations) ---
@@ -683,6 +718,21 @@ func (s *CachedBackendTestSuite) TestReleaseDoesNotInvalidate() {
 	s.Require().True(hit)
 	s.Assert().True(pos)
 	s.Assert().NotNil(s.b.data.get("/f", 0))
+}
+
+func (s *CachedBackendTestSuite) TestStatFsCachedWithinTTL() {
+	// SetupTest leaves StatFsTTL unset (cache off); enable it for this test.
+	s.b.statfs = newStatfsCache(time.Minute, nil)
+	// inner.StatFs is expected exactly once — the second call must be served
+	// from cache (a second RPC would be an unexpected mock call and fail).
+	s.inner.EXPECT().StatFs(mock.Anything, "/").
+		Return(&io.StatFs{Bfree: 42}, proto.FsError_FS_OK).Once()
+	v1, st := s.b.StatFs(context.Background(), "/")
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	s.Assert().Equal(uint64(42), v1.Bfree)
+	v2, st := s.b.StatFs(context.Background(), "/")
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	s.Assert().Equal(uint64(42), v2.Bfree, "second StatFs served from cache, no RPC")
 }
 
 func (s *CachedBackendTestSuite) TestFlushDoesNotInvalidate() {

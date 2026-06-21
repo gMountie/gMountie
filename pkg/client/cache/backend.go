@@ -29,6 +29,7 @@ type cachedBackend struct {
 	dir        *dirCache
 	data       *dataCache
 	xattr      *xattrCache
+	statfs     *statfsCache
 	validity   *validityTracker
 	subscriber *subscribeConsumer
 	subCancel  context.CancelFunc
@@ -63,6 +64,7 @@ func NewCachedBackend(inner io.FileSystemBackend, cfg Config, p *persist.Persist
 		dir:      newDirCacheWithPersist(acct, cfg.DirTTL, nil, p),
 		data:     newDataCacheWithPersist(acct, cfg.ChunkSizeBytes, p),
 		xattr:    newXAttrCache(acct, cfg.XAttrTTL, nil),
+		statfs:   newStatfsCache(cfg.StatFsTTL, nil),
 		validity: newValidityTracker(),
 		persist:  p,
 	}
@@ -530,7 +532,14 @@ func (b *cachedBackend) Symlink(ctx context.Context, target, linkPath string) (*
 }
 
 func (b *cachedBackend) StatFs(ctx context.Context, p string) (*io.StatFs, proto.FsError) {
-	return b.inner.StatFs(ctx, p)
+	if v, ok := b.statfs.get(p); ok {
+		return v, proto.FsError_FS_OK
+	}
+	v, st := b.inner.StatFs(ctx, p)
+	if st == proto.FsError_FS_OK {
+		b.statfs.put(p, v)
+	}
+	return v, st
 }
 
 func (b *cachedBackend) GetXAttr(ctx context.Context, p, attr string) ([]byte, proto.FsError) {
@@ -609,12 +618,29 @@ func (b *cachedBackend) Write(ctx context.Context, fh io.FileHandle, off int64, 
 	}
 	if ch, ok := fh.(*cachedHandle); ok {
 		b.data.invalidateRange(ch.path, off, int64(len(data)))
-		b.attr.invalidate(ch.path)
+		// Optimistic attr update instead of eviction. We just wrote n bytes at
+		// off, so we are authoritative on the file's new minimum size: bump the
+		// cached size and stamp the path verified so the GetAttr macOS/FUSE-T
+		// fires after every write is served from cache, not a WAN round-trip.
+		// Evicting here turned a 1 GB Finder copy into ~28k GetAttr RPCs (Linux
+		// hides it behind the kernel attr cache; FUSE-T does not). Release
+		// reconciles with the server's authoritative attrs.
+		if b.attr.bumpSize(ch.path, off+int64(n)) {
+			b.validity.markPathVerified(ch.path, b.validity.currentEpoch())
+		}
 	}
 	return n, proto.FsError_FS_OK
 }
 
 func (b *cachedBackend) Release(ctx context.Context, fh io.FileHandle) proto.FsError {
+	// Deliberately does NOT invalidate the attr for written handles. The
+	// optimistic write-time attr (see Write) carries the pre-write version, so
+	// the next unverified Stat's GetAttrIfChanged already detects the change and
+	// refetches; Subscribe push reconciles when verified. Invalidating here
+	// instead *removed* the persisted attr, so a cold restart saw an attr miss
+	// (full GetAttr, not revalidation) and served stale data chunks that the
+	// revalidation path would have invalidated (regression in e2e
+	// TestRestartRevalidatesAfterMutation).
 	return b.inner.Release(ctx, unwrapHandle(fh))
 }
 
@@ -633,7 +659,12 @@ func (b *cachedBackend) Allocate(ctx context.Context, fh io.FileHandle, off, siz
 	}
 	if ch, ok := fh.(*cachedHandle); ok {
 		b.data.invalidateRange(ch.path, int64(off), int64(size))
-		b.attr.invalidate(ch.path)
+		// Same optimistic-update rationale as Write: allocation can grow the
+		// file, so bump the cached size and keep the entry verified rather than
+		// evicting it. Release reconciles with the server.
+		if b.attr.bumpSize(ch.path, int64(off+size)) {
+			b.validity.markPathVerified(ch.path, b.validity.currentEpoch())
+		}
 	}
 	return proto.FsError_FS_OK
 }
