@@ -179,11 +179,18 @@ message ReadDirRequest {
   Caller caller = 2;
   string path   = 3;
   bool   plus   = 4;
+  bool   with_xattr = 5;  // ask the server to listxattr each entry (cache-only)
 }
 
 message DirEntryPlus {
   DirEntry entry      = 1;
   Attr     attributes = 2;  // set when plus=true and the per-entry stat succeeded
+  // xattr_listed is true when with_xattr was requested AND the per-entry
+  // listxattr succeeded. It is the prime signal: proto3 cannot distinguish an
+  // empty repeated field (no xattrs) from "not requested", so the client primes
+  // its xattr cache only when this bool is set.
+  bool             xattr_listed = 3;
+  repeated string  xattr_names  = 4;  // entry's xattr names; empty == no xattrs
 }
 
 message ReadDirBatch {
