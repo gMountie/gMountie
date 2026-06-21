@@ -5,7 +5,6 @@ import (
 	stdio "io"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
@@ -163,13 +162,13 @@ func (s *BackendClientTestSuite) TestStat() {
 	s.fsClient.EXPECT().GetAttr(mock.Anything, mock.MatchedBy(func(req *proto.GetAttrRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/test"
 	}), mock.Anything).Return(&proto.GetAttrReply{
-		Status:     int32(fuse.OK),
+		Status:     proto.FsError_FS_OK,
 		Attributes: testAttr,
 	}, nil)
 
 	attr, st := s.backend.Stat(context.Background(), "/test")
 
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().NotNil(attr)
 	s.Assert().Equal(testAttr.Size, attr.Size)
 	s.Assert().Equal(testAttr.Mode, attr.Mode)
@@ -183,7 +182,7 @@ func (s *BackendClientTestSuite) TestStat_Error() {
 		Return(nil, context.DeadlineExceeded)
 
 	attr, st := s.backend.Stat(context.Background(), "/test")
-	s.Assert().Equal(fuse.EIO, st)
+	s.Assert().Equal(proto.FsError_FS_EIO, st)
 	s.Assert().Nil(attr)
 }
 
@@ -206,12 +205,12 @@ func (s *BackendClientTestSuite) TestStat_CancelledParentDoesNotAbortRPC() {
 		mock.Anything,
 		mock.Anything,
 	).Return(&proto.GetAttrReply{
-		Status:     int32(fuse.OK),
+		Status:     proto.FsError_FS_OK,
 		Attributes: &proto.Attr{Mode: 0o644, Owner: &proto.Owner{Uid: 1, Gid: 1}},
 	}, nil)
 
 	attr, st := s.backend.Stat(parent, "/test")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().NotNil(attr)
 }
 
@@ -220,7 +219,7 @@ func (s *BackendClientTestSuite) TestListDir_CancelledParentDoesNotAbortRPC() {
 	cancel()
 
 	stream := newReadDirStreamStub(s.T(), &proto.ReadDirBatch{
-		Status:  int32(fuse.OK),
+		Status:  proto.FsError_FS_OK,
 		Entries: []*proto.DirEntryPlus{{Entry: &proto.DirEntry{Name: "f", Mode: 0o644, Ino: 1}}},
 	})
 	s.fsClient.EXPECT().ReadDir(
@@ -230,7 +229,7 @@ func (s *BackendClientTestSuite) TestListDir_CancelledParentDoesNotAbortRPC() {
 	).Return(stream, nil)
 
 	entries, st := s.backend.ListDir(parent, "/test")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().Len(entries, 1)
 }
 
@@ -245,7 +244,7 @@ func (s *BackendClientTestSuite) TestStatFs_CancelledParentDoesNotAbortRPC() {
 	).Return(&proto.StatFsReply{Bsize: 4096}, nil)
 
 	res, st := s.backend.StatFs(parent, "/test")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().NotNil(res)
 }
 
@@ -261,10 +260,10 @@ func (s *BackendClientTestSuite) TestOpen_CancelledParentDoesNotAbortRPC() {
 		mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() == nil }),
 		mock.Anything,
 		mock.Anything,
-	).Return(&proto.OpenReply{Status: int32(fuse.OK), Fd: 1}, nil)
+	).Return(&proto.OpenReply{Status: proto.FsError_FS_OK, Fd: 1}, nil)
 
 	fh, st := s.backend.Open(parent, "/test", 0)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().NotNil(fh)
 }
 
@@ -279,7 +278,7 @@ func (s *BackendClientTestSuite) TestRelease_CancelledParentDoesNotAbortRPC() {
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	st := s.backend.Release(parent, h)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 }
 
 // Counter-test: SetLkw is a BLOCKING lock wait (F_SETLKW) and must STAY
@@ -294,11 +293,11 @@ func (s *BackendClientTestSuite) TestSetLkw_StaysCancellable() {
 	s.fileClient.EXPECT().SetLkw(
 		mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() != nil }),
 		mock.Anything,
-	).Return(&proto.SetLkwReply{Status: int32(fuse.OK)}, nil)
+	).Return(&proto.SetLkwReply{Status: proto.FsError_FS_OK}, nil)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	st := s.backend.SetLkw(parent, h, 7, lk, 0)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 }
 
 // TestStat_RetriesOnUnavailable verifies that an idempotent metadata
@@ -308,13 +307,13 @@ func (s *BackendClientTestSuite) TestStat_RetriesOnUnavailable() {
 		Return(nil, status.Error(codes.Unavailable, "down")).Once()
 	s.fsClient.EXPECT().GetAttr(mock.Anything, mock.Anything, mock.Anything).
 		Return(&proto.GetAttrReply{
-			Status:     int32(fuse.OK),
+			Status:     proto.FsError_FS_OK,
 			Attributes: &proto.Attr{Mode: 0o644, Owner: &proto.Owner{Uid: 1000, Gid: 1000}},
 		}, nil).Once()
 
 	attr, st := s.backend.Stat(context.Background(), "file")
 
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.NotNil(attr)
 	s.fsClient.AssertNumberOfCalls(s.T(), "GetAttr", 2)
 }
@@ -325,12 +324,12 @@ func (s *BackendClientTestSuite) TestLookup() {
 	s.fsClient.EXPECT().GetAttr(mock.Anything, mock.MatchedBy(func(req *proto.GetAttrRequest) bool {
 		return req.Path == "/parent/child"
 	}), mock.Anything).Return(&proto.GetAttrReply{
-		Status:     int32(fuse.OK),
+		Status:     proto.FsError_FS_OK,
 		Attributes: &proto.Attr{Ino: 42, Mode: 0o644, Owner: &proto.Owner{Uid: 1, Gid: 1}},
 	}, nil)
 
 	attr, st := s.backend.Lookup(context.Background(), "/parent", "child")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().NotNil(attr)
 	s.Assert().Equal(uint64(42), attr.Ino)
 }
@@ -339,7 +338,7 @@ func (s *BackendClientTestSuite) TestLookup() {
 // plus listings DISABLED, so the request must carry Plus=false.
 func (s *BackendClientTestSuite) TestListDir() {
 	stream := newReadDirStreamStub(s.T(), &proto.ReadDirBatch{
-		Status: int32(fuse.OK),
+		Status: proto.FsError_FS_OK,
 		Entries: []*proto.DirEntryPlus{
 			{Entry: &proto.DirEntry{Name: "file1", Mode: 0644, Ino: 1}},
 			{Entry: &proto.DirEntry{Name: "file2", Mode: 0644, Ino: 2}},
@@ -351,7 +350,7 @@ func (s *BackendClientTestSuite) TestListDir() {
 
 	result, st := s.backend.ListDir(context.Background(), "/test")
 
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().Len(result, 2)
 	s.Assert().Equal("file1", result[0].Name)
 	s.Assert().Equal("file2", result[1].Name)
@@ -363,18 +362,18 @@ func (s *BackendClientTestSuite) TestListDir() {
 // batches; entries accumulate in order across batches.
 func (s *BackendClientTestSuite) TestListDir_MultiBatchAccumulates() {
 	stream := newReadDirStreamStub(s.T(),
-		&proto.ReadDirBatch{Status: int32(fuse.OK), Entries: []*proto.DirEntryPlus{
+		&proto.ReadDirBatch{Status: proto.FsError_FS_OK, Entries: []*proto.DirEntryPlus{
 			{Entry: &proto.DirEntry{Name: "a", Ino: 1}},
 			{Entry: &proto.DirEntry{Name: "b", Ino: 2}},
 		}},
-		&proto.ReadDirBatch{Status: int32(fuse.OK), Entries: []*proto.DirEntryPlus{
+		&proto.ReadDirBatch{Status: proto.FsError_FS_OK, Entries: []*proto.DirEntryPlus{
 			{Entry: &proto.DirEntry{Name: "c", Ino: 3}},
 		}},
 	)
 	s.fsClient.EXPECT().ReadDir(mock.Anything, mock.Anything, mock.Anything).Return(stream, nil)
 
 	result, st := s.backend.ListDir(context.Background(), "/big")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().Len(result, 3)
 	s.Assert().Equal([]string{"a", "b", "c"},
 		[]string{result[0].Name, result[1].Name, result[2].Name})
@@ -384,11 +383,11 @@ func (s *BackendClientTestSuite) TestListDir_MultiBatchAccumulates() {
 // returns an empty NON-NIL slice (a real "directory with no entries" answer,
 // distinguishable from the nil-on-error arm).
 func (s *BackendClientTestSuite) TestListDir_EmptyDir() {
-	stream := newReadDirStreamStub(s.T(), &proto.ReadDirBatch{Status: int32(fuse.OK)})
+	stream := newReadDirStreamStub(s.T(), &proto.ReadDirBatch{Status: proto.FsError_FS_OK})
 	s.fsClient.EXPECT().ReadDir(mock.Anything, mock.Anything, mock.Anything).Return(stream, nil)
 
 	result, st := s.backend.ListDir(context.Background(), "/empty")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().NotNil(result)
 	s.Assert().Empty(result)
 }
@@ -396,11 +395,11 @@ func (s *BackendClientTestSuite) TestListDir_EmptyDir() {
 // TestListDir_TerminalStatusBatch: a fuse-level failure arrives as one
 // terminal batch carrying the status; the backend surfaces it.
 func (s *BackendClientTestSuite) TestListDir_TerminalStatusBatch() {
-	stream := newReadDirStreamStub(s.T(), &proto.ReadDirBatch{Status: int32(fuse.EACCES)})
+	stream := newReadDirStreamStub(s.T(), &proto.ReadDirBatch{Status: proto.FsError_FS_EACCES})
 	s.fsClient.EXPECT().ReadDir(mock.Anything, mock.Anything, mock.Anything).Return(stream, nil)
 
 	result, st := s.backend.ListDir(context.Background(), "/forbidden")
-	s.Assert().Equal(fuse.EACCES, st)
+	s.Assert().Equal(proto.FsError_FS_EACCES, st)
 	s.Assert().Nil(result)
 }
 
@@ -411,7 +410,7 @@ func (s *BackendClientTestSuite) TestListDir_TerminalStatusBatch() {
 func (s *BackendClientTestSuite) TestListDir_PlusFlagPropagatesAndMapsAttrs() {
 	plusBackend := NewBackendClient(s.client, "testVolume", WithPlusListings(true))
 	stream := newReadDirStreamStub(s.T(), &proto.ReadDirBatch{
-		Status: int32(fuse.OK),
+		Status: proto.FsError_FS_OK,
 		Entries: []*proto.DirEntryPlus{
 			{
 				Entry:      &proto.DirEntry{Name: "f", Mode: 0o644, Ino: 9},
@@ -425,7 +424,7 @@ func (s *BackendClientTestSuite) TestListDir_PlusFlagPropagatesAndMapsAttrs() {
 	}), mock.Anything).Return(stream, nil)
 
 	result, st := plusBackend.ListDir(context.Background(), "/test")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().Len(result, 2)
 	s.Require().NotNil(result[0].Attr)
 	s.Assert().Equal(uint64(64), result[0].Attr.Size)
@@ -439,14 +438,14 @@ func (s *BackendClientTestSuite) TestListDir_RetriesOnUnavailable() {
 	s.fsClient.EXPECT().ReadDir(mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, status.Error(codes.Unavailable, "down")).Once()
 	stream := newReadDirStreamStub(s.T(), &proto.ReadDirBatch{
-		Status:  int32(fuse.OK),
+		Status:  proto.FsError_FS_OK,
 		Entries: []*proto.DirEntryPlus{{Entry: &proto.DirEntry{Name: "f", Ino: 1}}},
 	})
 	s.fsClient.EXPECT().ReadDir(mock.Anything, mock.Anything, mock.Anything).
 		Return(stream, nil).Once()
 
 	result, st := s.backend.ListDir(context.Background(), "/test")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().Len(result, 1)
 	s.fsClient.AssertNumberOfCalls(s.T(), "ReadDir", 2)
 }
@@ -457,7 +456,7 @@ func (s *BackendClientTestSuite) TestListDir_RetriesOnUnavailable() {
 func (s *BackendClientTestSuite) TestListDirMapsXattrNames() {
 	xattrBackend := NewBackendClient(s.client, "testVolume", WithXattrListings(true))
 	stream := newReadDirStreamStub(s.T(), &proto.ReadDirBatch{
-		Status: int32(fuse.OK),
+		Status: proto.FsError_FS_OK,
 		Entries: []*proto.DirEntryPlus{
 			{
 				Entry:       &proto.DirEntry{Name: "f", Mode: 0o644},
@@ -471,7 +470,7 @@ func (s *BackendClientTestSuite) TestListDirMapsXattrNames() {
 	}), mock.Anything).Return(stream, nil)
 
 	entries, st := xattrBackend.ListDir(context.Background(), "")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().Len(entries, 1)
 	s.True(entries[0].XattrListed)
 	s.Equal([]string{"user.a"}, entries[0].XattrNames)
@@ -480,10 +479,10 @@ func (s *BackendClientTestSuite) TestListDirMapsXattrNames() {
 func (s *BackendClientTestSuite) TestAccess() {
 	s.fsClient.EXPECT().Access(mock.Anything, mock.MatchedBy(func(req *proto.AccessRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/test" && req.Mode == 0444
-	}), mock.Anything).Return(&proto.AccessReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.AccessReply{Status: proto.FsError_FS_OK}, nil)
 
 	st := s.backend.Access(context.Background(), "/test", 0444)
-	s.Assert().Equal(fuse.OK, st)
+	s.Assert().Equal(proto.FsError_FS_OK, st)
 }
 
 func (s *BackendClientTestSuite) TestStatFs() {
@@ -502,7 +501,7 @@ func (s *BackendClientTestSuite) TestStatFs() {
 	}, nil)
 
 	stats, st := s.backend.StatFs(context.Background(), "/test")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().NotNil(stats)
 	s.Assert().Equal(uint64(1000), stats.Blocks)
 	s.Assert().Equal(uint64(500), stats.Bfree)
@@ -514,12 +513,12 @@ func (s *BackendClientTestSuite) TestGetXAttr() {
 	s.fsClient.EXPECT().GetXAttr(mock.Anything, mock.MatchedBy(func(req *proto.GetXAttrRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/test" && req.Attribute == "user.test"
 	}), mock.Anything).Return(&proto.GetXAttrReply{
-		Status: int32(fuse.OK),
+		Status: proto.FsError_FS_OK,
 		Data:   expectedData,
 	}, nil)
 
 	data, st := s.backend.GetXAttr(context.Background(), "/test", "user.test")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(expectedData, data)
 }
 
@@ -527,10 +526,10 @@ func (s *BackendClientTestSuite) TestMkdir() {
 	s.fsClient.EXPECT().Mkdir(mock.Anything, mock.MatchedBy(func(req *proto.MkdirRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/test" && req.Mode == 0755 &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	}), mock.Anything).Return(&proto.MkdirReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.MkdirReply{Status: proto.FsError_FS_OK}, nil)
 
 	attr, st := s.backend.Mkdir(context.Background(), "/test", 0755)
-	s.Assert().Equal(fuse.OK, st)
+	s.Assert().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Nil(attr, "no Attributes in reply → nil attr so callers fall back to Stat")
 }
 
@@ -539,12 +538,12 @@ func (s *BackendClientTestSuite) TestMkdir() {
 // The strict mock proves no stray GetAttr is issued.
 func (s *BackendClientTestSuite) TestMkdir_ReturnsAttrFromReply() {
 	s.fsClient.EXPECT().Mkdir(mock.Anything, mock.Anything, mock.Anything).Return(&proto.MkdirReply{
-		Status:     int32(fuse.OK),
+		Status:     proto.FsError_FS_OK,
 		Attributes: &proto.Attr{Ino: 11, Mode: 0o40755, Owner: &proto.Owner{Uid: 1000, Gid: 1000}},
 	}, nil).Once()
 
 	attr, st := s.backend.Mkdir(context.Background(), "/test", 0o755)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().NotNil(attr)
 	s.Assert().Equal(uint64(11), attr.Ino)
 	s.Assert().Equal(uint32(0o40755), attr.Mode)
@@ -555,10 +554,10 @@ func (s *BackendClientTestSuite) TestMkdir_ReturnsAttrFromReply() {
 // nil attrs even if the reply carried some.
 func (s *BackendClientTestSuite) TestMkdir_InBandErrorReturnsNilAttr() {
 	s.fsClient.EXPECT().Mkdir(mock.Anything, mock.Anything, mock.Anything).
-		Return(&proto.MkdirReply{Status: int32(fuse.EACCES)}, nil).Once()
+		Return(&proto.MkdirReply{Status: proto.FsError_FS_EACCES}, nil).Once()
 
 	attr, st := s.backend.Mkdir(context.Background(), "/test", 0o755)
-	s.Assert().Equal(fuse.EACCES, st)
+	s.Assert().Equal(proto.FsError_FS_EACCES, st)
 	s.Assert().Nil(attr)
 }
 
@@ -570,25 +569,25 @@ func (s *BackendClientTestSuite) TestSymlink_ReturnsAttrFromReply() {
 		return req.Volume == "testVolume" && req.Target == "/target" && req.LinkPath == "/link" &&
 			req.SessionId == "test-session" && req.RequestId != ""
 	}), mock.Anything).Return(&proto.SymlinkReply{
-		Status:     int32(fuse.OK),
+		Status:     proto.FsError_FS_OK,
 		Attributes: &proto.Attr{Ino: 12, Mode: 0o120777, Owner: &proto.Owner{Uid: 1, Gid: 1}},
 	}, nil).Once()
 
 	attr, st := s.backend.Symlink(context.Background(), "/target", "/link")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().NotNil(attr)
 	s.Assert().Equal(uint64(12), attr.Ino)
 	s.Assert().Equal(uint32(0o120777), attr.Mode)
 }
 
 // TestSymlink_NilAttrsInReply: server omits Attributes (its trailing stat
-// failed) → nil attr with fuse.OK so the node falls back to Stat.
+// failed) → nil attr with proto.FsError_FS_OK so the node falls back to Stat.
 func (s *BackendClientTestSuite) TestSymlink_NilAttrsInReply() {
 	s.fsClient.EXPECT().Symlink(mock.Anything, mock.Anything, mock.Anything).
-		Return(&proto.SymlinkReply{Status: int32(fuse.OK)}, nil).Once()
+		Return(&proto.SymlinkReply{Status: proto.FsError_FS_OK}, nil).Once()
 
 	attr, st := s.backend.Symlink(context.Background(), "/target", "/link")
-	s.Assert().Equal(fuse.OK, st)
+	s.Assert().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Nil(attr)
 }
 
@@ -596,30 +595,30 @@ func (s *BackendClientTestSuite) TestRmdir() {
 	s.fsClient.EXPECT().Rmdir(mock.Anything, mock.MatchedBy(func(req *proto.RmdirRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/test" &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	}), mock.Anything).Return(&proto.RmdirReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.RmdirReply{Status: proto.FsError_FS_OK}, nil)
 
 	st := s.backend.Rmdir(context.Background(), "/test")
-	s.Assert().Equal(fuse.OK, st)
+	s.Assert().Equal(proto.FsError_FS_OK, st)
 }
 
 func (s *BackendClientTestSuite) TestUnlink() {
 	s.fsClient.EXPECT().Unlink(mock.Anything, mock.MatchedBy(func(req *proto.UnlinkRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/test" &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	}), mock.Anything).Return(&proto.UnlinkReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.UnlinkReply{Status: proto.FsError_FS_OK}, nil)
 
 	st := s.backend.Unlink(context.Background(), "/test")
-	s.Assert().Equal(fuse.OK, st)
+	s.Assert().Equal(proto.FsError_FS_OK, st)
 }
 
 func (s *BackendClientTestSuite) TestRename() {
 	s.fsClient.EXPECT().Rename(mock.Anything, mock.MatchedBy(func(req *proto.RenameRequest) bool {
 		return req.Volume == "testVolume" && req.OldName == "/old" && req.NewName == "/new" &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	}), mock.Anything).Return(&proto.RenameReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.RenameReply{Status: proto.FsError_FS_OK}, nil)
 
 	st := s.backend.Rename(context.Background(), "/old", "/new")
-	s.Assert().Equal(fuse.OK, st)
+	s.Assert().Equal(proto.FsError_FS_OK, st)
 }
 
 // TestSetAttr verifies the full wire mapping of the single-RPC SetAttr:
@@ -637,7 +636,7 @@ func (s *BackendClientTestSuite) TestSetAttr() {
 			req.Mtime != nil && req.Mtime.Sec == 1577836800 && req.Mtime.Nsec == 42 &&
 			req.SessionId == "test-session" && req.RequestId != ""
 	}), mock.Anything).Return(&proto.SetAttrReply{
-		Status: int32(fuse.OK),
+		Status: proto.FsError_FS_OK,
 		Attributes: &proto.Attr{
 			Ino: 7, Size: 1024, Mode: 0o600, Mtime: 1577836800, Mtimensec: 42,
 			Owner: &proto.Owner{Uid: 1000, Gid: 1000},
@@ -650,7 +649,7 @@ func (s *BackendClientTestSuite) TestSetAttr() {
 		Mode:  0o600,
 		Mtime: &mtime,
 	})
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().NotNil(attr)
 	s.Assert().Equal(uint64(7), attr.Ino)
 	s.Assert().Equal(uint64(1024), attr.Size)
@@ -664,13 +663,13 @@ func (s *BackendClientTestSuite) TestSetAttr_MasksNonWireValidBits() {
 	mtime := time.Unix(100, 0)
 	s.fsClient.EXPECT().SetAttr(mock.Anything, mock.MatchedBy(func(req *proto.SetAttrRequest) bool {
 		return req.Valid == uint32(fuse.FATTR_MTIME)
-	}), mock.Anything).Return(&proto.SetAttrReply{Status: int32(fuse.OK)}, nil).Once()
+	}), mock.Anything).Return(&proto.SetAttrReply{Status: proto.FsError_FS_OK}, nil).Once()
 
 	_, st := s.backend.SetAttr(context.Background(), "/test", SetAttrIn{
 		Valid: fuse.FATTR_MTIME | fuse.FATTR_MTIME_NOW | fuse.FATTR_FH,
 		Mtime: &mtime,
 	})
-	s.Assert().Equal(fuse.OK, st)
+	s.Assert().Equal(proto.FsError_FS_OK, st)
 }
 
 // TestSetAttr_WireFattrContract pins the numeric FATTR_* values. The proto
@@ -708,12 +707,12 @@ func (s *BackendClientTestSuite) TestSetAttr_RetryReusesRequestID() {
 		Run(func(_ context.Context, req *proto.SetAttrRequest, _ ...grpc.CallOption) {
 			ids = append(ids, req.RequestId)
 		}).Return(&proto.SetAttrReply{
-		Status:     int32(fuse.OK),
+		Status:     proto.FsError_FS_OK,
 		Attributes: &proto.Attr{Ino: 1, Owner: &proto.Owner{}},
 	}, nil).Once()
 
 	attr, st := s.backend.SetAttr(context.Background(), "/f", SetAttrIn{Valid: fuse.FATTR_SIZE, Size: 0})
-	s.Assert().Equal(fuse.OK, st)
+	s.Assert().Equal(proto.FsError_FS_OK, st)
 	s.Assert().NotNil(attr)
 	s.Require().Len(ids, 2, "expected exactly two SetAttr attempts")
 	s.Assert().NotEmpty(ids[0], "request_id must be non-empty")
@@ -724,10 +723,10 @@ func (s *BackendClientTestSuite) TestSetAttr_RetryReusesRequestID() {
 // as the fuse.Status with nil attrs (the server stopped mid-sequence).
 func (s *BackendClientTestSuite) TestSetAttr_InBandErrorReturnsStatus() {
 	s.fsClient.EXPECT().SetAttr(mock.Anything, mock.Anything, mock.Anything).
-		Return(&proto.SetAttrReply{Status: int32(fuse.EACCES)}, nil).Once()
+		Return(&proto.SetAttrReply{Status: proto.FsError_FS_EACCES}, nil).Once()
 
 	attr, st := s.backend.SetAttr(context.Background(), "/f", SetAttrIn{Valid: fuse.FATTR_MODE, Mode: 0o600})
-	s.Assert().Equal(fuse.EACCES, st)
+	s.Assert().Equal(proto.FsError_FS_EACCES, st)
 	s.Assert().Nil(attr)
 }
 
@@ -748,10 +747,10 @@ func (s *BackendClientTestSuite) TestMkdir_RetryReusesRequestID() {
 	s.fsClient.EXPECT().Mkdir(mock.Anything, mock.Anything, mock.Anything).
 		Run(func(_ context.Context, req *proto.MkdirRequest, _ ...grpc.CallOption) {
 			ids = append(ids, req.RequestId)
-		}).Return(&proto.MkdirReply{Status: int32(fuse.OK)}, nil).Once()
+		}).Return(&proto.MkdirReply{Status: proto.FsError_FS_OK}, nil).Once()
 
 	_, st := s.backend.Mkdir(context.Background(), "/d", 0755)
-	s.Assert().Equal(fuse.OK, st)
+	s.Assert().Equal(proto.FsError_FS_OK, st)
 	s.Require().Len(ids, 2, "expected exactly two Mkdir attempts")
 	s.Assert().NotEmpty(ids[0], "request_id must be non-empty")
 	s.Assert().Equal(ids[0], ids[1], "retry must reuse the same request_id for server-side dedup")
@@ -764,12 +763,12 @@ func (s *BackendClientTestSuite) TestOpenReturnsHandle() {
 		return req.Volume == "testVolume" && req.Path == "/test" && req.Flags == 0 &&
 			req.SessionId == "test-session" && req.RequestId != ""
 	}), mock.Anything).Return(&proto.OpenReply{
-		Status: int32(fuse.OK),
+		Status: proto.FsError_FS_OK,
 		Fd:     1,
 	}, nil)
 
 	fh, st := s.backend.Open(context.Background(), "/test", 0)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().NotNil(fh)
 	s.Assert().IsType(&grpcFileHandle{}, fh)
 	s.Assert().Equal("/test", fh.Path())
@@ -780,7 +779,7 @@ func (s *BackendClientTestSuite) TestOpen_Error() {
 		Return(nil, context.DeadlineExceeded)
 
 	fh, st := s.backend.Open(context.Background(), "/test", 0)
-	s.Assert().Equal(fuse.EIO, st)
+	s.Assert().Equal(proto.FsError_FS_EIO, st)
 	s.Assert().Nil(fh)
 }
 
@@ -792,12 +791,12 @@ func (s *BackendClientTestSuite) TestCreateReturnsHandle() {
 		return req.Volume == "testVolume" && req.Path == "/dir/file" && req.Flags == 0 && req.Mode == 0644 &&
 			req.SessionId == "test-session" && req.RequestId != ""
 	}), mock.Anything).Return(&proto.CreateReply{
-		Status: int32(fuse.OK),
+		Status: proto.FsError_FS_OK,
 		Fd:     7,
 	}, nil)
 
 	fh, attr, st := s.backend.Create(context.Background(), "/dir", "file", 0, 0644)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().NotNil(fh)
 	s.Assert().IsType(&grpcFileHandle{}, fh)
 	s.Assert().Nil(attr, "no Attributes in reply → attr must be nil so node falls back to Stat")
@@ -808,13 +807,13 @@ func (s *BackendClientTestSuite) TestCreateReturnsHandle() {
 // The strict mock ensures no stray GetAttr/Stat call is issued by the backend.
 func (s *BackendClientTestSuite) TestCreateReturnsAttrFromReply() {
 	s.fileClient.EXPECT().Create(mock.Anything, mock.Anything, mock.Anything).Return(&proto.CreateReply{
-		Status:     int32(fuse.OK),
+		Status:     proto.FsError_FS_OK,
 		Fd:         7,
 		Attributes: &proto.Attr{Ino: 42, Mode: 0o100644},
 	}, nil).Once()
 
 	_, attr, st := s.backend.Create(context.Background(), "/", "new.txt", 0, 0o644)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().NotNil(attr)
 	s.Assert().Equal(uint64(42), attr.Ino)
 	s.Assert().Equal(uint32(0o100644), attr.Mode)
@@ -825,8 +824,8 @@ func (s *BackendClientTestSuite) TestCreateReturnsAttrFromReply() {
 func (s *BackendClientTestSuite) TestRead_MultiFrame() {
 	testData := []byte("test data")
 	stream := newBackendReadStreamStub(s.T(),
-		&proto.ReadFrame{Data: testData, Status: int32(fuse.OK)},
-		&proto.ReadFrame{Status: int32(fuse.OK)},
+		&proto.ReadFrame{Data: testData, Status: proto.FsError_FS_OK},
+		&proto.ReadFrame{Status: proto.FsError_FS_OK},
 	)
 	s.fileClient.EXPECT().Read(mock.Anything, &proto.ReadRequest{
 		Volume:    "testVolume",
@@ -840,7 +839,7 @@ func (s *BackendClientTestSuite) TestRead_MultiFrame() {
 	dest := make([]byte, 1024)
 	n, st := s.backend.Read(context.Background(), h, 0, dest)
 
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(len(testData), n)
 	s.Assert().Equal(testData, dest[:n])
 }
@@ -853,7 +852,7 @@ func (s *BackendClientTestSuite) TestRead_ErrorReturnsEIO() {
 	dest := make([]byte, 1024)
 	n, st := s.backend.Read(context.Background(), h, 0, dest)
 
-	s.Assert().Equal(fuse.EIO, st)
+	s.Assert().Equal(proto.FsError_FS_EIO, st)
 	s.Assert().Equal(0, n)
 }
 
@@ -863,8 +862,8 @@ func (s *BackendClientTestSuite) TestRead_RetriesOnUnavailable() {
 	s.fileClient.EXPECT().Read(mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, status.Error(codes.Unavailable, "down")).Once()
 	streamOK := newBackendReadStreamStub(s.T(),
-		&proto.ReadFrame{Data: []byte("0123456789"), Status: int32(fuse.OK)},
-		&proto.ReadFrame{Status: int32(fuse.OK)},
+		&proto.ReadFrame{Data: []byte("0123456789"), Status: proto.FsError_FS_OK},
+		&proto.ReadFrame{Status: proto.FsError_FS_OK},
 	)
 	s.fileClient.EXPECT().Read(mock.Anything, mock.Anything, mock.Anything).
 		Return(streamOK, nil).Once()
@@ -873,7 +872,7 @@ func (s *BackendClientTestSuite) TestRead_RetriesOnUnavailable() {
 	dest := make([]byte, 10)
 	n, st := s.backend.Read(context.Background(), h, 0, dest)
 
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(10, n)
 	s.fileClient.AssertNumberOfCalls(s.T(), "Read", 2)
 }
@@ -882,14 +881,14 @@ func (s *BackendClientTestSuite) TestWrite_SmallPayload() {
 	testData := []byte("test data")
 	stub := newBackendWriteStreamStub(s.T(), &proto.WriteReply{
 		Written: uint32(len(testData)),
-		Status:  int32(fuse.OK),
+		Status:  proto.FsError_FS_OK,
 	}, nil)
 	s.fileClient.EXPECT().Write(mock.Anything, mock.Anything).Return(stub, nil)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	written, st := s.backend.Write(context.Background(), h, 0, testData)
 
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(uint32(len(testData)), written)
 	s.Require().Len(stub.frames, 1, "small payload should fit in a single frame")
 	header := stub.frames[0]
@@ -911,14 +910,14 @@ func (s *BackendClientTestSuite) TestWrite_LargePayloadChunks() {
 	}
 	stub := newBackendWriteStreamStub(s.T(), &proto.WriteReply{
 		Written: uint32(len(payload)),
-		Status:  int32(fuse.OK),
+		Status:  proto.FsError_FS_OK,
 	}, nil)
 	s.fileClient.EXPECT().Write(mock.Anything, mock.Anything).Return(stub, nil)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	written, st := s.backend.Write(context.Background(), h, 7, payload)
 
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(uint32(len(payload)), written)
 	s.Require().Len(stub.frames, 4, "expected 4 frames for 3*frame + 1024 bytes")
 	header := stub.frames[0]
@@ -950,7 +949,7 @@ func (s *BackendClientTestSuite) TestWrite_RetriesOnUnavailable() {
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	n, st := s.backend.Write(context.Background(), h, 0, []byte("hello"))
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(uint32(5), n)
 	s.Require().Len(stub.frames, 1)
 	s.Assert().NotEmpty(stub.frames[0].RequestId)
@@ -969,7 +968,7 @@ func (s *BackendClientTestSuite) TestWrite_RetryReusesRequestID() {
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	n, st := s.backend.Write(context.Background(), h, 0, []byte("hello"))
 
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(uint32(5), n)
 	s.Require().Len(attempt1.frames, 1, "attempt 1 should have sent the header frame before CloseAndRecv failed")
 	s.Require().Len(attempt2.frames, 1, "attempt 2 should have sent the header frame")
@@ -984,7 +983,7 @@ func (s *BackendClientTestSuite) TestWrite_Error() {
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	written, st := s.backend.Write(context.Background(), h, 0, []byte("test"))
-	s.Assert().Equal(fuse.EIO, st)
+	s.Assert().Equal(proto.FsError_FS_EIO, st)
 	s.Assert().Equal(uint32(0), written)
 }
 
@@ -1000,7 +999,7 @@ func (s *BackendClientTestSuite) TestRelease() {
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	st := s.backend.Release(context.Background(), h)
-	s.Assert().Equal(fuse.OK, st)
+	s.Assert().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Error(h.lifeCtx.Err(), "lifeCtx must be cancelled after Release")
 }
 
@@ -1011,7 +1010,7 @@ func (s *BackendClientTestSuite) TestRelease() {
 func (s *BackendClientTestSuite) TestFlushCleanHandleSkipsRPC() {
 	h := s.newHandle(grpcclient.PerFileConfig{WriteCoalesceBytes: 4096})
 	st := s.backend.Flush(context.Background(), h)
-	s.Assert().Equal(fuse.OK, st)
+	s.Assert().Equal(proto.FsError_FS_OK, st)
 }
 
 // TestFlushFusesWriteAndFlush verifies that a buffered small write followed
@@ -1020,18 +1019,18 @@ func (s *BackendClientTestSuite) TestFlushCleanHandleSkipsRPC() {
 func (s *BackendClientTestSuite) TestFlushFusesWriteAndFlush() {
 	h := s.newHandle(grpcclient.PerFileConfig{WriteCoalesceBytes: 4096})
 	_, wst := s.backend.Write(context.Background(), h, 0, []byte("hi"))
-	s.Require().Equal(fuse.OK, wst)
+	s.Require().Equal(proto.FsError_FS_OK, wst)
 
 	s.fileClient.EXPECT().WriteAndFlush(mock.Anything, mock.MatchedBy(func(r *proto.WriteAndFlushRequest) bool {
 		return r.Volume == "testVolume" && r.Fd == 1 &&
 			r.SessionId == "test-session" && r.Offset == 0 && string(r.Data) == "hi"
 	}), mock.Anything).Return(&proto.WriteAndFlushReply{
-		Status:  int32(fuse.OK),
+		Status:  proto.FsError_FS_OK,
 		Written: 2,
 	}, nil).Once()
 
 	st := s.backend.Flush(context.Background(), h)
-	s.Assert().Equal(fuse.OK, st)
+	s.Assert().Equal(proto.FsError_FS_OK, st)
 }
 
 // TestFlush_CleanAfterWrite verifies that a second Flush after a successful
@@ -1039,14 +1038,14 @@ func (s *BackendClientTestSuite) TestFlushFusesWriteAndFlush() {
 func (s *BackendClientTestSuite) TestFlush_CleanAfterWrite() {
 	h := s.newHandle(grpcclient.PerFileConfig{WriteCoalesceBytes: 4096})
 	_, wst := s.backend.Write(context.Background(), h, 0, []byte("data"))
-	s.Require().Equal(fuse.OK, wst)
+	s.Require().Equal(proto.FsError_FS_OK, wst)
 
 	s.fileClient.EXPECT().WriteAndFlush(mock.Anything, mock.Anything, mock.Anything).
-		Return(&proto.WriteAndFlushReply{Status: int32(fuse.OK), Written: 4}, nil).Once()
+		Return(&proto.WriteAndFlushReply{Status: proto.FsError_FS_OK, Written: 4}, nil).Once()
 
-	s.Require().Equal(fuse.OK, s.backend.Flush(context.Background(), h))
+	s.Require().Equal(proto.FsError_FS_OK, s.backend.Flush(context.Background(), h))
 	// Second Flush: handle is clean, no RPC expected.
-	s.Assert().Equal(fuse.OK, s.backend.Flush(context.Background(), h))
+	s.Assert().Equal(proto.FsError_FS_OK, s.backend.Flush(context.Background(), h))
 }
 
 // TestFsync_CleanAfterWrite verifies that a successful Fsync clears the dirty
@@ -1056,18 +1055,18 @@ func (s *BackendClientTestSuite) TestFlush_CleanAfterWrite() {
 func (s *BackendClientTestSuite) TestFsync_CleanAfterWrite() {
 	h := s.newHandle(grpcclient.PerFileConfig{WriteCoalesceBytes: 4096})
 	_, wst := s.backend.Write(context.Background(), h, 0, []byte("data"))
-	s.Require().Equal(fuse.OK, wst)
+	s.Require().Equal(proto.FsError_FS_OK, wst)
 
 	// Fsync drains the coalescer via drainCoalescer (→ streaming Write RPC)
 	// then issues the server-side Fsync RPC.
-	writeStub := newBackendWriteStreamStub(s.T(), &proto.WriteReply{Written: 4, Status: int32(fuse.OK)}, nil)
+	writeStub := newBackendWriteStreamStub(s.T(), &proto.WriteReply{Written: 4, Status: proto.FsError_FS_OK}, nil)
 	s.fileClient.EXPECT().Write(mock.Anything, mock.Anything).Return(writeStub, nil).Once()
 	s.fileClient.EXPECT().Fsync(mock.Anything, mock.Anything, mock.Anything).
-		Return(&proto.FsyncReply{Status: int32(fuse.OK)}, nil).Once()
+		Return(&proto.FsyncReply{Status: proto.FsError_FS_OK}, nil).Once()
 
-	s.Require().Equal(fuse.OK, s.backend.Fsync(context.Background(), h, 0))
+	s.Require().Equal(proto.FsError_FS_OK, s.backend.Fsync(context.Background(), h, 0))
 	// Handle is now clean: the close-path Flush must issue no RPC.
-	s.Assert().Equal(fuse.OK, s.backend.Flush(context.Background(), h))
+	s.Assert().Equal(proto.FsError_FS_OK, s.backend.Flush(context.Background(), h))
 }
 
 func (s *BackendClientTestSuite) TestFsync() {
@@ -1077,12 +1076,12 @@ func (s *BackendClientTestSuite) TestFsync() {
 		Flags:     0,
 		SessionId: "test-session",
 	}, mock.Anything).Return(&proto.FsyncReply{
-		Status: int32(fuse.OK),
+		Status: proto.FsError_FS_OK,
 	}, nil)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	st := s.backend.Fsync(context.Background(), h, 0)
-	s.Assert().Equal(fuse.OK, st)
+	s.Assert().Equal(proto.FsError_FS_OK, st)
 }
 
 // TestFlush_RetriesOnUnavailable verifies that a transient gRPC
@@ -1092,16 +1091,16 @@ func (s *BackendClientTestSuite) TestFsync() {
 func (s *BackendClientTestSuite) TestFlush_RetriesOnUnavailable() {
 	h := s.newHandle(grpcclient.PerFileConfig{WriteCoalesceBytes: 4096})
 	_, wst := s.backend.Write(context.Background(), h, 0, []byte("retry"))
-	s.Require().Equal(fuse.OK, wst)
+	s.Require().Equal(proto.FsError_FS_OK, wst)
 
 	s.fileClient.EXPECT().WriteAndFlush(mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, status.Error(codes.Unavailable, "down")).Once()
 	s.fileClient.EXPECT().WriteAndFlush(mock.Anything, mock.Anything, mock.Anything).
-		Return(&proto.WriteAndFlushReply{Status: int32(fuse.OK), Written: 5}, nil).Once()
+		Return(&proto.WriteAndFlushReply{Status: proto.FsError_FS_OK, Written: 5}, nil).Once()
 
 	st := s.backend.Flush(context.Background(), h)
 
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.fileClient.AssertNumberOfCalls(s.T(), "WriteAndFlush", 2)
 }
 
@@ -1115,7 +1114,7 @@ func (s *BackendClientTestSuite) TestFlush_RetriesOnUnavailable() {
 func (s *BackendClientTestSuite) TestFlush_RetryReusesRequestID() {
 	h := s.newHandle(grpcclient.PerFileConfig{WriteCoalesceBytes: 4096})
 	_, wst := s.backend.Write(context.Background(), h, 0, []byte("retry-data"))
-	s.Require().Equal(fuse.OK, wst)
+	s.Require().Equal(proto.FsError_FS_OK, wst)
 
 	var ids []string
 	s.fileClient.EXPECT().WriteAndFlush(mock.Anything, mock.Anything, mock.Anything).
@@ -1126,10 +1125,10 @@ func (s *BackendClientTestSuite) TestFlush_RetryReusesRequestID() {
 	s.fileClient.EXPECT().WriteAndFlush(mock.Anything, mock.Anything, mock.Anything).
 		Run(func(_ context.Context, req *proto.WriteAndFlushRequest, _ ...grpc.CallOption) {
 			ids = append(ids, req.RequestId)
-		}).Return(&proto.WriteAndFlushReply{Status: int32(fuse.OK), Written: 10}, nil).Once()
+		}).Return(&proto.WriteAndFlushReply{Status: proto.FsError_FS_OK, Written: 10}, nil).Once()
 
 	st := s.backend.Flush(context.Background(), h)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().Len(ids, 2, "expected exactly two WriteAndFlush attempts")
 	s.Assert().NotEmpty(ids[0], "request_id must be non-empty")
 	s.Assert().Equal(ids[0], ids[1], "retry must reuse the same request_id for server-side dedup")
@@ -1141,16 +1140,16 @@ func (s *BackendClientTestSuite) TestFlush_RetryReusesRequestID() {
 func (s *BackendClientTestSuite) TestFlush_RequestIdNonEmpty() {
 	h := s.newHandle(grpcclient.PerFileConfig{WriteCoalesceBytes: 4096})
 	_, wst := s.backend.Write(context.Background(), h, 0, []byte("data"))
-	s.Require().Equal(fuse.OK, wst)
+	s.Require().Equal(proto.FsError_FS_OK, wst)
 
 	var gotID string
 	s.fileClient.EXPECT().WriteAndFlush(mock.Anything, mock.Anything, mock.Anything).
 		Run(func(_ context.Context, req *proto.WriteAndFlushRequest, _ ...grpc.CallOption) {
 			gotID = req.RequestId
-		}).Return(&proto.WriteAndFlushReply{Status: int32(fuse.OK), Written: 4}, nil).Once()
+		}).Return(&proto.WriteAndFlushReply{Status: proto.FsError_FS_OK, Written: 4}, nil).Once()
 
 	st := s.backend.Flush(context.Background(), h)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().NotEmpty(gotID, "WriteAndFlush RPC must carry a non-empty request_id")
 }
 
@@ -1171,16 +1170,16 @@ func (s *BackendClientTestSuite) TestFlush_SurfacesLostCoalescedWriteErr() {
 
 	// First small write buffers — no RPC.
 	_, st1 := s.backend.Write(context.Background(), h, 0, []byte("ab"))
-	s.Require().Equal(fuse.OK, st1)
+	s.Require().Equal(proto.FsError_FS_OK, st1)
 
 	// Second contiguous write overflows the threshold → batch flush, which the
 	// stub fails in-band with ENOSPC (no transport error, so no retry storm).
 	failStub := newBackendWriteStreamStub(s.T(),
-		&proto.WriteReply{Written: 0, Status: int32(fuse.Status(syscall.ENOSPC))}, nil)
+		&proto.WriteReply{Written: 0, Status: proto.FsError_FS_ENOSPC}, nil)
 	s.fileClient.EXPECT().Write(mock.Anything, mock.Anything).Return(failStub, nil).Once()
 
 	_, st2 := s.backend.Write(context.Background(), h, 2, []byte("cd"))
-	s.Require().Equal(fuse.Status(syscall.ENOSPC), st2,
+	s.Require().Equal(proto.FsError_FS_ENOSPC, st2,
 		"the failed batch flush must surface to FUSE immediately")
 
 	// The coalescer is now empty but the handle is still dirty. Flush must
@@ -1188,15 +1187,15 @@ func (s *BackendClientTestSuite) TestFlush_SurfacesLostCoalescedWriteErr() {
 	// strict mock with no WriteAndFlush expectation enforces that, and the
 	// returned status must be the lost write's ENOSPC, not a spurious OK.
 	st := s.backend.Flush(context.Background(), h)
-	s.Assert().Equal(fuse.Status(syscall.ENOSPC), st,
+	s.Assert().Equal(proto.FsError_FS_ENOSPC, st,
 		"Flush must surface the lost coalesced-write error, not mask it with OK")
 
 	// Sticky error is consumed exactly once: the handle is still dirty (the
 	// failed write set dirty before buffering), so a second Flush proceeds to
 	// the (now empty) WriteAndFlush rather than re-surfacing the cleared error.
 	s.fileClient.EXPECT().WriteAndFlush(mock.Anything, mock.Anything, mock.Anything).
-		Return(&proto.WriteAndFlushReply{Status: int32(fuse.OK)}, nil).Once()
-	s.Assert().Equal(fuse.OK, s.backend.Flush(context.Background(), h),
+		Return(&proto.WriteAndFlushReply{Status: proto.FsError_FS_OK}, nil).Once()
+	s.Assert().Equal(proto.FsError_FS_OK, s.backend.Flush(context.Background(), h),
 		"once consumed, the sticky error is not re-surfaced")
 }
 
@@ -1207,18 +1206,18 @@ func (s *BackendClientTestSuite) TestFsync_SurfacesLostCoalescedWriteErr() {
 	h := s.newHandle(grpcclient.PerFileConfig{WriteCoalesceBytes: 4})
 
 	_, st1 := s.backend.Write(context.Background(), h, 0, []byte("ab"))
-	s.Require().Equal(fuse.OK, st1)
+	s.Require().Equal(proto.FsError_FS_OK, st1)
 
 	failStub := newBackendWriteStreamStub(s.T(),
-		&proto.WriteReply{Written: 0, Status: int32(fuse.Status(syscall.ENOSPC))}, nil)
+		&proto.WriteReply{Written: 0, Status: proto.FsError_FS_ENOSPC}, nil)
 	s.fileClient.EXPECT().Write(mock.Anything, mock.Anything).Return(failStub, nil).Once()
 
 	_, st2 := s.backend.Write(context.Background(), h, 2, []byte("cd"))
-	s.Require().Equal(fuse.Status(syscall.ENOSPC), st2)
+	s.Require().Equal(proto.FsError_FS_ENOSPC, st2)
 
 	// Strict mock: no Fsync RPC expected — the sticky error short-circuits.
 	st := s.backend.Fsync(context.Background(), h, 0)
-	s.Assert().Equal(fuse.Status(syscall.ENOSPC), st,
+	s.Assert().Equal(proto.FsError_FS_ENOSPC, st,
 		"Fsync must surface the lost coalesced-write error")
 }
 
@@ -1228,12 +1227,12 @@ func (s *BackendClientTestSuite) TestFsync_RetriesOnUnavailable() {
 	s.fileClient.EXPECT().Fsync(mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, status.Error(codes.Unavailable, "down")).Once()
 	s.fileClient.EXPECT().Fsync(mock.Anything, mock.Anything, mock.Anything).
-		Return(&proto.FsyncReply{Status: int32(fuse.OK)}, nil).Once()
+		Return(&proto.FsyncReply{Status: proto.FsError_FS_OK}, nil).Once()
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	st := s.backend.Fsync(context.Background(), h, 0)
 
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.fileClient.AssertNumberOfCalls(s.T(), "Fsync", 2)
 }
 
@@ -1242,7 +1241,7 @@ func (s *BackendClientTestSuite) TestFsync_RetriesOnUnavailable() {
 func (s *BackendClientTestSuite) TestRead_BadHandleEBADF() {
 	n, st := s.backend.Read(context.Background(), badHandle{}, 0, make([]byte, 8))
 	s.Assert().Equal(0, n)
-	s.Assert().Equal(fuse.EBADF, st)
+	s.Assert().Equal(proto.FsError_FS_EBADF, st)
 }
 
 // TestAllocate verifies fallocate(2) translates to an AllocateRequest
@@ -1252,11 +1251,11 @@ func (s *BackendClientTestSuite) TestAllocate() {
 		return req.Volume == "testVolume" && req.Fd == 1 && req.Path == "/test/path" &&
 			req.Off == 100 && req.Size == 4096 && req.Mode == 0 &&
 			req.SessionId == "test-session"
-	}), mock.Anything).Return(&proto.AllocateReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.AllocateReply{Status: proto.FsError_FS_OK}, nil)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	st := s.backend.Allocate(context.Background(), h, 100, 4096, 0)
-	s.Assert().Equal(fuse.OK, st)
+	s.Assert().Equal(proto.FsError_FS_OK, st)
 }
 
 func (s *BackendClientTestSuite) TestAllocate_Error() {
@@ -1265,12 +1264,12 @@ func (s *BackendClientTestSuite) TestAllocate_Error() {
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	st := s.backend.Allocate(context.Background(), h, 0, 4096, 0)
-	s.Assert().Equal(fuse.EIO, st)
+	s.Assert().Equal(proto.FsError_FS_EIO, st)
 }
 
 func (s *BackendClientTestSuite) TestAllocate_BadHandleEBADF() {
 	st := s.backend.Allocate(context.Background(), badHandle{}, 0, 4096, 0)
-	s.Assert().Equal(fuse.EBADF, st)
+	s.Assert().Equal(proto.FsError_FS_EBADF, st)
 }
 
 // TestGetLk verifies the lock state query translates the inbound
@@ -1282,14 +1281,14 @@ func (s *BackendClientTestSuite) TestGetLk() {
 			req.SessionId == "test-session" && req.Lk != nil &&
 			req.Lk.Start == 0 && req.Lk.End == 16 && req.Lk.Typ == 1 && req.Lk.Pid == 99
 	}), mock.Anything).Return(&proto.GetLkReply{
-		Status: int32(fuse.OK),
+		Status: proto.FsError_FS_OK,
 		Lk:     &proto.FileLock{Start: 0, End: 16, Typ: 2, Pid: 1234},
 	}, nil)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	var out fuse.FileLock
 	st := s.backend.GetLk(context.Background(), h, 42, lk, 0, &out)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(uint64(0), out.Start)
 	s.Assert().Equal(uint64(16), out.End)
 	s.Assert().Equal(uint32(2), out.Typ)
@@ -1303,13 +1302,13 @@ func (s *BackendClientTestSuite) TestGetLk_Error() {
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	var out fuse.FileLock
 	st := s.backend.GetLk(context.Background(), h, 0, &fuse.FileLock{}, 0, &out)
-	s.Assert().Equal(fuse.EIO, st)
+	s.Assert().Equal(proto.FsError_FS_EIO, st)
 }
 
 func (s *BackendClientTestSuite) TestGetLk_BadHandleEBADF() {
 	var out fuse.FileLock
 	st := s.backend.GetLk(context.Background(), badHandle{}, 0, &fuse.FileLock{}, 0, &out)
-	s.Assert().Equal(fuse.EBADF, st)
+	s.Assert().Equal(proto.FsError_FS_EBADF, st)
 }
 
 func (s *BackendClientTestSuite) TestSetLk() {
@@ -1318,11 +1317,11 @@ func (s *BackendClientTestSuite) TestSetLk() {
 		return req.Volume == "testVolume" && req.Fd == 1 && req.Owner == 7 && req.Flags == 0 &&
 			req.SessionId == "test-session" && req.Lk != nil &&
 			req.Lk.Start == 10 && req.Lk.End == 20 && req.Lk.Typ == 1 && req.Lk.Pid == 5
-	}), mock.Anything).Return(&proto.SetLkReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.SetLkReply{Status: proto.FsError_FS_OK}, nil)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	st := s.backend.SetLk(context.Background(), h, 7, lk, 0)
-	s.Assert().Equal(fuse.OK, st)
+	s.Assert().Equal(proto.FsError_FS_OK, st)
 }
 
 func (s *BackendClientTestSuite) TestSetLk_Error() {
@@ -1331,12 +1330,12 @@ func (s *BackendClientTestSuite) TestSetLk_Error() {
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	st := s.backend.SetLk(context.Background(), h, 0, &fuse.FileLock{}, 0)
-	s.Assert().Equal(fuse.EIO, st)
+	s.Assert().Equal(proto.FsError_FS_EIO, st)
 }
 
 func (s *BackendClientTestSuite) TestSetLk_BadHandleEBADF() {
 	st := s.backend.SetLk(context.Background(), badHandle{}, 0, &fuse.FileLock{}, 0)
-	s.Assert().Equal(fuse.EBADF, st)
+	s.Assert().Equal(proto.FsError_FS_EBADF, st)
 }
 
 func (s *BackendClientTestSuite) TestSetLkw() {
@@ -1345,11 +1344,11 @@ func (s *BackendClientTestSuite) TestSetLkw() {
 		return req.Volume == "testVolume" && req.Fd == 1 && req.Owner == 7 && req.Flags == 0 &&
 			req.SessionId == "test-session" && req.Lk != nil &&
 			req.Lk.Start == 10 && req.Lk.End == 20 && req.Lk.Typ == 1 && req.Lk.Pid == 5
-	})).Return(&proto.SetLkwReply{Status: int32(fuse.OK)}, nil)
+	})).Return(&proto.SetLkwReply{Status: proto.FsError_FS_OK}, nil)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	st := s.backend.SetLkw(context.Background(), h, 7, lk, 0)
-	s.Assert().Equal(fuse.OK, st)
+	s.Assert().Equal(proto.FsError_FS_OK, st)
 }
 
 func (s *BackendClientTestSuite) TestSetLkw_Error() {
@@ -1358,12 +1357,12 @@ func (s *BackendClientTestSuite) TestSetLkw_Error() {
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	st := s.backend.SetLkw(context.Background(), h, 0, &fuse.FileLock{}, 0)
-	s.Assert().Equal(fuse.EIO, st)
+	s.Assert().Equal(proto.FsError_FS_EIO, st)
 }
 
 func (s *BackendClientTestSuite) TestSetLkw_BadHandleEBADF() {
 	st := s.backend.SetLkw(context.Background(), badHandle{}, 0, &fuse.FileLock{}, 0)
-	s.Assert().Equal(fuse.EBADF, st)
+	s.Assert().Equal(proto.FsError_FS_EBADF, st)
 }
 
 // TestStat_PropagatesCallerFromCtx is the load-bearing assertion for the
@@ -1383,12 +1382,12 @@ func (s *BackendClientTestSuite) TestStat_PropagatesCallerFromCtx() {
 			req.Caller.Owner.Uid == wantUID && req.Caller.Owner.Gid == wantGID &&
 			req.Caller.Pid == wantPID
 	}), mock.Anything).Return(&proto.GetAttrReply{
-		Status:     int32(fuse.OK),
+		Status:     proto.FsError_FS_OK,
 		Attributes: &proto.Attr{Mode: 0o644, Owner: &proto.Owner{Uid: wantUID, Gid: wantGID}},
 	}, nil)
 
 	_, st := s.backend.Stat(ctx, "/path")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 }
 
 // TestStat_BareCtxStampsZeroCaller verifies the fallback path: a ctx
@@ -1402,12 +1401,12 @@ func (s *BackendClientTestSuite) TestStat_BareCtxStampsZeroCaller() {
 		return req.Caller != nil && req.Caller.Owner != nil &&
 			req.Caller.Owner.Uid == 0 && req.Caller.Owner.Gid == 0 && req.Caller.Pid == 0
 	}), mock.Anything).Return(&proto.GetAttrReply{
-		Status:     int32(fuse.OK),
+		Status:     proto.FsError_FS_OK,
 		Attributes: &proto.Attr{Mode: 0o644, Owner: &proto.Owner{}},
 	}, nil)
 
 	_, st := s.backend.Stat(context.Background(), "/path")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 }
 
 // fakeDecorator models a Sub-spec B-style FileHandle wrapper: it holds
@@ -1478,15 +1477,15 @@ func (s *BackendClientTestSuite) TestReadFillsPrefetchWindow() {
 			// would fail AssertExpectations for an in-flight prefetch — the -race
 			// flake. See newBackendReadStreamStubOptional.
 			stub := newBackendReadStreamStubOptional(s.T(),
-				&proto.ReadFrame{Data: data, Status: int32(fuse.OK)},
-				&proto.ReadFrame{Status: int32(fuse.OK)},
+				&proto.ReadFrame{Data: data, Status: proto.FsError_FS_OK},
+				&proto.ReadFrame{Status: proto.FsError_FS_OK},
 			)
 			return stub, nil
 		}).Maybe()
 
 	dest := make([]byte, chunkBytes)
 	n, st := s.backend.Read(context.Background(), h, 0, dest)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().Equal(chunkBytes, n)
 
 	// One synchronous Read + 3 prefetch goroutines = at least 4 total calls.
@@ -1529,21 +1528,21 @@ func (s *BackendClientTestSuite) TestRead_PartialPrefixFetchesOnlyTail() {
 			mu.Unlock()
 			if req.Offset == 2*chunkBytes {
 				return newBackendReadStreamStubOptional(s.T(),
-					&proto.ReadFrame{Data: tail, Status: int32(fuse.OK)},
-					&proto.ReadFrame{Status: int32(fuse.OK)},
+					&proto.ReadFrame{Data: tail, Status: proto.FsError_FS_OK},
+					&proto.ReadFrame{Status: proto.FsError_FS_OK},
 				), nil
 			}
 			// Async window-refill prefetches (offsets >= 3072); content is
 			// irrelevant to this test.
 			return newBackendReadStreamStubOptional(s.T(),
-				&proto.ReadFrame{Data: make([]byte, chunkBytes), Status: int32(fuse.OK)},
-				&proto.ReadFrame{Status: int32(fuse.OK)},
+				&proto.ReadFrame{Data: make([]byte, chunkBytes), Status: proto.FsError_FS_OK},
+				&proto.ReadFrame{Status: proto.FsError_FS_OK},
 			), nil
 		}).Maybe()
 
 	dest := make([]byte, 2*chunkBytes)
 	n, st := s.backend.Read(context.Background(), h, chunkBytes, dest)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().Equal(2*chunkBytes, n)
 	s.Assert().Equal(prefix, dest[:chunkBytes], "first half must come from the warm chunk")
 	s.Assert().Equal(tail, dest[chunkBytes:], "second half must come from the live tail RPC")
@@ -1586,13 +1585,13 @@ func (s *BackendClientTestSuite) TestRead_PartialPrefixTailErrorNoShortRead() {
 	}), mock.Anything).RunAndReturn(
 		func(_ context.Context, _ *proto.ReadRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[proto.ReadFrame], error) {
 			return newBackendReadStreamStub(s.T(),
-				&proto.ReadFrame{Status: int32(fuse.EIO)},
+				&proto.ReadFrame{Status: proto.FsError_FS_EIO},
 			), nil
 		}).Once()
 
 	dest := make([]byte, 2*chunkBytes)
 	n, st := s.backend.Read(context.Background(), h, chunkBytes, dest)
-	s.Require().Equal(fuse.EIO, st)
+	s.Require().Equal(proto.FsError_FS_EIO, st)
 	s.Assert().Zero(n, "a failed tail fetch must not surface a short read")
 }
 
@@ -1624,8 +1623,8 @@ func (s *BackendClientTestSuite) TestRead_PartialPrefixShortTailAtEOF() {
 		RunAndReturn(func(_ context.Context, req *proto.ReadRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[proto.ReadFrame], error) {
 			if req.Offset == 2*chunkBytes {
 				return newBackendReadStreamStubOptional(s.T(),
-					&proto.ReadFrame{Data: tail, Status: int32(fuse.OK)},
-					&proto.ReadFrame{Status: int32(fuse.OK)},
+					&proto.ReadFrame{Data: tail, Status: proto.FsError_FS_OK},
+					&proto.ReadFrame{Status: proto.FsError_FS_OK},
 				), nil
 			}
 			// Window-refill prefetch: empty stream, never stored.
@@ -1634,7 +1633,7 @@ func (s *BackendClientTestSuite) TestRead_PartialPrefixShortTailAtEOF() {
 
 	dest := make([]byte, 2*chunkBytes)
 	n, st := s.backend.Read(context.Background(), h, chunkBytes, dest)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().Equal(chunkBytes+tailBytes, n, "combined cache prefix + short live tail at EOF")
 	s.Assert().Equal(prefix, dest[:chunkBytes])
 	s.Assert().Equal(tail, dest[chunkBytes:n])
@@ -1651,14 +1650,14 @@ func (s *BackendClientTestSuite) TestSetAttr_BothTimes() {
 			req.Atime != nil && req.Atime.Sec == 100 && req.Atime.Nsec == 1 &&
 			req.Mtime != nil && req.Mtime.Sec == 200 && req.Mtime.Nsec == 2 &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	}), mock.Anything).Return(&proto.SetAttrReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.SetAttrReply{Status: proto.FsError_FS_OK}, nil)
 
 	_, st := s.backend.SetAttr(context.Background(), "/test", SetAttrIn{
 		Valid: fuse.FATTR_ATIME | fuse.FATTR_MTIME,
 		Atime: &atime,
 		Mtime: &mtime,
 	})
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 }
 
 // TestSetAttr_RPCErrorMapsToErrno: a transport-level error (no reply) maps
@@ -1667,7 +1666,7 @@ func (s *BackendClientTestSuite) TestSetAttr_RPCErrorMapsToErrno() {
 	s.fsClient.EXPECT().SetAttr(mock.Anything, mock.Anything, mock.Anything).Return(nil, context.DeadlineExceeded)
 	attr, st := s.backend.SetAttr(context.Background(), "/test", SetAttrIn{Valid: fuse.FATTR_MODE, Mode: 0o600})
 	s.Assert().Nil(attr)
-	s.Assert().Equal(fuse.EIO, st)
+	s.Assert().Equal(proto.FsError_FS_EIO, st)
 }
 
 // Protective property: a cancelled FUSE request ctx must NOT abort the in-flight
@@ -1682,10 +1681,10 @@ func (s *BackendClientTestSuite) TestSetAttr_CancelledParentDoesNotAbortRPC() {
 		mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() == nil }),
 		mock.Anything,
 		mock.Anything,
-	).Return(&proto.SetAttrReply{Status: int32(fuse.OK)}, nil)
+	).Return(&proto.SetAttrReply{Status: proto.FsError_FS_OK}, nil)
 
 	_, st := s.backend.SetAttr(parent, "/test", SetAttrIn{Valid: fuse.FATTR_MODE, Mode: 0o600})
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 }
 
 // newHandleAt is like newHandle but lets the caller choose path and fd so
@@ -1697,7 +1696,7 @@ func (s *BackendClientTestSuite) newHandleAt(path string, fd uint64, cfg grpccli
 // --- CopyFileRange ---
 
 // TestCopyFileRange_HappyPath verifies all wire fields in the request and
-// the correct (BytesCopied, fuse.OK) return value. RequestId must be non-empty
+// the correct (BytesCopied, proto.FsError_FS_OK) return value. RequestId must be non-empty
 // so the server's idempotency cache can key on it.
 func (s *BackendClientTestSuite) TestCopyFileRange_HappyPath() {
 	src := s.newHandleAt("/src/file", 1, grpcclient.PerFileConfig{})
@@ -1712,7 +1711,7 @@ func (s *BackendClientTestSuite) TestCopyFileRange_HappyPath() {
 	}), mock.Anything).Return(&proto.CopyFileRangeReply{BytesCopied: 4096, Status: 0}, nil).Once()
 
 	n, st := s.backend.CopyFileRange(context.Background(), src, 100, dst, 200, 4096, 0)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(uint64(4096), n)
 }
 
@@ -1727,7 +1726,7 @@ func (s *BackendClientTestSuite) TestCopyFileRange_TransportError() {
 		Return(nil, status.Error(codes.Internal, "fatal")).Once()
 
 	n, st := s.backend.CopyFileRange(context.Background(), src, 0, dst, 0, 512, 0)
-	s.Assert().Equal(fuse.EIO, st)
+	s.Assert().Equal(proto.FsError_FS_EIO, st)
 	s.Assert().Equal(uint64(0), n)
 	s.fileClient.AssertNumberOfCalls(s.T(), "CopyFileRange", 1)
 }
@@ -1739,12 +1738,12 @@ func (s *BackendClientTestSuite) TestCopyFileRange_BadHandleEBADF() {
 	good := s.newHandleAt("/dst/file", 2, grpcclient.PerFileConfig{})
 	// badHandle as src — resolveHandle returns nil on the first handle.
 	n, st := s.backend.CopyFileRange(context.Background(), badHandle{}, 0, good, 0, 512, 0)
-	s.Assert().Equal(fuse.EBADF, st)
+	s.Assert().Equal(proto.FsError_FS_EBADF, st)
 	s.Assert().Equal(uint64(0), n)
 	// badHandle as dst — src resolves fine, dst does not.
 	good2 := s.newHandleAt("/src/file", 1, grpcclient.PerFileConfig{})
 	n, st = s.backend.CopyFileRange(context.Background(), good2, 0, badHandle{}, 0, 512, 0)
-	s.Assert().Equal(fuse.EBADF, st)
+	s.Assert().Equal(proto.FsError_FS_EBADF, st)
 	s.Assert().Equal(uint64(0), n)
 }
 
@@ -1759,10 +1758,10 @@ func (s *BackendClientTestSuite) TestCopyFileRange_DrainOrdering() {
 
 	// Buffer a write on dst (small — stays in coalescer, no wire RPC yet).
 	_, wst := s.backend.Write(context.Background(), dst, 0, []byte("pending"))
-	s.Require().Equal(fuse.OK, wst)
+	s.Require().Equal(proto.FsError_FS_OK, wst)
 
 	// Drain RPC: the coalescer's pending bytes will flow through streamingWrite.
-	writeStub := newBackendWriteStreamStub(s.T(), &proto.WriteReply{Written: 7, Status: int32(fuse.OK)}, nil)
+	writeStub := newBackendWriteStreamStub(s.T(), &proto.WriteReply{Written: 7, Status: proto.FsError_FS_OK}, nil)
 	s.fileClient.EXPECT().Write(mock.Anything, mock.Anything).Return(writeStub, nil).Once()
 
 	// Copy RPC: inside RunAndReturn assert the write already fired.
@@ -1773,7 +1772,7 @@ func (s *BackendClientTestSuite) TestCopyFileRange_DrainOrdering() {
 		}).Once()
 
 	n, st := s.backend.CopyFileRange(context.Background(), src, 0, dst, 0, 1024, 0)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(uint64(1024), n)
 }
 
@@ -1800,7 +1799,7 @@ func (s *BackendClientTestSuite) TestCopyFileRange_RetryReusesRequestID() {
 		}).Return(&proto.CopyFileRangeReply{BytesCopied: 512, Status: 0}, nil).Once()
 
 	n, st := s.backend.CopyFileRange(context.Background(), src, 0, dst, 0, 512, 0)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(uint64(512), n)
 	s.Require().Len(ids, 2, "expected exactly two CopyFileRange attempts")
 	s.Assert().NotEmpty(ids[0], "request_id must be non-empty")
@@ -1819,9 +1818,9 @@ func (s *BackendClientTestSuite) TestCopyFileRange_ZeroCopied_DirtyFlagNotSet() 
 		Return(&proto.CopyFileRangeReply{BytesCopied: 0, Status: 0}, nil).Once()
 
 	_, st := s.backend.CopyFileRange(context.Background(), src, 0, dst, 0, 0, 0)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	// dst is still clean: Flush must be a no-op (strict mock — no WriteAndFlush call).
-	s.Require().Equal(fuse.OK, s.backend.Flush(context.Background(), dst))
+	s.Require().Equal(proto.FsError_FS_OK, s.backend.Flush(context.Background(), dst))
 }
 
 // TestCopyFileRange_NonZeroCopied_DirtyFlagSet verifies the converse: when
@@ -1834,12 +1833,12 @@ func (s *BackendClientTestSuite) TestCopyFileRange_NonZeroCopied_DirtyFlagSet() 
 	s.fileClient.EXPECT().CopyFileRange(mock.Anything, mock.Anything, mock.Anything).
 		Return(&proto.CopyFileRangeReply{BytesCopied: 512, Status: 0}, nil).Once()
 	_, st := s.backend.CopyFileRange(context.Background(), src, 0, dst, 0, 512, 0)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 
 	// dst is now dirty: Flush must issue WriteAndFlush.
 	s.fileClient.EXPECT().WriteAndFlush(mock.Anything, mock.Anything, mock.Anything).
-		Return(&proto.WriteAndFlushReply{Status: int32(fuse.OK), Written: 0}, nil).Once()
-	s.Require().Equal(fuse.OK, s.backend.Flush(context.Background(), dst))
+		Return(&proto.WriteAndFlushReply{Status: proto.FsError_FS_OK, Written: 0}, nil).Once()
+	s.Require().Equal(proto.FsError_FS_OK, s.backend.Flush(context.Background(), dst))
 }
 
 // --- Lseek ---
@@ -1854,7 +1853,7 @@ func (s *BackendClientTestSuite) TestLseek_HappyPath() {
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	off, st := s.backend.Lseek(context.Background(), h, 4096, 4)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(uint64(8192), off)
 }
 
@@ -1869,7 +1868,7 @@ func (s *BackendClientTestSuite) TestLseek_RetryReusesResult() {
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	off, st := s.backend.Lseek(context.Background(), h, 0, 4)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(uint64(1024), off)
 	s.fileClient.AssertNumberOfCalls(s.T(), "Lseek", 2)
 }
@@ -1877,7 +1876,7 @@ func (s *BackendClientTestSuite) TestLseek_RetryReusesResult() {
 // TestLseek_BadHandleEBADF verifies the EBADF fast-path for a foreign handle.
 func (s *BackendClientTestSuite) TestLseek_BadHandleEBADF() {
 	off, st := s.backend.Lseek(context.Background(), badHandle{}, 0, 4)
-	s.Assert().Equal(fuse.EBADF, st)
+	s.Assert().Equal(proto.FsError_FS_EBADF, st)
 	s.Assert().Equal(uint64(0), off)
 }
 
@@ -1892,10 +1891,10 @@ func (s *BackendClientTestSuite) TestSetXAttr_HappyPath() {
 			req.Attribute == "user.foo" && string(req.Data) == "xvalue" &&
 			req.Flags == 0 &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	}), mock.Anything).Return(&proto.SetXAttrReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.SetXAttrReply{Status: proto.FsError_FS_OK}, nil)
 
 	st := s.backend.SetXAttr(context.Background(), "/test", "user.foo", data, 0)
-	s.Assert().Equal(fuse.OK, st)
+	s.Assert().Equal(proto.FsError_FS_OK, st)
 }
 
 // TestRemoveXAttr_HappyPath verifies RemoveXAttr stamps RequestId and SessionId.
@@ -1904,10 +1903,10 @@ func (s *BackendClientTestSuite) TestRemoveXAttr_HappyPath() {
 		return req.Volume == "testVolume" && req.Path == "/test" &&
 			req.Attribute == "user.foo" &&
 			req.SessionId == "test-session" && req.RequestId != ""
-	}), mock.Anything).Return(&proto.RemoveXAttrReply{Status: int32(fuse.OK)}, nil)
+	}), mock.Anything).Return(&proto.RemoveXAttrReply{Status: proto.FsError_FS_OK}, nil)
 
 	st := s.backend.RemoveXAttr(context.Background(), "/test", "user.foo")
-	s.Assert().Equal(fuse.OK, st)
+	s.Assert().Equal(proto.FsError_FS_OK, st)
 }
 
 // TestListXAttr_HappyPath verifies ListXAttr returns the attribute name list.
@@ -1916,11 +1915,11 @@ func (s *BackendClientTestSuite) TestListXAttr_HappyPath() {
 		return req.Volume == "testVolume" && req.Path == "/test"
 	}), mock.Anything).Return(&proto.ListXAttrReply{
 		Attributes: []string{"user.foo", "user.bar"},
-		Status:     int32(fuse.OK),
+		Status:     proto.FsError_FS_OK,
 	}, nil)
 
 	names, st := s.backend.ListXAttr(context.Background(), "/test")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().Len(names, 2)
 	s.Assert().Equal("user.foo", names[0])
 	s.Assert().Equal("user.bar", names[1])
@@ -1944,8 +1943,8 @@ func (s *BackendClientTestSuite) TestRead_ReadaheadConcurrentWithRelease() {
 		RunAndReturn(func(_ context.Context, _ *proto.ReadRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[proto.ReadFrame], error) {
 			data := make([]byte, chunkBytes)
 			return newBackendReadStreamStubOptional(s.T(),
-				&proto.ReadFrame{Data: data, Status: int32(fuse.OK)},
-				&proto.ReadFrame{Status: int32(fuse.OK)},
+				&proto.ReadFrame{Data: data, Status: proto.FsError_FS_OK},
+				&proto.ReadFrame{Status: proto.FsError_FS_OK},
 			), nil
 		}).Maybe()
 	s.fileClient.EXPECT().Release(mock.Anything, mock.Anything, mock.Anything).
@@ -1959,7 +1958,7 @@ func (s *BackendClientTestSuite) TestRead_ReadaheadConcurrentWithRelease() {
 		<-start
 		dest := make([]byte, chunkBytes)
 		for i := 0; i < 64; i++ {
-			if _, st := s.backend.Read(context.Background(), h, int64(i)*chunkBytes, dest); !st.Ok() {
+			if _, st := s.backend.Read(context.Background(), h, int64(i)*chunkBytes, dest); st != proto.FsError_FS_OK {
 				return // an error after Release cancelled lifeCtx is fine; we chase races
 			}
 		}
@@ -1969,7 +1968,7 @@ func (s *BackendClientTestSuite) TestRead_ReadaheadConcurrentWithRelease() {
 		<-start
 		time.Sleep(2 * time.Millisecond) // let some prefetches get in flight
 		st := s.backend.Release(context.Background(), h)
-		s.True(st.Ok() || st == fuse.EIO, "Release must terminate cleanly, got %v", st)
+		s.True(st == proto.FsError_FS_OK || st == proto.FsError_FS_EIO, "Release must terminate cleanly, got %v", st)
 	}()
 	close(start)
 	wg.Wait()
@@ -1985,15 +1984,15 @@ func (s *BackendClientTestSuite) TestStatusFromRPCError_Mapping() {
 	tests := []struct {
 		name string
 		err  error
-		want fuse.Status
+		want proto.FsError
 	}{
-		{"NotFound", status.Error(codes.NotFound, "fd not found"), fuse.ENOENT},
-		{"PermissionDenied", status.Error(codes.PermissionDenied, "denied"), fuse.EACCES},
-		{"Unauthenticated", status.Error(codes.Unauthenticated, "revoked"), fuse.EACCES},
-		{"Unavailable", status.Error(codes.Unavailable, "down"), fuse.EIO},
-		{"Internal", status.Error(codes.Internal, "boom"), fuse.EIO},
-		{"non-grpc error", context.DeadlineExceeded, fuse.EIO},
-		{"reclaim failure unwraps to its status", errFromStatus(fuse.ENOENT), fuse.ENOENT},
+		{"NotFound", status.Error(codes.NotFound, "fd not found"), proto.FsError_FS_ENOENT},
+		{"PermissionDenied", status.Error(codes.PermissionDenied, "denied"), proto.FsError_FS_EACCES},
+		{"Unauthenticated", status.Error(codes.Unauthenticated, "revoked"), proto.FsError_FS_EACCES},
+		{"Unavailable", status.Error(codes.Unavailable, "down"), proto.FsError_FS_EIO},
+		{"Internal", status.Error(codes.Internal, "boom"), proto.FsError_FS_EIO},
+		{"non-grpc error", context.DeadlineExceeded, proto.FsError_FS_EIO},
+		{"reclaim failure unwraps to its status", errFromStatus(proto.FsError_FS_ENOENT), proto.FsError_FS_ENOENT},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
@@ -2010,7 +2009,7 @@ func (s *BackendClientTestSuite) TestStat_TransportPermissionDeniedMapsToEACCES(
 		Return(nil, status.Error(codes.PermissionDenied, "identity denied")).Once()
 
 	attr, st := s.backend.Stat(context.Background(), "/secret")
-	s.Assert().Equal(fuse.EACCES, st)
+	s.Assert().Equal(proto.FsError_FS_EACCES, st)
 	s.Assert().Nil(attr)
 }
 
@@ -2025,7 +2024,7 @@ func (s *BackendClientTestSuite) TestRead_DeadFdNotFoundMapsToESTALE() {
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	n, st := s.backend.Read(context.Background(), h, 0, make([]byte, 8))
-	s.Assert().Equal(fuse.Status(syscall.ESTALE), st)
+	s.Assert().Equal(proto.FsError_FS_ESTALE, st)
 	s.Assert().Equal(0, n)
 }
 
@@ -2057,8 +2056,8 @@ func (s *BackendClientTestSuite) TestRead_ReadaheadArmsAtDefaultThreshold() {
 			readCount.Add(1)
 			data := make([]byte, chunkBytes)
 			return newBackendReadStreamStubOptional(s.T(),
-				&proto.ReadFrame{Data: data, Status: int32(fuse.OK)},
-				&proto.ReadFrame{Status: int32(fuse.OK)},
+				&proto.ReadFrame{Data: data, Status: proto.FsError_FS_OK},
+				&proto.ReadFrame{Status: proto.FsError_FS_OK},
 			), nil
 		}).Maybe()
 
@@ -2066,17 +2065,17 @@ func (s *BackendClientTestSuite) TestRead_ReadaheadArmsAtDefaultThreshold() {
 
 	// Read 1: seqHits = 1 — no prefetch yet; exactly one RPC (the synchronous live fetch).
 	_, st := s.backend.Read(context.Background(), h, 0, dest)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(int64(1), readCount.Load(), "Read 1: exactly one live RPC, no prefetch")
 
 	// Read 2: seqHits = 2 — still below threshold; still no prefetch.
 	_, st = s.backend.Read(context.Background(), h, int64(chunkBytes), dest)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(int64(2), readCount.Load(), "Read 2: still no prefetch RPC")
 
 	// Read 3: seqHits reaches threshold=3; prefetches must fire now.
 	_, st = s.backend.Read(context.Background(), h, int64(2*chunkBytes), dest)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 
 	// 3 synchronous RPCs + ≥1 prefetch goroutine spawned on the third Read.
 	s.Eventually(func() bool {
@@ -2150,7 +2149,7 @@ func (s *FdOpReclaimSuite) newStaleHandle() *grpcFileHandle {
 
 // expectOpenReturns sets up a single Open expectation for the stale handle's
 // reclaim; it returns a reply with the given fd and status.
-func (s *FdOpReclaimSuite) expectOpenReturns(newFd uint64, st fuse.Status) {
+func (s *FdOpReclaimSuite) expectOpenReturns(newFd uint64, st proto.FsError) {
 	s.fileClient.EXPECT().Open(
 		mock.Anything,
 		mock.MatchedBy(func(req *proto.OpenRequest) bool {
@@ -2159,17 +2158,17 @@ func (s *FdOpReclaimSuite) expectOpenReturns(newFd uint64, st fuse.Status) {
 				req.SessionId == "live-session"
 		}),
 		mock.Anything,
-	).Return(&proto.OpenReply{Fd: newFd, Status: int32(st)}, nil).Once()
+	).Return(&proto.OpenReply{Fd: newFd, Status: st}, nil).Once()
 }
 
 // TestReadUsesReclaimedFd: Read on a stale handle must trigger reclaim, then
 // issue the Read RPC with the new fd from the Open reply.
 func (s *FdOpReclaimSuite) TestReadUsesReclaimedFd() {
 	const freshFd = uint64(99)
-	s.expectOpenReturns(freshFd, fuse.OK)
+	s.expectOpenReturns(freshFd, proto.FsError_FS_OK)
 
 	readStream := newBackendReadStreamStub(s.T(),
-		&proto.ReadFrame{Status: int32(fuse.OK), Data: []byte("hello")},
+		&proto.ReadFrame{Status: proto.FsError_FS_OK, Data: []byte("hello")},
 	)
 	s.fileClient.EXPECT().Read(
 		mock.Anything,
@@ -2182,7 +2181,7 @@ func (s *FdOpReclaimSuite) TestReadUsesReclaimedFd() {
 	h := s.newStaleHandle()
 	dest := make([]byte, 64)
 	n, st := s.backend.Read(context.Background(), h, 0, dest)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(5, n)
 	s.fileClient.AssertNumberOfCalls(s.T(), "Open", 1)
 }
@@ -2190,13 +2189,13 @@ func (s *FdOpReclaimSuite) TestReadUsesReclaimedFd() {
 // TestReadReclaimFailureSurfacesStatus: when reclaim fails (Open returns ENOENT),
 // the Read must return ENOENT and must NOT issue the underlying Read RPC.
 func (s *FdOpReclaimSuite) TestReadReclaimFailureSurfacesStatus() {
-	s.expectOpenReturns(0, fuse.ENOENT)
+	s.expectOpenReturns(0, proto.FsError_FS_ENOENT)
 	// No Read expectation — strict mock proves the RPC is never issued.
 
 	h := s.newStaleHandle()
 	dest := make([]byte, 64)
 	_, st := s.backend.Read(context.Background(), h, 0, dest)
-	s.Assert().Equal(fuse.ENOENT, st)
+	s.Assert().Equal(proto.FsError_FS_ENOENT, st)
 	s.fileClient.AssertNumberOfCalls(s.T(), "Read", 0)
 }
 
@@ -2204,7 +2203,7 @@ func (s *FdOpReclaimSuite) TestReadReclaimFailureSurfacesStatus() {
 // issues WriteAndFlush with the new fd.
 func (s *FdOpReclaimSuite) TestFlushUsesReclaimedFd() {
 	const freshFd = uint64(42)
-	s.expectOpenReturns(freshFd, fuse.OK)
+	s.expectOpenReturns(freshFd, proto.FsError_FS_OK)
 
 	s.fileClient.EXPECT().WriteAndFlush(
 		mock.Anything,
@@ -2212,24 +2211,24 @@ func (s *FdOpReclaimSuite) TestFlushUsesReclaimedFd() {
 			return req.Fd == freshFd && req.SessionId == "live-session"
 		}),
 		mock.Anything,
-	).Return(&proto.WriteAndFlushReply{Status: int32(fuse.OK)}, nil).Once()
+	).Return(&proto.WriteAndFlushReply{Status: proto.FsError_FS_OK}, nil).Once()
 
 	h := s.newStaleHandle()
 	h.dirty.Store(true)
 	st := s.backend.Flush(context.Background(), h)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.fileClient.AssertNumberOfCalls(s.T(), "Open", 1)
 }
 
 // TestFlushReclaimFailureSurfacesStatus: when reclaim fails, Flush returns that
 // status without calling WriteAndFlush.
 func (s *FdOpReclaimSuite) TestFlushReclaimFailureSurfacesStatus() {
-	s.expectOpenReturns(0, fuse.EACCES)
+	s.expectOpenReturns(0, proto.FsError_FS_EACCES)
 
 	h := s.newStaleHandle()
 	h.dirty.Store(true)
 	st := s.backend.Flush(context.Background(), h)
-	s.Assert().Equal(fuse.EACCES, st)
+	s.Assert().Equal(proto.FsError_FS_EACCES, st)
 	s.fileClient.AssertNumberOfCalls(s.T(), "WriteAndFlush", 0)
 }
 

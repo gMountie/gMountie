@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	cgofuse "github.com/winfsp/cgofuse/fuse"
 	gio "go.gmountie.dev/gmountie/pkg/client/io"
+	proto "go.gmountie.dev/gmountie/pkg/proto"
 )
 
 type MutSuite struct {
@@ -20,7 +21,7 @@ type MutSuite struct {
 func TestMutSuite(t *testing.T) { suite.Run(t, new(MutSuite)) }
 
 func (s *MutSuite) SetupTest() {
-	s.be = &fakeBackend{statAttr: &gio.Attr{}, statSt: fuse.OK}
+	s.be = &fakeBackend{statAttr: &gio.Attr{}, statSt: proto.FsError_FS_OK}
 	// rewriter: local uid 501 -> server uid 1000
 	rw := gio.NewIDRewriter(&gio.Identity{Uid: 1000, Gid: 1000}, 501, 20)
 	s.fs = New(s.be, rw)

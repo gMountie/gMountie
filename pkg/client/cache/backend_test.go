@@ -7,6 +7,7 @@ import (
 
 	iomocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/io"
 	"go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/proto"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"
@@ -45,44 +46,44 @@ func (s *CachedBackendTestSuite) SetupTest() {
 func (s *CachedBackendTestSuite) openCachedHandle(path string) (io.FileHandle, *iomocks.MockFileHandle) {
 	innerH := iomocks.NewMockFileHandle(s.T())
 	innerH.EXPECT().Unwrap().Return(innerH).Maybe()
-	s.inner.EXPECT().Open(mock.Anything, path, mock.Anything).Return(innerH, fuse.OK).Once()
+	s.inner.EXPECT().Open(mock.Anything, path, mock.Anything).Return(innerH, proto.FsError_FS_OK).Once()
 	h, st := s.b.Open(context.Background(), path, 0)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	return h, innerH
 }
 
 // --- Read path ---
 
 func (s *CachedBackendTestSuite) TestStatHitAfterMiss() {
-	s.inner.EXPECT().Stat(mock.Anything, "/x").Return(&io.Attr{Ino: 1, Size: 10}, fuse.OK).Once()
+	s.inner.EXPECT().Stat(mock.Anything, "/x").Return(&io.Attr{Ino: 1, Size: 10}, proto.FsError_FS_OK).Once()
 	// Miss: hits inner.
 	a, st := s.b.Stat(context.Background(), "/x")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(uint64(1), a.Ino)
 	// Hit: inner NOT called (Once above proves this).
 	a2, st2 := s.b.Stat(context.Background(), "/x")
-	s.Require().Equal(fuse.OK, st2)
+	s.Require().Equal(proto.FsError_FS_OK, st2)
 	s.Assert().Equal(uint64(1), a2.Ino)
 }
 
 func (s *CachedBackendTestSuite) TestStatCachesNegativeOnENOENT() {
-	s.inner.EXPECT().Stat(mock.Anything, "/missing").Return(nil, fuse.ENOENT).Once()
+	s.inner.EXPECT().Stat(mock.Anything, "/missing").Return(nil, proto.FsError_FS_ENOENT).Once()
 	_, st := s.b.Stat(context.Background(), "/missing")
-	s.Require().Equal(fuse.ENOENT, st)
+	s.Require().Equal(proto.FsError_FS_ENOENT, st)
 	// Second call: cached negative, inner NOT called.
 	_, st2 := s.b.Stat(context.Background(), "/missing")
-	s.Assert().Equal(fuse.ENOENT, st2)
+	s.Assert().Equal(proto.FsError_FS_ENOENT, st2)
 }
 
 func (s *CachedBackendTestSuite) TestLookupCachesPositiveOnSuccess() {
 	s.inner.EXPECT().Lookup(mock.Anything, "/d", "child").
-		Return(&io.Attr{Ino: 7}, fuse.OK).Once()
+		Return(&io.Attr{Ino: 7}, proto.FsError_FS_OK).Once()
 	a, st := s.b.Lookup(context.Background(), "/d", "child")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(uint64(7), a.Ino)
 	// Second call: hit, keyed on joined path. Inner NOT called.
 	a2, st2 := s.b.Lookup(context.Background(), "/d", "child")
-	s.Require().Equal(fuse.OK, st2)
+	s.Require().Equal(proto.FsError_FS_OK, st2)
 	s.Assert().Equal(uint64(7), a2.Ino)
 	// Verify cache keyed on joined path "/d/child".
 	cached, hit, pos := s.b.attr.get("/d/child")
@@ -92,16 +93,16 @@ func (s *CachedBackendTestSuite) TestLookupCachesPositiveOnSuccess() {
 }
 
 func (s *CachedBackendTestSuite) TestLookupCachesNegativeOnENOENT() {
-	s.inner.EXPECT().Lookup(mock.Anything, "/d", "nope").Return(nil, fuse.ENOENT).Once()
+	s.inner.EXPECT().Lookup(mock.Anything, "/d", "nope").Return(nil, proto.FsError_FS_ENOENT).Once()
 	_, st := s.b.Lookup(context.Background(), "/d", "nope")
-	s.Require().Equal(fuse.ENOENT, st)
+	s.Require().Equal(proto.FsError_FS_ENOENT, st)
 	// Cached negative.
 	_, hit, pos := s.b.attr.get("/d/nope")
 	s.Require().True(hit)
 	s.Assert().False(pos)
 	// Second call uses cache.
 	_, st2 := s.b.Lookup(context.Background(), "/d", "nope")
-	s.Assert().Equal(fuse.ENOENT, st2)
+	s.Assert().Equal(proto.FsError_FS_ENOENT, st2)
 }
 
 func (s *CachedBackendTestSuite) TestListDirHitAfterMiss() {
@@ -109,13 +110,13 @@ func (s *CachedBackendTestSuite) TestListDirHitAfterMiss() {
 		{DirEntry: io.DirEntry{Name: "a"}},
 		{DirEntry: io.DirEntry{Name: "b"}},
 	}
-	s.inner.EXPECT().ListDir(mock.Anything, "/d").Return(entries, fuse.OK).Once()
+	s.inner.EXPECT().ListDir(mock.Anything, "/d").Return(entries, proto.FsError_FS_OK).Once()
 	got, st := s.b.ListDir(context.Background(), "/d")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Len(got, 2)
 	// Second call: hit.
 	got2, st2 := s.b.ListDir(context.Background(), "/d")
-	s.Require().Equal(fuse.OK, st2)
+	s.Require().Equal(proto.FsError_FS_OK, st2)
 	s.Assert().Len(got2, 2)
 	s.Assert().Equal("a", got2[0].Name)
 }
@@ -133,19 +134,19 @@ func (s *CachedBackendTestSuite) TestListDirPlusPrimesAttrCache() {
 			Attr:     &io.Attr{Ino: 7, Size: 42, Mode: 0o100644},
 		},
 	}
-	s.inner.EXPECT().ListDir(mock.Anything, "/d").Return(entries, fuse.OK).Once()
+	s.inner.EXPECT().ListDir(mock.Anything, "/d").Return(entries, proto.FsError_FS_OK).Once()
 	_, st := s.b.ListDir(context.Background(), "/d")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 
 	a, st2 := s.b.Stat(context.Background(), "/d/child")
-	s.Require().Equal(fuse.OK, st2)
+	s.Require().Equal(proto.FsError_FS_OK, st2)
 	s.Require().NotNil(a)
 	s.Assert().Equal(uint64(7), a.Ino)
 	s.Assert().Equal(uint64(42), a.Size)
 
 	// Lookup is keyed on the same joined path — also a zero-RPC hit.
 	a2, st3 := s.b.Lookup(context.Background(), "/d", "child")
-	s.Require().Equal(fuse.OK, st3)
+	s.Require().Equal(proto.FsError_FS_OK, st3)
 	s.Assert().Equal(uint64(7), a2.Ino)
 }
 
@@ -154,14 +155,14 @@ func (s *CachedBackendTestSuite) TestListDirPlusPrimesAttrCache() {
 // attr cache — a later Stat goes to the backend.
 func (s *CachedBackendTestSuite) TestListDirNilAttrEntriesDoNotPrime() {
 	entries := []io.DirEntryPlus{{DirEntry: io.DirEntry{Name: "noattr", Ino: 8}}}
-	s.inner.EXPECT().ListDir(mock.Anything, "/d").Return(entries, fuse.OK).Once()
+	s.inner.EXPECT().ListDir(mock.Anything, "/d").Return(entries, proto.FsError_FS_OK).Once()
 	_, st := s.b.ListDir(context.Background(), "/d")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 
 	s.inner.EXPECT().Stat(mock.Anything, "/d/noattr").
-		Return(&io.Attr{Ino: 8}, fuse.OK).Once()
+		Return(&io.Attr{Ino: 8}, proto.FsError_FS_OK).Once()
 	a, st2 := s.b.Stat(context.Background(), "/d/noattr")
-	s.Require().Equal(fuse.OK, st2)
+	s.Require().Equal(proto.FsError_FS_OK, st2)
 	s.Assert().Equal(uint64(8), a.Ino)
 }
 
@@ -177,7 +178,7 @@ func (s *CachedBackendTestSuite) TestReadFromCacheChunk() {
 
 	dest := make([]byte, 100)
 	n, st := s.b.Read(context.Background(), h, 0, dest)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(100, n)
 	s.Assert().Equal(chunk[:100], dest)
 }
@@ -186,33 +187,33 @@ func (s *CachedBackendTestSuite) TestReadFetchesAndCachesOnMiss() {
 	h, innerH := s.openCachedHandle("/f")
 	// Inner.Read called ONCE for chunk 0; returns 1024 bytes.
 	s.inner.EXPECT().Read(mock.Anything, innerH, int64(0), mock.MatchedBy(func(b []byte) bool { return len(b) == 1024 })).
-		RunAndReturn(func(_ context.Context, _ io.FileHandle, _ int64, buf []byte) (int, fuse.Status) {
+		RunAndReturn(func(_ context.Context, _ io.FileHandle, _ int64, buf []byte) (int, proto.FsError) {
 			for i := range buf {
 				buf[i] = byte(i % 251)
 			}
-			return 1024, fuse.OK
+			return 1024, proto.FsError_FS_OK
 		}).Once()
 
 	dest := make([]byte, 100)
 	n, st := s.b.Read(context.Background(), h, 0, dest)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(100, n)
 
 	// Second read of same range: cache hit, inner.Read NOT called again
 	// (mock's Once would fail).
 	dest2 := make([]byte, 100)
 	n2, st2 := s.b.Read(context.Background(), h, 0, dest2)
-	s.Require().Equal(fuse.OK, st2)
+	s.Require().Equal(proto.FsError_FS_OK, st2)
 	s.Assert().Equal(100, n2)
 	s.Assert().Equal(dest, dest2)
 }
 
 // fillReturn fills buf with deterministic bytes and reports a full read.
-func fillReturn(_ context.Context, _ io.FileHandle, _ int64, buf []byte) (int, fuse.Status) {
+func fillReturn(_ context.Context, _ io.FileHandle, _ int64, buf []byte) (int, proto.FsError) {
 	for i := range buf {
 		buf[i] = byte(i % 251)
 	}
-	return len(buf), fuse.OK
+	return len(buf), proto.FsError_FS_OK
 }
 
 // TestSequentialReadOverReadsSpan is the WAN readahead-defeat fix: once a read
@@ -241,7 +242,7 @@ func (s *CachedBackendTestSuite) TestSequentialReadOverReadsSpan() {
 	for i := 0; i < thIdx+span; i++ {
 		dest := make([]byte, cs)
 		n, st := s.b.Read(context.Background(), h, int64(i*cs), dest)
-		s.Require().Equal(fuse.OK, st)
+		s.Require().Equal(proto.FsError_FS_OK, st)
 		s.Require().Equal(cs, n)
 	}
 }
@@ -260,7 +261,7 @@ func (s *CachedBackendTestSuite) TestRandomReadDoesNotOverRead() {
 	for _, ci := range []int{0, 5, 2, 9} {
 		dest := make([]byte, cs)
 		n, st := s.b.Read(context.Background(), h, int64(ci*cs), dest)
-		s.Require().Equal(fuse.OK, st)
+		s.Require().Equal(proto.FsError_FS_OK, st)
 		s.Require().Equal(cs, n)
 	}
 }
@@ -271,22 +272,22 @@ func (s *CachedBackendTestSuite) TestReadHandlesEOFMidStream() {
 	// read of 500 without padding or looping forever.
 	h, innerH := s.openCachedHandle("/short")
 	s.inner.EXPECT().Read(mock.Anything, innerH, int64(0), mock.Anything).
-		RunAndReturn(func(_ context.Context, _ io.FileHandle, _ int64, buf []byte) (int, fuse.Status) {
+		RunAndReturn(func(_ context.Context, _ io.FileHandle, _ int64, buf []byte) (int, proto.FsError) {
 			for i := 0; i < 500; i++ {
 				buf[i] = byte(i)
 			}
-			return 500, fuse.OK
+			return 500, proto.FsError_FS_OK
 		}).Once()
 
 	dest := make([]byte, 1024)
 	n, st := s.b.Read(context.Background(), h, 0, dest)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(500, n)
 
 	// Second read at offset 0 hits cache (no second inner.Read).
 	dest2 := make([]byte, 1024)
 	n2, st2 := s.b.Read(context.Background(), h, 0, dest2)
-	s.Require().Equal(fuse.OK, st2)
+	s.Require().Equal(proto.FsError_FS_OK, st2)
 	s.Assert().Equal(500, n2)
 }
 
@@ -307,7 +308,7 @@ func (s *CachedBackendTestSuite) TestReadAcrossChunkBoundaryFromCache() {
 
 	dest := make([]byte, 2048)
 	n, st := s.b.Read(context.Background(), h, 0, dest)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(2048, n, "Read spanning two full chunks must return both")
 	s.Assert().Equal(chunk0, dest[:1024])
 	s.Assert().Equal(chunk1, dest[1024:])
@@ -319,23 +320,23 @@ func (s *CachedBackendTestSuite) TestReadAcrossChunkBoundaryOnMiss() {
 	// continue to the next chunk to satisfy the rest of dest.
 	h, innerH := s.openCachedHandle("/f")
 	s.inner.EXPECT().Read(mock.Anything, innerH, int64(0), mock.MatchedBy(func(b []byte) bool { return len(b) == 1024 })).
-		RunAndReturn(func(_ context.Context, _ io.FileHandle, _ int64, buf []byte) (int, fuse.Status) {
+		RunAndReturn(func(_ context.Context, _ io.FileHandle, _ int64, buf []byte) (int, proto.FsError) {
 			for i := range buf {
 				buf[i] = 0xAA
 			}
-			return 1024, fuse.OK
+			return 1024, proto.FsError_FS_OK
 		}).Once()
 	s.inner.EXPECT().Read(mock.Anything, innerH, int64(1024), mock.MatchedBy(func(b []byte) bool { return len(b) == 1024 })).
-		RunAndReturn(func(_ context.Context, _ io.FileHandle, _ int64, buf []byte) (int, fuse.Status) {
+		RunAndReturn(func(_ context.Context, _ io.FileHandle, _ int64, buf []byte) (int, proto.FsError) {
 			for i := range buf {
 				buf[i] = 0xBB
 			}
-			return 1024, fuse.OK
+			return 1024, proto.FsError_FS_OK
 		}).Once()
 
 	dest := make([]byte, 2048)
 	n, st := s.b.Read(context.Background(), h, 0, dest)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(2048, n, "Read spanning two chunks on miss must fetch both")
 	for i := 0; i < 1024; i++ {
 		s.Require().Equal(byte(0xAA), dest[i])
@@ -352,9 +353,9 @@ func (s *CachedBackendTestSuite) TestWriteInvalidatesDataAndAttr() {
 	s.b.data.put("/f", 0, []byte("OLD-CONTENT"))
 	h, innerH := s.openCachedHandle("/f")
 	s.inner.EXPECT().Write(mock.Anything, innerH, int64(0), mock.Anything).
-		Return(uint32(4), fuse.OK).Once()
+		Return(uint32(4), proto.FsError_FS_OK).Once()
 	_, st := s.b.Write(context.Background(), h, 0, []byte("NEW!"))
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	// Cache invalidated:
 	s.Assert().Nil(s.b.data.get("/f", 0))
 	_, hit, _ := s.b.attr.get("/f")
@@ -369,9 +370,9 @@ func (s *CachedBackendTestSuite) TestWriteOnlyInvalidatesOverlappingChunks() {
 	s.b.data.put("/f", 2, make([]byte, 1024))
 	h, innerH := s.openCachedHandle("/f")
 	s.inner.EXPECT().Write(mock.Anything, innerH, int64(1024), mock.Anything).
-		Return(uint32(100), fuse.OK).Once()
+		Return(uint32(100), proto.FsError_FS_OK).Once()
 	_, st := s.b.Write(context.Background(), h, 1024, make([]byte, 100))
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().NotNil(s.b.data.get("/f", 0))
 	s.Assert().Nil(s.b.data.get("/f", 1))
 	s.Assert().NotNil(s.b.data.get("/f", 2))
@@ -385,9 +386,9 @@ func (s *CachedBackendTestSuite) TestCreateInvalidatesParentDirAndDropsNegative(
 	innerH := iomocks.NewMockFileHandle(s.T())
 	innerH.EXPECT().Unwrap().Return(innerH).Maybe()
 	s.inner.EXPECT().Create(mock.Anything, "/d", "new", mock.Anything, mock.Anything).
-		Return(innerH, nil, fuse.OK).Once()
+		Return(innerH, nil, proto.FsError_FS_OK).Once()
 	h, a, st := s.b.Create(context.Background(), "/d", "new", 0, 0o644)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Nil(a)
 	s.Assert().NotNil(h)
 	// Parent dir + parent attr invalidated.
@@ -405,9 +406,9 @@ func (s *CachedBackendTestSuite) TestCreatePopulatesPositiveAttrIfBackendReturns
 	innerH.EXPECT().Unwrap().Return(innerH).Maybe()
 	returnedAttr := &io.Attr{Ino: 42, Size: 0, Mode: 0o100644}
 	s.inner.EXPECT().Create(mock.Anything, "/d", "new", mock.Anything, mock.Anything).
-		Return(innerH, returnedAttr, fuse.OK).Once()
+		Return(innerH, returnedAttr, proto.FsError_FS_OK).Once()
 	_, a, st := s.b.Create(context.Background(), "/d", "new", 0, 0o644)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(uint64(42), a.Ino)
 	// Positive attr populated for joined path.
 	cached, hit, pos := s.b.attr.get("/d/new")
@@ -421,9 +422,9 @@ func (s *CachedBackendTestSuite) TestMkdirInvalidatesParentAndDropsNegative() {
 	s.b.attr.putPositive("", &io.Attr{Ino: 1}) // parent attr cached
 	s.b.dir.put("", []io.DirEntry{})
 	// nil reply attrs (server's post-create stat failed): nothing is primed.
-	s.inner.EXPECT().Mkdir(mock.Anything, "/d", mock.Anything).Return(nil, fuse.OK).Once()
+	s.inner.EXPECT().Mkdir(mock.Anything, "/d", mock.Anything).Return(nil, proto.FsError_FS_OK).Once()
 	a, st := s.b.Mkdir(context.Background(), "/d", 0o755)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Nil(a)
 	_, hit, _ := s.b.attr.get("/d")
 	s.Assert().False(hit) // negative dropped
@@ -438,13 +439,13 @@ func (s *CachedBackendTestSuite) TestMkdirInvalidatesParentAndDropsNegative() {
 // zero-RPC hit — no inner Stat expectation registered (absence proof).
 func (s *CachedBackendTestSuite) TestMkdirPrimesAttrCacheFromReply() {
 	returned := &io.Attr{Ino: 21, Mode: 0o40755}
-	s.inner.EXPECT().Mkdir(mock.Anything, "/d", mock.Anything).Return(returned, fuse.OK).Once()
+	s.inner.EXPECT().Mkdir(mock.Anything, "/d", mock.Anything).Return(returned, proto.FsError_FS_OK).Once()
 	a, st := s.b.Mkdir(context.Background(), "/d", 0o755)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().NotNil(a)
 
 	cached, st2 := s.b.Stat(context.Background(), "/d")
-	s.Require().Equal(fuse.OK, st2)
+	s.Require().Equal(proto.FsError_FS_OK, st2)
 	s.Assert().Equal(uint64(21), cached.Ino)
 }
 
@@ -456,9 +457,9 @@ func (s *CachedBackendTestSuite) TestSymlinkInvalidatesParentAndPrimes() {
 	s.b.attr.putPositive("/d", &io.Attr{Ino: 1}) // parent attr cached
 	s.b.dir.put("/d", []io.DirEntry{})
 	returned := &io.Attr{Ino: 31, Mode: 0o120777}
-	s.inner.EXPECT().Symlink(mock.Anything, "/target", "/d/lnk").Return(returned, fuse.OK).Once()
+	s.inner.EXPECT().Symlink(mock.Anything, "/target", "/d/lnk").Return(returned, proto.FsError_FS_OK).Once()
 	a, st := s.b.Symlink(context.Background(), "/target", "/d/lnk")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().NotNil(a)
 
 	_, parentHit, _ := s.b.attr.get("/d")
@@ -467,7 +468,7 @@ func (s *CachedBackendTestSuite) TestSymlinkInvalidatesParentAndPrimes() {
 	s.Assert().False(dirHit) // parent listing invalidated
 
 	cached, st2 := s.b.Stat(context.Background(), "/d/lnk")
-	s.Require().Equal(fuse.OK, st2)
+	s.Require().Equal(proto.FsError_FS_OK, st2)
 	s.Assert().Equal(uint64(31), cached.Ino)
 }
 
@@ -475,9 +476,9 @@ func (s *CachedBackendTestSuite) TestSymlinkInvalidatesParentAndPrimes() {
 // entry invalidated (any stale negative dropped), so the next Stat refetches.
 func (s *CachedBackendTestSuite) TestSymlinkNilAttrsJustInvalidates() {
 	s.b.attr.putNegative("/d/lnk") // prior failed Lookup
-	s.inner.EXPECT().Symlink(mock.Anything, "/target", "/d/lnk").Return(nil, fuse.OK).Once()
+	s.inner.EXPECT().Symlink(mock.Anything, "/target", "/d/lnk").Return(nil, proto.FsError_FS_OK).Once()
 	a, st := s.b.Symlink(context.Background(), "/target", "/d/lnk")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Nil(a)
 	_, hit, _ := s.b.attr.get("/d/lnk")
 	s.Assert().False(hit, "negative entry dropped, nothing primed")
@@ -487,9 +488,9 @@ func (s *CachedBackendTestSuite) TestRmdirInvalidatesAndNegativesPath() {
 	s.b.attr.putPositive("/d", &io.Attr{Ino: 1})
 	s.b.dir.put("/d", []io.DirEntry{})
 	s.b.dir.put("", []io.DirEntry{{Name: "d"}})
-	s.inner.EXPECT().Rmdir(mock.Anything, "/d").Return(fuse.OK).Once()
+	s.inner.EXPECT().Rmdir(mock.Anything, "/d").Return(proto.FsError_FS_OK).Once()
 	st := s.b.Rmdir(context.Background(), "/d")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	// Negative-cached.
 	_, hit, pos := s.b.attr.get("/d")
 	s.Require().True(hit)
@@ -504,9 +505,9 @@ func (s *CachedBackendTestSuite) TestRmdirInvalidatesAndNegativesPath() {
 
 func (s *CachedBackendTestSuite) TestRmdirInvalidatesParentAttr() {
 	s.b.attr.putPositive("", &io.Attr{Ino: 1}) // parent attr cached
-	s.inner.EXPECT().Rmdir(mock.Anything, "/d").Return(fuse.OK).Once()
+	s.inner.EXPECT().Rmdir(mock.Anything, "/d").Return(proto.FsError_FS_OK).Once()
 	st := s.b.Rmdir(context.Background(), "/d")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	// Rmdir removes a dir entry, bumping the parent's mtime — parent attr
 	// must be invalidated so the originating client doesn't serve stale mtime.
 	_, parentHit, _ := s.b.attr.get("")
@@ -517,9 +518,9 @@ func (s *CachedBackendTestSuite) TestUnlinkInvalidatesAndNegativesPath() {
 	s.b.attr.putPositive("/f", &io.Attr{Ino: 1})
 	s.b.data.put("/f", 0, []byte("c"))
 	s.b.dir.put("", []io.DirEntry{{Name: "f"}})
-	s.inner.EXPECT().Unlink(mock.Anything, "/f").Return(fuse.OK).Once()
+	s.inner.EXPECT().Unlink(mock.Anything, "/f").Return(proto.FsError_FS_OK).Once()
 	st := s.b.Unlink(context.Background(), "/f")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	// Negative attr cached for /f.
 	_, hit, pos := s.b.attr.get("/f")
 	s.Require().True(hit)
@@ -533,9 +534,9 @@ func (s *CachedBackendTestSuite) TestUnlinkInvalidatesAndNegativesPath() {
 
 func (s *CachedBackendTestSuite) TestUnlinkInvalidatesParentAttr() {
 	s.b.attr.putPositive("", &io.Attr{Ino: 1}) // parent attr cached
-	s.inner.EXPECT().Unlink(mock.Anything, "/f").Return(fuse.OK).Once()
+	s.inner.EXPECT().Unlink(mock.Anything, "/f").Return(proto.FsError_FS_OK).Once()
 	st := s.b.Unlink(context.Background(), "/f")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	// Unlink removes a dir entry, bumping the parent's mtime — parent attr
 	// must be invalidated so the originating client doesn't serve stale mtime.
 	_, parentHit, _ := s.b.attr.get("")
@@ -548,9 +549,9 @@ func (s *CachedBackendTestSuite) TestRenameInvalidatesBothPaths() {
 	s.b.data.put("/a", 0, []byte("aa"))
 	s.b.data.put("/b", 0, []byte("bb"))
 	s.b.dir.put("", []io.DirEntry{})
-	s.inner.EXPECT().Rename(mock.Anything, "/a", "/b").Return(fuse.OK).Once()
+	s.inner.EXPECT().Rename(mock.Anything, "/a", "/b").Return(proto.FsError_FS_OK).Once()
 	st := s.b.Rename(context.Background(), "/a", "/b")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	// /a now negative-cached.
 	_, hitA, posA := s.b.attr.get("/a")
 	s.Require().True(hitA)
@@ -570,9 +571,9 @@ func (s *CachedBackendTestSuite) TestRenameInvalidatesOldParentAttr() {
 	// Rename from "src/a" to "src/b" (same parent): old-parent attr must be
 	// invalidated because the rename changes the parent directory's mtime.
 	s.b.attr.putPositive("src", &io.Attr{Ino: 10})
-	s.inner.EXPECT().Rename(mock.Anything, "src/a", "src/b").Return(fuse.OK).Once()
+	s.inner.EXPECT().Rename(mock.Anything, "src/a", "src/b").Return(proto.FsError_FS_OK).Once()
 	st := s.b.Rename(context.Background(), "src/a", "src/b")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	_, oldParentHit, _ := s.b.attr.get("src")
 	s.Assert().False(oldParentHit, "old parent attr must be invalidated on Rename")
 }
@@ -580,9 +581,9 @@ func (s *CachedBackendTestSuite) TestRenameInvalidatesOldParentAttr() {
 func (s *CachedBackendTestSuite) TestRenameInvalidatesNewParentAttr() {
 	// Rename across directories: new-parent attr must also be invalidated.
 	s.b.attr.putPositive("dst", &io.Attr{Ino: 20})
-	s.inner.EXPECT().Rename(mock.Anything, "src/a", "dst/a").Return(fuse.OK).Once()
+	s.inner.EXPECT().Rename(mock.Anything, "src/a", "dst/a").Return(proto.FsError_FS_OK).Once()
 	st := s.b.Rename(context.Background(), "src/a", "dst/a")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	_, newParentHit, _ := s.b.attr.get("dst")
 	s.Assert().False(newParentHit, "new parent attr must be invalidated on Rename")
 }
@@ -597,10 +598,10 @@ func (s *CachedBackendTestSuite) TestSetAttrWithSizeInvalidatesDataAndPrimesAttr
 	s.b.attr.putPositive("/f", &io.Attr{Size: 2048, Mode: 0o644})
 	in := io.SetAttrIn{Valid: fuse.FATTR_SIZE | fuse.FATTR_MODE, Size: 100, Mode: 0o600}
 	final := &io.Attr{Ino: 9, Size: 100, Mode: 0o600}
-	s.inner.EXPECT().SetAttr(mock.Anything, "/f", in).Return(final, fuse.OK).Once()
+	s.inner.EXPECT().SetAttr(mock.Anything, "/f", in).Return(final, proto.FsError_FS_OK).Once()
 
 	a, st := s.b.SetAttr(context.Background(), "/f", in)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().Equal(final, a)
 	// Data chunks dropped (truncate changes content).
 	s.Assert().Nil(s.b.data.get("/f", 0))
@@ -620,10 +621,10 @@ func (s *CachedBackendTestSuite) TestSetAttrWithoutSizeKeepsDataAndPrimesAttr() 
 	s.b.attr.putPositive("/f", &io.Attr{Mode: 0o644})
 	in := io.SetAttrIn{Valid: fuse.FATTR_MODE, Mode: 0o600}
 	s.inner.EXPECT().SetAttr(mock.Anything, "/f", in).
-		Return(&io.Attr{Mode: 0o600}, fuse.OK).Once()
+		Return(&io.Attr{Mode: 0o600}, proto.FsError_FS_OK).Once()
 
 	_, st := s.b.SetAttr(context.Background(), "/f", in)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().NotNil(s.b.data.get("/f", 0)) // data untouched
 	cached, hit, pos := s.b.attr.get("/f")
 	s.Require().True(hit)
@@ -639,10 +640,10 @@ func (s *CachedBackendTestSuite) TestSetAttrFailureStillInvalidates() {
 	s.b.data.put("/f", 0, []byte("DATA"))
 	s.b.attr.putPositive("/f", &io.Attr{Size: 4, Mode: 0o644})
 	in := io.SetAttrIn{Valid: fuse.FATTR_SIZE | fuse.FATTR_MODE, Size: 0, Mode: 0o600}
-	s.inner.EXPECT().SetAttr(mock.Anything, "/f", in).Return(nil, fuse.EPERM).Once()
+	s.inner.EXPECT().SetAttr(mock.Anything, "/f", in).Return(nil, proto.FsError_FS_EPERM).Once()
 
 	_, st := s.b.SetAttr(context.Background(), "/f", in)
-	s.Require().Equal(fuse.EPERM, st)
+	s.Require().Equal(proto.FsError_FS_EPERM, st)
 	s.Assert().Nil(s.b.data.get("/f", 0)) // SIZE was requested; truncate may have applied
 	_, hit, _ := s.b.attr.get("/f")
 	s.Assert().False(hit)
@@ -656,9 +657,9 @@ func (s *CachedBackendTestSuite) TestAllocateInvalidatesDataRangeAndAttr() {
 	s.b.attr.putPositive("/f", &io.Attr{Size: 3072})
 	h, innerH := s.openCachedHandle("/f")
 	s.inner.EXPECT().Allocate(mock.Anything, innerH, uint64(0), uint64(1500), mock.Anything).
-		Return(fuse.OK).Once()
+		Return(proto.FsError_FS_OK).Once()
 	st := s.b.Allocate(context.Background(), h, 0, 1500, 0)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	// Chunks 0 and 1 invalidated; chunk 2 untouched.
 	s.Assert().Nil(s.b.data.get("/f", 0))
 	s.Assert().Nil(s.b.data.get("/f", 1))
@@ -674,9 +675,9 @@ func (s *CachedBackendTestSuite) TestReleaseDoesNotInvalidate() {
 	s.b.attr.putPositive("/f", &io.Attr{Ino: 1})
 	s.b.data.put("/f", 0, []byte("DATA"))
 	h, innerH := s.openCachedHandle("/f")
-	s.inner.EXPECT().Release(mock.Anything, innerH).Return(fuse.OK).Once()
+	s.inner.EXPECT().Release(mock.Anything, innerH).Return(proto.FsError_FS_OK).Once()
 	st := s.b.Release(context.Background(), h)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	// Cache untouched.
 	_, hit, pos := s.b.attr.get("/f")
 	s.Require().True(hit)
@@ -688,9 +689,9 @@ func (s *CachedBackendTestSuite) TestFlushDoesNotInvalidate() {
 	s.b.attr.putPositive("/f", &io.Attr{Ino: 1})
 	s.b.data.put("/f", 0, []byte("DATA"))
 	h, innerH := s.openCachedHandle("/f")
-	s.inner.EXPECT().Flush(mock.Anything, innerH).Return(fuse.OK).Once()
+	s.inner.EXPECT().Flush(mock.Anything, innerH).Return(proto.FsError_FS_OK).Once()
 	st := s.b.Flush(context.Background(), h)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	_, hit, _ := s.b.attr.get("/f")
 	s.Assert().True(hit)
 	s.Assert().NotNil(s.b.data.get("/f", 0))
@@ -700,9 +701,9 @@ func (s *CachedBackendTestSuite) TestFsyncDoesNotInvalidate() {
 	s.b.attr.putPositive("/f", &io.Attr{Ino: 1})
 	s.b.data.put("/f", 0, []byte("DATA"))
 	h, innerH := s.openCachedHandle("/f")
-	s.inner.EXPECT().Fsync(mock.Anything, innerH, int64(0)).Return(fuse.OK).Once()
+	s.inner.EXPECT().Fsync(mock.Anything, innerH, int64(0)).Return(proto.FsError_FS_OK).Once()
 	st := s.b.Fsync(context.Background(), h, 0)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	_, hit, _ := s.b.attr.get("/f")
 	s.Assert().True(hit)
 	s.Assert().NotNil(s.b.data.get("/f", 0))
@@ -716,14 +717,14 @@ func (s *CachedBackendTestSuite) TestLockOpsPassthroughNoCacheMutations() {
 	out := &fuse.FileLock{}
 	// All three lock ops should pass through with the unwrapped handle.
 	s.inner.EXPECT().GetLk(mock.Anything, innerH, uint64(1), lk, uint32(0), out).
-		Return(fuse.OK).Once()
+		Return(proto.FsError_FS_OK).Once()
 	s.inner.EXPECT().SetLk(mock.Anything, innerH, uint64(1), lk, uint32(0)).
-		Return(fuse.OK).Once()
+		Return(proto.FsError_FS_OK).Once()
 	s.inner.EXPECT().SetLkw(mock.Anything, innerH, uint64(1), lk, uint32(0)).
-		Return(fuse.OK).Once()
-	s.Require().Equal(fuse.OK, s.b.GetLk(context.Background(), h, 1, lk, 0, out))
-	s.Require().Equal(fuse.OK, s.b.SetLk(context.Background(), h, 1, lk, 0))
-	s.Require().Equal(fuse.OK, s.b.SetLkw(context.Background(), h, 1, lk, 0))
+		Return(proto.FsError_FS_OK).Once()
+	s.Require().Equal(proto.FsError_FS_OK, s.b.GetLk(context.Background(), h, 1, lk, 0, out))
+	s.Require().Equal(proto.FsError_FS_OK, s.b.SetLk(context.Background(), h, 1, lk, 0))
+	s.Require().Equal(proto.FsError_FS_OK, s.b.SetLkw(context.Background(), h, 1, lk, 0))
 	// Cache untouched.
 	_, hit, _ := s.b.attr.get("/f")
 	s.Assert().True(hit)
@@ -737,9 +738,9 @@ func (s *CachedBackendTestSuite) TestMutationFailureDoesNotInvalidate() {
 	// the cache — invalidation is conditional on inner success. (SetAttr is
 	// the deliberate exception: see TestSetAttrFailureStillInvalidates.)
 	s.b.attr.putPositive("/f", &io.Attr{Ino: 1})
-	s.inner.EXPECT().Unlink(mock.Anything, "/f").Return(fuse.EACCES).Once()
+	s.inner.EXPECT().Unlink(mock.Anything, "/f").Return(proto.FsError_FS_EACCES).Once()
 	st := s.b.Unlink(context.Background(), "/f")
-	s.Require().Equal(fuse.EACCES, st)
+	s.Require().Equal(proto.FsError_FS_EACCES, st)
 	// Cache still has the old attr.
 	_, hit, pos := s.b.attr.get("/f")
 	s.Require().True(hit)
@@ -772,14 +773,14 @@ func (s *CachedBackendTestSuite) TestUnverifiedStateGatesStatViaGetAttrIfChanged
 	be := newUnverifiedBackend(s.T(), inner)
 
 	// First Stat: cache miss → inner.Stat called, entry populated.
-	inner.EXPECT().Stat(mock.Anything, "f").Return(&io.Attr{Ino: 7, Size: 11, Version: 42}, fuse.OK).Once()
+	inner.EXPECT().Stat(mock.Anything, "f").Return(&io.Attr{Ino: 7, Size: 11, Version: 42}, proto.FsError_FS_OK).Once()
 	_, st := be.Stat(context.Background(), "f")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 
 	// Second Stat: cache hit but unverified → GetAttrIfChanged called.
-	inner.EXPECT().GetAttrIfChanged(mock.Anything, "f", uint64(42)).Return(nil, true, fuse.OK).Once()
+	inner.EXPECT().GetAttrIfChanged(mock.Anything, "f", uint64(42)).Return(nil, true, proto.FsError_FS_OK).Once()
 	a, st := be.Stat(context.Background(), "f")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(uint64(42), a.Version)
 }
 
@@ -788,14 +789,14 @@ func (s *CachedBackendTestSuite) TestUnverifiedRevalidationOnVersionChangeInvali
 	be := newUnverifiedBackend(s.T(), inner)
 
 	// Seed the cache.
-	inner.EXPECT().Stat(mock.Anything, "f").Return(&io.Attr{Version: 42}, fuse.OK).Once()
+	inner.EXPECT().Stat(mock.Anything, "f").Return(&io.Attr{Version: 42}, proto.FsError_FS_OK).Once()
 	_, _ = be.Stat(context.Background(), "f")
 
 	// Version changed: server returns new attrs.
 	freshAttr := &io.Attr{Version: 99, Size: 200}
-	inner.EXPECT().GetAttrIfChanged(mock.Anything, "f", uint64(42)).Return(freshAttr, false, fuse.OK).Once()
+	inner.EXPECT().GetAttrIfChanged(mock.Anything, "f", uint64(42)).Return(freshAttr, false, proto.FsError_FS_OK).Once()
 	a, st := be.Stat(context.Background(), "f")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(uint64(99), a.Version)
 	s.Assert().Equal(uint64(200), a.Size)
 }
@@ -805,13 +806,13 @@ func (s *CachedBackendTestSuite) TestUnverifiedRevalidationENOENTReturnsNotFound
 	be := newUnverifiedBackend(s.T(), inner)
 
 	// Seed the cache.
-	inner.EXPECT().Stat(mock.Anything, "f").Return(&io.Attr{Version: 42}, fuse.OK).Once()
+	inner.EXPECT().Stat(mock.Anything, "f").Return(&io.Attr{Version: 42}, proto.FsError_FS_OK).Once()
 	_, _ = be.Stat(context.Background(), "f")
 
 	// Path gone on server.
-	inner.EXPECT().GetAttrIfChanged(mock.Anything, "f", uint64(42)).Return(nil, false, fuse.ENOENT).Once()
+	inner.EXPECT().GetAttrIfChanged(mock.Anything, "f", uint64(42)).Return(nil, false, proto.FsError_FS_ENOENT).Once()
 	_, st := be.Stat(context.Background(), "f")
-	s.Require().Equal(fuse.ENOENT, st)
+	s.Require().Equal(proto.FsError_FS_ENOENT, st)
 }
 
 // --- CopyFileRange ---
@@ -824,67 +825,67 @@ func (s *CachedBackendTestSuite) TestCopyFileRangeInvalidatesDestination() {
 	dstH, innerDst := s.openCachedHandle("/dst")
 
 	// Seed dst attr cache.
-	s.inner.EXPECT().Stat(mock.Anything, "/dst").Return(&io.Attr{Ino: 2, Size: 4096}, fuse.OK).Once()
+	s.inner.EXPECT().Stat(mock.Anything, "/dst").Return(&io.Attr{Ino: 2, Size: 4096}, proto.FsError_FS_OK).Once()
 	_, st := s.b.Stat(context.Background(), "/dst")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 
 	// Seed dst data cache: chunk 0 ([0,1024)) and chunk 2 ([2048,3072)).
 	buf := make([]byte, 1024)
 	s.inner.EXPECT().Read(mock.Anything, innerDst, int64(0), mock.Anything).
-		RunAndReturn(func(_ context.Context, _ io.FileHandle, _ int64, b []byte) (int, fuse.Status) {
-			return 1024, fuse.OK
+		RunAndReturn(func(_ context.Context, _ io.FileHandle, _ int64, b []byte) (int, proto.FsError) {
+			return 1024, proto.FsError_FS_OK
 		}).Once()
 	_, st = s.b.Read(context.Background(), dstH, 0, buf)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.inner.EXPECT().Read(mock.Anything, innerDst, int64(2048), mock.Anything).
-		RunAndReturn(func(_ context.Context, _ io.FileHandle, _ int64, b []byte) (int, fuse.Status) {
-			return 1024, fuse.OK
+		RunAndReturn(func(_ context.Context, _ io.FileHandle, _ int64, b []byte) (int, proto.FsError) {
+			return 1024, proto.FsError_FS_OK
 		}).Once()
 	_, st = s.b.Read(context.Background(), dstH, 2048, buf)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 
 	// Copy 100 bytes into dst@0 — overlaps chunk 0 only.
 	s.inner.EXPECT().CopyFileRange(mock.Anything, innerSrc, uint64(0), innerDst, uint64(0), uint64(100), uint64(0)).
-		Return(uint64(100), fuse.OK).Once()
+		Return(uint64(100), proto.FsError_FS_OK).Once()
 	n, cst := s.b.CopyFileRange(context.Background(), srcH, 0, dstH, 0, 100, 0)
-	s.Require().Equal(fuse.OK, cst)
+	s.Require().Equal(proto.FsError_FS_OK, cst)
 	s.Require().Equal(uint64(100), n)
 
 	// Chunk 0 must MISS (re-fetch from inner)...
 	s.inner.EXPECT().Read(mock.Anything, innerDst, int64(0), mock.Anything).
-		RunAndReturn(func(_ context.Context, _ io.FileHandle, _ int64, b []byte) (int, fuse.Status) {
-			return 1024, fuse.OK
+		RunAndReturn(func(_ context.Context, _ io.FileHandle, _ int64, b []byte) (int, proto.FsError) {
+			return 1024, proto.FsError_FS_OK
 		}).Once()
 	_, st = s.b.Read(context.Background(), dstH, 0, buf)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	// ...chunk 2 must still HIT (no new EXPECT: served from cache).
 	_, st = s.b.Read(context.Background(), dstH, 2048, buf)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 
 	// Attr must MISS after the copy (size/mtime moved).
-	s.inner.EXPECT().Stat(mock.Anything, "/dst").Return(&io.Attr{Ino: 2, Size: 4096}, fuse.OK).Once()
+	s.inner.EXPECT().Stat(mock.Anything, "/dst").Return(&io.Attr{Ino: 2, Size: 4096}, proto.FsError_FS_OK).Once()
 	_, st = s.b.Stat(context.Background(), "/dst")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 }
 
 // Lseek and the xattr trio are pure pass-throughs — one delegation test
 // each keeps the interface honest without over-testing.
 func (s *CachedBackendTestSuite) TestLseekAndXattrPassThrough() {
 	h, innerH := s.openCachedHandle("/f")
-	s.inner.EXPECT().Lseek(mock.Anything, innerH, uint64(5), uint32(3)).Return(uint64(9), fuse.OK).Once()
+	s.inner.EXPECT().Lseek(mock.Anything, innerH, uint64(5), uint32(3)).Return(uint64(9), proto.FsError_FS_OK).Once()
 	off, st := s.b.Lseek(context.Background(), h, 5, 3)
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Equal(uint64(9), off)
 
-	s.inner.EXPECT().SetXAttr(mock.Anything, "/f", "user.k", []byte("v"), uint32(0)).Return(fuse.OK).Once()
-	s.Equal(fuse.OK, s.b.SetXAttr(context.Background(), "/f", "user.k", []byte("v"), 0))
+	s.inner.EXPECT().SetXAttr(mock.Anything, "/f", "user.k", []byte("v"), uint32(0)).Return(proto.FsError_FS_OK).Once()
+	s.Equal(proto.FsError_FS_OK, s.b.SetXAttr(context.Background(), "/f", "user.k", []byte("v"), 0))
 
-	s.inner.EXPECT().RemoveXAttr(mock.Anything, "/f", "user.k").Return(fuse.OK).Once()
-	s.Equal(fuse.OK, s.b.RemoveXAttr(context.Background(), "/f", "user.k"))
+	s.inner.EXPECT().RemoveXAttr(mock.Anything, "/f", "user.k").Return(proto.FsError_FS_OK).Once()
+	s.Equal(proto.FsError_FS_OK, s.b.RemoveXAttr(context.Background(), "/f", "user.k"))
 
-	s.inner.EXPECT().ListXAttr(mock.Anything, "/f").Return([]string{"user.k"}, fuse.OK).Once()
+	s.inner.EXPECT().ListXAttr(mock.Anything, "/f").Return([]string{"user.k"}, proto.FsError_FS_OK).Once()
 	names, st := s.b.ListXAttr(context.Background(), "/f")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Equal([]string{"user.k"}, names)
 }
 
@@ -894,13 +895,13 @@ func (s *CachedBackendTestSuite) TestLseekAndXattrPassThrough() {
 // call for the same path is served from the xattr cache without hitting inner
 // (the .Once() expectation on inner would fail if inner were called twice).
 func (s *CachedBackendTestSuite) TestListXAttrServesFromCacheAfterFirstCall() {
-	s.inner.EXPECT().ListXAttr(mock.Anything, "f").Return([]string{"user.a"}, fuse.OK).Once()
+	s.inner.EXPECT().ListXAttr(mock.Anything, "f").Return([]string{"user.a"}, proto.FsError_FS_OK).Once()
 	n1, st1 := s.b.ListXAttr(context.Background(), "f")
-	s.Require().Equal(fuse.OK, st1)
+	s.Require().Equal(proto.FsError_FS_OK, st1)
 	s.Equal([]string{"user.a"}, n1)
 	// Second call must NOT hit inner (Once() above would fail on a 2nd call).
 	n2, st2 := s.b.ListXAttr(context.Background(), "f")
-	s.Require().Equal(fuse.OK, st2)
+	s.Require().Equal(proto.FsError_FS_OK, st2)
 	s.Equal([]string{"user.a"}, n2)
 }
 
@@ -912,12 +913,12 @@ func (s *CachedBackendTestSuite) TestListDirPrimesXattrCache() {
 		DirEntry:    io.DirEntry{Name: "child"},
 		XattrListed: true,
 		XattrNames:  []string{"user.k"},
-	}}, fuse.OK).Once()
+	}}, proto.FsError_FS_OK).Once()
 	_, st := s.b.ListDir(context.Background(), "d")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	// ListXAttr on the primed child must be served from cache (no inner call).
 	names, xst := s.b.ListXAttr(context.Background(), "d/child")
-	s.Require().Equal(fuse.OK, xst)
+	s.Require().Equal(proto.FsError_FS_OK, xst)
 	s.Equal([]string{"user.k"}, names)
 	// no inner.ListXAttr expectation set → mock auto-asserts no unexpected calls
 }
@@ -927,11 +928,11 @@ func (s *CachedBackendTestSuite) TestListDirPrimesXattrCache() {
 // write bumps inode ctime, making the cached attr stale).
 func (s *CachedBackendTestSuite) TestSetXAttrInvalidatesXattrAndAttr() {
 	// Prime both caches.
-	s.inner.EXPECT().ListXAttr(mock.Anything, "f").Return([]string{"user.a"}, fuse.OK).Times(2)
+	s.inner.EXPECT().ListXAttr(mock.Anything, "f").Return([]string{"user.a"}, proto.FsError_FS_OK).Times(2)
 	_, _ = s.b.ListXAttr(context.Background(), "f")
 	s.b.attr.putPositive("f", &io.Attr{Ino: 1})
-	s.inner.EXPECT().SetXAttr(mock.Anything, "f", "user.b", []byte("v"), uint32(0)).Return(fuse.OK).Once()
-	s.Require().Equal(fuse.OK, s.b.SetXAttr(context.Background(), "f", "user.b", []byte("v"), 0))
+	s.inner.EXPECT().SetXAttr(mock.Anything, "f", "user.b", []byte("v"), uint32(0)).Return(proto.FsError_FS_OK).Once()
+	s.Require().Equal(proto.FsError_FS_OK, s.b.SetXAttr(context.Background(), "f", "user.b", []byte("v"), 0))
 	// Attr must be invalidated (xattr write bumps ctime).
 	_, hit, _ := s.b.attr.get("f")
 	s.Assert().False(hit)

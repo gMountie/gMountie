@@ -143,7 +143,7 @@ func (b *cachedBackend) revalidate(ctx context.Context, path string, cachedVersi
 	// stamp leaked into the new epoch and served stale attrs.
 	epoch := b.validity.currentEpoch()
 	attrs, notMod, st := b.inner.GetAttrIfChanged(ctx, path, cachedVersion)
-	if !st.Ok() && st != fuse.ENOENT {
+	if st != proto.FsError_FS_OK && st != proto.FsError_FS_ENOENT {
 		metrics.CacheRevalidation("error")
 		return revalidateResult{fallback: true}
 	}
@@ -156,7 +156,7 @@ func (b *cachedBackend) revalidate(ctx context.Context, path string, cachedVersi
 	b.attr.invalidate(path)
 	b.data.invalidatePath(path)
 	b.dir.invalidate(pathParent(path))
-	if st == fuse.ENOENT {
+	if st == proto.FsError_FS_ENOENT {
 		b.attr.putNegative(path)
 		metrics.CacheRevalidation("enoent")
 		return revalidateResult{enoent: true}
@@ -170,7 +170,7 @@ func (b *cachedBackend) revalidate(ctx context.Context, path string, cachedVersi
 // GetAttrIfChanged passes through to inner; cachedBackend does not
 // intercept this call — it is the mechanism by which higher-level Stat
 // gating works, not a cacheable operation itself.
-func (b *cachedBackend) GetAttrIfChanged(ctx context.Context, p string, knownVersion uint64) (*io.Attr, bool, fuse.Status) {
+func (b *cachedBackend) GetAttrIfChanged(ctx context.Context, p string, knownVersion uint64) (*io.Attr, bool, proto.FsError) {
 	return b.inner.GetAttrIfChanged(ctx, p, knownVersion)
 }
 
@@ -184,8 +184,8 @@ func (b *cachedBackend) GetAttrIfChanged(ctx context.Context, p string, knownVer
 func (b *cachedBackend) cachedAttrLookup(
 	ctx context.Context,
 	key string,
-	fromInner func() (*io.Attr, fuse.Status),
-) (*io.Attr, fuse.Status) {
+	fromInner func() (*io.Attr, proto.FsError),
+) (*io.Attr, proto.FsError) {
 	cached, hit, pos := b.attr.get(key)
 	if !hit {
 		return fromInner()
@@ -193,9 +193,9 @@ func (b *cachedBackend) cachedAttrLookup(
 	// Fast path: globally verified or this path already revalidated this epoch.
 	if b.validity.globalState() == stateVerified || b.validity.isPathVerified(key) {
 		if pos {
-			return cached, fuse.OK
+			return cached, proto.FsError_FS_OK
 		}
-		return nil, fuse.ENOENT
+		return nil, proto.FsError_FS_ENOENT
 	}
 	// Unverified: run lightweight revalidation.
 	knownVersion := uint64(0)
@@ -206,62 +206,62 @@ func (b *cachedBackend) cachedAttrLookup(
 	switch {
 	case r.notModified:
 		if pos {
-			return cached, fuse.OK
+			return cached, proto.FsError_FS_OK
 		}
-		return nil, fuse.ENOENT
+		return nil, proto.FsError_FS_ENOENT
 	case r.enoent:
-		return nil, fuse.ENOENT
+		return nil, proto.FsError_FS_ENOENT
 	case r.freshAttrs != nil:
 		b.attr.putPositive(key, r.freshAttrs)
-		return r.freshAttrs, fuse.OK
+		return r.freshAttrs, proto.FsError_FS_OK
 	default: // fallback: revalidation RPC itself failed
 		return fromInner()
 	}
 }
 
-func (b *cachedBackend) Stat(ctx context.Context, p string) (*io.Attr, fuse.Status) {
-	return b.cachedAttrLookup(ctx, p, func() (*io.Attr, fuse.Status) {
+func (b *cachedBackend) Stat(ctx context.Context, p string) (*io.Attr, proto.FsError) {
+	return b.cachedAttrLookup(ctx, p, func() (*io.Attr, proto.FsError) {
 		return b.statFromInner(ctx, p)
 	})
 }
 
 // statFromInner fetches attrs from inner and populates the attr cache.
-func (b *cachedBackend) statFromInner(ctx context.Context, p string) (*io.Attr, fuse.Status) {
+func (b *cachedBackend) statFromInner(ctx context.Context, p string) (*io.Attr, proto.FsError) {
 	metrics.CacheMiss("attr")
 	a, st := b.inner.Stat(ctx, p)
-	if st == fuse.OK && a != nil {
+	if st == proto.FsError_FS_OK && a != nil {
 		b.attr.putPositive(p, a)
-	} else if st == fuse.ENOENT {
+	} else if st == proto.FsError_FS_ENOENT {
 		b.attr.putNegative(p)
 	}
 	return a, st
 }
 
-func (b *cachedBackend) Lookup(ctx context.Context, parent, name string) (*io.Attr, fuse.Status) {
+func (b *cachedBackend) Lookup(ctx context.Context, parent, name string) (*io.Attr, proto.FsError) {
 	full := joinPath(parent, name)
-	return b.cachedAttrLookup(ctx, full, func() (*io.Attr, fuse.Status) {
+	return b.cachedAttrLookup(ctx, full, func() (*io.Attr, proto.FsError) {
 		return b.lookupFromInner(ctx, parent, name, full)
 	})
 }
 
 // lookupFromInner fetches from inner and populates the attr cache.
-func (b *cachedBackend) lookupFromInner(ctx context.Context, parent, name, full string) (*io.Attr, fuse.Status) {
+func (b *cachedBackend) lookupFromInner(ctx context.Context, parent, name, full string) (*io.Attr, proto.FsError) {
 	metrics.CacheMiss("attr")
 	a, st := b.inner.Lookup(ctx, parent, name)
-	if st == fuse.OK && a != nil {
+	if st == proto.FsError_FS_OK && a != nil {
 		b.attr.putPositive(full, a)
-	} else if st == fuse.ENOENT {
+	} else if st == proto.FsError_FS_ENOENT {
 		b.attr.putNegative(full)
 	}
 	return a, st
 }
 
-func (b *cachedBackend) ListDir(ctx context.Context, p string) ([]io.DirEntryPlus, fuse.Status) {
+func (b *cachedBackend) ListDir(ctx context.Context, p string) ([]io.DirEntryPlus, proto.FsError) {
 	if entries, hit := b.dir.get(p); hit {
 		// Gate on validity: revalidate the directory's own attr to check for
 		// freshness. Use the dir path as the revalidation key.
 		if b.validity.globalState() == stateVerified || b.validity.isPathVerified(p) {
-			return plusFromEntries(entries), fuse.OK
+			return plusFromEntries(entries), proto.FsError_FS_OK
 		}
 		// Run revalidation on the directory itself.
 		cached, _, pos := b.attr.get(p)
@@ -276,17 +276,17 @@ func (b *cachedBackend) ListDir(ctx context.Context, p string) ([]io.DirEntryPlu
 				// Directory attr unchanged; listing is still valid.
 				// Re-fetch from dir cache (revalidate may not have changed it).
 				if entries2, hit2 := b.dir.get(p); hit2 {
-					return plusFromEntries(entries2), fuse.OK
+					return plusFromEntries(entries2), proto.FsError_FS_OK
 				}
 				// Dir cache was evicted in the meantime; fall through to inner.
 			case r.enoent:
-				return nil, fuse.ENOENT
+				return nil, proto.FsError_FS_ENOENT
 			case r.freshAttrs != nil:
 				// Dir changed: revalidate flushed the dir cache; fall through to
 				// listDirFromInner to replace the stale listing.
 			default:
 				// Fallback: revalidation RPC error; serve cached listing.
-				return plusFromEntries(entries), fuse.OK
+				return plusFromEntries(entries), proto.FsError_FS_OK
 			}
 		}
 		// Dir cached but attr unverified/changed: fall through to inner.
@@ -296,10 +296,10 @@ func (b *cachedBackend) ListDir(ctx context.Context, p string) ([]io.DirEntryPlu
 
 // listDirFromInner fetches from inner, primes the attr cache from plus
 // entries, and populates the dir cache.
-func (b *cachedBackend) listDirFromInner(ctx context.Context, p string) ([]io.DirEntryPlus, fuse.Status) {
+func (b *cachedBackend) listDirFromInner(ctx context.Context, p string) ([]io.DirEntryPlus, proto.FsError) {
 	metrics.CacheMiss("dir")
 	entries, st := b.inner.ListDir(ctx, p)
-	if st == fuse.OK {
+	if st == proto.FsError_FS_OK {
 		// Prime the attr cache (standard positive TTL, same as Stat) from each
 		// entry that carries attrs — this is the READDIRPLUS win: the kernel's
 		// per-child LOOKUP after a readdir is served from cache with zero
@@ -352,7 +352,7 @@ const (
 	prefetchSeqThreshold = 3
 )
 
-func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, dest []byte) (int, fuse.Status) {
+func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, dest []byte) (int, proto.FsError) {
 	ch, ok := fh.(*cachedHandle)
 	if !ok {
 		return b.inner.Read(ctx, fh, off, dest)
@@ -368,7 +368,7 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 		}
 		r := b.revalidate(ctx, ch.path, knownVersion)
 		if r.enoent {
-			return 0, fuse.ENOENT
+			return 0, proto.FsError_FS_ENOENT
 		}
 		// On freshAttrs: revalidate already invalidated data chunks; the chunk
 		// lookup below will miss and fall through to inner — correct.
@@ -397,7 +397,7 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 				// EOF mid-stream: insideOff is past the cached chunk's end
 				// even though dest still has room. The chunk we have is the
 				// last one and it's short, so the file ends here.
-				return total, fuse.OK
+				return total, proto.FsError_FS_OK
 			}
 			avail := len(cached) - insideOff
 			if avail < want {
@@ -409,7 +409,7 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 			// more to read from the backend regardless of dest's remaining
 			// capacity. A full chunk just means advance to the next chunk.
 			if int64(len(cached)) < chunkSize {
-				return total, fuse.OK
+				return total, proto.FsError_FS_OK
 			}
 			continue
 		}
@@ -443,7 +443,7 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 		spanGen := b.data.currentGen(ch.path)
 		buf := make([]byte, spanChunks*int(chunkSize))
 		n, st := b.inner.Read(ctx, ch.inner, chunkStart, buf)
-		if st != fuse.OK {
+		if st != proto.FsError_FS_OK {
 			if finishSpan != nil {
 				finishSpan()
 			}
@@ -453,7 +453,7 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 			if finishSpan != nil {
 				finishSpan()
 			}
-			return total, fuse.OK
+			return total, proto.FsError_FS_OK
 		}
 		// Cache every chunk the span returned: full chunks plus a final short
 		// chunk (EOF). Copy each into its own buffer so evicting one chunk does
@@ -481,7 +481,7 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 		}
 		if insideOff >= served {
 			// EOF before our requested offset.
-			return total, fuse.OK
+			return total, proto.FsError_FS_OK
 		}
 		avail := served - insideOff
 		if avail < want {
@@ -492,20 +492,20 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 		// Short first chunk = file ends here; otherwise continue to the next
 		// chunk (now served from the over-read cache).
 		if served < int(chunkSize) {
-			return total, fuse.OK
+			return total, proto.FsError_FS_OK
 		}
 	}
-	return total, fuse.OK
+	return total, proto.FsError_FS_OK
 }
 
-func (b *cachedBackend) Access(ctx context.Context, p string, mode uint32) fuse.Status {
+func (b *cachedBackend) Access(ctx context.Context, p string, mode uint32) proto.FsError {
 	return b.inner.Access(ctx, p, mode)
 }
 
 // Readlink is a pass-through. The link target is content of the link inode,
 // not the inode's attrs — it's small (PATH_MAX) and rarely re-read, so we
 // don't add a target cache yet.
-func (b *cachedBackend) Readlink(ctx context.Context, p string) (string, fuse.Status) {
+func (b *cachedBackend) Readlink(ctx context.Context, p string) (string, proto.FsError) {
 	return b.inner.Readlink(ctx, p)
 }
 
@@ -514,9 +514,9 @@ func (b *cachedBackend) Readlink(ctx context.Context, p string) (string, fuse.St
 // path. The reply attrs prime the attr cache (like Create) so the kernel's
 // immediate Lookup on the new link is a cache hit; nil attrs (server stat
 // failed) leave the entry invalidated so the next Stat refetches.
-func (b *cachedBackend) Symlink(ctx context.Context, target, linkPath string) (*io.Attr, fuse.Status) {
+func (b *cachedBackend) Symlink(ctx context.Context, target, linkPath string) (*io.Attr, proto.FsError) {
 	a, st := b.inner.Symlink(ctx, target, linkPath)
-	if st != fuse.OK {
+	if st != proto.FsError_FS_OK {
 		return nil, st
 	}
 	parent := pathParent(linkPath)
@@ -526,23 +526,23 @@ func (b *cachedBackend) Symlink(ctx context.Context, target, linkPath string) (*
 	if a != nil {
 		b.attr.putPositive(linkPath, a)
 	}
-	return a, fuse.OK
+	return a, proto.FsError_FS_OK
 }
 
-func (b *cachedBackend) StatFs(ctx context.Context, p string) (*io.StatFs, fuse.Status) {
+func (b *cachedBackend) StatFs(ctx context.Context, p string) (*io.StatFs, proto.FsError) {
 	return b.inner.StatFs(ctx, p)
 }
 
-func (b *cachedBackend) GetXAttr(ctx context.Context, p, attr string) ([]byte, fuse.Status) {
+func (b *cachedBackend) GetXAttr(ctx context.Context, p, attr string) ([]byte, proto.FsError) {
 	return b.inner.GetXAttr(ctx, p, attr)
 }
 
 // SetXAttr stores an extended attribute, then drops the cached names list and
 // the attr entry: an xattr write bumps the inode ctime, so the cached attr
 // version is now stale too.
-func (b *cachedBackend) SetXAttr(ctx context.Context, p, attr string, data []byte, flags uint32) fuse.Status {
+func (b *cachedBackend) SetXAttr(ctx context.Context, p, attr string, data []byte, flags uint32) proto.FsError {
 	st := b.inner.SetXAttr(ctx, p, attr, data, flags)
-	if st == fuse.OK {
+	if st == proto.FsError_FS_OK {
 		b.xattr.invalidate(p)
 		b.attr.invalidate(p)
 	}
@@ -550,9 +550,9 @@ func (b *cachedBackend) SetXAttr(ctx context.Context, p, attr string, data []byt
 }
 
 // RemoveXAttr deletes an extended attribute; same invalidation as SetXAttr.
-func (b *cachedBackend) RemoveXAttr(ctx context.Context, p, attr string) fuse.Status {
+func (b *cachedBackend) RemoveXAttr(ctx context.Context, p, attr string) proto.FsError {
 	st := b.inner.RemoveXAttr(ctx, p, attr)
-	if st == fuse.OK {
+	if st == proto.FsError_FS_OK {
 		b.xattr.invalidate(p)
 		b.attr.invalidate(p)
 	}
@@ -562,35 +562,35 @@ func (b *cachedBackend) RemoveXAttr(ctx context.Context, p, attr string) fuse.St
 // ListXAttr is read-through against the advisory xattr cache. It serves on
 // TTL + invalidation only (no GetAttrIfChanged revalidation): a stale names
 // list is at worst a wrong ls "+" indicator, never an enforcement decision.
-func (b *cachedBackend) ListXAttr(ctx context.Context, p string) ([]string, fuse.Status) {
+func (b *cachedBackend) ListXAttr(ctx context.Context, p string) ([]string, proto.FsError) {
 	if names, hit := b.xattr.get(p); hit {
-		return names, fuse.OK
+		return names, proto.FsError_FS_OK
 	}
 	names, st := b.inner.ListXAttr(ctx, p)
-	if st == fuse.OK {
+	if st == proto.FsError_FS_OK {
 		b.xattr.put(p, names)
 	}
 	return names, st
 }
 
-func (b *cachedBackend) GetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) fuse.Status {
+func (b *cachedBackend) GetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) proto.FsError {
 	return b.inner.GetLk(ctx, unwrapHandle(fh), owner, lk, flags, out)
 }
 
 // --- Open / Create / file-handle ops ---
 
-func (b *cachedBackend) Open(ctx context.Context, p string, flags uint32) (io.FileHandle, fuse.Status) {
+func (b *cachedBackend) Open(ctx context.Context, p string, flags uint32) (io.FileHandle, proto.FsError) {
 	h, st := b.inner.Open(ctx, p, flags)
-	if st != fuse.OK {
+	if st != proto.FsError_FS_OK {
 		return nil, st
 	}
-	return newCachedHandle(h, p), fuse.OK
+	return newCachedHandle(h, p), proto.FsError_FS_OK
 }
 
-func (b *cachedBackend) Create(ctx context.Context, parent, name string, flags, mode uint32) (io.FileHandle, *io.Attr, fuse.Status) {
+func (b *cachedBackend) Create(ctx context.Context, parent, name string, flags, mode uint32) (io.FileHandle, *io.Attr, proto.FsError) {
 	full := joinPath(parent, name)
 	h, a, st := b.inner.Create(ctx, parent, name, flags, mode)
-	if st != fuse.OK {
+	if st != proto.FsError_FS_OK {
 		return nil, nil, st
 	}
 	b.dir.invalidate(parent)
@@ -599,70 +599,70 @@ func (b *cachedBackend) Create(ctx context.Context, parent, name string, flags, 
 	if a != nil {
 		b.attr.putPositive(full, a)
 	}
-	return newCachedHandle(h, full), a, fuse.OK
+	return newCachedHandle(h, full), a, proto.FsError_FS_OK
 }
 
-func (b *cachedBackend) Write(ctx context.Context, fh io.FileHandle, off int64, data []byte) (uint32, fuse.Status) {
+func (b *cachedBackend) Write(ctx context.Context, fh io.FileHandle, off int64, data []byte) (uint32, proto.FsError) {
 	n, st := b.inner.Write(ctx, unwrapHandle(fh), off, data)
-	if st != fuse.OK {
+	if st != proto.FsError_FS_OK {
 		return n, st
 	}
 	if ch, ok := fh.(*cachedHandle); ok {
 		b.data.invalidateRange(ch.path, off, int64(len(data)))
 		b.attr.invalidate(ch.path)
 	}
-	return n, fuse.OK
+	return n, proto.FsError_FS_OK
 }
 
-func (b *cachedBackend) Release(ctx context.Context, fh io.FileHandle) fuse.Status {
+func (b *cachedBackend) Release(ctx context.Context, fh io.FileHandle) proto.FsError {
 	return b.inner.Release(ctx, unwrapHandle(fh))
 }
 
-func (b *cachedBackend) Flush(ctx context.Context, fh io.FileHandle) fuse.Status {
+func (b *cachedBackend) Flush(ctx context.Context, fh io.FileHandle) proto.FsError {
 	return b.inner.Flush(ctx, unwrapHandle(fh))
 }
 
-func (b *cachedBackend) Fsync(ctx context.Context, fh io.FileHandle, flags int64) fuse.Status {
+func (b *cachedBackend) Fsync(ctx context.Context, fh io.FileHandle, flags int64) proto.FsError {
 	return b.inner.Fsync(ctx, unwrapHandle(fh), flags)
 }
 
-func (b *cachedBackend) Allocate(ctx context.Context, fh io.FileHandle, off, size uint64, mode uint32) fuse.Status {
+func (b *cachedBackend) Allocate(ctx context.Context, fh io.FileHandle, off, size uint64, mode uint32) proto.FsError {
 	st := b.inner.Allocate(ctx, unwrapHandle(fh), off, size, mode)
-	if st != fuse.OK {
+	if st != proto.FsError_FS_OK {
 		return st
 	}
 	if ch, ok := fh.(*cachedHandle); ok {
 		b.data.invalidateRange(ch.path, int64(off), int64(size))
 		b.attr.invalidate(ch.path)
 	}
-	return fuse.OK
+	return proto.FsError_FS_OK
 }
 
-func (b *cachedBackend) SetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status {
+func (b *cachedBackend) SetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError {
 	return b.inner.SetLk(ctx, unwrapHandle(fh), owner, lk, flags)
 }
 
-func (b *cachedBackend) SetLkw(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status {
+func (b *cachedBackend) SetLkw(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError {
 	return b.inner.SetLkw(ctx, unwrapHandle(fh), owner, lk, flags)
 }
 
 // CopyFileRange passes through, then invalidates the DESTINATION like a
 // Write of the copied range: the data cache for [offOut, offOut+n) and
 // the attr entry (size/mtime moved). Source is untouched (atime only).
-func (b *cachedBackend) CopyFileRange(ctx context.Context, fhIn io.FileHandle, offIn uint64, fhOut io.FileHandle, offOut uint64, length, flags uint64) (uint64, fuse.Status) {
+func (b *cachedBackend) CopyFileRange(ctx context.Context, fhIn io.FileHandle, offIn uint64, fhOut io.FileHandle, offOut uint64, length, flags uint64) (uint64, proto.FsError) {
 	n, st := b.inner.CopyFileRange(ctx, unwrapHandle(fhIn), offIn, unwrapHandle(fhOut), offOut, length, flags)
-	if st != fuse.OK {
+	if st != proto.FsError_FS_OK {
 		return n, st
 	}
 	if ch, ok := fhOut.(*cachedHandle); ok && n > 0 {
 		b.data.invalidateRange(ch.path, int64(offOut), int64(n))
 		b.attr.invalidate(ch.path)
 	}
-	return n, fuse.OK
+	return n, proto.FsError_FS_OK
 }
 
 // Lseek is a pure pass-through — hole geometry isn't cached.
-func (b *cachedBackend) Lseek(ctx context.Context, fh io.FileHandle, offset uint64, whence uint32) (uint64, fuse.Status) {
+func (b *cachedBackend) Lseek(ctx context.Context, fh io.FileHandle, offset uint64, whence uint32) (uint64, proto.FsError) {
 	return b.inner.Lseek(ctx, unwrapHandle(fh), offset, whence)
 }
 
@@ -671,9 +671,9 @@ func (b *cachedBackend) Lseek(ctx context.Context, fh io.FileHandle, offset uint
 // Mkdir invalidates the parent (new dirent bumps its mtime) and primes the
 // attr cache from the reply attrs (like Create); nil attrs (server stat
 // failed) just drop any negative-cached entry so the next Stat refetches.
-func (b *cachedBackend) Mkdir(ctx context.Context, p string, mode uint32) (*io.Attr, fuse.Status) {
+func (b *cachedBackend) Mkdir(ctx context.Context, p string, mode uint32) (*io.Attr, proto.FsError) {
 	a, st := b.inner.Mkdir(ctx, p, mode)
-	if st != fuse.OK {
+	if st != proto.FsError_FS_OK {
 		return nil, st
 	}
 	parent := pathParent(p)
@@ -683,12 +683,12 @@ func (b *cachedBackend) Mkdir(ctx context.Context, p string, mode uint32) (*io.A
 	if a != nil {
 		b.attr.putPositive(p, a)
 	}
-	return a, fuse.OK
+	return a, proto.FsError_FS_OK
 }
 
-func (b *cachedBackend) Rmdir(ctx context.Context, p string) fuse.Status {
+func (b *cachedBackend) Rmdir(ctx context.Context, p string) proto.FsError {
 	st := b.inner.Rmdir(ctx, p)
-	if st != fuse.OK {
+	if st != proto.FsError_FS_OK {
 		return st
 	}
 	b.attr.invalidate(p)
@@ -697,12 +697,12 @@ func (b *cachedBackend) Rmdir(ctx context.Context, p string) fuse.Status {
 	b.dir.invalidate(parent)
 	b.attr.invalidate(parent) // Rmdir changes the parent's mtime
 	b.attr.putNegative(p)
-	return fuse.OK
+	return proto.FsError_FS_OK
 }
 
-func (b *cachedBackend) Unlink(ctx context.Context, p string) fuse.Status {
+func (b *cachedBackend) Unlink(ctx context.Context, p string) proto.FsError {
 	st := b.inner.Unlink(ctx, p)
-	if st != fuse.OK {
+	if st != proto.FsError_FS_OK {
 		return st
 	}
 	b.attr.invalidate(p)
@@ -711,12 +711,12 @@ func (b *cachedBackend) Unlink(ctx context.Context, p string) fuse.Status {
 	b.dir.invalidate(parent)
 	b.attr.invalidate(parent) // Unlink changes the parent's mtime
 	b.attr.putNegative(p)
-	return fuse.OK
+	return proto.FsError_FS_OK
 }
 
-func (b *cachedBackend) Rename(ctx context.Context, oldPath, newPath string) fuse.Status {
+func (b *cachedBackend) Rename(ctx context.Context, oldPath, newPath string) proto.FsError {
 	st := b.inner.Rename(ctx, oldPath, newPath)
-	if st != fuse.OK {
+	if st != proto.FsError_FS_OK {
 		return st
 	}
 	b.attr.invalidate(oldPath)
@@ -730,7 +730,7 @@ func (b *cachedBackend) Rename(ctx context.Context, oldPath, newPath string) fus
 	b.attr.invalidate(oldParent) // Rename changes the mtime of both parent dirs
 	b.attr.invalidate(newParent)
 	b.attr.putNegative(oldPath)
-	return fuse.OK
+	return proto.FsError_FS_OK
 }
 
 // SetAttr forwards the single-RPC attribute application, then reconciles the
@@ -741,7 +741,7 @@ func (b *cachedBackend) Rename(ctx context.Context, oldPath, newPath string) fus
 // server may have applied EARLIER fields before stopping (size→mode→owner→
 // times), so unlike the other mutation wrappers we still invalidate
 // conservatively rather than assuming nothing changed.
-func (b *cachedBackend) SetAttr(ctx context.Context, p string, in io.SetAttrIn) (*io.Attr, fuse.Status) {
+func (b *cachedBackend) SetAttr(ctx context.Context, p string, in io.SetAttrIn) (*io.Attr, proto.FsError) {
 	a, st := b.inner.SetAttr(ctx, p, in)
 	// A requested size change makes every cached chunk suspect on success
 	// AND on failure: size applies first server-side, so even a failed call
@@ -749,7 +749,7 @@ func (b *cachedBackend) SetAttr(ctx context.Context, p string, in io.SetAttrIn) 
 	if in.Valid&fuse.FATTR_SIZE != 0 {
 		b.data.invalidatePath(p)
 	}
-	if st != fuse.OK {
+	if st != proto.FsError_FS_OK {
 		b.attr.invalidate(p)
 		return nil, st
 	}
@@ -760,7 +760,7 @@ func (b *cachedBackend) SetAttr(ctx context.Context, p string, in io.SetAttrIn) 
 		// Stat refetches.
 		b.attr.invalidate(p)
 	}
-	return a, fuse.OK
+	return a, proto.FsError_FS_OK
 }
 
 // --- helpers ---

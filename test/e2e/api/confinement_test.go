@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 
 	"go.gmountie.dev/gmountie/pkg/proto"
@@ -61,9 +60,9 @@ func (s *ConfinementWireSuite) assertGetAttrDenied(path string) {
 	})
 	s.Require().NoError(err, "gRPC call itself must succeed; status rides in reply")
 	s.Require().NotNil(reply)
-	s.Equal(int32(syscall.EACCES), reply.Status,
-		"escape %q must surface as EACCES (=%d), got %d (attr=%v)",
-		path, int32(syscall.EACCES), reply.Status, reply.Attributes)
+	s.Equal(proto.FsError_FS_EACCES, reply.Status,
+		"escape %q must surface as FS_EACCES, got %v (attr=%v)",
+		path, reply.Status, reply.Attributes)
 }
 
 // TestDotDotEscapeDenied: a leading ".." in the wire path is the simplest
@@ -93,8 +92,8 @@ func (s *ConfinementWireSuite) TestLeadingSlashIsRelative() {
 	})
 	s.Require().NoError(err)
 	s.Require().NotNil(reply)
-	s.Equal(int32(syscall.ENOENT), reply.Status,
-		"leading slash addresses in-tree; should be ENOENT not EACCES, got %d", reply.Status)
+	s.Equal(proto.FsError_FS_ENOENT, reply.Status,
+		"leading slash addresses in-tree; should be ENOENT not EACCES, got %v", reply.Status)
 }
 
 // TestSymlinkEscapeDenied: a symlink whose target lives OUTSIDE the volume,
@@ -114,8 +113,8 @@ func (s *ConfinementWireSuite) TestSymlinkEscapeDenied() {
 	})
 	s.Require().NoError(err)
 	s.Require().NotNil(reply)
-	s.Equal(int32(syscall.EACCES), reply.Status,
-		"symlink-to-outside-root must surface as EACCES, got %d", reply.Status)
+	s.Equal(proto.FsError_FS_EACCES, reply.Status,
+		"symlink-to-outside-root must surface as EACCES, got %v", reply.Status)
 }
 
 // TestInTreeStillResolves is the positive control: a normal in-tree path
@@ -132,7 +131,7 @@ func (s *ConfinementWireSuite) TestInTreeStillResolves() {
 	})
 	s.Require().NoError(err)
 	s.Require().NotNil(reply)
-	s.Equal(int32(0), reply.Status, "in-tree GetAttr must succeed (status OK), got %d", reply.Status)
+	s.Equal(proto.FsError_FS_OK, reply.Status, "in-tree GetAttr must succeed (status OK), got %v", reply.Status)
 	s.Require().NotNil(reply.Attributes)
 	s.EqualValues(2, reply.Attributes.Size, "size should reflect on-disk content")
 }

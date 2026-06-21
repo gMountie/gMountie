@@ -161,12 +161,12 @@ func (s *StreamingReadSuite) TestRead_DeliversFullPayloadInMultipleFrames() {
 
 	got := make([]byte, 0, totalSize)
 	for i, frame := range stream.frames[:5] {
-		s.Assert().Equal(int32(fuse.OK), frame.Status, "data frame %d should carry OK status", i)
+		s.Assert().Equal(proto.FsError_FS_OK, frame.Status, "data frame %d should carry OK status", i)
 		s.Assert().Len(frame.Data, s.frameSize, "data frame %d should be exactly frame size", i)
 		got = append(got, frame.Data...)
 	}
 	terminal := stream.frames[5]
-	s.Assert().Equal(int32(fuse.OK), terminal.Status, "terminal frame should be OK")
+	s.Assert().Equal(proto.FsError_FS_OK, terminal.Status, "terminal frame should be OK")
 	s.Assert().Empty(terminal.Data, "terminal frame should carry no payload")
 	s.Assert().Equal(payload, got, "concatenated frames must match payload byte-for-byte")
 }
@@ -194,7 +194,7 @@ func (s *StreamingReadSuite) TestRead_EOFReturnsShortFinalFrame() {
 	s.Require().Len(stream.frames, 3)
 	s.Assert().Len(stream.frames[0].Data, s.frameSize)
 	s.Assert().Len(stream.frames[1].Data, fileSize-s.frameSize)
-	s.Assert().Equal(int32(fuse.OK), stream.frames[2].Status)
+	s.Assert().Equal(proto.FsError_FS_OK, stream.frames[2].Status)
 	s.Assert().Empty(stream.frames[2].Data)
 
 	got := append(stream.frames[0].Data, stream.frames[1].Data...)
@@ -234,9 +234,9 @@ func (s *StreamingReadSuite) TestRead_MidStreamErrorEmitsTerminalErrnoFrame() {
 
 	s.Require().NoError(err, "mid-stream errno should surface as a terminal frame, not a transport error")
 	s.Require().Len(stream.frames, 2, "expected one data frame + one terminal errno frame")
-	s.Assert().Equal(int32(fuse.OK), stream.frames[0].Status, "first frame carries the served chunk")
+	s.Assert().Equal(proto.FsError_FS_OK, stream.frames[0].Status, "first frame carries the served chunk")
 	s.Assert().Len(stream.frames[0].Data, s.frameSize)
-	s.Assert().Equal(int32(fuse.EIO), stream.frames[1].Status, "terminal frame carries the errno")
+	s.Assert().Equal(proto.FsError_FS_EIO, stream.frames[1].Status, "terminal frame carries the errno")
 	s.Assert().Empty(stream.frames[1].Data, "terminal errno frame must not carry stale data")
 }
 
@@ -252,7 +252,7 @@ func (s *StreamingReadSuite) TestRead_ReturnsErrnoOnBadFd() {
 
 	s.Require().NoError(err, "bad fd should surface as an errno frame, not a transport error")
 	s.Require().Len(stream.frames, 1)
-	s.Assert().Equal(int32(fuse.EBADF), stream.frames[0].Status)
+	s.Assert().Equal(proto.FsError_FS_EBADF, stream.frames[0].Status)
 	s.Assert().Empty(stream.frames[0].Data)
 }
 

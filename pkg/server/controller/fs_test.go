@@ -64,7 +64,7 @@ func (s *RpcServerTestSuite) TestGetAttr() {
 	// Verify.
 	s.Require().NoError(err)
 	s.Assert().NotNil(reply)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
+	s.Assert().Equal(proto.FsError_FS_OK, reply.Status)
 }
 
 func (s *RpcServerTestSuite) TestMkdir() {
@@ -87,7 +87,7 @@ func (s *RpcServerTestSuite) TestMkdir() {
 	// Verify.
 	s.Require().NoError(err)
 	s.Assert().NotNil(reply)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
+	s.Assert().Equal(proto.FsError_FS_OK, reply.Status)
 }
 
 func (s *RpcServerTestSuite) TestRmdir() {
@@ -109,7 +109,7 @@ func (s *RpcServerTestSuite) TestRmdir() {
 	// Verify.
 	s.Require().NoError(err)
 	s.Assert().NotNil(reply)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
+	s.Assert().Equal(proto.FsError_FS_OK, reply.Status)
 }
 
 func (s *RpcServerTestSuite) TestRename() {
@@ -132,7 +132,7 @@ func (s *RpcServerTestSuite) TestRename() {
 	// Verify.
 	s.Require().NoError(err)
 	s.Assert().NotNil(reply)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
+	s.Assert().Equal(proto.FsError_FS_OK, reply.Status)
 }
 
 func (s *RpcServerTestSuite) TestStatFs() {
@@ -187,7 +187,7 @@ func (s *RpcServerTestSuite) TestUnlink() {
 	// Verify.
 	s.Require().NoError(err)
 	s.Assert().NotNil(reply)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
+	s.Assert().Equal(proto.FsError_FS_OK, reply.Status)
 }
 
 func (s *RpcServerTestSuite) TestAccess() {
@@ -204,7 +204,7 @@ func (s *RpcServerTestSuite) TestAccess() {
 	// Verify.
 	s.Require().NoError(err)
 	s.Assert().NotNil(reply)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
+	s.Assert().Equal(proto.FsError_FS_OK, reply.Status)
 }
 
 // TestGetAttrBindsRequestIdentity asserts a path-op handler resolves its FS via
@@ -247,7 +247,7 @@ func (s *RpcServerTestSuite) TestGetXAttr() {
 	// Verify.
 	s.Require().NoError(err)
 	s.Assert().NotNil(reply)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
+	s.Assert().Equal(proto.FsError_FS_OK, reply.Status)
 }
 
 func (s *RpcServerTestSuite) TestMkdirEmptyRequestIDFails() {
@@ -318,7 +318,7 @@ func (s *RpcServerTestSuite) TestUnlinkEmitsDeletedEvent() {
 	}
 	reply, err := s.server.Unlink(testAuthedCtx("test-user"), request)
 	s.Require().NoError(err)
-	s.Require().Equal(int32(fuse.OK), reply.Status)
+	s.Require().Equal(proto.FsError_FS_OK, reply.Status)
 
 	// Assert: event must arrive promptly.
 	select {
@@ -459,7 +459,7 @@ func (s *RpcServerTestSuite) TestSetAttr_SizeOnly() {
 		SessionId: s.sessionID, RequestId: "req-setattr-size",
 	})
 	s.Require().NoError(err)
-	s.Require().Equal(int32(fuse.OK), reply.Status)
+	s.Require().Equal(proto.FsError_FS_OK, reply.Status)
 	// Reply attrs must match what a trailing GetAttr would have returned —
 	// the client uses them instead of issuing its own stat.
 	s.Require().NotNil(reply.Attributes)
@@ -490,7 +490,7 @@ func (s *RpcServerTestSuite) TestSetAttr_MultiFieldAppliesAll() {
 		SessionId: s.sessionID, RequestId: "req-setattr-multi",
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.OK), reply.Status)
+	s.Equal(proto.FsError_FS_OK, reply.Status)
 	s.NotNil(reply.Attributes)
 	mockFs.AssertExpectations(s.T()) // every requested field was applied exactly once
 }
@@ -516,7 +516,7 @@ func (s *RpcServerTestSuite) TestSetAttr_StopsAtFirstFailure() {
 		SessionId: s.sessionID, RequestId: "req-setattr-stop",
 	})
 	s.Require().NoError(err, "fs failures travel in-band, not as RPC errors")
-	s.Equal(int32(fuse.EPERM), reply.Status)
+	s.Equal(proto.FsError_FS_EPERM, reply.Status)
 	s.Nil(reply.Attributes)
 
 	// The truncate before the failing chmod DID mutate the file, so client
@@ -548,7 +548,7 @@ func (s *RpcServerTestSuite) TestSetAttr_FirstStepFailureEmitsNothing() {
 		SessionId: s.sessionID, RequestId: "req-setattr-fail-first",
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.EACCES), reply.Status)
+	s.Equal(proto.FsError_FS_EACCES, reply.Status)
 
 	// Nothing was applied — no mutation event may fire. Emission is
 	// synchronous (buffered channel push inside the handler), so a
@@ -584,7 +584,7 @@ func (s *RpcServerTestSuite) TestSetAttr_NoBitsIsReadOnly() {
 		SessionId: s.sessionID, RequestId: "req-setattr-nobits",
 	})
 	s.Require().NoError(err)
-	s.Require().Equal(int32(fuse.OK), reply.Status)
+	s.Require().Equal(proto.FsError_FS_OK, reply.Status)
 	s.Require().NotNil(reply.Attributes)
 	s.Equal(uint64(42), reply.Attributes.Ino)
 	s.Equal(uint64(256), reply.Attributes.Size)
@@ -615,7 +615,7 @@ func (s *RpcServerTestSuite) TestSetAttr_UidOnlyResolvesGidFromStat() {
 		SessionId: s.sessionID, RequestId: "req-setattr-uid-only",
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.OK), reply.Status)
+	s.Equal(proto.FsError_FS_OK, reply.Status)
 	mockFs.AssertExpectations(s.T()) // Chown received the stat's gid 2000
 }
 
@@ -635,7 +635,7 @@ func (s *RpcServerTestSuite) TestSetAttr_GidOnlyResolvesUidFromStat() {
 		SessionId: s.sessionID, RequestId: "req-setattr-gid-only",
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.OK), reply.Status)
+	s.Equal(proto.FsError_FS_OK, reply.Status)
 	mockFs.AssertExpectations(s.T()) // Chown received the stat's uid 500
 }
 
@@ -681,7 +681,7 @@ func (s *RpcServerTestSuite) TestSetAttr_EmitsMutatedSeededFromReplyStat() {
 		SessionId: s.sessionID, RequestId: "req-setattr-emit",
 	})
 	s.Require().NoError(err)
-	s.Require().Equal(int32(fuse.OK), reply.Status)
+	s.Require().Equal(proto.FsError_FS_OK, reply.Status)
 
 	select {
 	case ev := <-events:
@@ -706,7 +706,7 @@ func (s *RpcServerTestSuite) TestReadlink() {
 		Path:   "/link",
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.OK), reply.Status)
+	s.Equal(proto.FsError_FS_OK, reply.Status)
 	s.Equal("real.txt", reply.Target)
 }
 
@@ -725,7 +725,7 @@ func (s *RpcServerTestSuite) TestSymlink() {
 		RequestId: "test-req-symlink",
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.OK), reply.Status)
+	s.Equal(proto.FsError_FS_OK, reply.Status)
 }
 
 // TestMkdir_ReplyAttrsFromSingleTrailingStat pins the create-style contract:
@@ -748,7 +748,7 @@ func (s *RpcServerTestSuite) TestMkdir_ReplyAttrsFromSingleTrailingStat() {
 		SessionId: s.sessionID, RequestId: "req-mkdir-attrs",
 	})
 	s.Require().NoError(err)
-	s.Require().Equal(int32(fuse.OK), reply.Status)
+	s.Require().Equal(proto.FsError_FS_OK, reply.Status)
 	// Reply attrs must match what a trailing GetAttr would have returned —
 	// the client uses them instead of issuing its own stat.
 	s.Require().NotNil(reply.Attributes)
@@ -786,7 +786,7 @@ func (s *RpcServerTestSuite) TestMkdir_TrailingStatFailureStillOK() {
 		SessionId: s.sessionID, RequestId: "req-mkdir-statfail",
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.OK), reply.Status, "mkdir succeeded; the stat failure must not surface")
+	s.Equal(proto.FsError_FS_OK, reply.Status, "mkdir succeeded; the stat failure must not surface")
 	s.Nil(reply.Attributes)
 
 	select {
@@ -819,7 +819,7 @@ func (s *RpcServerTestSuite) TestSymlink_ReplyAttrsFromSingleTrailingStat() {
 		SessionId: s.sessionID, RequestId: "req-symlink-attrs",
 	})
 	s.Require().NoError(err)
-	s.Require().Equal(int32(fuse.OK), reply.Status)
+	s.Require().Equal(proto.FsError_FS_OK, reply.Status)
 	s.Require().NotNil(reply.Attributes)
 	s.Equal(uint64(33), reply.Attributes.Ino)
 	s.Equal(fuse.S_IFLNK|uint32(0o777), reply.Attributes.Mode)
@@ -853,7 +853,7 @@ func (s *RpcServerTestSuite) TestSymlink_TrailingStatFailureStillOK() {
 		SessionId: s.sessionID, RequestId: "req-symlink-statfail",
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.OK), reply.Status)
+	s.Equal(proto.FsError_FS_OK, reply.Status)
 	s.Nil(reply.Attributes)
 
 	select {
@@ -882,7 +882,7 @@ func (s *RpcServerTestSuite) TestSetXAttr_Happy() {
 		SessionId: s.sessionID, RequestId: "req-setx-1",
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.OK), reply.Status)
+	s.Equal(proto.FsError_FS_OK, reply.Status)
 
 	select {
 	case ev := <-events:
@@ -900,7 +900,7 @@ func (s *RpcServerTestSuite) TestSetXAttr_DisallowedNamespace_EPERM() {
 		SessionId: s.sessionID, RequestId: "req-setx-2",
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.EPERM), reply.Status)
+	s.Equal(proto.FsError_FS_EPERM, reply.Status)
 }
 
 func (s *RpcServerTestSuite) TestSetXAttr_IdempotentReplay() {
@@ -916,7 +916,7 @@ func (s *RpcServerTestSuite) TestSetXAttr_IdempotentReplay() {
 	for i := 0; i < 2; i++ {
 		reply, err := s.server.SetXAttr(testAuthedCtx("test-user"), req)
 		s.Require().NoError(err)
-		s.Equal(int32(fuse.OK), reply.Status)
+		s.Equal(proto.FsError_FS_OK, reply.Status)
 	}
 	mockFs.AssertExpectations(s.T()) // .Once() proves the replay was deduped
 }
@@ -932,7 +932,7 @@ func (s *RpcServerTestSuite) TestRemoveXAttr_Happy() {
 		SessionId: s.sessionID, RequestId: "req-rmx-1",
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.OK), reply.Status)
+	s.Equal(proto.FsError_FS_OK, reply.Status)
 }
 
 func (s *RpcServerTestSuite) TestRemoveXAttr_DisallowedNamespace_EPERM() {
@@ -942,7 +942,7 @@ func (s *RpcServerTestSuite) TestRemoveXAttr_DisallowedNamespace_EPERM() {
 		SessionId: s.sessionID, RequestId: "req-rmx-2",
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.EPERM), reply.Status)
+	s.Equal(proto.FsError_FS_EPERM, reply.Status)
 }
 
 func (s *RpcServerTestSuite) TestListXAttr_Happy() {
@@ -954,7 +954,7 @@ func (s *RpcServerTestSuite) TestListXAttr_Happy() {
 		Volume: "testVolume", Path: "/f",
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.OK), reply.Status)
+	s.Equal(proto.FsError_FS_OK, reply.Status)
 	s.Equal([]string{"user.a", "user.b"}, reply.Attributes)
 }
 
@@ -1018,7 +1018,7 @@ func (s *RpcServerTestSuite) TestSetXAttr_NoSubscribers_SkipsStatAndEmit() {
 		SessionId: s.sessionID, RequestId: "req-setx-nosub",
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.OK), reply.Status)
+	s.Equal(proto.FsError_FS_OK, reply.Status)
 	s.EqualValues(0, spy.emits.Load(), "no subscribers → the emit must be skipped")
 	mockFs.AssertExpectations(s.T())
 	mockFs.AssertNotCalled(s.T(), "GetAttr", mock.Anything, mock.Anything)
@@ -1042,7 +1042,7 @@ func (s *RpcServerTestSuite) TestSetXAttr_WithSubscriber_StatSeedsEventVersion()
 		SessionId: s.sessionID, RequestId: "req-setx-sub",
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.OK), reply.Status)
+	s.Equal(proto.FsError_FS_OK, reply.Status)
 
 	select {
 	case ev := <-events:

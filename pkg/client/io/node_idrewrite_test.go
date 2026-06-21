@@ -7,6 +7,7 @@ import (
 
 	iomocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/io"
 	clientio "go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/proto"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -46,7 +47,7 @@ func rootAsIDRW[T any](s *NodeIDRewriteSuite) T {
 // display uid/gid (500/500) before returning the fuse.AttrOut to the kernel.
 func (s *NodeIDRewriteSuite) TestGetattr_InboundRewrite() {
 	s.backend.EXPECT().Stat(mock.Anything, "").Return(
-		&clientio.Attr{Ino: 1, Mode: fuse.S_IFREG | 0o644, Uid: 1001, Gid: 1001}, fuse.OK,
+		&clientio.Attr{Ino: 1, Mode: fuse.S_IFREG | 0o644, Uid: 1001, Gid: 1001}, proto.FsError_FS_OK,
 	)
 	out := &fuse.AttrOut{}
 	errno := rootAsIDRW[fs.NodeGetattrer](s).Getattr(context.Background(), nil, out)
@@ -59,7 +60,7 @@ func (s *NodeIDRewriteSuite) TestGetattr_InboundRewrite() {
 // different server user (not 1001) are mapped to nobody (65534).
 func (s *NodeIDRewriteSuite) TestGetattr_OtherUser_MapsToNobody() {
 	s.backend.EXPECT().Stat(mock.Anything, "").Return(
-		&clientio.Attr{Ino: 2, Mode: fuse.S_IFREG | 0o644, Uid: 9999, Gid: 9999}, fuse.OK,
+		&clientio.Attr{Ino: 2, Mode: fuse.S_IFREG | 0o644, Uid: 9999, Gid: 9999}, proto.FsError_FS_OK,
 	)
 	out := &fuse.AttrOut{}
 	errno := rootAsIDRW[fs.NodeGetattrer](s).Getattr(context.Background(), nil, out)
@@ -79,7 +80,7 @@ func (s *NodeIDRewriteSuite) TestSetattr_OutboundChownRewrite() {
 	})).Return(
 		// Reply carries server ids so we can also verify the inbound rewrite
 		// fires on the way out.
-		&clientio.Attr{Ino: 1, Mode: fuse.S_IFREG | 0o644, Uid: 1001, Gid: 1001}, fuse.OK,
+		&clientio.Attr{Ino: 1, Mode: fuse.S_IFREG | 0o644, Uid: 1001, Gid: 1001}, proto.FsError_FS_OK,
 	).Once()
 
 	in := &fuse.SetAttrIn{}

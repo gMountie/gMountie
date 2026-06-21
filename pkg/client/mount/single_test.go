@@ -15,7 +15,6 @@ import (
 	"go.gmountie.dev/gmountie/internal/mocks/pkg/client/grpc"
 	mockProto "go.gmountie.dev/gmountie/internal/mocks/pkg/proto"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
@@ -50,10 +49,10 @@ func (s *SingleVolumeMounterTestSuite) SetupTest() {
 	//mockVolumeClient := &mockProto.MockVolumeServiceClient{}
 
 	mockFsClient.EXPECT().Access(mock.Anything, mock.Anything, mock.Anything).Return(&proto.AccessReply{
-		Status: int32(fuse.ENOSYS),
+		Status: proto.FsError_FS_ENOSYS,
 	}, nil).Maybe()
 	mockFsClient.EXPECT().GetAttr(mock.Anything, mock.Anything, mock.Anything).Return(&proto.GetAttrReply{
-		Status: int32(fuse.ENOSYS),
+		Status: proto.FsError_FS_ENOSYS,
 	}, nil).Maybe()
 	// Mount path negotiates the FUSE frame ceiling via Version.Get; return
 	// the default frame size so the configured MaxWriteBytes is preserved.

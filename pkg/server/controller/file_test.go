@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 	"time"
 
@@ -70,7 +69,7 @@ func (s *RpcFileServerTestSuite) TestOpen() {
 	// Verify.
 	s.Require().NoError(err)
 	s.Assert().NotNil(reply)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
+	s.Assert().Equal(proto.FsError_FS_OK, reply.Status)
 }
 
 func (s *RpcFileServerTestSuite) TestCreate() {
@@ -89,7 +88,7 @@ func (s *RpcFileServerTestSuite) TestCreate() {
 	// Verify.
 	s.Require().NoError(err)
 	s.Assert().NotNil(reply)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
+	s.Assert().Equal(proto.FsError_FS_OK, reply.Status)
 	// The handler must populate reply.Attributes from the post-create GetAttr.
 	s.Require().NotNil(reply.Attributes, "Create reply must carry Attributes")
 	s.Assert().Equal(uint64(42), reply.Attributes.Ino)
@@ -117,7 +116,7 @@ func (s *RpcFileServerTestSuite) TestRead() {
 	s.Require().NotEmpty(stream.frames)
 	// First frame should carry the data, last frame is terminal OK.
 	s.Assert().Equal([]byte("test data"), stream.frames[0].Data)
-	s.Assert().Equal(int32(fuse.OK), stream.frames[len(stream.frames)-1].Status)
+	s.Assert().Equal(proto.FsError_FS_OK, stream.frames[len(stream.frames)-1].Status)
 }
 
 func (s *RpcFileServerTestSuite) TestFsync() {
@@ -138,7 +137,7 @@ func (s *RpcFileServerTestSuite) TestFsync() {
 	// Verify.
 	s.Require().NoError(err)
 	s.Assert().NotNil(reply)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
+	s.Assert().Equal(proto.FsError_FS_OK, reply.Status)
 }
 
 func (s *RpcFileServerTestSuite) TestRelease() {
@@ -178,7 +177,7 @@ func (s *RpcFileServerTestSuite) TestFlush() {
 	// Verify.
 	s.Require().NoError(err)
 	s.Assert().NotNil(reply)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
+	s.Assert().Equal(proto.FsError_FS_OK, reply.Status)
 }
 
 func (s *RpcFileServerTestSuite) TestOpenNonOkDoesNotRegisterFd() {
@@ -195,7 +194,7 @@ func (s *RpcFileServerTestSuite) TestOpenNonOkDoesNotRegisterFd() {
 	}
 	reply, err := s.server.Open(testAuthedCtx("test-user"), request)
 	s.Require().NoError(err)
-	s.Require().Equal(int32(fuse.ENOENT), reply.Status)
+	s.Require().Equal(proto.FsError_FS_ENOENT, reply.Status)
 
 	// The fd in the reply must NOT be registered on the session.
 	sess, err := s.sessionMgr.Get(s.sessionID)
@@ -217,7 +216,7 @@ func (s *RpcFileServerTestSuite) TestCreateNonOkDoesNotRegisterFd() {
 	}
 	reply, err := s.server.Create(testAuthedCtx("test-user"), request)
 	s.Require().NoError(err)
-	s.Require().Equal(int32(fuse.EACCES), reply.Status)
+	s.Require().Equal(proto.FsError_FS_EACCES, reply.Status)
 
 	sess, _ := s.sessionMgr.Get(s.sessionID)
 	_, ok := sess.GetFile(reply.Fd)
@@ -294,7 +293,7 @@ func (s *RpcFileServerTestSuite) TestWriteAndFlushWritesThenFlushesAndReturnsAtt
 
 	// Verify.
 	s.Require().NoError(err)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
+	s.Assert().Equal(proto.FsError_FS_OK, reply.Status)
 	s.Assert().Equal(uint32(5), reply.Written)
 	s.Require().NotNil(reply.FinalAttr)
 	s.Assert().Equal(uint64(5), reply.FinalAttr.Size)
@@ -320,7 +319,7 @@ func (s *RpcFileServerTestSuite) TestWriteAndFlushEmptyDataIsPureFlush() {
 
 	// Verify.
 	s.Require().NoError(err)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
+	s.Assert().Equal(proto.FsError_FS_OK, reply.Status)
 	s.Assert().Equal(uint32(0), reply.Written)
 	s.Require().NotNil(reply.FinalAttr)
 }
@@ -345,7 +344,7 @@ func (s *RpcFileServerTestSuite) TestWriteAndFlushWriteErrorSkipsFlush() {
 
 	// Verify: write error is surfaced; flush was NOT called.
 	s.Require().NoError(err)
-	s.Assert().Equal(int32(fuse.EIO), reply.Status)
+	s.Assert().Equal(proto.FsError_FS_EIO, reply.Status)
 	s.Assert().Equal(uint32(0), reply.Written)
 	mockFile.AssertNotCalled(s.T(), "Flush")
 }
@@ -373,7 +372,7 @@ func (s *RpcFileServerTestSuite) TestWriteAndFlushEmitsMutationEventOnSuccess() 
 		Volume: "testVolume", Fd: fd, Offset: 0, Data: []byte("hi"), SessionId: s.sessionID,
 	})
 	s.Require().NoError(err)
-	s.Assert().Equal(int32(fuse.OK), reply.Status)
+	s.Assert().Equal(proto.FsError_FS_OK, reply.Status)
 
 	// A KindMutated event for /emit.txt must arrive on the bus.
 	select {
@@ -437,10 +436,10 @@ func (s *RpcFileServerTestSuite) TestWriteAndFlush_EmptyRequestIDExecutesEachCal
 	}
 	r1, err := s.server.WriteAndFlush(testAuthedCtx("test-user"), req)
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.OK), r1.Status)
+	s.Equal(proto.FsError_FS_OK, r1.Status)
 	r2, err := s.server.WriteAndFlush(testAuthedCtx("test-user"), req)
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.OK), r2.Status)
+	s.Equal(proto.FsError_FS_OK, r2.Status)
 	mockFile.AssertExpectations(s.T()) // Flush .Times(2): both calls really executed
 	mockFs.AssertExpectations(s.T())
 }
@@ -468,14 +467,14 @@ func (s *RpcFileServerTestSuite) TestWriteAndFlush_ReplayAfterFdReleaseReturnsCa
 	}
 	r1, err := s.server.WriteAndFlush(testAuthedCtx("test-user"), req)
 	s.Require().NoError(err)
-	s.Require().Equal(int32(fuse.OK), r1.Status)
+	s.Require().Equal(proto.FsError_FS_OK, r1.Status)
 
 	// The fd is gone before the retry lands.
 	sess.ReleaseFile(fd)
 
 	r2, err := s.server.WriteAndFlush(testAuthedCtx("test-user"), req)
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.OK), r2.Status, "cache hit must not consult the (now empty) fd table")
+	s.Equal(proto.FsError_FS_OK, r2.Status, "cache hit must not consult the (now empty) fd table")
 	s.Equal(r1.Written, r2.Written)
 	mockFile.AssertExpectations(s.T())
 	mockFs.AssertExpectations(s.T())
@@ -509,7 +508,7 @@ func (s *RpcFileServerTestSuite) TestCopyFileRange_ReplaySameRequestIDExecutesOn
 	}
 	r1, err := s.server.CopyFileRange(testAuthedCtx("test-user"), req)
 	s.Require().NoError(err)
-	s.Require().Equal(int32(fuse.OK), r1.Status)
+	s.Require().Equal(proto.FsError_FS_OK, r1.Status)
 	s.Equal(uint64(3), r1.BytesCopied)
 
 	r2, err := s.server.CopyFileRange(testAuthedCtx("test-user"), req)
@@ -544,7 +543,7 @@ func (s *RpcFileServerTestSuite) TestCopyFileRange_EmptyRequestIDExecutesEachCal
 	for i := 0; i < 2; i++ {
 		reply, err := s.server.CopyFileRange(testAuthedCtx("test-user"), req)
 		s.Require().NoError(err)
-		s.Equal(int32(fuse.OK), reply.Status)
+		s.Equal(proto.FsError_FS_OK, reply.Status)
 		s.Equal(uint64(2), reply.BytesCopied)
 	}
 	src.AssertExpectations(s.T()) // Read .Times(2): both copies really executed
@@ -574,14 +573,14 @@ func (s *RpcFileServerTestSuite) TestCopyFileRange_ReplayAfterFdReleaseReturnsCa
 	}
 	r1, err := s.server.CopyFileRange(testAuthedCtx("test-user"), req)
 	s.Require().NoError(err)
-	s.Require().Equal(int32(fuse.OK), r1.Status)
+	s.Require().Equal(proto.FsError_FS_OK, r1.Status)
 
 	sess.ReleaseFile(srcFd)
 	sess.ReleaseFile(dstFd)
 
 	r2, err := s.server.CopyFileRange(testAuthedCtx("test-user"), req)
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.OK), r2.Status, "cache hit must not consult the (now empty) fd table")
+	s.Equal(proto.FsError_FS_OK, r2.Status, "cache hit must not consult the (now empty) fd table")
 	s.Equal(uint64(3), r2.BytesCopied)
 	src.AssertExpectations(s.T())
 	dst.AssertExpectations(s.T())
@@ -630,7 +629,7 @@ func (s *RpcFileServerTestSuite) TestCopyFileRange_Happy() {
 		Length: 3, SessionId: s.sessionID,
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.OK), reply.Status)
+	s.Equal(proto.FsError_FS_OK, reply.Status)
 	s.Equal(uint64(3), reply.BytesCopied)
 
 	select {
@@ -661,7 +660,7 @@ func (s *RpcFileServerTestSuite) TestWriteAndFlushCrossVolumeFdRejected() {
 		Volume: "otherVolume", Fd: fd, Data: []byte("x"), SessionId: s.sessionID,
 	})
 	s.Require().NoError(err)
-	s.Assert().Equal(int32(fuse.EBADF), reply.Status, "cross-volume fd use must look like an unknown fd")
+	s.Assert().Equal(proto.FsError_FS_EBADF, reply.Status, "cross-volume fd use must look like an unknown fd")
 	s.Assert().Nil(reply.FinalAttr, "no metadata may leak for the foreign volume")
 
 	// The handler must not have touched volume B at all.
@@ -689,7 +688,7 @@ func (s *RpcFileServerTestSuite) TestReadCrossVolumeFdRejected() {
 	}, stream)
 	s.Require().NoError(err)
 	s.Require().Len(stream.frames, 1)
-	s.Assert().Equal(int32(fuse.EBADF), stream.frames[0].Status)
+	s.Assert().Equal(proto.FsError_FS_EBADF, stream.frames[0].Status)
 	mockFile.AssertNotCalled(s.T(), "Read", mock.Anything, mock.Anything)
 }
 
@@ -699,7 +698,7 @@ func (s *RpcFileServerTestSuite) TestCopyFileRange_BadFd() {
 		Volume: "testVolume", FdIn: srcFd, FdOut: 9999, Length: 4, SessionId: s.sessionID,
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.EBADF), reply.Status)
+	s.Equal(proto.FsError_FS_EBADF, reply.Status)
 }
 
 func (s *RpcFileServerTestSuite) TestCopyFileRange_NonzeroFlags_EINVAL() {
@@ -709,7 +708,7 @@ func (s *RpcFileServerTestSuite) TestCopyFileRange_NonzeroFlags_EINVAL() {
 		Volume: "testVolume", FdIn: srcFd, FdOut: dstFd, Length: 1, Flags: 1, SessionId: s.sessionID,
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.EINVAL), reply.Status)
+	s.Equal(proto.FsError_FS_EINVAL, reply.Status)
 	s.Equal(uint64(0), reply.BytesCopied) // gate fires before any copy
 }
 
@@ -720,14 +719,14 @@ func (s *RpcFileServerTestSuite) TestLseek_DataAndPastEOF() {
 		Volume: "testVolume", Fd: fd, Offset: 0, Whence: uint32(unix.SEEK_DATA), SessionId: s.sessionID,
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.OK), reply.Status)
+	s.Equal(proto.FsError_FS_OK, reply.Status)
 	s.Equal(uint64(0), reply.Offset)
 
 	reply, err = s.server.Lseek(testAuthedCtx("test-user"), &proto.LseekRequest{
 		Volume: "testVolume", Fd: fd, Offset: 100, Whence: uint32(unix.SEEK_DATA), SessionId: s.sessionID,
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.Status(syscall.ENXIO)), reply.Status)
+	s.Equal(proto.FsError_FS_ENXIO, reply.Status)
 }
 
 func (s *RpcFileServerTestSuite) TestLseek_BadWhence_EINVAL() {
@@ -736,7 +735,7 @@ func (s *RpcFileServerTestSuite) TestLseek_BadWhence_EINVAL() {
 		Volume: "testVolume", Fd: fd, Whence: 0 /* SEEK_SET — kernel never sends it */, SessionId: s.sessionID,
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.EINVAL), reply.Status)
+	s.Equal(proto.FsError_FS_EINVAL, reply.Status)
 }
 
 func (s *RpcFileServerTestSuite) TestLseek_BadFd() {
@@ -744,7 +743,7 @@ func (s *RpcFileServerTestSuite) TestLseek_BadFd() {
 		Volume: "testVolume", Fd: 9999, Whence: uint32(unix.SEEK_DATA), SessionId: s.sessionID,
 	})
 	s.Require().NoError(err)
-	s.Equal(int32(fuse.EBADF), reply.Status)
+	s.Equal(proto.FsError_FS_EBADF, reply.Status)
 }
 
 func TestRpcFileServerTestSuite(t *testing.T) {

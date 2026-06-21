@@ -7,9 +7,11 @@ import (
 	"strings"
 	"sync"
 
+	gio "go.gmountie.dev/gmountie/pkg/client/io"
+	proto "go.gmountie.dev/gmountie/pkg/proto"
+
 	"github.com/hanwen/go-fuse/v2/fuse"
 	cgofuse "github.com/winfsp/cgofuse/fuse"
-	gio "go.gmountie.dev/gmountie/pkg/client/io"
 )
 
 // MountieCgoFS adapts io.FileSystemBackend to cgofuse's FileSystemInterface.
@@ -64,7 +66,7 @@ func (fs *MountieCgoFS) Getattr(path string, stat *cgofuse.Stat_t, fh uint64) in
 	ctx, cancel := fs.opCtx()
 	defer cancel()
 	a, st := fs.backend.Stat(ctx, clean(path))
-	if !st.Ok() {
+	if st != proto.FsError_FS_OK {
 		return errc(st)
 	}
 	fillStat(stat, a, fs.rewriter)
@@ -75,7 +77,7 @@ func (fs *MountieCgoFS) Readdir(path string, fill func(name string, stat *cgofus
 	ctx, cancel := fs.opCtx()
 	defer cancel()
 	entries, st := fs.backend.ListDir(ctx, clean(path))
-	if !st.Ok() {
+	if st != proto.FsError_FS_OK {
 		return errc(st)
 	}
 	// "." and ".." are not returned by the backend; cgofuse expects them.
@@ -96,7 +98,7 @@ func (fs *MountieCgoFS) Readlink(path string) (int, string) {
 	ctx, cancel := fs.opCtx()
 	defer cancel()
 	target, st := fs.backend.Readlink(ctx, clean(path))
-	if !st.Ok() {
+	if st != proto.FsError_FS_OK {
 		return errc(st), ""
 	}
 	return 0, target
@@ -112,7 +114,7 @@ func (fs *MountieCgoFS) Statfs(path string, stat *cgofuse.Statfs_t) int {
 	ctx, cancel := fs.opCtx()
 	defer cancel()
 	s, st := fs.backend.StatFs(ctx, clean(path))
-	if !st.Ok() {
+	if st != proto.FsError_FS_OK {
 		return errc(st)
 	}
 	fillStatfs(stat, s)
@@ -139,7 +141,7 @@ func (fs *MountieCgoFS) Open(path string, flags int) (int, uint64) {
 	ctx, cancel := fs.opCtx()
 	defer cancel()
 	fh, st := fs.backend.Open(ctx, clean(path), uint32(flags))
-	if !st.Ok() {
+	if st != proto.FsError_FS_OK {
 		return errc(st), ^uint64(0)
 	}
 	return 0, fs.handles.add(fh)
@@ -150,7 +152,7 @@ func (fs *MountieCgoFS) Create(path string, flags int, mode uint32) (int, uint64
 	defer cancel()
 	parent, name := splitPath(clean(path))
 	fh, _, st := fs.backend.Create(ctx, parent, name, uint32(flags), mode)
-	if !st.Ok() {
+	if st != proto.FsError_FS_OK {
 		return errc(st), ^uint64(0)
 	}
 	return 0, fs.handles.add(fh)
@@ -159,12 +161,12 @@ func (fs *MountieCgoFS) Create(path string, flags int, mode uint32) (int, uint64
 func (fs *MountieCgoFS) Read(path string, buff []byte, ofst int64, fh uint64) int {
 	h, ok := fs.handles.get(fh)
 	if !ok {
-		return -int(fuse.EBADF)
+		return ebadf()
 	}
 	ctx, cancel := fs.opCtx()
 	defer cancel()
 	n, st := fs.backend.Read(ctx, h, ofst, buff)
-	if !st.Ok() {
+	if st != proto.FsError_FS_OK {
 		return errc(st)
 	}
 	return n
@@ -173,12 +175,12 @@ func (fs *MountieCgoFS) Read(path string, buff []byte, ofst int64, fh uint64) in
 func (fs *MountieCgoFS) Write(path string, buff []byte, ofst int64, fh uint64) int {
 	h, ok := fs.handles.get(fh)
 	if !ok {
-		return -int(fuse.EBADF)
+		return ebadf()
 	}
 	ctx, cancel := fs.opCtx()
 	defer cancel()
 	n, st := fs.backend.Write(ctx, h, ofst, buff)
-	if !st.Ok() {
+	if st != proto.FsError_FS_OK {
 		return errc(st)
 	}
 	return int(n)
@@ -187,7 +189,7 @@ func (fs *MountieCgoFS) Write(path string, buff []byte, ofst int64, fh uint64) i
 func (fs *MountieCgoFS) Flush(path string, fh uint64) int {
 	h, ok := fs.handles.get(fh)
 	if !ok {
-		return -int(fuse.EBADF)
+		return ebadf()
 	}
 	ctx, cancel := fs.opCtx()
 	defer cancel()
@@ -197,7 +199,7 @@ func (fs *MountieCgoFS) Flush(path string, fh uint64) int {
 func (fs *MountieCgoFS) Fsync(path string, datasync bool, fh uint64) int {
 	h, ok := fs.handles.get(fh)
 	if !ok {
-		return -int(fuse.EBADF)
+		return ebadf()
 	}
 	ctx, cancel := fs.opCtx()
 	defer cancel()
@@ -211,7 +213,7 @@ func (fs *MountieCgoFS) Fsync(path string, datasync bool, fh uint64) int {
 func (fs *MountieCgoFS) Release(path string, fh uint64) int {
 	h, ok := fs.handles.remove(fh)
 	if !ok {
-		return -int(fuse.EBADF)
+		return ebadf()
 	}
 	ctx, cancel := fs.opCtx()
 	defer cancel()
@@ -293,7 +295,7 @@ func (fs *MountieCgoFS) Getxattr(path string, name string) (int, []byte) {
 	ctx, cancel := fs.opCtx()
 	defer cancel()
 	data, st := fs.backend.GetXAttr(ctx, clean(path), name)
-	if !st.Ok() {
+	if st != proto.FsError_FS_OK {
 		return errc(st), nil
 	}
 	return 0, data
@@ -315,7 +317,7 @@ func (fs *MountieCgoFS) Listxattr(path string, fill func(name string) bool) int 
 	ctx, cancel := fs.opCtx()
 	defer cancel()
 	names, st := fs.backend.ListXAttr(ctx, clean(path))
-	if !st.Ok() {
+	if st != proto.FsError_FS_OK {
 		return errc(st)
 	}
 	for _, n := range names {
