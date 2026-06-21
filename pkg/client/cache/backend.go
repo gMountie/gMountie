@@ -118,10 +118,11 @@ func (b *cachedBackend) Close() error {
 // subscriber is independently testable without a full cachedBackend.
 type subscribeBackendAdapter struct{ b *cachedBackend }
 
-func (a *subscribeBackendAdapter) invalidateAttr(p string) { a.b.attr.invalidate(p) }
-func (a *subscribeBackendAdapter) invalidateData(p string) { a.b.data.invalidatePath(p) }
-func (a *subscribeBackendAdapter) invalidateDir(p string)  { a.b.dir.invalidate(p) }
-func (a *subscribeBackendAdapter) putNegative(p string)    { a.b.attr.putNegative(p) }
+func (a *subscribeBackendAdapter) invalidateAttr(p string)  { a.b.attr.invalidate(p) }
+func (a *subscribeBackendAdapter) invalidateData(p string)  { a.b.data.invalidatePath(p) }
+func (a *subscribeBackendAdapter) invalidateDir(p string)   { a.b.dir.invalidate(p) }
+func (a *subscribeBackendAdapter) invalidateXAttr(p string) { a.b.xattr.invalidate(p) }
+func (a *subscribeBackendAdapter) putNegative(p string)     { a.b.attr.putNegative(p) }
 
 // revalidateResult carries the outcome of a GetAttrIfChanged revalidation
 // call made by the gating logic in Stat/Lookup/ListDir/Read.

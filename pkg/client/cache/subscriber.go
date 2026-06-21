@@ -23,6 +23,7 @@ type subscribeBackendOps interface {
 	invalidateAttr(path string)
 	invalidateData(path string)
 	invalidateDir(path string)
+	invalidateXAttr(path string)
 	putNegative(path string)
 }
 
@@ -143,6 +144,7 @@ func (c *subscribeConsumer) invalidatePathAndParent(p string) {
 	parent := subscribePathParent(p)
 	c.cache.invalidateAttr(p)
 	c.cache.invalidateData(p)
+	c.cache.invalidateXAttr(p)
 	c.cache.invalidateDir(parent)
 	c.cache.invalidateAttr(parent)
 }

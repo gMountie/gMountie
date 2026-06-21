@@ -19,6 +19,7 @@ type fakeBackendForSubscriber struct {
 	dataInvals    []string
 	dirInvals     []string
 	attrNegatives []string
+	xattrInvals   []string
 }
 
 func (b *fakeBackendForSubscriber) invalidateAttr(p string) {
@@ -40,6 +41,11 @@ func (b *fakeBackendForSubscriber) putNegative(p string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.attrNegatives = append(b.attrNegatives, p)
+}
+func (b *fakeBackendForSubscriber) invalidateXAttr(p string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.xattrInvals = append(b.xattrInvals, p)
 }
 
 type SubscribeConsumerSuite struct{ suite.Suite }
@@ -119,6 +125,13 @@ func (s *SubscribeConsumerSuite) TestMutatedRootLevelPathInvalidatesRootParent()
 	c.handle(&proto.SubscribeEvent{Kind: proto.SubscribeEvent_MUTATED, Path: "top.txt"})
 	s.Assert().Contains(be.attrInvals, "", "root attr must be invalidated for root-level path")
 	s.Assert().Contains(be.dirInvals, "", "root dir must be invalidated for root-level path")
+}
+
+func (s *SubscribeConsumerSuite) TestMutatedInvalidatesXAttr() {
+	be := &fakeBackendForSubscriber{}
+	c := &subscribeConsumer{cache: be, validity: newValidityTracker()}
+	c.handle(&proto.SubscribeEvent{Kind: proto.SubscribeEvent_MUTATED, Path: "a/b"})
+	s.Assert().Contains(be.xattrInvals, "a/b")
 }
 
 // scriptedStream is a subscribeStream whose Recv() returns a pre-scripted
