@@ -40,6 +40,10 @@ const (
 	// Subscribe push invalidates on delete/rename so the TTL is the
 	// last line of defence, not the first.
 	DefaultCacheNegativeTTL = 30 * time.Second
+	// DefaultCacheXAttrTTL is the per-entry lifetime for cached xattr-name
+	// lists. Advisory/display-only (ACL enforcement is server-side), so it
+	// mirrors the attr TTL and TTL+invalidation are the only freshness signals.
+	DefaultCacheXAttrTTL = 5 * time.Minute
 )
 
 // defaultCachePath returns the XDG-default cache directory.
@@ -85,6 +89,9 @@ type CacheConfig struct {
 	// entries (paths that returned ENOENT). Zero disables time-based
 	// expiry for this tier.
 	NegativeTTL time.Duration `mapstructure:"negative_ttl"`
+	// XAttrTTL is the per-entry lifetime for cached xattr-name lists. Zero
+	// disables time-based expiry for this tier.
+	XAttrTTL time.Duration `mapstructure:"xattr_ttl"`
 }
 
 // defaultCacheConfig returns a CacheConfig seeded entirely from the
@@ -102,6 +109,7 @@ func defaultCacheConfig() *CacheConfig {
 		AttrTTL:          DefaultCacheAttrTTL,
 		DirTTL:           DefaultCacheDirTTL,
 		NegativeTTL:      DefaultCacheNegativeTTL,
+		XAttrTTL:         DefaultCacheXAttrTTL,
 	}
 }
 
@@ -122,6 +130,7 @@ func NewCacheConfig(v *viper.Viper) (*CacheConfig, error) {
 	v.SetDefault("attr_ttl", DefaultCacheAttrTTL)
 	v.SetDefault("dir_ttl", DefaultCacheDirTTL)
 	v.SetDefault("negative_ttl", DefaultCacheNegativeTTL)
+	v.SetDefault("xattr_ttl", DefaultCacheXAttrTTL)
 	if err := v.UnmarshalExact(cfg, viper.DecodeHook(mapstructure.StringToTimeDurationHookFunc())); err != nil {
 		return nil, err
 	}
