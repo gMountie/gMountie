@@ -17,10 +17,10 @@ type EventBusSuite struct{ suite.Suite }
 func (s *EventBusSuite) TestEmitDeliversToSubscriber() {
 	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 16})
 	defer bus.Close()
-	events, _, cancel := bus.Subscribe("vol1")
+	events, _, cancel := bus.Subscribe("vol1", "")
 	defer cancel()
 
-	bus.Emit("vol1", "foo/bar", 42, io.KindMutated)
+	bus.Emit("vol1", "foo/bar", 42, io.KindMutated, "")
 
 	select {
 	case ev := <-events:
@@ -35,12 +35,12 @@ func (s *EventBusSuite) TestEmitDeliversToSubscriber() {
 func (s *EventBusSuite) TestEmitOnlyDeliversToMatchingVolume() {
 	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 16})
 	defer bus.Close()
-	vol1Events, _, cancel1 := bus.Subscribe("vol1")
+	vol1Events, _, cancel1 := bus.Subscribe("vol1", "")
 	defer cancel1()
-	vol2Events, _, cancel2 := bus.Subscribe("vol2")
+	vol2Events, _, cancel2 := bus.Subscribe("vol2", "")
 	defer cancel2()
 
-	bus.Emit("vol1", "p", 1, io.KindMutated)
+	bus.Emit("vol1", "p", 1, io.KindMutated, "")
 
 	select {
 	case <-vol1Events:
@@ -57,12 +57,12 @@ func (s *EventBusSuite) TestEmitOnlyDeliversToMatchingVolume() {
 func (s *EventBusSuite) TestMultiSubscriberFanOut() {
 	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 16})
 	defer bus.Close()
-	a, _, cancelA := bus.Subscribe("v")
+	a, _, cancelA := bus.Subscribe("v", "")
 	defer cancelA()
-	b, _, cancelB := bus.Subscribe("v")
+	b, _, cancelB := bus.Subscribe("v", "")
 	defer cancelB()
 
-	bus.Emit("v", "p", 1, io.KindMutated)
+	bus.Emit("v", "p", 1, io.KindMutated, "")
 
 	for _, ch := range []<-chan io.Event{a, b} {
 		select {
@@ -76,13 +76,13 @@ func (s *EventBusSuite) TestMultiSubscriberFanOut() {
 func (s *EventBusSuite) TestFullChannelDropsSubscriber() {
 	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 1})
 	defer bus.Close()
-	_, done, cancel := bus.Subscribe("v")
+	_, done, cancel := bus.Subscribe("v", "")
 	defer cancel()
 
 	// Don't drain — overrun the 1-deep buffer so the slow subscriber is dropped.
-	bus.Emit("v", "p1", 1, io.KindMutated)
-	bus.Emit("v", "p2", 2, io.KindMutated)
-	bus.Emit("v", "p3", 3, io.KindMutated)
+	bus.Emit("v", "p1", 1, io.KindMutated, "")
+	bus.Emit("v", "p2", 2, io.KindMutated, "")
+	bus.Emit("v", "p3", 3, io.KindMutated, "")
 
 	// Termination is signalled via done (the event channel is never closed).
 	select {
@@ -105,13 +105,13 @@ func (s *EventBusSuite) TestDroppedSubscriberRemovedFromSlice() {
 	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 1, Metrics: m})
 	defer bus.Close()
 
-	_, slowDone, cancelSlow := bus.Subscribe("v")
+	_, slowDone, cancelSlow := bus.Subscribe("v", "")
 	defer cancelSlow()
 
 	// Overrun the slow subscriber (buffer 1, three emits, no drain).
-	bus.Emit("v", "p1", 1, io.KindMutated)
-	bus.Emit("v", "p2", 2, io.KindMutated)
-	bus.Emit("v", "p3", 3, io.KindMutated)
+	bus.Emit("v", "p1", 1, io.KindMutated, "")
+	bus.Emit("v", "p2", 2, io.KindMutated, "")
+	bus.Emit("v", "p3", 3, io.KindMutated, "")
 
 	select {
 	case <-slowDone:
@@ -123,8 +123,8 @@ func (s *EventBusSuite) TestDroppedSubscriberRemovedFromSlice() {
 
 	// Two more emits: the dropped subscriber must be gone from the slice, so no
 	// further drops are recorded for it.
-	bus.Emit("v", "p4", 4, io.KindMutated)
-	bus.Emit("v", "p5", 5, io.KindMutated)
+	bus.Emit("v", "p4", 4, io.KindMutated, "")
+	bus.Emit("v", "p5", 5, io.KindMutated, "")
 	s.Equal(dropsAfterFirst, drops(),
 		"a dropped subscriber must be removed from the slice, not re-counted on later fanouts")
 }
@@ -132,7 +132,7 @@ func (s *EventBusSuite) TestDroppedSubscriberRemovedFromSlice() {
 func (s *EventBusSuite) TestHeartbeatFires() {
 	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 16, HeartbeatInterval: 30 * time.Millisecond})
 	defer bus.Close()
-	events, _, cancel := bus.Subscribe("v")
+	events, _, cancel := bus.Subscribe("v", "")
 	defer cancel()
 
 	deadline := time.After(time.Second)
@@ -158,7 +158,7 @@ func (s *EventBusSuite) TestHasSubscribers() {
 
 	s.False(bus.HasSubscribers("v"), "fresh bus must report no subscribers")
 
-	_, _, cancel := bus.Subscribe("v")
+	_, _, cancel := bus.Subscribe("v", "")
 	s.True(bus.HasSubscribers("v"), "one subscriber must flip the gate")
 	s.False(bus.HasSubscribers("other"), "the gate is per-volume")
 
@@ -170,7 +170,7 @@ func (s *EventBusSuite) TestHasSubscribers() {
 // keep answering false, not panic.
 func (s *EventBusSuite) TestHasSubscribersAfterClose() {
 	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 4})
-	_, _, cancel := bus.Subscribe("v")
+	_, _, cancel := bus.Subscribe("v", "")
 	defer cancel()
 	bus.Close()
 	s.False(bus.HasSubscribers("v"))
@@ -183,7 +183,7 @@ func (s *EventBusSuite) TestSubscribeAfterClose() {
 	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 16})
 	bus.Close()
 
-	_, done, cancel := bus.Subscribe("vol")
+	_, done, cancel := bus.Subscribe("vol", "")
 	defer cancel()
 
 	// done must already be closed — reading from it unblocks immediately.
@@ -216,7 +216,7 @@ func (s *EventBusSuite) TestEmitWhileCancelClose_NoPanic() {
 					return
 				default:
 				}
-				ev, done, cancel := bus.Subscribe("v")
+				ev, done, cancel := bus.Subscribe("v", "")
 				// Drain a few then drop without fully draining (forces overflow).
 				for i := 0; i < 3; i++ {
 					select {
@@ -240,7 +240,7 @@ func (s *EventBusSuite) TestEmitWhileCancelClose_NoPanic() {
 				case <-stop:
 					return
 				default:
-					bus.Emit("v", "p", 1, io.KindMutated)
+					bus.Emit("v", "p", 1, io.KindMutated, "")
 				}
 			}
 		}()
@@ -250,6 +250,48 @@ func (s *EventBusSuite) TestEmitWhileCancelClose_NoPanic() {
 	bus.Close() // concurrent Close while emits/cancels are in flight
 	close(stop)
 	wg.Wait()
+}
+
+// TestSelfEchoSkippedForOriginSession is the protective property of the
+// self-echo suppression: a mutation tagged with a session is NOT delivered back
+// to that same session's subscriber (which already updated its cache
+// optimistically), but IS delivered to every other subscriber. An empty
+// OriginSession (heartbeats, pre-session events) still reaches everyone.
+func (s *EventBusSuite) TestSelfEchoSkippedForOriginSession() {
+	bus := io.NewLocalEventBus(io.EventBusOptions{BufferSize: 16})
+	defer bus.Close()
+
+	aEvents, _, cancelA := bus.Subscribe("v", "session-A")
+	defer cancelA()
+	bEvents, _, cancelB := bus.Subscribe("v", "session-B")
+	defer cancelB()
+
+	// A's own mutation: must reach B, must NOT reach A.
+	bus.Emit("v", "p", 1, io.KindMutated, "session-A")
+
+	select {
+	case ev := <-bEvents:
+		s.Equal("p", ev.Path)
+	case <-time.After(time.Second):
+		s.FailNow("B should receive A's mutation")
+	}
+	select {
+	case ev := <-aEvents:
+		s.FailNowf("A must not receive its own mutation", "got %+v", ev)
+	case <-time.After(100 * time.Millisecond):
+		// expected: no self-echo
+	}
+
+	// Empty OriginSession (e.g. heartbeat) broadcasts to everyone, including A.
+	bus.Emit("v", "", 0, io.KindHeartbeat, "")
+	for _, ch := range []<-chan io.Event{aEvents, bEvents} {
+		select {
+		case ev := <-ch:
+			s.Equal(io.KindHeartbeat, ev.Kind)
+		case <-time.After(time.Second):
+			s.FailNow("sessionless event must reach every subscriber")
+		}
+	}
 }
 
 func TestEventBusSuite(t *testing.T) { suite.Run(t, new(EventBusSuite)) }

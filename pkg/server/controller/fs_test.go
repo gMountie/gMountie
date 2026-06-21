@@ -301,7 +301,7 @@ func (s *RpcServerTestSuite) TestMkdirUnknownSessionReturnsNotFound() {
 
 func (s *RpcServerTestSuite) TestUnlinkEmitsDeletedEvent() {
 	// Setup: subscribe before the call.
-	events, _, cancel := s.bus.Subscribe("testVolume")
+	events, _, cancel := s.bus.Subscribe("testVolume", "")
 	defer cancel()
 
 	mockFs := new(pathfs2.MockFileSystem)
@@ -496,7 +496,7 @@ func (s *RpcServerTestSuite) TestSetAttr_MultiFieldAppliesAll() {
 }
 
 func (s *RpcServerTestSuite) TestSetAttr_StopsAtFirstFailure() {
-	events, _, cancel := s.bus.Subscribe("testVolume")
+	events, _, cancel := s.bus.Subscribe("testVolume", "")
 	defer cancel()
 
 	mockFs := new(pathfs2.MockFileSystem)
@@ -533,7 +533,7 @@ func (s *RpcServerTestSuite) TestSetAttr_StopsAtFirstFailure() {
 }
 
 func (s *RpcServerTestSuite) TestSetAttr_FirstStepFailureEmitsNothing() {
-	events, _, cancel := s.bus.Subscribe("testVolume")
+	events, _, cancel := s.bus.Subscribe("testVolume", "")
 	defer cancel()
 
 	mockFs := new(pathfs2.MockFileSystem)
@@ -567,7 +567,7 @@ func (s *RpcServerTestSuite) TestSetAttr_FirstStepFailureEmitsNothing() {
 // Chmod, Chown, Utimens) and emits no event (nothing mutated).
 func (s *RpcServerTestSuite) TestSetAttr_NoBitsIsReadOnly() {
 	// Subscribe first so any spurious event would be caught.
-	events, _, cancel := s.bus.Subscribe("testVolume")
+	events, _, cancel := s.bus.Subscribe("testVolume", "")
 	defer cancel()
 
 	mockFs := new(pathfs2.MockFileSystem)
@@ -663,7 +663,7 @@ func (s *RpcServerTestSuite) TestSetAttr_IdempotentReplay() {
 }
 
 func (s *RpcServerTestSuite) TestSetAttr_EmitsMutatedSeededFromReplyStat() {
-	events, _, cancel := s.bus.Subscribe("testVolume")
+	events, _, cancel := s.bus.Subscribe("testVolume", "")
 	defer cancel()
 
 	mockFs := new(pathfs2.MockFileSystem)
@@ -733,7 +733,7 @@ func (s *RpcServerTestSuite) TestSymlink() {
 // .Once() on GetAttr is the no-double-stat proof — the old mutateEmit path
 // would stat a second time via versionAfter and fail the strict mock.
 func (s *RpcServerTestSuite) TestMkdir_ReplyAttrsFromSingleTrailingStat() {
-	events, _, cancel := s.bus.Subscribe("testVolume")
+	events, _, cancel := s.bus.Subscribe("testVolume", "")
 	defer cancel()
 
 	mockFs := new(pathfs2.MockFileSystem)
@@ -772,7 +772,7 @@ func (s *RpcServerTestSuite) TestMkdir_ReplyAttrsFromSingleTrailingStat() {
 // trailing stat must NOT fail the RPC — Status stays OK, Attributes stay nil
 // and the event carries version 0 so clients revalidate via GetAttrIfChanged.
 func (s *RpcServerTestSuite) TestMkdir_TrailingStatFailureStillOK() {
-	events, _, cancel := s.bus.Subscribe("testVolume")
+	events, _, cancel := s.bus.Subscribe("testVolume", "")
 	defer cancel()
 
 	mockFs := new(pathfs2.MockFileSystem)
@@ -804,7 +804,7 @@ func (s *RpcServerTestSuite) TestMkdir_TrailingStatFailureStillOK() {
 // Mkdir, on the LINK's own path (lstat semantics — the confined FS does not
 // follow the target).
 func (s *RpcServerTestSuite) TestSymlink_ReplyAttrsFromSingleTrailingStat() {
-	events, _, cancel := s.bus.Subscribe("testVolume")
+	events, _, cancel := s.bus.Subscribe("testVolume", "")
 	defer cancel()
 
 	mockFs := new(pathfs2.MockFileSystem)
@@ -839,7 +839,7 @@ func (s *RpcServerTestSuite) TestSymlink_ReplyAttrsFromSingleTrailingStat() {
 // TestSymlink_TrailingStatFailureStillOK mirrors the Mkdir partial-failure
 // contract: OK status, nil attrs, version-0 event.
 func (s *RpcServerTestSuite) TestSymlink_TrailingStatFailureStillOK() {
-	events, _, cancel := s.bus.Subscribe("testVolume")
+	events, _, cancel := s.bus.Subscribe("testVolume", "")
 	defer cancel()
 
 	mockFs := new(pathfs2.MockFileSystem)
@@ -874,7 +874,7 @@ func (s *RpcServerTestSuite) TestSetXAttr_Happy() {
 	mockFs.EXPECT().GetAttr("/f", mock.Anything).Return(&fuse.Attr{Ino: 1}, fuse.OK).Maybe()
 
 	// Subscribe to assert a mutation event is emitted on success.
-	events, _, cancel := s.bus.Subscribe("testVolume")
+	events, _, cancel := s.bus.Subscribe("testVolume", "")
 	defer cancel()
 
 	reply, err := s.server.SetXAttr(testAuthedCtx("test-user"), &proto.SetXAttrRequest{
@@ -989,14 +989,14 @@ type spyBus struct {
 	emits atomic.Int64
 }
 
-func (b *spyBus) Emit(volume, path string, newVersion uint64, kind serverio.EventKind) {
+func (b *spyBus) Emit(volume, path string, newVersion uint64, kind serverio.EventKind, originSession string) {
 	b.emits.Add(1)
-	b.EventBus.Emit(volume, path, newVersion, kind)
+	b.EventBus.Emit(volume, path, newVersion, kind, originSession)
 }
 
-func (b *spyBus) EmitRename(volume, oldPath, newPath string, newVersion uint64) {
+func (b *spyBus) EmitRename(volume, oldPath, newPath string, newVersion uint64, originSession string) {
 	b.emits.Add(1)
-	b.EventBus.EmitRename(volume, oldPath, newPath, newVersion)
+	b.EventBus.EmitRename(volume, oldPath, newPath, newVersion, originSession)
 }
 
 // TestSetXAttr_NoSubscribers_SkipsStatAndEmit: with nobody subscribed to the
@@ -1028,7 +1028,7 @@ func (s *RpcServerTestSuite) TestSetXAttr_NoSubscribers_SkipsStatAndEmit() {
 // behavior on the subscribed path: the versionAfter stat happens exactly once
 // and the event carries the non-zero version derived from it.
 func (s *RpcServerTestSuite) TestSetXAttr_WithSubscriber_StatSeedsEventVersion() {
-	events, _, cancel := s.bus.Subscribe("testVolume")
+	events, _, cancel := s.bus.Subscribe("testVolume", "")
 	defer cancel()
 
 	mockFs := new(pathfs2.MockFileSystem)

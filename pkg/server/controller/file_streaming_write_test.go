@@ -359,7 +359,7 @@ func (s *StreamingWriteSuite) TestWrite_NoSubscribers_SkipsVersionStatAndEmit() 
 // post-write versionAfterPath stat happens exactly once and the event carries
 // the non-zero version it produced.
 func (s *StreamingWriteSuite) TestWrite_WithSubscriber_EmitsVersionFromStat() {
-	events, _, cancel := s.bus.Subscribe("testVolume")
+	events, _, cancel := s.bus.Subscribe("testVolume", "")
 	defer cancel()
 
 	mockFs := new(pathfs2.MockFileSystem)

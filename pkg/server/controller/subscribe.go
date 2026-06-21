@@ -29,7 +29,11 @@ func (r *RpcServerImpl) Subscribe(request *proto.SubscribeRequest, stream proto.
 		r.metrics.SubscribeSubscribersInc(request.Volume)
 		defer r.metrics.SubscribeSubscribersDec(request.Volume)
 	}
-	events, busDone, cancel := r.bus.Subscribe(request.Volume)
+	// Bind the subscriber to its client session so the bus can skip echoing the
+	// client its own mutations (Event.OriginSession). The session-id rides in
+	// the stream's metadata (sessionIDStreamInterceptor stamps it on Subscribe);
+	// an empty value (no metadata) simply disables the skip for this stream.
+	events, busDone, cancel := r.bus.Subscribe(request.Volume, sessionIDFromContext(ctx))
 	defer cancel()
 	fctx := createContext(ctx, request.Caller)
 	for {
