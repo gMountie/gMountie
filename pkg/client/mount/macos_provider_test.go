@@ -70,3 +70,8 @@ func (s *MacProviderSuite) TestPathExists() {
 	s.Require().NoError(err)
 	s.True(pathExists(exe))
 }
+
+func (s *MacProviderSuite) TestAdapterForProvider() {
+	s.Equal(adapterGoFuse, adapterForProvider(providerMacFUSE))
+	s.Equal(adapterCgoFuse, adapterForProvider(providerFuseT))
+}
