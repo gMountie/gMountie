@@ -130,18 +130,26 @@ func (s *XAttrCacheE2ESuite) TestReadDirPrimesXattr_NoPerFileListXAttrRPC() {
 	ents, err := os.ReadDir(subdir)
 	s.Require().NoError(err)
 
+	var taggedNames string
 	for _, e := range ents {
 		p := filepath.Join(subdir, e.Name())
 		sz, _ := unix.Listxattr(p, nil)
 		if sz > 0 {
 			buf := make([]byte, sz)
-			_, _ = unix.Listxattr(p, buf)
+			n, _ := unix.Listxattr(p, buf)
+			if e.Name() == "f0" {
+				taggedNames = string(buf[:n])
+			}
 		}
 	}
 
 	after := s.listXattrCalls.Load()
 	s.Equal(int64(0), after-before,
 		"readdir must prime the xattr cache: no per-file ListXAttr RPC expected, got %d", after-before)
+	// Self-contained guard: prove the prime carried real data, so delta==0 above
+	// can't pass vacuously by the per-file listxattr never reaching the cache.
+	s.Contains(taggedNames, "user.tag",
+		"the primed names for f0 must include the xattr set before ReadDir")
 }
 
 // TestSetXAttrInvalidatesCache creates a file, primes its (empty) xattr cache
