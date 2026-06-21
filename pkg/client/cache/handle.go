@@ -2,6 +2,7 @@ package cache
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"go.gmountie.dev/gmountie/pkg/client/io"
 )
@@ -18,6 +19,11 @@ import (
 type cachedHandle struct {
 	inner io.FileHandle
 	path  string
+
+	// wrote is set once the handle takes a Write/Allocate. Release reconciles
+	// the optimistically-updated attrs with the server only for written handles,
+	// so read-only open/close cycles (Finder previews, browsing) add no RPCs.
+	wrote atomic.Bool
 
 	// Sequential-read detection for prefetch over-read (cachedBackend.Read).
 	// A caching FUSE fs rarely sees the kernel fan reads out concurrently, so a

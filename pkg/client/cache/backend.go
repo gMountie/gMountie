@@ -608,14 +608,30 @@ func (b *cachedBackend) Write(ctx context.Context, fh io.FileHandle, off int64, 
 		return n, st
 	}
 	if ch, ok := fh.(*cachedHandle); ok {
+		ch.wrote.Store(true)
 		b.data.invalidateRange(ch.path, off, int64(len(data)))
-		b.attr.invalidate(ch.path)
+		// Optimistic attr update instead of eviction. We just wrote n bytes at
+		// off, so we are authoritative on the file's new minimum size: bump the
+		// cached size and stamp the path verified so the GetAttr macOS/FUSE-T
+		// fires after every write is served from cache, not a WAN round-trip.
+		// Evicting here turned a 1 GB Finder copy into ~28k GetAttr RPCs (Linux
+		// hides it behind the kernel attr cache; FUSE-T does not). Release
+		// reconciles with the server's authoritative attrs.
+		if b.attr.bumpSize(ch.path, off+int64(n)) {
+			b.validity.markPathVerified(ch.path, b.validity.currentEpoch())
+		}
 	}
 	return n, proto.FsError_FS_OK
 }
 
 func (b *cachedBackend) Release(ctx context.Context, fh io.FileHandle) proto.FsError {
-	return b.inner.Release(ctx, unwrapHandle(fh))
+	st := b.inner.Release(ctx, unwrapHandle(fh))
+	if ch, ok := fh.(*cachedHandle); ok && ch.wrote.Load() {
+		// The file was written with optimistic attrs (see Write); drop them so
+		// the next Stat fetches the server's authoritative size/mtime/blocks.
+		b.attr.invalidate(ch.path)
+	}
+	return st
 }
 
 func (b *cachedBackend) Flush(ctx context.Context, fh io.FileHandle) proto.FsError {
@@ -632,8 +648,14 @@ func (b *cachedBackend) Allocate(ctx context.Context, fh io.FileHandle, off, siz
 		return st
 	}
 	if ch, ok := fh.(*cachedHandle); ok {
+		ch.wrote.Store(true)
 		b.data.invalidateRange(ch.path, int64(off), int64(size))
-		b.attr.invalidate(ch.path)
+		// Same optimistic-update rationale as Write: allocation can grow the
+		// file, so bump the cached size and keep the entry verified rather than
+		// evicting it. Release reconciles with the server.
+		if b.attr.bumpSize(ch.path, int64(off+size)) {
+			b.validity.markPathVerified(ch.path, b.validity.currentEpoch())
+		}
 	}
 	return proto.FsError_FS_OK
 }

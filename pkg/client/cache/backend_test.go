@@ -348,7 +348,7 @@ func (s *CachedBackendTestSuite) TestReadAcrossChunkBoundaryOnMiss() {
 
 // --- Invalidation table ---
 
-func (s *CachedBackendTestSuite) TestWriteInvalidatesDataAndAttr() {
+func (s *CachedBackendTestSuite) TestWriteUpdatesAttrAndInvalidatesData() {
 	s.b.attr.putPositive("/f", &io.Attr{Ino: 1, Size: 100})
 	s.b.data.put("/f", 0, []byte("OLD-CONTENT"))
 	h, innerH := s.openCachedHandle("/f")
@@ -356,10 +356,41 @@ func (s *CachedBackendTestSuite) TestWriteInvalidatesDataAndAttr() {
 		Return(uint32(4), proto.FsError_FS_OK).Once()
 	_, st := s.b.Write(context.Background(), h, 0, []byte("NEW!"))
 	s.Require().Equal(proto.FsError_FS_OK, st)
-	// Cache invalidated:
+	// Data range invalidated (a later read re-fetches):
 	s.Assert().Nil(s.b.data.get("/f", 0))
+	// Attr is NOT evicted — optimistically kept and stamped verified so the
+	// GetAttr macOS/FUSE-T fires after the write is served from cache, not a RPC.
+	a, hit, pos := s.b.attr.get("/f")
+	s.Require().True(hit)
+	s.Require().True(pos)
+	s.Assert().Equal(uint64(100), a.Size, "in-file write keeps the larger cached size")
+	s.Assert().True(s.b.validity.isPathVerified("/f"), "write stamps the path verified")
+}
+
+func (s *CachedBackendTestSuite) TestWriteGrowsCachedSize() {
+	s.b.attr.putPositive("/f", &io.Attr{Ino: 1, Size: 100})
+	h, innerH := s.openCachedHandle("/f")
+	s.inner.EXPECT().Write(mock.Anything, innerH, int64(100), mock.Anything).
+		Return(uint32(50), proto.FsError_FS_OK).Once()
+	_, st := s.b.Write(context.Background(), h, 100, make([]byte, 50))
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	a, hit, _ := s.b.attr.get("/f")
+	s.Require().True(hit)
+	s.Assert().Equal(uint64(150), a.Size, "append bumps cached size to off+n (acknowledged bytes)")
+}
+
+func (s *CachedBackendTestSuite) TestReleaseAfterWriteReconcilesAttr() {
+	s.b.attr.putPositive("/f", &io.Attr{Ino: 1, Size: 100})
+	h, innerH := s.openCachedHandle("/f")
+	s.inner.EXPECT().Write(mock.Anything, innerH, int64(0), mock.Anything).
+		Return(uint32(4), proto.FsError_FS_OK).Once()
+	s.inner.EXPECT().Release(mock.Anything, innerH).Return(proto.FsError_FS_OK).Once()
+	_, _ = s.b.Write(context.Background(), h, 0, []byte("NEW!"))
 	_, hit, _ := s.b.attr.get("/f")
-	s.Assert().False(hit)
+	s.Require().True(hit, "attr kept after write")
+	s.b.Release(context.Background(), h)
+	_, hit, _ = s.b.attr.get("/f")
+	s.Assert().False(hit, "Release of a written handle drops attrs to reconcile with the server")
 }
 
 func (s *CachedBackendTestSuite) TestWriteOnlyInvalidatesOverlappingChunks() {
@@ -649,7 +680,7 @@ func (s *CachedBackendTestSuite) TestSetAttrFailureStillInvalidates() {
 	s.Assert().False(hit)
 }
 
-func (s *CachedBackendTestSuite) TestAllocateInvalidatesDataRangeAndAttr() {
+func (s *CachedBackendTestSuite) TestAllocateInvalidatesDataRangeAndKeepsAttr() {
 	// Pre-populate 3 chunks. Allocate covers only chunks 0 and 1.
 	s.b.data.put("/f", 0, make([]byte, 1024))
 	s.b.data.put("/f", 1, make([]byte, 1024))
@@ -664,9 +695,10 @@ func (s *CachedBackendTestSuite) TestAllocateInvalidatesDataRangeAndAttr() {
 	s.Assert().Nil(s.b.data.get("/f", 0))
 	s.Assert().Nil(s.b.data.get("/f", 1))
 	s.Assert().NotNil(s.b.data.get("/f", 2))
-	// Attr invalidated.
-	_, hit, _ := s.b.attr.get("/f")
-	s.Assert().False(hit)
+	// Attr kept (optimistic update), not evicted; in-file alloc keeps the size.
+	a, hit, _ := s.b.attr.get("/f")
+	s.Require().True(hit)
+	s.Assert().Equal(uint64(3072), a.Size)
 }
 
 // --- Pass-through ops (no cache mutations) ---
