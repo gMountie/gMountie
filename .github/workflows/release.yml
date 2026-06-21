@@ -77,9 +77,12 @@ jobs:
               go build -trimpath -buildvcs=true -ldflags "$LDFLAGS" -o stage/gmountie ./cmd
           fi
           cp LICENSE README.md CHANGELOG.md stage/
-          cp -R examples stage/examples
+          # examples/ is optional — goreleaser's archive skips it when absent;
+          # match that so the archive contents stay in lockstep with Linux.
+          EXTRA=""
+          if [ -d examples ]; then cp -R examples stage/examples; EXTRA="examples"; fi
           tar -C stage -czf "dist-darwin/gMountie_${VERSION}_darwin_${arch}.tar.gz" \
-            gmountie LICENSE README.md CHANGELOG.md examples
+            gmountie LICENSE README.md CHANGELOG.md $EXTRA
         done
         echo "== darwin archives ==" && ls -la dist-darwin/
 
