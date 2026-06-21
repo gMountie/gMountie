@@ -18,6 +18,14 @@ const (
 	fuseTLibPath = "/usr/local/lib/libfuse-t.dylib"
 )
 
+// adapterKind names which FUSE adapter mounts a backend on darwin.
+type adapterKind int
+
+const (
+	adapterGoFuse adapterKind = iota // macFUSE: hanwen/go-fuse (cgo-free, full node.go features)
+	adapterCgoFuse                   // FUSE-T: winfsp/cgofuse (kextless)
+)
+
 // detectProvider resolves which FUSE provider to use. override wins unless it
 // is providerAuto, in which case it probes install paths (macFUSE preferred,
 // FUSE-T fallback) using exists (injected for testing; pass pathExists in
@@ -78,4 +86,14 @@ func linuxCgofuseOptions(maxWrite int) []string {
 		return nil
 	}
 	return []string{"-o", "big_writes", "-o", fmt.Sprintf("max_write=%d", maxWrite)}
+}
+
+// adapterForProvider maps a resolved (non-auto) provider to its adapter.
+// macFUSE speaks the FUSE kernel protocol go-fuse implements; FUSE-T is
+// NFSv4-backed and only reachable through cgofuse's libfuse API.
+func adapterForProvider(p fuseProvider) adapterKind {
+	if p == providerFuseT {
+		return adapterCgoFuse
+	}
+	return adapterGoFuse
 }
