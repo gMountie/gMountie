@@ -23,6 +23,14 @@ type Event struct {
 	NewPath    string // KindRenamed only
 	NewVersion uint64 // 0 for KindDeleted / KindHeartbeat
 	Kind       EventKind
+	// OriginSession is the session_id of the client whose mutation produced
+	// this event. fanout skips the subscriber bound to the same session: that
+	// client already updated its own cache optimistically when it made the
+	// change (Create primes, Write bumps, Unlink/Rmdir invalidate), so echoing
+	// the event back only destroys those primes and forces a needless GetAttr
+	// refetch — the metadata-storm that made npm-install-over-WAN crawl. Empty
+	// for heartbeats and pre-session events, which broadcast to every subscriber.
+	OriginSession string
 }
 
 // EventBus is the server-side change-event broker. Sub-spec D's
@@ -30,8 +38,8 @@ type Event struct {
 // Subscribe. The interface lets us swap in inotify-driven sources
 // later (roadmap future-work).
 type EventBus interface {
-	Emit(volume, path string, newVersion uint64, kind EventKind)
-	EmitRename(volume, oldPath, newPath string, newVersion uint64)
+	Emit(volume, path string, newVersion uint64, kind EventKind, originSession string)
+	EmitRename(volume, oldPath, newPath string, newVersion uint64, originSession string)
 	// HasSubscribers reports whether volume currently has at least one
 	// subscriber. Mutating handlers consult it to skip the version-seeding
 	// stat and the emit entirely when nobody is listening — see the PERF
@@ -44,7 +52,13 @@ type EventBus interface {
 	// The event channel is NEVER closed — consumers MUST select on done to
 	// detect termination (closing ch would race a concurrent fanout send and
 	// panic; SS-M1). Drain contract: read ch until done fires.
-	Subscribe(volume string) (events <-chan Event, done <-chan struct{}, cancel func())
+	//
+	// sessionID identifies the subscriber's client session so fanout can skip
+	// echoing that client's own mutations back to it (see Event.OriginSession).
+	// Empty (e.g. the server could not read session-id metadata) disables the
+	// skip for this subscriber — it then receives every event including its
+	// own, the pre-suppression behaviour.
+	Subscribe(volume, sessionID string) (events <-chan Event, done <-chan struct{}, cancel func())
 	Close()
 }
 
@@ -73,6 +87,10 @@ type subscriber struct {
 	// flight observes termination without the closer touching ch.
 	done      chan struct{}
 	closeOnce sync.Once
+	// sessionID is the subscribing client's session. fanout skips this
+	// subscriber for events whose OriginSession matches (self-echo). Empty
+	// disables the skip (receives everything).
+	sessionID string
 }
 
 // terminate signals end-of-subscription. Idempotent and never closes ch, so
@@ -127,12 +145,12 @@ func NewLocalEventBus(opts EventBusOptions) EventBus {
 	return b
 }
 
-func (b *localEventBus) Emit(volume, path string, newVersion uint64, kind EventKind) {
-	b.fanout(volume, Event{Path: path, NewVersion: newVersion, Kind: kind})
+func (b *localEventBus) Emit(volume, path string, newVersion uint64, kind EventKind, originSession string) {
+	b.fanout(volume, Event{Path: path, NewVersion: newVersion, Kind: kind, OriginSession: originSession})
 }
 
-func (b *localEventBus) EmitRename(volume, oldPath, newPath string, newVersion uint64) {
-	b.fanout(volume, Event{Path: oldPath, NewPath: newPath, NewVersion: newVersion, Kind: KindRenamed})
+func (b *localEventBus) EmitRename(volume, oldPath, newPath string, newVersion uint64, originSession string) {
+	b.fanout(volume, Event{Path: oldPath, NewPath: newPath, NewVersion: newVersion, Kind: KindRenamed, OriginSession: originSession})
 }
 
 func (b *localEventBus) HasSubscribers(volume string) bool {
@@ -141,7 +159,7 @@ func (b *localEventBus) HasSubscribers(volume string) bool {
 	return len(b.subscribers[volume]) > 0
 }
 
-func (b *localEventBus) Subscribe(volume string) (<-chan Event, <-chan struct{}, func()) {
+func (b *localEventBus) Subscribe(volume, sessionID string) (<-chan Event, <-chan struct{}, func()) {
 	b.mu.Lock()
 	if b.closed {
 		// Return an already-terminated subscriber so the caller drains cleanly.
@@ -150,7 +168,7 @@ func (b *localEventBus) Subscribe(volume string) (<-chan Event, <-chan struct{},
 		close(done)
 		return make(chan Event), done, func() {}
 	}
-	s := &subscriber{ch: make(chan Event, b.opts.BufferSize), done: make(chan struct{})}
+	s := &subscriber{ch: make(chan Event, b.opts.BufferSize), done: make(chan struct{}), sessionID: sessionID}
 	b.subscribers[volume] = append(b.subscribers[volume], s)
 	b.mu.Unlock()
 	if b.opts.OnSubscribe != nil {
@@ -215,6 +233,15 @@ func (b *localEventBus) fanout(volume string, ev Event) {
 	}
 	var dropped []*subscriber
 	for _, s := range subs {
+		// Self-echo skip: never deliver a client its own mutation. The client
+		// already updated its cache optimistically when it made the change;
+		// re-delivering the event would evict those primes and force a GetAttr
+		// refetch. Guarded on a non-empty OriginSession so heartbeats and
+		// pre-session events (OriginSession=="") still reach everyone, and on a
+		// non-empty subscriber session so a sessionless subscriber is unaffected.
+		if ev.OriginSession != "" && s.sessionID == ev.OriginSession {
+			continue
+		}
 		if !s.trySend(ev) {
 			// trySend's overflow path already terminated s. Collect it so we
 			// can splice it out of the live slice — otherwise the dead

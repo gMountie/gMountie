@@ -97,18 +97,18 @@ func (r *RpcFileServerImpl) emitMutatedFd(ctx context.Context, volume, path stri
 	if !r.bus.HasSubscribers(volume) {
 		return
 	}
-	r.bus.Emit(volume, path, r.versionAfterPath(ctx, volume, path, caller), serverio.KindMutated)
+	r.bus.Emit(volume, path, r.versionAfterPath(ctx, volume, path, caller), serverio.KindMutated, sessionIDFromContext(ctx))
 }
 
 // emitMutatedAttr is emitMutatedFd for handlers that already hold a fresh
 // post-op attr (Create/WriteAndFlush stat the path for their replies anyway —
 // re-statting would waste a syscall). A nil attr yields version 0; clients
 // fall back to GetAttrIfChanged.
-func (r *RpcFileServerImpl) emitMutatedAttr(volume, path string, attr *fuse.Attr) {
+func (r *RpcFileServerImpl) emitMutatedAttr(ctx context.Context, volume, path string, attr *fuse.Attr) {
 	if !r.bus.HasSubscribers(volume) {
 		return
 	}
-	r.bus.Emit(volume, path, serverio.VersionFromAttr(attr), serverio.KindMutated)
+	r.bus.Emit(volume, path, serverio.VersionFromAttr(attr), serverio.KindMutated, sessionIDFromContext(ctx))
 }
 
 // sessionFile looks up fd in sess and enforces the fd↔volume binding recorded
@@ -165,9 +165,9 @@ func (r *RpcFileServerImpl) Create(ctx context.Context, request *proto.CreateReq
 			reply.Fd = sess.RegisterFile(request.Volume, request.Path, file)
 			if attr, gst := fs.GetAttr(request.Path, createContext(ctx, request.Caller)); gst.Ok() {
 				reply.Attributes = toProtoAttr(attr, &id)
-				r.emitMutatedAttr(request.Volume, request.Path, attr)
+				r.emitMutatedAttr(ctx, request.Volume, request.Path, attr)
 			} else {
-				r.emitMutatedAttr(request.Volume, request.Path, nil)
+				r.emitMutatedAttr(ctx, request.Volume, request.Path, nil)
 			}
 		}
 		return reply, nil
@@ -518,10 +518,10 @@ func (r *RpcFileServerImpl) WriteAndFlush(ctx context.Context, req *proto.WriteA
 		if attr, gst := fs.GetAttr(entry.Path, createContext(ctx, nil)); gst.Ok() {
 			reply.FinalAttr = toProtoAttr(attr, nil)
 			if st == fuse.OK {
-				r.emitMutatedAttr(req.Volume, entry.Path, attr)
+				r.emitMutatedAttr(ctx, req.Volume, entry.Path, attr)
 			}
 		} else if st == fuse.OK {
-			r.emitMutatedAttr(req.Volume, entry.Path, nil)
+			r.emitMutatedAttr(ctx, req.Volume, entry.Path, nil)
 		}
 		return reply, nil
 	})

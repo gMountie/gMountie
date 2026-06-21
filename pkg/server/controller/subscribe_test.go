@@ -104,7 +104,7 @@ func (s *SubscribeStreamSuite) TestEmittedEventsReachStream() {
 	go func() { done <- srv.Subscribe(&proto.SubscribeRequest{Volume: "vol-test"}, stream) }()
 
 	waitRegistered() // deterministic: the subscriber IS registered before Emit
-	bus.Emit("vol-test", "p1", 42, serverio.KindMutated)
+	bus.Emit("vol-test", "p1", 42, serverio.KindMutated, "")
 
 	s.Require().Eventually(func() bool {
 		for _, ev := range snapshotSent(stream) {
@@ -177,8 +177,8 @@ func (s *SubscribeStreamSuite) TestDeniedPathIsFiltered() {
 	// /secret first, /public second: per-subscriber channel ordering means
 	// that once /public is observed, /secret has definitely been processed
 	// (and filtered) — no fixed drain needed.
-	bus.Emit("vol-test", "/secret", 1, serverio.KindMutated)
-	bus.Emit("vol-test", "/public", 2, serverio.KindMutated)
+	bus.Emit("vol-test", "/secret", 1, serverio.KindMutated, "")
+	bus.Emit("vol-test", "/public", 2, serverio.KindMutated, "")
 
 	s.Require().Eventually(func() bool {
 		for _, ev := range snapshotSent(stream) {
@@ -207,7 +207,7 @@ func (s *SubscribeStreamSuite) TestHeartbeatBypassesFilter() {
 	go func() { done <- srv.Subscribe(&proto.SubscribeRequest{Volume: "vol-test"}, stream) }()
 	waitRegistered()
 
-	bus.Emit("vol-test", "", 0, serverio.KindHeartbeat)
+	bus.Emit("vol-test", "", 0, serverio.KindHeartbeat, "")
 
 	s.Require().Eventually(func() bool {
 		for _, ev := range snapshotSent(stream) {
@@ -238,8 +238,8 @@ func (s *SubscribeStreamSuite) TestRenameRequiresBothPathsAccessible() {
 	// heartbeat is a sentinel — heartbeats always pass the filter and the
 	// per-subscriber channel preserves order, so once it arrives the rename
 	// has definitely been processed (and filtered).
-	bus.EmitRename("vol-test", "/hidden", "/visible", 1)
-	bus.Emit("vol-test", "", 0, serverio.KindHeartbeat)
+	bus.EmitRename("vol-test", "/hidden", "/visible", 1, "")
+	bus.Emit("vol-test", "", 0, serverio.KindHeartbeat, "")
 
 	s.Require().Eventually(func() bool {
 		for _, ev := range snapshotSent(stream) {

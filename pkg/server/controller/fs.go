@@ -84,7 +84,7 @@ func (r *RpcServerImpl) Mkdir(ctx context.Context, request *proto.MkdirRequest) 
 		// see statAttrsAndEmit for the stat-fail partial-success contract.
 		reply := &proto.MkdirReply{
 			Status:     proto.FsError_FS_OK,
-			Attributes: r.statAttrsAndEmit(fs, request.Volume, request.Path, &id, fctx),
+			Attributes: r.statAttrsAndEmit(ctx, fs, request.Volume, request.Path, &id, fctx),
 		}
 		return reply, nil
 	})
@@ -100,7 +100,7 @@ func (r *RpcServerImpl) Rmdir(ctx context.Context, request *proto.RmdirRequest) 
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.RmdirReply, error) {
-		s := r.deleteEmit(request.Volume, request.Path, func() fuse.Status {
+		s := r.deleteEmit(ctx, request.Volume, request.Path, func() fuse.Status {
 			return fs.Rmdir(request.Path, createContext(ctx, request.Caller))
 		})
 		return &proto.RmdirReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
@@ -157,7 +157,7 @@ func (r *RpcServerImpl) Symlink(ctx context.Context, request *proto.SymlinkReque
 		// statAttrsAndEmit for the stat-fail partial-success contract.
 		reply := &proto.SymlinkReply{
 			Status:     proto.FsError_FS_OK,
-			Attributes: r.statAttrsAndEmit(fs, request.Volume, request.LinkPath, &id, fctx),
+			Attributes: r.statAttrsAndEmit(ctx, fs, request.Volume, request.LinkPath, &id, fctx),
 		}
 		return reply, nil
 	})
@@ -260,7 +260,7 @@ func (r *RpcServerImpl) Unlink(ctx context.Context, request *proto.UnlinkRequest
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.UnlinkReply, error) {
-		s := r.deleteEmit(request.Volume, request.Path, func() fuse.Status {
+		s := r.deleteEmit(ctx, request.Volume, request.Path, func() fuse.Status {
 			return fs.Unlink(request.Path, createContext(ctx, request.Caller))
 		})
 		return &proto.UnlinkReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
@@ -313,7 +313,7 @@ func (r *RpcServerImpl) SetAttr(ctx context.Context, request *proto.SetAttrReque
 			// caches must still be invalidated. Version 0 (no fresh attr in
 			// hand) makes them revalidate via GetAttrIfChanged.
 			if mutated {
-				r.emitMutatedAttr(request.Volume, request.Path, nil)
+				r.emitMutatedAttr(ctx, request.Volume, request.Path, nil)
 			}
 			return &proto.SetAttrReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
 		}
@@ -325,10 +325,10 @@ func (r *RpcServerImpl) SetAttr(ctx context.Context, request *proto.SetAttrReque
 		if attr, gst := fs.GetAttr(request.Path, fctx); gst.Ok() {
 			reply.Attributes = toProtoAttr(attr, &id)
 			if mutated {
-				r.emitMutatedAttr(request.Volume, request.Path, attr)
+				r.emitMutatedAttr(ctx, request.Volume, request.Path, attr)
 			}
 		} else if mutated {
-			r.emitMutatedAttr(request.Volume, request.Path, nil)
+			r.emitMutatedAttr(ctx, request.Volume, request.Path, nil)
 		}
 		return reply, nil
 	})
