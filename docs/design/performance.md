@@ -232,6 +232,37 @@ Without `permit_without_stream`, an idle mount between FUSE operations would
 stall indefinitely on the first RPC after a silent disconnect. Both values are
 config-driven.
 
+### 2.9 Connection pool
+
+A single `grpc.ClientConn` multiplexes all streams over one HTTP/2 connection =
+one TCP flow, which caps aggregate read/write throughput on high-BDP (1 Gbit /
+WAN) links well below the link. The client opens **N connections per mount**
+(`rpc.connections`, default 4, range 1–16; `1` reproduces the old single-conn
+behaviour), all sharing **one session**, and spreads data streams across them.
+
+This needs no server change: the server resolves a session by the `session_id`
+in request metadata and binds ownership to the **principal (cert CN), not the
+TCP connection**, and the fd table is per-session. So N connections carrying the
+same `session_id` resolve the same session, and an fd opened on any connection
+is usable on all of them.
+
+- **Connection 0 is the primary** — it carries the session handshake, the
+  keepalive and `Subscribe` streams, and ALL metadata + fd-lifecycle RPCs
+  (`Fs()`, `File()` Open/Create/Release/locks, `Volume()`, `Version()`).
+- **Read and Write streams spread** across all N via a load-aware
+  **least-in-flight** picker (`DataFileClient()`), ties resolving to the
+  primary. The spread is per-stream, so one large file's concurrent
+  writeback/readahead streams fan out across flows; a sequential single-stream
+  workload stays on the warm primary (congestion window stays hot) because every
+  tie picks conn 0.
+- Each connection auto-reconnects independently; a transient on one is re-issued
+  by the existing `retryOp` loop, which re-picks a connection. Session liveness
+  is driven only by the primary's keepalive — a non-primary data connection
+  dropping doesn't affect the session.
+
+The pool size is fixed for the client's lifetime. Spreading metadata RPCs (no
+throughput benefit) and dynamic resize are out of scope.
+
 ## 3. Serialization and data-copy path
 
 ### 3.1 Per-frame copy budget
