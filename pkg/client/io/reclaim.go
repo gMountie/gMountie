@@ -8,7 +8,6 @@ import (
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/google/uuid"
-	"github.com/hanwen/go-fuse/v2/fuse"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -32,7 +31,7 @@ import (
 // return. reopenMu serializes concurrent callers so the fd is reopened once;
 // each re-checks the predicate under the lock. On success a fresh fdState with
 // the new fd, session id, and epoch is atomically swapped in via h.state.
-func (h *grpcFileHandle) reclaimIfStale(ctx context.Context) fuse.Status {
+func (h *grpcFileHandle) reclaimIfStale(ctx context.Context) proto.FsError {
 	cur := h.state.Load()
 	// IMPORTANT: read SessionID() BEFORE BootEpoch(). The handshake sets the
 	// new epoch before the new session id under its mutex, so observing a
@@ -40,7 +39,7 @@ func (h *grpcFileHandle) reclaimIfStale(ctx context.Context) fuse.Status {
 	// visible. Reading in this order makes the restart/reap classification
 	// race-free.
 	if cur.sessionID == h.client.SessionID() {
-		return fuse.OK // fresh: same session, nothing to do
+		return proto.FsError_FS_OK // fresh: same session, nothing to do
 	}
 	// Session changed (Resume failed → Create). Restart or same-process reap?
 	if h.client.BootEpoch() == cur.epoch {
@@ -50,7 +49,7 @@ func (h *grpcFileHandle) reclaimIfStale(ctx context.Context) fuse.Status {
 		// with ESTALE ("stale file handle") — the honest errno for a dead fd,
 		// and never ENOENT (the file exists; it's our handle that's gone).
 		// This preserves the "fail cleanly past grace" contract.
-		return fuse.Status(syscall.ESTALE)
+		return proto.FsError_FS_ESTALE
 	}
 	// Boot epoch changed → the server process restarted. While it was down no
 	// client could write, so reopening by path is as safe as the original open.
@@ -60,10 +59,10 @@ func (h *grpcFileHandle) reclaimIfStale(ctx context.Context) fuse.Status {
 	live := h.client.SessionID()
 	liveEpoch := h.client.BootEpoch()
 	if cur.sessionID == live {
-		return fuse.OK // a racing caller already reclaimed
+		return proto.FsError_FS_OK // a racing caller already reclaimed
 	}
 	if liveEpoch == cur.epoch {
-		return fuse.Status(syscall.ESTALE) // became a reap under the lock; fail clean
+		return proto.FsError_FS_ESTALE // became a reap under the lock; fail clean
 	}
 	reply, err := h.client.File().Open(ctx, &proto.OpenRequest{
 		Volume:    h.volume,
@@ -76,23 +75,23 @@ func (h *grpcFileHandle) reclaimIfStale(ctx context.Context) fuse.Status {
 	if err != nil {
 		return statusFromRPCError(err)
 	}
-	if fuse.Status(reply.Status) != fuse.OK {
-		return fuse.Status(reply.Status)
+	if reply.Status != proto.FsError_FS_OK {
+		return reply.Status
 	}
 	log.Log.Info("reclaimed file handle after server restart",
 		zap.String("path", h.path),
 		zap.Uint64("old_fd", cur.fd), zap.Uint64("new_fd", reply.Fd))
 	h.state.Store(&fdState{fd: reply.Fd, sessionID: live, epoch: liveEpoch})
-	return fuse.OK
+	return proto.FsError_FS_OK
 }
 
-// reclaimError wraps a fuse.Status from a failed reclaim as a non-retryable
+// reclaimError wraps a proto.FsError from a failed reclaim as a non-retryable
 // error so retryOp short-circuits and the status reaches userspace unchanged.
-type reclaimError struct{ st fuse.Status }
+type reclaimError struct{ st proto.FsError }
 
 func (e reclaimError) Error() string { return "reclaim failed: " + e.st.String() }
 
-func errFromStatus(st fuse.Status) error { return reclaimError{st} }
+func errFromStatus(st proto.FsError) error { return reclaimError{st} }
 
 // sanitizeReopenFlags returns the open flags to use when REOPENING an
 // already-open file during reclaim. The file already exists and already holds

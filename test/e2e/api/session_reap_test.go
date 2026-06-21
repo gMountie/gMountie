@@ -120,7 +120,7 @@ func (s *SessionReapE2ESuite) TestReapPastGraceWireContract() {
 		RequestId: "reap-open-1",
 	})
 	s.Require().NoError(err, "Open on a live session must succeed")
-	s.Require().Zero(openReply.GetStatus(), "Open must return fuse.OK")
+	s.Require().Zero(openReply.GetStatus(), "Open must return proto.FsError_FS_OK")
 	fd := openReply.GetFd()
 
 	// Sanity: an fd-op on the live session works before the reap.
@@ -165,7 +165,7 @@ func (s *SessionReapE2ESuite) TestReapPastGraceWireContract() {
 		RequestId: "reap-open-2",
 	})
 	s.Require().NoError(err, "Open on the fresh session must succeed")
-	s.Require().Zero(openReply2.GetStatus(), "Open on the fresh session must return fuse.OK")
+	s.Require().Zero(openReply2.GetStatus(), "Open on the fresh session must return proto.FsError_FS_OK")
 	_, err = s.file.Flush(ctx, &proto.FlushRequest{
 		Volume: s.volName, Fd: openReply2.GetFd(), SessionId: sid2,
 	})

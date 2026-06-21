@@ -13,7 +13,6 @@ import (
 	grpcclient "go.gmountie.dev/gmountie/pkg/client/grpc"
 	"go.gmountie.dev/gmountie/pkg/proto"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc"
@@ -114,14 +113,14 @@ func (s *ReclaimStaleSuite) TestReopensWhenStale() {
 				req.Caller == openerCaller // must be the stored opener identity
 		}),
 		mock.Anything,
-	).Return(&proto.OpenReply{Fd: wantFd, Status: int32(fuse.OK)}, nil).Once()
+	).Return(&proto.OpenReply{Fd: wantFd, Status: proto.FsError_FS_OK}, nil).Once()
 
 	h := s.newStaleHandle(client, fileClient, path, 7, flags, "A")
 	h.reopenCaller = openerCaller // inject the opener's identity
 
 	st := h.reclaimIfStale(context.Background())
 
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(wantFd, h.state.Load().fd, "fd must be updated to the reply fd")
 	s.Assert().Equal("B", h.state.Load().sessionID, "sessionID must be updated to the live session")
 	s.Assert().Equal("epoch-2", h.state.Load().epoch, "epoch must be updated to the live boot epoch")
@@ -146,7 +145,7 @@ func (s *ReclaimStaleSuite) TestNoopWhenFresh() {
 
 	st := h.reclaimIfStale(context.Background())
 
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(origFd, h.state.Load().fd, "fd must be unchanged")
 	s.Assert().Equal("A", h.state.Load().sessionID, "sessionID must be unchanged")
 	fileClient.AssertNumberOfCalls(s.T(), "Open", 0)
@@ -167,7 +166,7 @@ func (s *ReclaimStaleSuite) TestConcurrentReopenOnce() {
 	fileClient.EXPECT().Open(mock.Anything, mock.Anything, mock.Anything).
 		RunAndReturn(func(_ context.Context, _ *proto.OpenRequest, _ ...grpc.CallOption) (*proto.OpenReply, error) {
 			openCount.Add(1)
-			return &proto.OpenReply{Fd: 42, Status: int32(fuse.OK)}, nil
+			return &proto.OpenReply{Fd: 42, Status: proto.FsError_FS_OK}, nil
 		}).Maybe()
 
 	h := s.newStaleHandle(client, fileClient, "/f", 7, uint32(syscall.O_RDWR), "A")
@@ -179,7 +178,7 @@ func (s *ReclaimStaleSuite) TestConcurrentReopenOnce() {
 		go func() {
 			defer wg.Done()
 			st := h.reclaimIfStale(context.Background())
-			s.Assert().Equal(fuse.OK, st)
+			s.Assert().Equal(proto.FsError_FS_OK, st)
 		}()
 	}
 	wg.Wait()
@@ -213,7 +212,7 @@ func (s *ReclaimStaleSuite) TestNoReclaimOnReap() {
 
 	st := h.reclaimIfStale(context.Background())
 
-	s.Require().Equal(fuse.Status(syscall.ESTALE), st, "reap must fail cleanly with ESTALE, not reopen")
+	s.Require().Equal(proto.FsError_FS_ESTALE, st, "reap must fail cleanly with ESTALE, not reopen")
 	s.Assert().Equal(origFd, h.state.Load().fd, "fd must be unchanged on a reap")
 	s.Assert().Equal(origSession, h.state.Load().sessionID, "sessionID must be unchanged on a reap")
 	s.Assert().Equal(origEpoch, h.state.Load().epoch, "epoch must be unchanged on a reap")
@@ -242,13 +241,13 @@ func (s *ReclaimStaleSuite) TestReclaimOnRestart() {
 				req.RequestId != ""
 		}),
 		mock.Anything,
-	).Return(&proto.OpenReply{Fd: wantFd, Status: int32(fuse.OK)}, nil).Once()
+	).Return(&proto.OpenReply{Fd: wantFd, Status: proto.FsError_FS_OK}, nil).Once()
 
 	h := s.newStaleHandle(client, fileClient, "/data/file.txt", 7, uint32(syscall.O_RDONLY), "A")
 
 	st := h.reclaimIfStale(context.Background())
 
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(wantFd, h.state.Load().fd, "fd must be updated to the reply fd")
 	s.Assert().Equal("B", h.state.Load().sessionID, "sessionID must be updated to the live session")
 	s.Assert().Equal("epoch-2", h.state.Load().epoch, "epoch must be updated to the live boot epoch")

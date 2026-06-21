@@ -67,7 +67,7 @@ func (s *RpcServerTestSuite) TestReadDirStreamsInBatches() {
 	s.Len(stream.sent[2].Entries, 176)
 	total := 0
 	for _, b := range stream.sent {
-		s.Equal(int32(fuse.OK), b.Status)
+		s.Equal(proto.FsError_FS_OK, b.Status)
 		for _, e := range b.Entries {
 			s.Require().NotNil(e.Entry)
 			s.Require().NotNil(e.Attributes, "plus=true must carry attrs for %q", e.Entry.Name)
@@ -109,7 +109,7 @@ func (s *RpcServerTestSuite) TestReadDirEmptyDir() {
 	s.Require().NoError(err)
 	s.Require().Len(stream.sent, 1)
 	s.Empty(stream.sent[0].Entries)
-	s.Equal(int32(fuse.OK), stream.sent[0].Status)
+	s.Equal(proto.FsError_FS_OK, stream.sent[0].Status)
 }
 
 // TestReadDirBindError: an unknown volume surfaces the BindIdentity gRPC
@@ -142,7 +142,7 @@ func (s *RpcServerTestSuite) TestReadDirFuseFailureTerminalBatch() {
 	s.Require().NoError(err)
 	s.Require().Len(stream.sent, 1)
 	s.Empty(stream.sent[0].Entries)
-	s.Equal(int32(fuse.ENOENT), stream.sent[0].Status)
+	s.Equal(proto.FsError_FS_ENOENT, stream.sent[0].Status)
 }
 
 // TestReadDirPlusFallbackWithoutCapability: when the bound FS does not

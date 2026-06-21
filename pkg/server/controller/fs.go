@@ -3,8 +3,10 @@ package controller
 import (
 	"context"
 	"strings"
+	"syscall"
 	"time"
 
+	fserr "go.gmountie.dev/gmountie/pkg/common/fserr"
 	"go.gmountie.dev/gmountie/pkg/proto"
 	serverio "go.gmountie.dev/gmountie/pkg/server/io"
 	"go.gmountie.dev/gmountie/pkg/server/metrics"
@@ -49,15 +51,15 @@ func (r *RpcServerImpl) GetAttr(ctx context.Context, request *proto.GetAttrReque
 	if err != nil {
 		return nil, err
 	}
-	attr, status := fs.GetAttr(request.Path, createContext(ctx, request.Caller))
+	attr, st := fs.GetAttr(request.Path, createContext(ctx, request.Caller))
 	if attr == nil {
 		return &proto.GetAttrReply{
-			Status: int32(status),
+			Status: fserr.FromErrno(syscall.Errno(st)),
 		}, nil
 	}
 	reply := &proto.GetAttrReply{
 		Attributes: toProtoAttr(attr, &id),
-		Status:     int32(status),
+		Status:     fserr.FromErrno(syscall.Errno(st)),
 	}
 	return reply, nil
 }
@@ -76,12 +78,12 @@ func (r *RpcServerImpl) Mkdir(ctx context.Context, request *proto.MkdirRequest) 
 	return withIdempotency(sess, request.RequestId, func() (*proto.MkdirReply, error) {
 		fctx := createContext(ctx, request.Caller)
 		if s := fs.Mkdir(request.Path, request.Mode, fctx); s != fuse.OK {
-			return &proto.MkdirReply{Status: int32(s)}, nil
+			return &proto.MkdirReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
 		}
 		// ONE trailing stat serves both the reply attrs and the event seed —
 		// see statAttrsAndEmit for the stat-fail partial-success contract.
 		reply := &proto.MkdirReply{
-			Status:     int32(fuse.OK),
+			Status:     proto.FsError_FS_OK,
 			Attributes: r.statAttrsAndEmit(fs, request.Volume, request.Path, &id, fctx),
 		}
 		return reply, nil
@@ -101,7 +103,7 @@ func (r *RpcServerImpl) Rmdir(ctx context.Context, request *proto.RmdirRequest) 
 		s := r.deleteEmit(request.Volume, request.Path, func() fuse.Status {
 			return fs.Rmdir(request.Path, createContext(ctx, request.Caller))
 		})
-		return &proto.RmdirReply{Status: int32(s)}, nil
+		return &proto.RmdirReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
 	})
 }
 
@@ -118,7 +120,7 @@ func (r *RpcServerImpl) Rename(ctx context.Context, request *proto.RenameRequest
 		s := r.renameEmit(ctx, fs, request.Volume, request.OldName, request.NewName, request.Caller, func() fuse.Status {
 			return fs.Rename(request.OldName, request.NewName, createContext(ctx, request.Caller))
 		})
-		return &proto.RenameReply{Status: int32(s)}, nil
+		return &proto.RenameReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
 	})
 }
 
@@ -131,7 +133,7 @@ func (r *RpcServerImpl) Readlink(ctx context.Context, request *proto.ReadlinkReq
 		return nil, err
 	}
 	target, st := fs.Readlink(request.Path, createContext(ctx, request.Caller))
-	return &proto.ReadlinkReply{Target: target, Status: int32(st)}, nil
+	return &proto.ReadlinkReply{Target: target, Status: fserr.FromErrno(syscall.Errno(st))}, nil
 }
 
 // Symlink creates the link and, on success, returns the LINK's own attrs in
@@ -149,12 +151,12 @@ func (r *RpcServerImpl) Symlink(ctx context.Context, request *proto.SymlinkReque
 	return withIdempotency(sess, request.RequestId, func() (*proto.SymlinkReply, error) {
 		fctx := createContext(ctx, request.Caller)
 		if s := fs.Symlink(request.Target, request.LinkPath, fctx); s != fuse.OK {
-			return &proto.SymlinkReply{Status: int32(s)}, nil
+			return &proto.SymlinkReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
 		}
 		// ONE trailing stat for both reply attrs and event seed — see
 		// statAttrsAndEmit for the stat-fail partial-success contract.
 		reply := &proto.SymlinkReply{
-			Status:     int32(fuse.OK),
+			Status:     proto.FsError_FS_OK,
 			Attributes: r.statAttrsAndEmit(fs, request.Volume, request.LinkPath, &id, fctx),
 		}
 		return reply, nil
@@ -195,7 +197,7 @@ func (r *RpcServerImpl) ReadDir(req *proto.ReadDirRequest, stream proto.RpcFs_Re
 		}
 	}
 	if !st.Ok() {
-		return stream.Send(&proto.ReadDirBatch{Status: int32(st)})
+		return stream.Send(&proto.ReadDirBatch{Status: fserr.FromErrno(syscall.Errno(st))})
 	}
 	// Stream batches. An EMPTY directory still sends one empty OK batch so
 	// the client can distinguish success-empty from a stream that produced
@@ -261,7 +263,7 @@ func (r *RpcServerImpl) Unlink(ctx context.Context, request *proto.UnlinkRequest
 		s := r.deleteEmit(request.Volume, request.Path, func() fuse.Status {
 			return fs.Unlink(request.Path, createContext(ctx, request.Caller))
 		})
-		return &proto.UnlinkReply{Status: int32(s)}, nil
+		return &proto.UnlinkReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
 	})
 }
 
@@ -270,8 +272,8 @@ func (r *RpcServerImpl) Access(ctx context.Context, request *proto.AccessRequest
 	if err != nil {
 		return nil, err
 	}
-	status := fs.Access(request.Path, request.Mode, createContext(ctx, request.Caller))
-	return &proto.AccessReply{Status: int32(status)}, nil
+	st := fs.Access(request.Path, request.Mode, createContext(ctx, request.Caller))
+	return &proto.AccessReply{Status: fserr.FromErrno(syscall.Errno(st))}, nil
 }
 
 // fileTimeToTime maps a wire FileTime to a Go time pointer. A nil input yields
@@ -313,9 +315,9 @@ func (r *RpcServerImpl) SetAttr(ctx context.Context, request *proto.SetAttrReque
 			if mutated {
 				r.emitMutatedAttr(request.Volume, request.Path, nil)
 			}
-			return &proto.SetAttrReply{Status: int32(s)}, nil
+			return &proto.SetAttrReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
 		}
-		reply := &proto.SetAttrReply{Status: int32(fuse.OK)}
+		reply := &proto.SetAttrReply{Status: proto.FsError_FS_OK}
 		// ONE trailing stat serves both the reply attrs and the event seed —
 		// emitMutatedAttr deliberately replaces versionAfter, which re-stats.
 		// mutated is false only for a degenerate request with no settable
@@ -411,8 +413,8 @@ func (r *RpcServerImpl) GetXAttr(ctx context.Context, request *proto.GetXAttrReq
 	if err != nil {
 		return nil, err
 	}
-	data, status := fs.GetXAttr(request.Path, request.Attribute, createContext(ctx, request.Caller))
-	return &proto.GetXAttrReply{Data: data, Status: int32(status)}, nil
+	data, st := fs.GetXAttr(request.Path, request.Attribute, createContext(ctx, request.Caller))
+	return &proto.GetXAttrReply{Data: data, Status: fserr.FromErrno(syscall.Errno(st))}, nil
 }
 
 func (r *RpcServerImpl) SetXAttr(ctx context.Context, request *proto.SetXAttrRequest) (*proto.SetXAttrReply, error) {
@@ -421,7 +423,7 @@ func (r *RpcServerImpl) SetXAttr(ctx context.Context, request *proto.SetXAttrReq
 		return nil, err
 	}
 	if !xattrWriteAllowed(request.Attribute) {
-		return &proto.SetXAttrReply{Status: int32(fuse.EPERM)}, nil
+		return &proto.SetXAttrReply{Status: proto.FsError_FS_EPERM}, nil
 	}
 	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
@@ -431,7 +433,7 @@ func (r *RpcServerImpl) SetXAttr(ctx context.Context, request *proto.SetXAttrReq
 		s := r.mutateEmit(ctx, fs, request.Volume, request.Path, request.Caller, func() fuse.Status {
 			return fs.SetXAttr(request.Path, request.Attribute, request.Data, int(request.Flags), createContext(ctx, request.Caller))
 		})
-		return &proto.SetXAttrReply{Status: int32(s)}, nil
+		return &proto.SetXAttrReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
 	})
 }
 
@@ -441,7 +443,7 @@ func (r *RpcServerImpl) RemoveXAttr(ctx context.Context, request *proto.RemoveXA
 		return nil, err
 	}
 	if !xattrWriteAllowed(request.Attribute) {
-		return &proto.RemoveXAttrReply{Status: int32(fuse.EPERM)}, nil
+		return &proto.RemoveXAttrReply{Status: proto.FsError_FS_EPERM}, nil
 	}
 	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
 	if err != nil {
@@ -451,7 +453,7 @@ func (r *RpcServerImpl) RemoveXAttr(ctx context.Context, request *proto.RemoveXA
 		s := r.mutateEmit(ctx, fs, request.Volume, request.Path, request.Caller, func() fuse.Status {
 			return fs.RemoveXAttr(request.Path, request.Attribute, createContext(ctx, request.Caller))
 		})
-		return &proto.RemoveXAttrReply{Status: int32(s)}, nil
+		return &proto.RemoveXAttrReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
 	})
 }
 
@@ -463,7 +465,7 @@ func (r *RpcServerImpl) ListXAttr(ctx context.Context, request *proto.ListXAttrR
 		return nil, err
 	}
 	attrs, st := fs.ListXAttr(request.Path, createContext(ctx, request.Caller))
-	return &proto.ListXAttrReply{Attributes: attrs, Status: int32(st)}, nil
+	return &proto.ListXAttrReply{Attributes: attrs, Status: fserr.FromErrno(syscall.Errno(st))}, nil
 }
 
 func (r *RpcServerImpl) GetAttrIfChanged(ctx context.Context, request *proto.GetAttrIfChangedRequest) (*proto.GetAttrIfChangedReply, error) {

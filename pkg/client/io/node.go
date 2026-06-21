@@ -18,6 +18,9 @@ import (
 	"strings"
 	"syscall"
 
+	fserr "go.gmountie.dev/gmountie/pkg/common/fserr"
+	"go.gmountie.dev/gmountie/pkg/proto"
+
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
@@ -153,8 +156,8 @@ func childPath(parent, name string) string {
 
 func (n *gMountieNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	a, st := n.backend.Lookup(ctx, n.path(), name)
-	if !st.Ok() {
-		return nil, syscall.Errno(st)
+	if st != proto.FsError_FS_OK {
+		return nil, fserr.ToErrno(st)
 	}
 	setAttrFromBackend(&out.Attr, a, n.rewriter)
 	return n.newChild(ctx, a), 0
@@ -164,8 +167,8 @@ func (n *gMountieNode) Lookup(ctx context.Context, name string, out *fuse.EntryO
 
 func (n *gMountieNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries, st := n.backend.ListDir(ctx, n.path())
-	if !st.Ok() {
-		return nil, syscall.Errno(st)
+	if st != proto.FsError_FS_OK {
+		return nil, fserr.ToErrno(st)
 	}
 	// Only the dirent part feeds the kernel here; per-entry attrs (plus
 	// listings) are consumed by the cache layer, which primes its attr
@@ -185,8 +188,8 @@ func (n *gMountieNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno
 
 func (n *gMountieNode) Getattr(ctx context.Context, _ fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
 	a, st := n.backend.Stat(ctx, n.path())
-	if !st.Ok() {
-		return syscall.Errno(st)
+	if st != proto.FsError_FS_OK {
+		return fserr.ToErrno(st)
 	}
 	setAttrFromBackend(&out.Attr, a, n.rewriter)
 	return 0
@@ -243,8 +246,8 @@ func (n *gMountieNode) Setattr(ctx context.Context, _ fs.FileHandle, in *fuse.Se
 		req.Mtime = &mtime
 	}
 	a, st := n.backend.SetAttr(ctx, p, req)
-	if !st.Ok() {
-		return syscall.Errno(st)
+	if st != proto.FsError_FS_OK {
+		return fserr.ToErrno(st)
 	}
 	// The server omits attrs only when its post-apply stat failed. Fall back
 	// to Stat rather than handing the kernel a zero fuse.Attr — the kernel
@@ -252,8 +255,8 @@ func (n *gMountieNode) Setattr(ctx context.Context, _ fs.FileHandle, in *fuse.Se
 	// concern as Create's fallback).
 	if a == nil {
 		a, st = n.backend.Stat(ctx, p)
-		if !st.Ok() {
-			return syscall.Errno(st)
+		if st != proto.FsError_FS_OK {
+			return fserr.ToErrno(st)
 		}
 	}
 	setAttrFromBackend(&out.Attr, a, n.rewriter)
@@ -275,8 +278,8 @@ func (n *gMountieNode) wantDirectIO(relPath string) bool {
 func (n *gMountieNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
 	p := n.path()
 	h, st := n.backend.Open(ctx, p, flags)
-	if !st.Ok() {
-		return nil, 0, syscall.Errno(st)
+	if st != proto.FsError_FS_OK {
+		return nil, 0, fserr.ToErrno(st)
 	}
 	var fuseFlags uint32
 	if n.wantDirectIO(p) {
@@ -290,8 +293,8 @@ func (n *gMountieNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, u
 func (n *gMountieNode) Create(ctx context.Context, name string, flags, mode uint32, out *fuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
 	parent := n.path()
 	handle, attr, st := n.backend.Create(ctx, parent, name, flags, mode)
-	if !st.Ok() {
-		return nil, nil, 0, syscall.Errno(st)
+	if st != proto.FsError_FS_OK {
+		return nil, nil, 0, fserr.ToErrno(st)
 	}
 	full := childPath(parent, name)
 	// When the server populates CreateReply.Attributes the backend maps it
@@ -303,8 +306,8 @@ func (n *gMountieNode) Create(ctx context.Context, name string, flags, mode uint
 	// and cleaned up by Release-on-close.
 	if attr == nil {
 		a, sst := n.backend.Stat(ctx, full)
-		if !sst.Ok() {
-			return nil, nil, 0, syscall.Errno(sst)
+		if sst != proto.FsError_FS_OK {
+			return nil, nil, 0, fserr.ToErrno(sst)
 		}
 		attr = a
 	}
@@ -321,8 +324,8 @@ func (n *gMountieNode) Create(ctx context.Context, name string, flags, mode uint
 func (n *gMountieNode) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	full := childPath(n.path(), name)
 	a, st := n.backend.Mkdir(ctx, full, mode)
-	if !st.Ok() {
-		return nil, syscall.Errno(st)
+	if st != proto.FsError_FS_OK {
+		return nil, fserr.ToErrno(st)
 	}
 	// The reply carries the new directory's attrs, so no trailing Stat. The
 	// server omits them only when its post-create stat failed; fall back to
@@ -330,10 +333,10 @@ func (n *gMountieNode) Mkdir(ctx context.Context, name string, mode uint32, out 
 	// the zero (Mode=0, Size=0) for EntryTimeout and poison subsequent stat
 	// ops (same rationale as the Create/Setattr fallbacks).
 	if a == nil {
-		var sst fuse.Status
+		var sst proto.FsError
 		a, sst = n.backend.Stat(ctx, full)
-		if !sst.Ok() {
-			return nil, syscall.Errno(sst)
+		if sst != proto.FsError_FS_OK {
+			return nil, fserr.ToErrno(sst)
 		}
 	}
 	setAttrFromBackend(&out.Attr, a, n.rewriter)
@@ -348,18 +351,18 @@ func (n *gMountieNode) Mkdir(ctx context.Context, name string, mode uint32, out 
 func (n *gMountieNode) Symlink(ctx context.Context, target, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	full := childPath(n.path(), name)
 	a, st := n.backend.Symlink(ctx, target, full)
-	if !st.Ok() {
-		return nil, syscall.Errno(st)
+	if st != proto.FsError_FS_OK {
+		return nil, fserr.ToErrno(st)
 	}
 	// The reply carries the new link's attrs (S_IFLNK — the link itself, not
 	// the target), so no trailing Stat. The server omits them only when its
 	// post-create stat failed; fall back to Stat rather than handing the
 	// kernel a zero EntryOut (kernel-cache poisoning, same as Mkdir/Create).
 	if a == nil {
-		var sst fuse.Status
+		var sst proto.FsError
 		a, sst = n.backend.Stat(ctx, full)
-		if !sst.Ok() {
-			return nil, syscall.Errno(sst)
+		if sst != proto.FsError_FS_OK {
+			return nil, fserr.ToErrno(sst)
 		}
 	}
 	setAttrFromBackend(&out.Attr, a, n.rewriter)
@@ -371,8 +374,8 @@ func (n *gMountieNode) Symlink(ctx context.Context, target, name string, out *fu
 // and every symlink under the mount is unfollowable.
 func (n *gMountieNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
 	target, st := n.backend.Readlink(ctx, n.path())
-	if !st.Ok() {
-		return nil, syscall.Errno(st)
+	if st != proto.FsError_FS_OK {
+		return nil, fserr.ToErrno(st)
 	}
 	return []byte(target), 0
 }
@@ -380,11 +383,11 @@ func (n *gMountieNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
 // --- Rmdir / Unlink ---
 
 func (n *gMountieNode) Rmdir(ctx context.Context, name string) syscall.Errno {
-	return syscall.Errno(n.backend.Rmdir(ctx, childPath(n.path(), name)))
+	return fserr.ToErrno(n.backend.Rmdir(ctx, childPath(n.path(), name)))
 }
 
 func (n *gMountieNode) Unlink(ctx context.Context, name string) syscall.Errno {
-	return syscall.Errno(n.backend.Unlink(ctx, childPath(n.path(), name)))
+	return fserr.ToErrno(n.backend.Unlink(ctx, childPath(n.path(), name)))
 }
 
 // --- Rename ---
@@ -400,7 +403,7 @@ func (n *gMountieNode) Rename(ctx context.Context, name string, newParent fs.Ino
 	}
 	oldP := childPath(n.path(), name)
 	newP := childPath(np.path(), newName)
-	return syscall.Errno(n.backend.Rename(ctx, oldP, newP))
+	return fserr.ToErrno(n.backend.Rename(ctx, oldP, newP))
 }
 
 // --- CopyFileRange ---
@@ -420,8 +423,8 @@ func (n *gMountieNode) CopyFileRange(ctx context.Context, fhIn fs.FileHandle, of
 		return 0, syscall.EBADF
 	}
 	copied, st := n.backend.CopyFileRange(ctx, src.fh, offIn, dst.fh, offOut, length, flags)
-	if !st.Ok() {
-		return 0, syscall.Errno(st)
+	if st != proto.FsError_FS_OK {
+		return 0, fserr.ToErrno(st)
 	}
 	if copied > math.MaxUint32 {
 		copied = math.MaxUint32
@@ -433,8 +436,8 @@ func (n *gMountieNode) CopyFileRange(ctx context.Context, fhIn fs.FileHandle, of
 
 func (n *gMountieNode) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
 	s, st := n.backend.StatFs(ctx, n.path())
-	if !st.Ok() {
-		return syscall.Errno(st)
+	if st != proto.FsError_FS_OK {
+		return fserr.ToErrno(st)
 	}
 	out.Blocks = s.Blocks
 	out.Bfree = s.Bfree
@@ -450,15 +453,15 @@ func (n *gMountieNode) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.
 // --- Access ---
 
 func (n *gMountieNode) Access(ctx context.Context, mask uint32) syscall.Errno {
-	return syscall.Errno(n.backend.Access(ctx, n.path(), mask))
+	return fserr.ToErrno(n.backend.Access(ctx, n.path(), mask))
 }
 
 // --- Getxattr ---
 
 func (n *gMountieNode) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
 	data, st := n.backend.GetXAttr(ctx, n.path(), attr)
-	if !st.Ok() {
-		return 0, syscall.Errno(st)
+	if st != proto.FsError_FS_OK {
+		return 0, fserr.ToErrno(st)
 	}
 	if len(data) > len(dest) {
 		return uint32(len(data)), syscall.Errno(fuse.ERANGE)
@@ -469,11 +472,11 @@ func (n *gMountieNode) Getxattr(ctx context.Context, attr string, dest []byte) (
 // --- Setxattr / Removexattr / Listxattr ---
 
 func (n *gMountieNode) Setxattr(ctx context.Context, attr string, data []byte, flags uint32) syscall.Errno {
-	return syscall.Errno(n.backend.SetXAttr(ctx, n.path(), attr, data, flags))
+	return fserr.ToErrno(n.backend.SetXAttr(ctx, n.path(), attr, data, flags))
 }
 
 func (n *gMountieNode) Removexattr(ctx context.Context, attr string) syscall.Errno {
-	return syscall.Errno(n.backend.RemoveXAttr(ctx, n.path(), attr))
+	return fserr.ToErrno(n.backend.RemoveXAttr(ctx, n.path(), attr))
 }
 
 // Listxattr marshals names into the kernel's NUL-joined buffer format.
@@ -481,8 +484,8 @@ func (n *gMountieNode) Removexattr(ctx context.Context, attr string) syscall.Err
 // size so the caller can re-issue with a bigger buffer.
 func (n *gMountieNode) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
 	names, st := n.backend.ListXAttr(ctx, n.path())
-	if !st.Ok() {
-		return 0, syscall.Errno(st)
+	if st != proto.FsError_FS_OK {
+		return 0, fserr.ToErrno(st)
 	}
 	sz := 0
 	for _, name := range names {
@@ -504,52 +507,52 @@ func (n *gMountieNode) Listxattr(ctx context.Context, dest []byte) (uint32, sysc
 
 func (f *gMountieFile) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
 	n, st := f.backend.Read(ctx, f.fh, off, dest)
-	if !st.Ok() {
-		return nil, syscall.Errno(st)
+	if st != proto.FsError_FS_OK {
+		return nil, fserr.ToErrno(st)
 	}
 	return fuse.ReadResultData(dest[:n]), 0
 }
 
 func (f *gMountieFile) Write(ctx context.Context, data []byte, off int64) (uint32, syscall.Errno) {
 	n, st := f.backend.Write(ctx, f.fh, off, data)
-	if !st.Ok() {
-		return 0, syscall.Errno(st)
+	if st != proto.FsError_FS_OK {
+		return 0, fserr.ToErrno(st)
 	}
 	return n, 0
 }
 
 func (f *gMountieFile) Flush(ctx context.Context) syscall.Errno {
-	return syscall.Errno(f.backend.Flush(ctx, f.fh))
+	return fserr.ToErrno(f.backend.Flush(ctx, f.fh))
 }
 
 func (f *gMountieFile) Fsync(ctx context.Context, flags uint32) syscall.Errno {
-	return syscall.Errno(f.backend.Fsync(ctx, f.fh, int64(flags)))
+	return fserr.ToErrno(f.backend.Fsync(ctx, f.fh, int64(flags)))
 }
 
 func (f *gMountieFile) Release(ctx context.Context) syscall.Errno {
-	return syscall.Errno(f.backend.Release(ctx, f.fh))
+	return fserr.ToErrno(f.backend.Release(ctx, f.fh))
 }
 
 func (f *gMountieFile) Allocate(ctx context.Context, off, size uint64, mode uint32) syscall.Errno {
-	return syscall.Errno(f.backend.Allocate(ctx, f.fh, off, size, mode))
+	return fserr.ToErrno(f.backend.Allocate(ctx, f.fh, off, size, mode))
 }
 
 func (f *gMountieFile) Getlk(ctx context.Context, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) syscall.Errno {
-	return syscall.Errno(f.backend.GetLk(ctx, f.fh, owner, lk, flags, out))
+	return fserr.ToErrno(f.backend.GetLk(ctx, f.fh, owner, lk, flags, out))
 }
 
 func (f *gMountieFile) Setlk(ctx context.Context, owner uint64, lk *fuse.FileLock, flags uint32) syscall.Errno {
-	return syscall.Errno(f.backend.SetLk(ctx, f.fh, owner, lk, flags))
+	return fserr.ToErrno(f.backend.SetLk(ctx, f.fh, owner, lk, flags))
 }
 
 func (f *gMountieFile) Setlkw(ctx context.Context, owner uint64, lk *fuse.FileLock, flags uint32) syscall.Errno {
-	return syscall.Errno(f.backend.SetLkw(ctx, f.fh, owner, lk, flags))
+	return fserr.ToErrno(f.backend.SetLkw(ctx, f.fh, owner, lk, flags))
 }
 
 func (f *gMountieFile) Lseek(ctx context.Context, off uint64, whence uint32) (uint64, syscall.Errno) {
 	o, st := f.backend.Lseek(ctx, f.fh, off, whence)
-	if !st.Ok() {
-		return 0, syscall.Errno(st)
+	if st != proto.FsError_FS_OK {
+		return 0, fserr.ToErrno(st)
 	}
 	return o, 0
 }

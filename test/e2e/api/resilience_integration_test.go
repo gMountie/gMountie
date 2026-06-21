@@ -32,14 +32,13 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
 	clientio "go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/test/e2e/utils"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -155,7 +154,7 @@ func (s *ResilienceSuite) TestResumesWithinGrace() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	_, st := backend.Stat(ctx, "/")
-	s.Require().Equal(fuse.OK, st, "GetAttr straddling a sub-grace drop must succeed")
+	s.Require().Equal(proto.FsError_FS_OK, st, "GetAttr straddling a sub-grace drop must succeed")
 
 	// Session id unchanged: the drop was reclaimed by Resume, not Create.
 	s.Require().Equal(startID, appCtx.GetClient().SessionID(),
@@ -185,7 +184,7 @@ func (s *ResilienceSuite) TestFdOpFailsCleanlyPastGrace() {
 
 	// Open an fd on the pre-drop session.
 	fh, st := backend.Open(context.Background(), "/data.bin", uint32(os.O_RDONLY))
-	s.Require().Equal(fuse.OK, st, "Open before the drop must succeed")
+	s.Require().Equal(proto.FsError_FS_OK, st, "Open before the drop must succeed")
 
 	// Drop long enough to reap the session → client Creates a fresh one.
 	oldID, newID := s.severUntilSessionChanges(appCtx)
@@ -196,7 +195,7 @@ func (s *ResilienceSuite) TestFdOpFailsCleanlyPastGrace() {
 	// reopen and surfaces a "stale file handle" rather than reopening a
 	// possibly-mutated file. ESTALE (not the misleading ENOENT) is the honest
 	// errno for a dead fd; the file still exists server-side (issue #117).
-	done := make(chan fuse.Status, 1)
+	done := make(chan proto.FsError, 1)
 	go func() {
 		dest := make([]byte, 16)
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -206,7 +205,7 @@ func (s *ResilienceSuite) TestFdOpFailsCleanlyPastGrace() {
 	}()
 	select {
 	case rst := <-done:
-		s.Require().Equal(fuse.Status(syscall.ESTALE), rst,
+		s.Require().Equal(proto.FsError_FS_ESTALE, rst,
 			"fd-op on a reaped session must fail with ESTALE (stale handle), not OK (silent loss) or ENOENT (misleading)")
 	case <-time.After(20 * time.Second):
 		s.FailNow("fd-op on a reaped session hung instead of failing cleanly")
@@ -237,12 +236,12 @@ func (s *ResilienceSuite) TestWriteFailsCleanlyOnReap() {
 	backend := clientio.NewBackendClient(appCtx.GetClient(), "vol")
 
 	fh, st := backend.Open(context.Background(), "/out.bin", uint32(os.O_WRONLY))
-	s.Require().Equal(fuse.OK, st, "Open for write before the drop must succeed")
+	s.Require().Equal(proto.FsError_FS_OK, st, "Open for write before the drop must succeed")
 
 	// A write on the pre-drop session — accepted (possibly coalesced/acked),
 	// marking the handle dirty so the eventual Flush must emit a WriteAndFlush.
 	_, wst := backend.Write(context.Background(), fh, 0, []byte("partial-output"))
-	s.Require().Equal(fuse.OK, wst, "the pre-drop write must be accepted")
+	s.Require().Equal(proto.FsError_FS_OK, wst, "the pre-drop write must be accepted")
 
 	// Reap the session (drop > grace, same server → boot epoch unchanged).
 	oldID, newID := s.severUntilSessionChanges(appCtx)
@@ -251,7 +250,7 @@ func (s *ResilienceSuite) TestWriteFailsCleanlyOnReap() {
 	// Flush is the FUSE op behind close(2). It must surface the dead-fd failure
 	// as ESTALE — never silently succeed (which would leave a truncated file
 	// with no error reaching the writer), never ENOENT.
-	done := make(chan fuse.Status, 1)
+	done := make(chan proto.FsError, 1)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -259,7 +258,7 @@ func (s *ResilienceSuite) TestWriteFailsCleanlyOnReap() {
 	}()
 	select {
 	case fst := <-done:
-		s.Require().Equal(fuse.Status(syscall.ESTALE), fst,
+		s.Require().Equal(proto.FsError_FS_ESTALE, fst,
 			"a write reaped mid-flight must fail the flush with ESTALE, not silently truncate or ENOENT")
 	case <-time.After(20 * time.Second):
 		s.FailNow("Flush after a reaped session hung instead of failing cleanly")
@@ -310,9 +309,9 @@ func (s *ResilienceSuite) TestNoDoubleApplyPastGrace() {
 
 	// The caller gets EIO — honest "I don't know if it applied" — NOT a
 	// spurious EEXIST that would falsely report the dir as pre-existing.
-	s.Require().Equal(fuse.EIO, st,
+	s.Require().Equal(proto.FsError_FS_EIO, st,
 		"a path-mutation across a session change must surface EIO, not a replayed status")
-	s.Require().NotEqual(fuse.Status(syscall.EEXIST), st,
+	s.Require().NotEqual(proto.FsError_FS_EEXIST, st,
 		"the caller must NOT receive a spurious EEXIST masking the lost success")
 
 	// The directory exists exactly once on disk (applied by attempt 1, never
@@ -325,7 +324,7 @@ func (s *ResilienceSuite) TestNoDoubleApplyPastGrace() {
 	// cache) a replay of the same Mkdir WOULD surface EEXIST. That the caller
 	// got EIO above — not this EEXIST — is exactly the guard working.
 	_, replaySt := backend.Mkdir(context.Background(), "/newdir", 0o755)
-	s.Require().Equal(fuse.Status(syscall.EEXIST), replaySt,
+	s.Require().Equal(proto.FsError_FS_EEXIST, replaySt,
 		"sanity: a fresh Mkdir of the existing dir on the new session surfaces EEXIST; "+
 			"the guard prevented exactly this spurious status from reaching the first caller")
 }
@@ -356,7 +355,7 @@ func (s *ResilienceSuite) TestFdOpReclaimsAcrossRestart() {
 
 	// Open an fd on the pre-restart session.
 	fh, st := backend.Open(context.Background(), "/data.bin", uint32(os.O_RDONLY))
-	s.Require().Equal(fuse.OK, st, "Open before restart must succeed")
+	s.Require().Equal(proto.FsError_FS_OK, st, "Open before restart must succeed")
 
 	oldID := appCtx.GetClient().SessionID()
 	s.Require().NotEmpty(oldID)
@@ -376,7 +375,7 @@ func (s *ResilienceSuite) TestFdOpReclaimsAcrossRestart() {
 	// the epoch change and reopen by path, so the Read succeeds.
 	type result struct {
 		n  int
-		st fuse.Status
+		st proto.FsError
 	}
 	done := make(chan result, 1)
 	go func() {
@@ -389,14 +388,14 @@ func (s *ResilienceSuite) TestFdOpReclaimsAcrossRestart() {
 
 	select {
 	case r := <-done:
-		s.Require().Equal(fuse.OK, r.st, "fd-op must reclaim and succeed across a true restart")
+		s.Require().Equal(proto.FsError_FS_OK, r.st, "fd-op must reclaim and succeed across a true restart")
 		dest := make([]byte, len(content))
 		// Re-read to get the actual bytes (done channel carries n, not dest).
 		// Redo the read synchronously now that the handle is reclaimed.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		n, rst2 := backend.Read(ctx, fh, 0, dest)
-		s.Require().Equal(fuse.OK, rst2, "second read after reclaim must succeed")
+		s.Require().Equal(proto.FsError_FS_OK, rst2, "second read after reclaim must succeed")
 		s.Require().Equal(content, string(dest[:n]), "reclaimed fd must return the original content")
 	case <-time.After(20 * time.Second):
 		s.FailNow("fd-op after a true restart hung instead of reclaiming")

@@ -10,6 +10,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	mock "github.com/stretchr/testify/mock"
 	"go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/proto"
 )
 
 // NewMockFileSystemBackend creates a new instance of MockFileSystemBackend. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
@@ -40,18 +41,18 @@ func (_m *MockFileSystemBackend) EXPECT() *MockFileSystemBackend_Expecter {
 }
 
 // Access provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) Access(ctx context.Context, path string, mode uint32) fuse.Status {
+func (_mock *MockFileSystemBackend) Access(ctx context.Context, path string, mode uint32) proto.FsError {
 	ret := _mock.Called(ctx, path, mode)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Access")
 	}
 
-	var r0 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uint32) fuse.Status); ok {
+	var r0 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uint32) proto.FsError); ok {
 		r0 = returnFunc(ctx, path, mode)
 	} else {
-		r0 = ret.Get(0).(fuse.Status)
+		r0 = ret.Get(0).(proto.FsError)
 	}
 	return r0
 }
@@ -92,29 +93,29 @@ func (_c *MockFileSystemBackend_Access_Call) Run(run func(ctx context.Context, p
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Access_Call) Return(status fuse.Status) *MockFileSystemBackend_Access_Call {
-	_c.Call.Return(status)
+func (_c *MockFileSystemBackend_Access_Call) Return(fsError proto.FsError) *MockFileSystemBackend_Access_Call {
+	_c.Call.Return(fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Access_Call) RunAndReturn(run func(ctx context.Context, path string, mode uint32) fuse.Status) *MockFileSystemBackend_Access_Call {
+func (_c *MockFileSystemBackend_Access_Call) RunAndReturn(run func(ctx context.Context, path string, mode uint32) proto.FsError) *MockFileSystemBackend_Access_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Allocate provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) Allocate(ctx context.Context, fh io.FileHandle, off uint64, size uint64, mode uint32) fuse.Status {
+func (_mock *MockFileSystemBackend) Allocate(ctx context.Context, fh io.FileHandle, off uint64, size uint64, mode uint32) proto.FsError {
 	ret := _mock.Called(ctx, fh, off, size, mode)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Allocate")
 	}
 
-	var r0 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, uint64, uint32) fuse.Status); ok {
+	var r0 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, uint64, uint32) proto.FsError); ok {
 		r0 = returnFunc(ctx, fh, off, size, mode)
 	} else {
-		r0 = ret.Get(0).(fuse.Status)
+		r0 = ret.Get(0).(proto.FsError)
 	}
 	return r0
 }
@@ -167,12 +168,12 @@ func (_c *MockFileSystemBackend_Allocate_Call) Run(run func(ctx context.Context,
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Allocate_Call) Return(status fuse.Status) *MockFileSystemBackend_Allocate_Call {
-	_c.Call.Return(status)
+func (_c *MockFileSystemBackend_Allocate_Call) Return(fsError proto.FsError) *MockFileSystemBackend_Allocate_Call {
+	_c.Call.Return(fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Allocate_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, off uint64, size uint64, mode uint32) fuse.Status) *MockFileSystemBackend_Allocate_Call {
+func (_c *MockFileSystemBackend_Allocate_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, off uint64, size uint64, mode uint32) proto.FsError) *MockFileSystemBackend_Allocate_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -222,7 +223,7 @@ func (_c *MockFileSystemBackend_Close_Call) RunAndReturn(run func() error) *Mock
 }
 
 // CopyFileRange provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) CopyFileRange(ctx context.Context, fhIn io.FileHandle, offIn uint64, fhOut io.FileHandle, offOut uint64, length uint64, flags uint64) (uint64, fuse.Status) {
+func (_mock *MockFileSystemBackend) CopyFileRange(ctx context.Context, fhIn io.FileHandle, offIn uint64, fhOut io.FileHandle, offOut uint64, length uint64, flags uint64) (uint64, proto.FsError) {
 	ret := _mock.Called(ctx, fhIn, offIn, fhOut, offOut, length, flags)
 
 	if len(ret) == 0 {
@@ -230,8 +231,8 @@ func (_mock *MockFileSystemBackend) CopyFileRange(ctx context.Context, fhIn io.F
 	}
 
 	var r0 uint64
-	var r1 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, io.FileHandle, uint64, uint64, uint64) (uint64, fuse.Status)); ok {
+	var r1 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, io.FileHandle, uint64, uint64, uint64) (uint64, proto.FsError)); ok {
 		return returnFunc(ctx, fhIn, offIn, fhOut, offOut, length, flags)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, io.FileHandle, uint64, uint64, uint64) uint64); ok {
@@ -239,10 +240,10 @@ func (_mock *MockFileSystemBackend) CopyFileRange(ctx context.Context, fhIn io.F
 	} else {
 		r0 = ret.Get(0).(uint64)
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, io.FileHandle, uint64, io.FileHandle, uint64, uint64, uint64) fuse.Status); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, io.FileHandle, uint64, io.FileHandle, uint64, uint64, uint64) proto.FsError); ok {
 		r1 = returnFunc(ctx, fhIn, offIn, fhOut, offOut, length, flags)
 	} else {
-		r1 = ret.Get(1).(fuse.Status)
+		r1 = ret.Get(1).(proto.FsError)
 	}
 	return r0, r1
 }
@@ -307,18 +308,18 @@ func (_c *MockFileSystemBackend_CopyFileRange_Call) Run(run func(ctx context.Con
 	return _c
 }
 
-func (_c *MockFileSystemBackend_CopyFileRange_Call) Return(v uint64, status fuse.Status) *MockFileSystemBackend_CopyFileRange_Call {
-	_c.Call.Return(v, status)
+func (_c *MockFileSystemBackend_CopyFileRange_Call) Return(v uint64, fsError proto.FsError) *MockFileSystemBackend_CopyFileRange_Call {
+	_c.Call.Return(v, fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_CopyFileRange_Call) RunAndReturn(run func(ctx context.Context, fhIn io.FileHandle, offIn uint64, fhOut io.FileHandle, offOut uint64, length uint64, flags uint64) (uint64, fuse.Status)) *MockFileSystemBackend_CopyFileRange_Call {
+func (_c *MockFileSystemBackend_CopyFileRange_Call) RunAndReturn(run func(ctx context.Context, fhIn io.FileHandle, offIn uint64, fhOut io.FileHandle, offOut uint64, length uint64, flags uint64) (uint64, proto.FsError)) *MockFileSystemBackend_CopyFileRange_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Create provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) Create(ctx context.Context, parent string, name string, flags uint32, mode uint32) (io.FileHandle, *io.Attr, fuse.Status) {
+func (_mock *MockFileSystemBackend) Create(ctx context.Context, parent string, name string, flags uint32, mode uint32) (io.FileHandle, *io.Attr, proto.FsError) {
 	ret := _mock.Called(ctx, parent, name, flags, mode)
 
 	if len(ret) == 0 {
@@ -327,8 +328,8 @@ func (_mock *MockFileSystemBackend) Create(ctx context.Context, parent string, n
 
 	var r0 io.FileHandle
 	var r1 *io.Attr
-	var r2 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, uint32, uint32) (io.FileHandle, *io.Attr, fuse.Status)); ok {
+	var r2 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, uint32, uint32) (io.FileHandle, *io.Attr, proto.FsError)); ok {
 		return returnFunc(ctx, parent, name, flags, mode)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, uint32, uint32) io.FileHandle); ok {
@@ -345,10 +346,10 @@ func (_mock *MockFileSystemBackend) Create(ctx context.Context, parent string, n
 			r1 = ret.Get(1).(*io.Attr)
 		}
 	}
-	if returnFunc, ok := ret.Get(2).(func(context.Context, string, string, uint32, uint32) fuse.Status); ok {
+	if returnFunc, ok := ret.Get(2).(func(context.Context, string, string, uint32, uint32) proto.FsError); ok {
 		r2 = returnFunc(ctx, parent, name, flags, mode)
 	} else {
-		r2 = ret.Get(2).(fuse.Status)
+		r2 = ret.Get(2).(proto.FsError)
 	}
 	return r0, r1, r2
 }
@@ -401,29 +402,29 @@ func (_c *MockFileSystemBackend_Create_Call) Run(run func(ctx context.Context, p
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Create_Call) Return(fileHandle io.FileHandle, attr *io.Attr, status fuse.Status) *MockFileSystemBackend_Create_Call {
-	_c.Call.Return(fileHandle, attr, status)
+func (_c *MockFileSystemBackend_Create_Call) Return(fileHandle io.FileHandle, attr *io.Attr, fsError proto.FsError) *MockFileSystemBackend_Create_Call {
+	_c.Call.Return(fileHandle, attr, fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Create_Call) RunAndReturn(run func(ctx context.Context, parent string, name string, flags uint32, mode uint32) (io.FileHandle, *io.Attr, fuse.Status)) *MockFileSystemBackend_Create_Call {
+func (_c *MockFileSystemBackend_Create_Call) RunAndReturn(run func(ctx context.Context, parent string, name string, flags uint32, mode uint32) (io.FileHandle, *io.Attr, proto.FsError)) *MockFileSystemBackend_Create_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Flush provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) Flush(ctx context.Context, fh io.FileHandle) fuse.Status {
+func (_mock *MockFileSystemBackend) Flush(ctx context.Context, fh io.FileHandle) proto.FsError {
 	ret := _mock.Called(ctx, fh)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Flush")
 	}
 
-	var r0 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle) fuse.Status); ok {
+	var r0 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle) proto.FsError); ok {
 		r0 = returnFunc(ctx, fh)
 	} else {
-		r0 = ret.Get(0).(fuse.Status)
+		r0 = ret.Get(0).(proto.FsError)
 	}
 	return r0
 }
@@ -458,29 +459,29 @@ func (_c *MockFileSystemBackend_Flush_Call) Run(run func(ctx context.Context, fh
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Flush_Call) Return(status fuse.Status) *MockFileSystemBackend_Flush_Call {
-	_c.Call.Return(status)
+func (_c *MockFileSystemBackend_Flush_Call) Return(fsError proto.FsError) *MockFileSystemBackend_Flush_Call {
+	_c.Call.Return(fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Flush_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle) fuse.Status) *MockFileSystemBackend_Flush_Call {
+func (_c *MockFileSystemBackend_Flush_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle) proto.FsError) *MockFileSystemBackend_Flush_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Fsync provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) Fsync(ctx context.Context, fh io.FileHandle, flags int64) fuse.Status {
+func (_mock *MockFileSystemBackend) Fsync(ctx context.Context, fh io.FileHandle, flags int64) proto.FsError {
 	ret := _mock.Called(ctx, fh, flags)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Fsync")
 	}
 
-	var r0 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, int64) fuse.Status); ok {
+	var r0 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, int64) proto.FsError); ok {
 		r0 = returnFunc(ctx, fh, flags)
 	} else {
-		r0 = ret.Get(0).(fuse.Status)
+		r0 = ret.Get(0).(proto.FsError)
 	}
 	return r0
 }
@@ -521,18 +522,18 @@ func (_c *MockFileSystemBackend_Fsync_Call) Run(run func(ctx context.Context, fh
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Fsync_Call) Return(status fuse.Status) *MockFileSystemBackend_Fsync_Call {
-	_c.Call.Return(status)
+func (_c *MockFileSystemBackend_Fsync_Call) Return(fsError proto.FsError) *MockFileSystemBackend_Fsync_Call {
+	_c.Call.Return(fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Fsync_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, flags int64) fuse.Status) *MockFileSystemBackend_Fsync_Call {
+func (_c *MockFileSystemBackend_Fsync_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, flags int64) proto.FsError) *MockFileSystemBackend_Fsync_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // GetAttrIfChanged provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) GetAttrIfChanged(ctx context.Context, path string, knownVersion uint64) (*io.Attr, bool, fuse.Status) {
+func (_mock *MockFileSystemBackend) GetAttrIfChanged(ctx context.Context, path string, knownVersion uint64) (*io.Attr, bool, proto.FsError) {
 	ret := _mock.Called(ctx, path, knownVersion)
 
 	if len(ret) == 0 {
@@ -541,8 +542,8 @@ func (_mock *MockFileSystemBackend) GetAttrIfChanged(ctx context.Context, path s
 
 	var r0 *io.Attr
 	var r1 bool
-	var r2 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uint64) (*io.Attr, bool, fuse.Status)); ok {
+	var r2 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uint64) (*io.Attr, bool, proto.FsError)); ok {
 		return returnFunc(ctx, path, knownVersion)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uint64) *io.Attr); ok {
@@ -557,10 +558,10 @@ func (_mock *MockFileSystemBackend) GetAttrIfChanged(ctx context.Context, path s
 	} else {
 		r1 = ret.Get(1).(bool)
 	}
-	if returnFunc, ok := ret.Get(2).(func(context.Context, string, uint64) fuse.Status); ok {
+	if returnFunc, ok := ret.Get(2).(func(context.Context, string, uint64) proto.FsError); ok {
 		r2 = returnFunc(ctx, path, knownVersion)
 	} else {
-		r2 = ret.Get(2).(fuse.Status)
+		r2 = ret.Get(2).(proto.FsError)
 	}
 	return r0, r1, r2
 }
@@ -601,29 +602,29 @@ func (_c *MockFileSystemBackend_GetAttrIfChanged_Call) Run(run func(ctx context.
 	return _c
 }
 
-func (_c *MockFileSystemBackend_GetAttrIfChanged_Call) Return(attr *io.Attr, b bool, status fuse.Status) *MockFileSystemBackend_GetAttrIfChanged_Call {
-	_c.Call.Return(attr, b, status)
+func (_c *MockFileSystemBackend_GetAttrIfChanged_Call) Return(attr *io.Attr, b bool, fsError proto.FsError) *MockFileSystemBackend_GetAttrIfChanged_Call {
+	_c.Call.Return(attr, b, fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_GetAttrIfChanged_Call) RunAndReturn(run func(ctx context.Context, path string, knownVersion uint64) (*io.Attr, bool, fuse.Status)) *MockFileSystemBackend_GetAttrIfChanged_Call {
+func (_c *MockFileSystemBackend_GetAttrIfChanged_Call) RunAndReturn(run func(ctx context.Context, path string, knownVersion uint64) (*io.Attr, bool, proto.FsError)) *MockFileSystemBackend_GetAttrIfChanged_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // GetLk provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) GetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) fuse.Status {
+func (_mock *MockFileSystemBackend) GetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) proto.FsError {
 	ret := _mock.Called(ctx, fh, owner, lk, flags, out)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetLk")
 	}
 
-	var r0 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, *fuse.FileLock, uint32, *fuse.FileLock) fuse.Status); ok {
+	var r0 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, *fuse.FileLock, uint32, *fuse.FileLock) proto.FsError); ok {
 		r0 = returnFunc(ctx, fh, owner, lk, flags, out)
 	} else {
-		r0 = ret.Get(0).(fuse.Status)
+		r0 = ret.Get(0).(proto.FsError)
 	}
 	return r0
 }
@@ -682,18 +683,18 @@ func (_c *MockFileSystemBackend_GetLk_Call) Run(run func(ctx context.Context, fh
 	return _c
 }
 
-func (_c *MockFileSystemBackend_GetLk_Call) Return(status fuse.Status) *MockFileSystemBackend_GetLk_Call {
-	_c.Call.Return(status)
+func (_c *MockFileSystemBackend_GetLk_Call) Return(fsError proto.FsError) *MockFileSystemBackend_GetLk_Call {
+	_c.Call.Return(fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_GetLk_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) fuse.Status) *MockFileSystemBackend_GetLk_Call {
+func (_c *MockFileSystemBackend_GetLk_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) proto.FsError) *MockFileSystemBackend_GetLk_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // GetXAttr provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) GetXAttr(ctx context.Context, path string, attr string) ([]byte, fuse.Status) {
+func (_mock *MockFileSystemBackend) GetXAttr(ctx context.Context, path string, attr string) ([]byte, proto.FsError) {
 	ret := _mock.Called(ctx, path, attr)
 
 	if len(ret) == 0 {
@@ -701,8 +702,8 @@ func (_mock *MockFileSystemBackend) GetXAttr(ctx context.Context, path string, a
 	}
 
 	var r0 []byte
-	var r1 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) ([]byte, fuse.Status)); ok {
+	var r1 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) ([]byte, proto.FsError)); ok {
 		return returnFunc(ctx, path, attr)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) []byte); ok {
@@ -712,10 +713,10 @@ func (_mock *MockFileSystemBackend) GetXAttr(ctx context.Context, path string, a
 			r0 = ret.Get(0).([]byte)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) fuse.Status); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) proto.FsError); ok {
 		r1 = returnFunc(ctx, path, attr)
 	} else {
-		r1 = ret.Get(1).(fuse.Status)
+		r1 = ret.Get(1).(proto.FsError)
 	}
 	return r0, r1
 }
@@ -756,18 +757,18 @@ func (_c *MockFileSystemBackend_GetXAttr_Call) Run(run func(ctx context.Context,
 	return _c
 }
 
-func (_c *MockFileSystemBackend_GetXAttr_Call) Return(bytes []byte, status fuse.Status) *MockFileSystemBackend_GetXAttr_Call {
-	_c.Call.Return(bytes, status)
+func (_c *MockFileSystemBackend_GetXAttr_Call) Return(bytes []byte, fsError proto.FsError) *MockFileSystemBackend_GetXAttr_Call {
+	_c.Call.Return(bytes, fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_GetXAttr_Call) RunAndReturn(run func(ctx context.Context, path string, attr string) ([]byte, fuse.Status)) *MockFileSystemBackend_GetXAttr_Call {
+func (_c *MockFileSystemBackend_GetXAttr_Call) RunAndReturn(run func(ctx context.Context, path string, attr string) ([]byte, proto.FsError)) *MockFileSystemBackend_GetXAttr_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // ListDir provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) ListDir(ctx context.Context, path string) ([]io.DirEntryPlus, fuse.Status) {
+func (_mock *MockFileSystemBackend) ListDir(ctx context.Context, path string) ([]io.DirEntryPlus, proto.FsError) {
 	ret := _mock.Called(ctx, path)
 
 	if len(ret) == 0 {
@@ -775,8 +776,8 @@ func (_mock *MockFileSystemBackend) ListDir(ctx context.Context, path string) ([
 	}
 
 	var r0 []io.DirEntryPlus
-	var r1 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) ([]io.DirEntryPlus, fuse.Status)); ok {
+	var r1 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) ([]io.DirEntryPlus, proto.FsError)); ok {
 		return returnFunc(ctx, path)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string) []io.DirEntryPlus); ok {
@@ -786,10 +787,10 @@ func (_mock *MockFileSystemBackend) ListDir(ctx context.Context, path string) ([
 			r0 = ret.Get(0).([]io.DirEntryPlus)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string) fuse.Status); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) proto.FsError); ok {
 		r1 = returnFunc(ctx, path)
 	} else {
-		r1 = ret.Get(1).(fuse.Status)
+		r1 = ret.Get(1).(proto.FsError)
 	}
 	return r0, r1
 }
@@ -824,18 +825,18 @@ func (_c *MockFileSystemBackend_ListDir_Call) Run(run func(ctx context.Context, 
 	return _c
 }
 
-func (_c *MockFileSystemBackend_ListDir_Call) Return(dirEntryPluss []io.DirEntryPlus, status fuse.Status) *MockFileSystemBackend_ListDir_Call {
-	_c.Call.Return(dirEntryPluss, status)
+func (_c *MockFileSystemBackend_ListDir_Call) Return(dirEntryPluss []io.DirEntryPlus, fsError proto.FsError) *MockFileSystemBackend_ListDir_Call {
+	_c.Call.Return(dirEntryPluss, fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_ListDir_Call) RunAndReturn(run func(ctx context.Context, path string) ([]io.DirEntryPlus, fuse.Status)) *MockFileSystemBackend_ListDir_Call {
+func (_c *MockFileSystemBackend_ListDir_Call) RunAndReturn(run func(ctx context.Context, path string) ([]io.DirEntryPlus, proto.FsError)) *MockFileSystemBackend_ListDir_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // ListXAttr provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) ListXAttr(ctx context.Context, path string) ([]string, fuse.Status) {
+func (_mock *MockFileSystemBackend) ListXAttr(ctx context.Context, path string) ([]string, proto.FsError) {
 	ret := _mock.Called(ctx, path)
 
 	if len(ret) == 0 {
@@ -843,8 +844,8 @@ func (_mock *MockFileSystemBackend) ListXAttr(ctx context.Context, path string) 
 	}
 
 	var r0 []string
-	var r1 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) ([]string, fuse.Status)); ok {
+	var r1 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) ([]string, proto.FsError)); ok {
 		return returnFunc(ctx, path)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string) []string); ok {
@@ -854,10 +855,10 @@ func (_mock *MockFileSystemBackend) ListXAttr(ctx context.Context, path string) 
 			r0 = ret.Get(0).([]string)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string) fuse.Status); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) proto.FsError); ok {
 		r1 = returnFunc(ctx, path)
 	} else {
-		r1 = ret.Get(1).(fuse.Status)
+		r1 = ret.Get(1).(proto.FsError)
 	}
 	return r0, r1
 }
@@ -892,18 +893,18 @@ func (_c *MockFileSystemBackend_ListXAttr_Call) Run(run func(ctx context.Context
 	return _c
 }
 
-func (_c *MockFileSystemBackend_ListXAttr_Call) Return(strings []string, status fuse.Status) *MockFileSystemBackend_ListXAttr_Call {
-	_c.Call.Return(strings, status)
+func (_c *MockFileSystemBackend_ListXAttr_Call) Return(strings []string, fsError proto.FsError) *MockFileSystemBackend_ListXAttr_Call {
+	_c.Call.Return(strings, fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_ListXAttr_Call) RunAndReturn(run func(ctx context.Context, path string) ([]string, fuse.Status)) *MockFileSystemBackend_ListXAttr_Call {
+func (_c *MockFileSystemBackend_ListXAttr_Call) RunAndReturn(run func(ctx context.Context, path string) ([]string, proto.FsError)) *MockFileSystemBackend_ListXAttr_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Lookup provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) Lookup(ctx context.Context, parent string, name string) (*io.Attr, fuse.Status) {
+func (_mock *MockFileSystemBackend) Lookup(ctx context.Context, parent string, name string) (*io.Attr, proto.FsError) {
 	ret := _mock.Called(ctx, parent, name)
 
 	if len(ret) == 0 {
@@ -911,8 +912,8 @@ func (_mock *MockFileSystemBackend) Lookup(ctx context.Context, parent string, n
 	}
 
 	var r0 *io.Attr
-	var r1 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (*io.Attr, fuse.Status)); ok {
+	var r1 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (*io.Attr, proto.FsError)); ok {
 		return returnFunc(ctx, parent, name)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) *io.Attr); ok {
@@ -922,10 +923,10 @@ func (_mock *MockFileSystemBackend) Lookup(ctx context.Context, parent string, n
 			r0 = ret.Get(0).(*io.Attr)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) fuse.Status); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) proto.FsError); ok {
 		r1 = returnFunc(ctx, parent, name)
 	} else {
-		r1 = ret.Get(1).(fuse.Status)
+		r1 = ret.Get(1).(proto.FsError)
 	}
 	return r0, r1
 }
@@ -966,18 +967,18 @@ func (_c *MockFileSystemBackend_Lookup_Call) Run(run func(ctx context.Context, p
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Lookup_Call) Return(attr *io.Attr, status fuse.Status) *MockFileSystemBackend_Lookup_Call {
-	_c.Call.Return(attr, status)
+func (_c *MockFileSystemBackend_Lookup_Call) Return(attr *io.Attr, fsError proto.FsError) *MockFileSystemBackend_Lookup_Call {
+	_c.Call.Return(attr, fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Lookup_Call) RunAndReturn(run func(ctx context.Context, parent string, name string) (*io.Attr, fuse.Status)) *MockFileSystemBackend_Lookup_Call {
+func (_c *MockFileSystemBackend_Lookup_Call) RunAndReturn(run func(ctx context.Context, parent string, name string) (*io.Attr, proto.FsError)) *MockFileSystemBackend_Lookup_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Lseek provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) Lseek(ctx context.Context, fh io.FileHandle, offset uint64, whence uint32) (uint64, fuse.Status) {
+func (_mock *MockFileSystemBackend) Lseek(ctx context.Context, fh io.FileHandle, offset uint64, whence uint32) (uint64, proto.FsError) {
 	ret := _mock.Called(ctx, fh, offset, whence)
 
 	if len(ret) == 0 {
@@ -985,8 +986,8 @@ func (_mock *MockFileSystemBackend) Lseek(ctx context.Context, fh io.FileHandle,
 	}
 
 	var r0 uint64
-	var r1 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, uint32) (uint64, fuse.Status)); ok {
+	var r1 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, uint32) (uint64, proto.FsError)); ok {
 		return returnFunc(ctx, fh, offset, whence)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, uint32) uint64); ok {
@@ -994,10 +995,10 @@ func (_mock *MockFileSystemBackend) Lseek(ctx context.Context, fh io.FileHandle,
 	} else {
 		r0 = ret.Get(0).(uint64)
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, io.FileHandle, uint64, uint32) fuse.Status); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, io.FileHandle, uint64, uint32) proto.FsError); ok {
 		r1 = returnFunc(ctx, fh, offset, whence)
 	} else {
-		r1 = ret.Get(1).(fuse.Status)
+		r1 = ret.Get(1).(proto.FsError)
 	}
 	return r0, r1
 }
@@ -1044,18 +1045,18 @@ func (_c *MockFileSystemBackend_Lseek_Call) Run(run func(ctx context.Context, fh
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Lseek_Call) Return(v uint64, status fuse.Status) *MockFileSystemBackend_Lseek_Call {
-	_c.Call.Return(v, status)
+func (_c *MockFileSystemBackend_Lseek_Call) Return(v uint64, fsError proto.FsError) *MockFileSystemBackend_Lseek_Call {
+	_c.Call.Return(v, fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Lseek_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, offset uint64, whence uint32) (uint64, fuse.Status)) *MockFileSystemBackend_Lseek_Call {
+func (_c *MockFileSystemBackend_Lseek_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, offset uint64, whence uint32) (uint64, proto.FsError)) *MockFileSystemBackend_Lseek_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Mkdir provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) Mkdir(ctx context.Context, path string, mode uint32) (*io.Attr, fuse.Status) {
+func (_mock *MockFileSystemBackend) Mkdir(ctx context.Context, path string, mode uint32) (*io.Attr, proto.FsError) {
 	ret := _mock.Called(ctx, path, mode)
 
 	if len(ret) == 0 {
@@ -1063,8 +1064,8 @@ func (_mock *MockFileSystemBackend) Mkdir(ctx context.Context, path string, mode
 	}
 
 	var r0 *io.Attr
-	var r1 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uint32) (*io.Attr, fuse.Status)); ok {
+	var r1 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uint32) (*io.Attr, proto.FsError)); ok {
 		return returnFunc(ctx, path, mode)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uint32) *io.Attr); ok {
@@ -1074,10 +1075,10 @@ func (_mock *MockFileSystemBackend) Mkdir(ctx context.Context, path string, mode
 			r0 = ret.Get(0).(*io.Attr)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, uint32) fuse.Status); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, uint32) proto.FsError); ok {
 		r1 = returnFunc(ctx, path, mode)
 	} else {
-		r1 = ret.Get(1).(fuse.Status)
+		r1 = ret.Get(1).(proto.FsError)
 	}
 	return r0, r1
 }
@@ -1118,18 +1119,18 @@ func (_c *MockFileSystemBackend_Mkdir_Call) Run(run func(ctx context.Context, pa
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Mkdir_Call) Return(attr *io.Attr, status fuse.Status) *MockFileSystemBackend_Mkdir_Call {
-	_c.Call.Return(attr, status)
+func (_c *MockFileSystemBackend_Mkdir_Call) Return(attr *io.Attr, fsError proto.FsError) *MockFileSystemBackend_Mkdir_Call {
+	_c.Call.Return(attr, fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Mkdir_Call) RunAndReturn(run func(ctx context.Context, path string, mode uint32) (*io.Attr, fuse.Status)) *MockFileSystemBackend_Mkdir_Call {
+func (_c *MockFileSystemBackend_Mkdir_Call) RunAndReturn(run func(ctx context.Context, path string, mode uint32) (*io.Attr, proto.FsError)) *MockFileSystemBackend_Mkdir_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Open provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) Open(ctx context.Context, path string, flags uint32) (io.FileHandle, fuse.Status) {
+func (_mock *MockFileSystemBackend) Open(ctx context.Context, path string, flags uint32) (io.FileHandle, proto.FsError) {
 	ret := _mock.Called(ctx, path, flags)
 
 	if len(ret) == 0 {
@@ -1137,8 +1138,8 @@ func (_mock *MockFileSystemBackend) Open(ctx context.Context, path string, flags
 	}
 
 	var r0 io.FileHandle
-	var r1 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uint32) (io.FileHandle, fuse.Status)); ok {
+	var r1 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uint32) (io.FileHandle, proto.FsError)); ok {
 		return returnFunc(ctx, path, flags)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string, uint32) io.FileHandle); ok {
@@ -1148,10 +1149,10 @@ func (_mock *MockFileSystemBackend) Open(ctx context.Context, path string, flags
 			r0 = ret.Get(0).(io.FileHandle)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, uint32) fuse.Status); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, uint32) proto.FsError); ok {
 		r1 = returnFunc(ctx, path, flags)
 	} else {
-		r1 = ret.Get(1).(fuse.Status)
+		r1 = ret.Get(1).(proto.FsError)
 	}
 	return r0, r1
 }
@@ -1192,18 +1193,18 @@ func (_c *MockFileSystemBackend_Open_Call) Run(run func(ctx context.Context, pat
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Open_Call) Return(fileHandle io.FileHandle, status fuse.Status) *MockFileSystemBackend_Open_Call {
-	_c.Call.Return(fileHandle, status)
+func (_c *MockFileSystemBackend_Open_Call) Return(fileHandle io.FileHandle, fsError proto.FsError) *MockFileSystemBackend_Open_Call {
+	_c.Call.Return(fileHandle, fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Open_Call) RunAndReturn(run func(ctx context.Context, path string, flags uint32) (io.FileHandle, fuse.Status)) *MockFileSystemBackend_Open_Call {
+func (_c *MockFileSystemBackend_Open_Call) RunAndReturn(run func(ctx context.Context, path string, flags uint32) (io.FileHandle, proto.FsError)) *MockFileSystemBackend_Open_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Read provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) Read(ctx context.Context, fh io.FileHandle, off int64, dest []byte) (int, fuse.Status) {
+func (_mock *MockFileSystemBackend) Read(ctx context.Context, fh io.FileHandle, off int64, dest []byte) (int, proto.FsError) {
 	ret := _mock.Called(ctx, fh, off, dest)
 
 	if len(ret) == 0 {
@@ -1211,8 +1212,8 @@ func (_mock *MockFileSystemBackend) Read(ctx context.Context, fh io.FileHandle, 
 	}
 
 	var r0 int
-	var r1 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, int64, []byte) (int, fuse.Status)); ok {
+	var r1 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, int64, []byte) (int, proto.FsError)); ok {
 		return returnFunc(ctx, fh, off, dest)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, int64, []byte) int); ok {
@@ -1220,10 +1221,10 @@ func (_mock *MockFileSystemBackend) Read(ctx context.Context, fh io.FileHandle, 
 	} else {
 		r0 = ret.Get(0).(int)
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, io.FileHandle, int64, []byte) fuse.Status); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, io.FileHandle, int64, []byte) proto.FsError); ok {
 		r1 = returnFunc(ctx, fh, off, dest)
 	} else {
-		r1 = ret.Get(1).(fuse.Status)
+		r1 = ret.Get(1).(proto.FsError)
 	}
 	return r0, r1
 }
@@ -1270,18 +1271,18 @@ func (_c *MockFileSystemBackend_Read_Call) Run(run func(ctx context.Context, fh 
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Read_Call) Return(n int, status fuse.Status) *MockFileSystemBackend_Read_Call {
-	_c.Call.Return(n, status)
+func (_c *MockFileSystemBackend_Read_Call) Return(n int, fsError proto.FsError) *MockFileSystemBackend_Read_Call {
+	_c.Call.Return(n, fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Read_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, off int64, dest []byte) (int, fuse.Status)) *MockFileSystemBackend_Read_Call {
+func (_c *MockFileSystemBackend_Read_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, off int64, dest []byte) (int, proto.FsError)) *MockFileSystemBackend_Read_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Readlink provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) Readlink(ctx context.Context, path string) (string, fuse.Status) {
+func (_mock *MockFileSystemBackend) Readlink(ctx context.Context, path string) (string, proto.FsError) {
 	ret := _mock.Called(ctx, path)
 
 	if len(ret) == 0 {
@@ -1289,8 +1290,8 @@ func (_mock *MockFileSystemBackend) Readlink(ctx context.Context, path string) (
 	}
 
 	var r0 string
-	var r1 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (string, fuse.Status)); ok {
+	var r1 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (string, proto.FsError)); ok {
 		return returnFunc(ctx, path)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string) string); ok {
@@ -1298,10 +1299,10 @@ func (_mock *MockFileSystemBackend) Readlink(ctx context.Context, path string) (
 	} else {
 		r0 = ret.Get(0).(string)
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string) fuse.Status); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) proto.FsError); ok {
 		r1 = returnFunc(ctx, path)
 	} else {
-		r1 = ret.Get(1).(fuse.Status)
+		r1 = ret.Get(1).(proto.FsError)
 	}
 	return r0, r1
 }
@@ -1336,29 +1337,29 @@ func (_c *MockFileSystemBackend_Readlink_Call) Run(run func(ctx context.Context,
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Readlink_Call) Return(s string, status fuse.Status) *MockFileSystemBackend_Readlink_Call {
-	_c.Call.Return(s, status)
+func (_c *MockFileSystemBackend_Readlink_Call) Return(s string, fsError proto.FsError) *MockFileSystemBackend_Readlink_Call {
+	_c.Call.Return(s, fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Readlink_Call) RunAndReturn(run func(ctx context.Context, path string) (string, fuse.Status)) *MockFileSystemBackend_Readlink_Call {
+func (_c *MockFileSystemBackend_Readlink_Call) RunAndReturn(run func(ctx context.Context, path string) (string, proto.FsError)) *MockFileSystemBackend_Readlink_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Release provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) Release(ctx context.Context, fh io.FileHandle) fuse.Status {
+func (_mock *MockFileSystemBackend) Release(ctx context.Context, fh io.FileHandle) proto.FsError {
 	ret := _mock.Called(ctx, fh)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Release")
 	}
 
-	var r0 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle) fuse.Status); ok {
+	var r0 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle) proto.FsError); ok {
 		r0 = returnFunc(ctx, fh)
 	} else {
-		r0 = ret.Get(0).(fuse.Status)
+		r0 = ret.Get(0).(proto.FsError)
 	}
 	return r0
 }
@@ -1393,29 +1394,29 @@ func (_c *MockFileSystemBackend_Release_Call) Run(run func(ctx context.Context, 
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Release_Call) Return(status fuse.Status) *MockFileSystemBackend_Release_Call {
-	_c.Call.Return(status)
+func (_c *MockFileSystemBackend_Release_Call) Return(fsError proto.FsError) *MockFileSystemBackend_Release_Call {
+	_c.Call.Return(fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Release_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle) fuse.Status) *MockFileSystemBackend_Release_Call {
+func (_c *MockFileSystemBackend_Release_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle) proto.FsError) *MockFileSystemBackend_Release_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // RemoveXAttr provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) RemoveXAttr(ctx context.Context, path string, attr string) fuse.Status {
+func (_mock *MockFileSystemBackend) RemoveXAttr(ctx context.Context, path string, attr string) proto.FsError {
 	ret := _mock.Called(ctx, path, attr)
 
 	if len(ret) == 0 {
 		panic("no return value specified for RemoveXAttr")
 	}
 
-	var r0 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) fuse.Status); ok {
+	var r0 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) proto.FsError); ok {
 		r0 = returnFunc(ctx, path, attr)
 	} else {
-		r0 = ret.Get(0).(fuse.Status)
+		r0 = ret.Get(0).(proto.FsError)
 	}
 	return r0
 }
@@ -1456,29 +1457,29 @@ func (_c *MockFileSystemBackend_RemoveXAttr_Call) Run(run func(ctx context.Conte
 	return _c
 }
 
-func (_c *MockFileSystemBackend_RemoveXAttr_Call) Return(status fuse.Status) *MockFileSystemBackend_RemoveXAttr_Call {
-	_c.Call.Return(status)
+func (_c *MockFileSystemBackend_RemoveXAttr_Call) Return(fsError proto.FsError) *MockFileSystemBackend_RemoveXAttr_Call {
+	_c.Call.Return(fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_RemoveXAttr_Call) RunAndReturn(run func(ctx context.Context, path string, attr string) fuse.Status) *MockFileSystemBackend_RemoveXAttr_Call {
+func (_c *MockFileSystemBackend_RemoveXAttr_Call) RunAndReturn(run func(ctx context.Context, path string, attr string) proto.FsError) *MockFileSystemBackend_RemoveXAttr_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Rename provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) Rename(ctx context.Context, oldPath string, newPath string) fuse.Status {
+func (_mock *MockFileSystemBackend) Rename(ctx context.Context, oldPath string, newPath string) proto.FsError {
 	ret := _mock.Called(ctx, oldPath, newPath)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Rename")
 	}
 
-	var r0 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) fuse.Status); ok {
+	var r0 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) proto.FsError); ok {
 		r0 = returnFunc(ctx, oldPath, newPath)
 	} else {
-		r0 = ret.Get(0).(fuse.Status)
+		r0 = ret.Get(0).(proto.FsError)
 	}
 	return r0
 }
@@ -1519,29 +1520,29 @@ func (_c *MockFileSystemBackend_Rename_Call) Run(run func(ctx context.Context, o
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Rename_Call) Return(status fuse.Status) *MockFileSystemBackend_Rename_Call {
-	_c.Call.Return(status)
+func (_c *MockFileSystemBackend_Rename_Call) Return(fsError proto.FsError) *MockFileSystemBackend_Rename_Call {
+	_c.Call.Return(fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Rename_Call) RunAndReturn(run func(ctx context.Context, oldPath string, newPath string) fuse.Status) *MockFileSystemBackend_Rename_Call {
+func (_c *MockFileSystemBackend_Rename_Call) RunAndReturn(run func(ctx context.Context, oldPath string, newPath string) proto.FsError) *MockFileSystemBackend_Rename_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Rmdir provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) Rmdir(ctx context.Context, path string) fuse.Status {
+func (_mock *MockFileSystemBackend) Rmdir(ctx context.Context, path string) proto.FsError {
 	ret := _mock.Called(ctx, path)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Rmdir")
 	}
 
-	var r0 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) fuse.Status); ok {
+	var r0 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) proto.FsError); ok {
 		r0 = returnFunc(ctx, path)
 	} else {
-		r0 = ret.Get(0).(fuse.Status)
+		r0 = ret.Get(0).(proto.FsError)
 	}
 	return r0
 }
@@ -1576,18 +1577,18 @@ func (_c *MockFileSystemBackend_Rmdir_Call) Run(run func(ctx context.Context, pa
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Rmdir_Call) Return(status fuse.Status) *MockFileSystemBackend_Rmdir_Call {
-	_c.Call.Return(status)
+func (_c *MockFileSystemBackend_Rmdir_Call) Return(fsError proto.FsError) *MockFileSystemBackend_Rmdir_Call {
+	_c.Call.Return(fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Rmdir_Call) RunAndReturn(run func(ctx context.Context, path string) fuse.Status) *MockFileSystemBackend_Rmdir_Call {
+func (_c *MockFileSystemBackend_Rmdir_Call) RunAndReturn(run func(ctx context.Context, path string) proto.FsError) *MockFileSystemBackend_Rmdir_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // SetAttr provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) SetAttr(ctx context.Context, path string, in io.SetAttrIn) (*io.Attr, fuse.Status) {
+func (_mock *MockFileSystemBackend) SetAttr(ctx context.Context, path string, in io.SetAttrIn) (*io.Attr, proto.FsError) {
 	ret := _mock.Called(ctx, path, in)
 
 	if len(ret) == 0 {
@@ -1595,8 +1596,8 @@ func (_mock *MockFileSystemBackend) SetAttr(ctx context.Context, path string, in
 	}
 
 	var r0 *io.Attr
-	var r1 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, io.SetAttrIn) (*io.Attr, fuse.Status)); ok {
+	var r1 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, io.SetAttrIn) (*io.Attr, proto.FsError)); ok {
 		return returnFunc(ctx, path, in)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string, io.SetAttrIn) *io.Attr); ok {
@@ -1606,10 +1607,10 @@ func (_mock *MockFileSystemBackend) SetAttr(ctx context.Context, path string, in
 			r0 = ret.Get(0).(*io.Attr)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, io.SetAttrIn) fuse.Status); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, io.SetAttrIn) proto.FsError); ok {
 		r1 = returnFunc(ctx, path, in)
 	} else {
-		r1 = ret.Get(1).(fuse.Status)
+		r1 = ret.Get(1).(proto.FsError)
 	}
 	return r0, r1
 }
@@ -1650,29 +1651,29 @@ func (_c *MockFileSystemBackend_SetAttr_Call) Run(run func(ctx context.Context, 
 	return _c
 }
 
-func (_c *MockFileSystemBackend_SetAttr_Call) Return(attr *io.Attr, status fuse.Status) *MockFileSystemBackend_SetAttr_Call {
-	_c.Call.Return(attr, status)
+func (_c *MockFileSystemBackend_SetAttr_Call) Return(attr *io.Attr, fsError proto.FsError) *MockFileSystemBackend_SetAttr_Call {
+	_c.Call.Return(attr, fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_SetAttr_Call) RunAndReturn(run func(ctx context.Context, path string, in io.SetAttrIn) (*io.Attr, fuse.Status)) *MockFileSystemBackend_SetAttr_Call {
+func (_c *MockFileSystemBackend_SetAttr_Call) RunAndReturn(run func(ctx context.Context, path string, in io.SetAttrIn) (*io.Attr, proto.FsError)) *MockFileSystemBackend_SetAttr_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // SetLk provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) SetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status {
+func (_mock *MockFileSystemBackend) SetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError {
 	ret := _mock.Called(ctx, fh, owner, lk, flags)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SetLk")
 	}
 
-	var r0 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, *fuse.FileLock, uint32) fuse.Status); ok {
+	var r0 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, *fuse.FileLock, uint32) proto.FsError); ok {
 		r0 = returnFunc(ctx, fh, owner, lk, flags)
 	} else {
-		r0 = ret.Get(0).(fuse.Status)
+		r0 = ret.Get(0).(proto.FsError)
 	}
 	return r0
 }
@@ -1725,29 +1726,29 @@ func (_c *MockFileSystemBackend_SetLk_Call) Run(run func(ctx context.Context, fh
 	return _c
 }
 
-func (_c *MockFileSystemBackend_SetLk_Call) Return(status fuse.Status) *MockFileSystemBackend_SetLk_Call {
-	_c.Call.Return(status)
+func (_c *MockFileSystemBackend_SetLk_Call) Return(fsError proto.FsError) *MockFileSystemBackend_SetLk_Call {
+	_c.Call.Return(fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_SetLk_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status) *MockFileSystemBackend_SetLk_Call {
+func (_c *MockFileSystemBackend_SetLk_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError) *MockFileSystemBackend_SetLk_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // SetLkw provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) SetLkw(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status {
+func (_mock *MockFileSystemBackend) SetLkw(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError {
 	ret := _mock.Called(ctx, fh, owner, lk, flags)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SetLkw")
 	}
 
-	var r0 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, *fuse.FileLock, uint32) fuse.Status); ok {
+	var r0 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, *fuse.FileLock, uint32) proto.FsError); ok {
 		r0 = returnFunc(ctx, fh, owner, lk, flags)
 	} else {
-		r0 = ret.Get(0).(fuse.Status)
+		r0 = ret.Get(0).(proto.FsError)
 	}
 	return r0
 }
@@ -1800,29 +1801,29 @@ func (_c *MockFileSystemBackend_SetLkw_Call) Run(run func(ctx context.Context, f
 	return _c
 }
 
-func (_c *MockFileSystemBackend_SetLkw_Call) Return(status fuse.Status) *MockFileSystemBackend_SetLkw_Call {
-	_c.Call.Return(status)
+func (_c *MockFileSystemBackend_SetLkw_Call) Return(fsError proto.FsError) *MockFileSystemBackend_SetLkw_Call {
+	_c.Call.Return(fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_SetLkw_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status) *MockFileSystemBackend_SetLkw_Call {
+func (_c *MockFileSystemBackend_SetLkw_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError) *MockFileSystemBackend_SetLkw_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // SetXAttr provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) SetXAttr(ctx context.Context, path string, attr string, data []byte, flags uint32) fuse.Status {
+func (_mock *MockFileSystemBackend) SetXAttr(ctx context.Context, path string, attr string, data []byte, flags uint32) proto.FsError {
 	ret := _mock.Called(ctx, path, attr, data, flags)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SetXAttr")
 	}
 
-	var r0 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, []byte, uint32) fuse.Status); ok {
+	var r0 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, []byte, uint32) proto.FsError); ok {
 		r0 = returnFunc(ctx, path, attr, data, flags)
 	} else {
-		r0 = ret.Get(0).(fuse.Status)
+		r0 = ret.Get(0).(proto.FsError)
 	}
 	return r0
 }
@@ -1875,18 +1876,18 @@ func (_c *MockFileSystemBackend_SetXAttr_Call) Run(run func(ctx context.Context,
 	return _c
 }
 
-func (_c *MockFileSystemBackend_SetXAttr_Call) Return(status fuse.Status) *MockFileSystemBackend_SetXAttr_Call {
-	_c.Call.Return(status)
+func (_c *MockFileSystemBackend_SetXAttr_Call) Return(fsError proto.FsError) *MockFileSystemBackend_SetXAttr_Call {
+	_c.Call.Return(fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_SetXAttr_Call) RunAndReturn(run func(ctx context.Context, path string, attr string, data []byte, flags uint32) fuse.Status) *MockFileSystemBackend_SetXAttr_Call {
+func (_c *MockFileSystemBackend_SetXAttr_Call) RunAndReturn(run func(ctx context.Context, path string, attr string, data []byte, flags uint32) proto.FsError) *MockFileSystemBackend_SetXAttr_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Stat provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) Stat(ctx context.Context, path string) (*io.Attr, fuse.Status) {
+func (_mock *MockFileSystemBackend) Stat(ctx context.Context, path string) (*io.Attr, proto.FsError) {
 	ret := _mock.Called(ctx, path)
 
 	if len(ret) == 0 {
@@ -1894,8 +1895,8 @@ func (_mock *MockFileSystemBackend) Stat(ctx context.Context, path string) (*io.
 	}
 
 	var r0 *io.Attr
-	var r1 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (*io.Attr, fuse.Status)); ok {
+	var r1 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (*io.Attr, proto.FsError)); ok {
 		return returnFunc(ctx, path)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string) *io.Attr); ok {
@@ -1905,10 +1906,10 @@ func (_mock *MockFileSystemBackend) Stat(ctx context.Context, path string) (*io.
 			r0 = ret.Get(0).(*io.Attr)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string) fuse.Status); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) proto.FsError); ok {
 		r1 = returnFunc(ctx, path)
 	} else {
-		r1 = ret.Get(1).(fuse.Status)
+		r1 = ret.Get(1).(proto.FsError)
 	}
 	return r0, r1
 }
@@ -1943,18 +1944,18 @@ func (_c *MockFileSystemBackend_Stat_Call) Run(run func(ctx context.Context, pat
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Stat_Call) Return(attr *io.Attr, status fuse.Status) *MockFileSystemBackend_Stat_Call {
-	_c.Call.Return(attr, status)
+func (_c *MockFileSystemBackend_Stat_Call) Return(attr *io.Attr, fsError proto.FsError) *MockFileSystemBackend_Stat_Call {
+	_c.Call.Return(attr, fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Stat_Call) RunAndReturn(run func(ctx context.Context, path string) (*io.Attr, fuse.Status)) *MockFileSystemBackend_Stat_Call {
+func (_c *MockFileSystemBackend_Stat_Call) RunAndReturn(run func(ctx context.Context, path string) (*io.Attr, proto.FsError)) *MockFileSystemBackend_Stat_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // StatFs provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) StatFs(ctx context.Context, path string) (*io.StatFs, fuse.Status) {
+func (_mock *MockFileSystemBackend) StatFs(ctx context.Context, path string) (*io.StatFs, proto.FsError) {
 	ret := _mock.Called(ctx, path)
 
 	if len(ret) == 0 {
@@ -1962,8 +1963,8 @@ func (_mock *MockFileSystemBackend) StatFs(ctx context.Context, path string) (*i
 	}
 
 	var r0 *io.StatFs
-	var r1 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (*io.StatFs, fuse.Status)); ok {
+	var r1 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (*io.StatFs, proto.FsError)); ok {
 		return returnFunc(ctx, path)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string) *io.StatFs); ok {
@@ -1973,10 +1974,10 @@ func (_mock *MockFileSystemBackend) StatFs(ctx context.Context, path string) (*i
 			r0 = ret.Get(0).(*io.StatFs)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string) fuse.Status); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) proto.FsError); ok {
 		r1 = returnFunc(ctx, path)
 	} else {
-		r1 = ret.Get(1).(fuse.Status)
+		r1 = ret.Get(1).(proto.FsError)
 	}
 	return r0, r1
 }
@@ -2011,18 +2012,18 @@ func (_c *MockFileSystemBackend_StatFs_Call) Run(run func(ctx context.Context, p
 	return _c
 }
 
-func (_c *MockFileSystemBackend_StatFs_Call) Return(statFs *io.StatFs, status fuse.Status) *MockFileSystemBackend_StatFs_Call {
-	_c.Call.Return(statFs, status)
+func (_c *MockFileSystemBackend_StatFs_Call) Return(statFs *io.StatFs, fsError proto.FsError) *MockFileSystemBackend_StatFs_Call {
+	_c.Call.Return(statFs, fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_StatFs_Call) RunAndReturn(run func(ctx context.Context, path string) (*io.StatFs, fuse.Status)) *MockFileSystemBackend_StatFs_Call {
+func (_c *MockFileSystemBackend_StatFs_Call) RunAndReturn(run func(ctx context.Context, path string) (*io.StatFs, proto.FsError)) *MockFileSystemBackend_StatFs_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Symlink provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) Symlink(ctx context.Context, target string, linkPath string) (*io.Attr, fuse.Status) {
+func (_mock *MockFileSystemBackend) Symlink(ctx context.Context, target string, linkPath string) (*io.Attr, proto.FsError) {
 	ret := _mock.Called(ctx, target, linkPath)
 
 	if len(ret) == 0 {
@@ -2030,8 +2031,8 @@ func (_mock *MockFileSystemBackend) Symlink(ctx context.Context, target string, 
 	}
 
 	var r0 *io.Attr
-	var r1 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (*io.Attr, fuse.Status)); ok {
+	var r1 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (*io.Attr, proto.FsError)); ok {
 		return returnFunc(ctx, target, linkPath)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) *io.Attr); ok {
@@ -2041,10 +2042,10 @@ func (_mock *MockFileSystemBackend) Symlink(ctx context.Context, target string, 
 			r0 = ret.Get(0).(*io.Attr)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) fuse.Status); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) proto.FsError); ok {
 		r1 = returnFunc(ctx, target, linkPath)
 	} else {
-		r1 = ret.Get(1).(fuse.Status)
+		r1 = ret.Get(1).(proto.FsError)
 	}
 	return r0, r1
 }
@@ -2085,29 +2086,29 @@ func (_c *MockFileSystemBackend_Symlink_Call) Run(run func(ctx context.Context, 
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Symlink_Call) Return(attr *io.Attr, status fuse.Status) *MockFileSystemBackend_Symlink_Call {
-	_c.Call.Return(attr, status)
+func (_c *MockFileSystemBackend_Symlink_Call) Return(attr *io.Attr, fsError proto.FsError) *MockFileSystemBackend_Symlink_Call {
+	_c.Call.Return(attr, fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Symlink_Call) RunAndReturn(run func(ctx context.Context, target string, linkPath string) (*io.Attr, fuse.Status)) *MockFileSystemBackend_Symlink_Call {
+func (_c *MockFileSystemBackend_Symlink_Call) RunAndReturn(run func(ctx context.Context, target string, linkPath string) (*io.Attr, proto.FsError)) *MockFileSystemBackend_Symlink_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Unlink provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) Unlink(ctx context.Context, path string) fuse.Status {
+func (_mock *MockFileSystemBackend) Unlink(ctx context.Context, path string) proto.FsError {
 	ret := _mock.Called(ctx, path)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Unlink")
 	}
 
-	var r0 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) fuse.Status); ok {
+	var r0 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) proto.FsError); ok {
 		r0 = returnFunc(ctx, path)
 	} else {
-		r0 = ret.Get(0).(fuse.Status)
+		r0 = ret.Get(0).(proto.FsError)
 	}
 	return r0
 }
@@ -2142,18 +2143,18 @@ func (_c *MockFileSystemBackend_Unlink_Call) Run(run func(ctx context.Context, p
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Unlink_Call) Return(status fuse.Status) *MockFileSystemBackend_Unlink_Call {
-	_c.Call.Return(status)
+func (_c *MockFileSystemBackend_Unlink_Call) Return(fsError proto.FsError) *MockFileSystemBackend_Unlink_Call {
+	_c.Call.Return(fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Unlink_Call) RunAndReturn(run func(ctx context.Context, path string) fuse.Status) *MockFileSystemBackend_Unlink_Call {
+func (_c *MockFileSystemBackend_Unlink_Call) RunAndReturn(run func(ctx context.Context, path string) proto.FsError) *MockFileSystemBackend_Unlink_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Write provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) Write(ctx context.Context, fh io.FileHandle, off int64, data []byte) (uint32, fuse.Status) {
+func (_mock *MockFileSystemBackend) Write(ctx context.Context, fh io.FileHandle, off int64, data []byte) (uint32, proto.FsError) {
 	ret := _mock.Called(ctx, fh, off, data)
 
 	if len(ret) == 0 {
@@ -2161,8 +2162,8 @@ func (_mock *MockFileSystemBackend) Write(ctx context.Context, fh io.FileHandle,
 	}
 
 	var r0 uint32
-	var r1 fuse.Status
-	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, int64, []byte) (uint32, fuse.Status)); ok {
+	var r1 proto.FsError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, int64, []byte) (uint32, proto.FsError)); ok {
 		return returnFunc(ctx, fh, off, data)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, int64, []byte) uint32); ok {
@@ -2170,10 +2171,10 @@ func (_mock *MockFileSystemBackend) Write(ctx context.Context, fh io.FileHandle,
 	} else {
 		r0 = ret.Get(0).(uint32)
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, io.FileHandle, int64, []byte) fuse.Status); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, io.FileHandle, int64, []byte) proto.FsError); ok {
 		r1 = returnFunc(ctx, fh, off, data)
 	} else {
-		r1 = ret.Get(1).(fuse.Status)
+		r1 = ret.Get(1).(proto.FsError)
 	}
 	return r0, r1
 }
@@ -2220,12 +2221,12 @@ func (_c *MockFileSystemBackend_Write_Call) Run(run func(ctx context.Context, fh
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Write_Call) Return(v uint32, status fuse.Status) *MockFileSystemBackend_Write_Call {
-	_c.Call.Return(v, status)
+func (_c *MockFileSystemBackend_Write_Call) Return(v uint32, fsError proto.FsError) *MockFileSystemBackend_Write_Call {
+	_c.Call.Return(v, fsError)
 	return _c
 }
 
-func (_c *MockFileSystemBackend_Write_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, off int64, data []byte) (uint32, fuse.Status)) *MockFileSystemBackend_Write_Call {
+func (_c *MockFileSystemBackend_Write_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, off int64, data []byte) (uint32, proto.FsError)) *MockFileSystemBackend_Write_Call {
 	_c.Call.Return(run)
 	return _c
 }

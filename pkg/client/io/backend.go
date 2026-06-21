@@ -9,6 +9,8 @@ import (
 	"context"
 	"time"
 
+	"go.gmountie.dev/gmountie/pkg/proto"
+
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
@@ -107,93 +109,93 @@ type FileHandle interface {
 // I/O. Implementations must be safe for concurrent calls.
 type FileSystemBackend interface {
 	// Stat returns the attributes of path. Used by Getattr.
-	Stat(ctx context.Context, path string) (*Attr, fuse.Status)
+	Stat(ctx context.Context, path string) (*Attr, proto.FsError)
 
 	// GetAttrIfChanged is a lightweight revalidation check (Sub-spec D).
 	// Returns (nil, true, OK) when the server's current version matches
 	// knownVersion; (newAttr, false, OK) when version changed; (nil, false,
 	// ENOENT) when the path is gone. RPC errors return (nil, false, EIO) so
 	// callers fall through to a full Stat.
-	GetAttrIfChanged(ctx context.Context, path string, knownVersion uint64) (*Attr, bool, fuse.Status)
+	GetAttrIfChanged(ctx context.Context, path string, knownVersion uint64) (*Attr, bool, proto.FsError)
 	// Lookup resolves a child name under parent, returning attrs + inode.
-	Lookup(ctx context.Context, parent, name string) (*Attr, fuse.Status)
+	Lookup(ctx context.Context, parent, name string) (*Attr, proto.FsError)
 	// ListDir returns the entries of a directory. A backend configured for
 	// plus listings (READDIRPLUS) also carries per-entry attrs so a cache
 	// decorator can prime its attr cache from the listing; Attr is nil per
 	// entry otherwise, or when the server-side per-entry stat failed.
-	ListDir(ctx context.Context, path string) ([]DirEntryPlus, fuse.Status)
+	ListDir(ctx context.Context, path string) ([]DirEntryPlus, proto.FsError)
 
 	// Access mirrors the access(2) check.
-	Access(ctx context.Context, path string, mode uint32) fuse.Status
+	Access(ctx context.Context, path string, mode uint32) proto.FsError
 	// StatFs returns filesystem statistics for the volume containing path.
-	StatFs(ctx context.Context, path string) (*StatFs, fuse.Status)
+	StatFs(ctx context.Context, path string) (*StatFs, proto.FsError)
 	// GetXAttr returns the extended-attribute bytes for path/attr.
-	GetXAttr(ctx context.Context, path, attr string) ([]byte, fuse.Status)
+	GetXAttr(ctx context.Context, path, attr string) ([]byte, proto.FsError)
 	// SetXAttr stores an extended attribute (flags: XATTR_CREATE/REPLACE).
-	SetXAttr(ctx context.Context, path, attr string, data []byte, flags uint32) fuse.Status
+	SetXAttr(ctx context.Context, path, attr string, data []byte, flags uint32) proto.FsError
 	// RemoveXAttr deletes an extended attribute.
-	RemoveXAttr(ctx context.Context, path, attr string) fuse.Status
+	RemoveXAttr(ctx context.Context, path, attr string) proto.FsError
 	// ListXAttr returns the extended-attribute names of path.
-	ListXAttr(ctx context.Context, path string) ([]string, fuse.Status)
+	ListXAttr(ctx context.Context, path string) ([]string, proto.FsError)
 
 	// Open opens an existing file. flags follow the FUSE open flags.
-	Open(ctx context.Context, path string, flags uint32) (FileHandle, fuse.Status)
+	Open(ctx context.Context, path string, flags uint32) (FileHandle, proto.FsError)
 	// Create creates a new file as a child of parent.
-	Create(ctx context.Context, parent, name string, flags, mode uint32) (FileHandle, *Attr, fuse.Status)
+	Create(ctx context.Context, parent, name string, flags, mode uint32) (FileHandle, *Attr, proto.FsError)
 	// Read fills dest starting at off and returns the number of bytes read.
-	Read(ctx context.Context, fh FileHandle, off int64, dest []byte) (int, fuse.Status)
+	Read(ctx context.Context, fh FileHandle, off int64, dest []byte) (int, proto.FsError)
 	// Write writes data at off and returns the number of bytes written.
-	Write(ctx context.Context, fh FileHandle, off int64, data []byte) (uint32, fuse.Status)
+	Write(ctx context.Context, fh FileHandle, off int64, data []byte) (uint32, proto.FsError)
 	// Release closes the open file referenced by fh.
-	Release(ctx context.Context, fh FileHandle) fuse.Status
+	Release(ctx context.Context, fh FileHandle) proto.FsError
 	// Flush is called on each close(2) of a fd that opened the file.
-	Flush(ctx context.Context, fh FileHandle) fuse.Status
+	Flush(ctx context.Context, fh FileHandle) proto.FsError
 	// Fsync sync()s the file.
-	Fsync(ctx context.Context, fh FileHandle, flags int64) fuse.Status
+	Fsync(ctx context.Context, fh FileHandle, flags int64) proto.FsError
 	// Allocate preallocates space at off..off+size for future writes
 	// (fallocate(2)).
-	Allocate(ctx context.Context, fh FileHandle, off, size uint64, mode uint32) fuse.Status
+	Allocate(ctx context.Context, fh FileHandle, off, size uint64, mode uint32) proto.FsError
 	// GetLk queries the lock state for a region of the file
 	// (fcntl(F_GETLK)).
-	GetLk(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) fuse.Status
+	GetLk(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) proto.FsError
 	// SetLk attempts to acquire a lock without blocking
 	// (fcntl(F_SETLK)).
-	SetLk(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status
+	SetLk(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError
 	// SetLkw attempts to acquire a lock, blocking until it can be
 	// granted (fcntl(F_SETLKW)).
-	SetLkw(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) fuse.Status
+	SetLkw(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError
 	// CopyFileRange copies length bytes server-side from fhIn@offIn to
 	// fhOut@offOut without the data crossing the wire. flags must be 0.
 	// Short counts are legal (source EOF); callers reissue.
-	CopyFileRange(ctx context.Context, fhIn FileHandle, offIn uint64, fhOut FileHandle, offOut uint64, length, flags uint64) (uint64, fuse.Status)
+	CopyFileRange(ctx context.Context, fhIn FileHandle, offIn uint64, fhOut FileHandle, offOut uint64, length, flags uint64) (uint64, proto.FsError)
 	// Lseek probes hole geometry (SEEK_DATA/SEEK_HOLE) on an open handle.
-	Lseek(ctx context.Context, fh FileHandle, offset uint64, whence uint32) (uint64, fuse.Status)
+	Lseek(ctx context.Context, fh FileHandle, offset uint64, whence uint32) (uint64, proto.FsError)
 
 	// Mkdir creates a directory and returns its attrs from the reply so the
-	// caller skips the trailing Stat. A nil Attr with fuse.OK means the
+	// caller skips the trailing Stat. A nil Attr with FS_OK means the
 	// server omitted the attrs (its post-create stat failed); callers fall
 	// back to Stat.
-	Mkdir(ctx context.Context, path string, mode uint32) (*Attr, fuse.Status)
+	Mkdir(ctx context.Context, path string, mode uint32) (*Attr, proto.FsError)
 	// Rmdir removes an empty directory.
-	Rmdir(ctx context.Context, path string) fuse.Status
+	Rmdir(ctx context.Context, path string) proto.FsError
 	// Unlink removes a non-directory.
-	Unlink(ctx context.Context, path string) fuse.Status
+	Unlink(ctx context.Context, path string) proto.FsError
 	// Rename moves a file/directory.
-	Rename(ctx context.Context, oldPath, newPath string) fuse.Status
+	Rename(ctx context.Context, oldPath, newPath string) proto.FsError
 	// Readlink returns the target string of the symbolic link at path.
-	Readlink(ctx context.Context, path string) (string, fuse.Status)
+	Readlink(ctx context.Context, path string) (string, proto.FsError)
 	// Symlink creates a new symbolic link at linkPath pointing at target.
 	// The target string is stored verbatim — confinement is enforced at
 	// resolve time, not at create time. Returns the new link's attrs like
-	// Mkdir (nil with fuse.OK when the server's trailing stat failed).
-	Symlink(ctx context.Context, target, linkPath string) (*Attr, fuse.Status)
+	// Mkdir (nil with FS_OK when the server's trailing stat failed).
+	Symlink(ctx context.Context, target, linkPath string) (*Attr, proto.FsError)
 	// SetAttr applies the fields named by in.Valid in one RPC and returns the
 	// resulting attrs (no trailing Stat needed). The server applies
 	// size→mode→owner→times and stops at the first failure, so a non-OK
 	// status may mean earlier fields were already applied. Mutating: retried
 	// with a stable request_id. Replaced the removed per-field Truncate/
 	// Chmod/Chown/Utimens fan-out for FUSE SETATTR.
-	SetAttr(ctx context.Context, path string, in SetAttrIn) (*Attr, fuse.Status)
+	SetAttr(ctx context.Context, path string, in SetAttrIn) (*Attr, proto.FsError)
 
 	// Close releases resources held by the backend. For the gRPC backend
 	// this is a no-op (the connection is owned by the caller); for

@@ -3,7 +3,9 @@ package controller
 import (
 	"context"
 	stdio "io"
+	"syscall"
 
+	fserr "go.gmountie.dev/gmountie/pkg/common/fserr"
 	"go.gmountie.dev/gmountie/pkg/proto"
 	serverio "go.gmountie.dev/gmountie/pkg/server/io"
 	"go.gmountie.dev/gmountie/pkg/server/metrics"
@@ -139,7 +141,7 @@ func (r *RpcFileServerImpl) Open(ctx context.Context, request *proto.OpenRequest
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.OpenReply, error) {
 		file, s := fs.Open(request.Path, request.Flags, createContext(ctx, request.Caller))
-		reply := &proto.OpenReply{Status: int32(s)}
+		reply := &proto.OpenReply{Status: fserr.FromErrno(syscall.Errno(s))}
 		if s == fuse.OK {
 			reply.Fd = sess.RegisterFile(request.Volume, request.Path, file)
 		}
@@ -158,7 +160,7 @@ func (r *RpcFileServerImpl) Create(ctx context.Context, request *proto.CreateReq
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.CreateReply, error) {
 		file, s := fs.Create(request.Path, request.Flags, request.Mode, createContext(ctx, request.Caller))
-		reply := &proto.CreateReply{Status: int32(s)}
+		reply := &proto.CreateReply{Status: fserr.FromErrno(syscall.Errno(s))}
 		if s == fuse.OK {
 			reply.Fd = sess.RegisterFile(request.Volume, request.Path, file)
 			if attr, gst := fs.GetAttr(request.Path, createContext(ctx, request.Caller)); gst.Ok() {
@@ -187,7 +189,7 @@ func (r *RpcFileServerImpl) Read(request *proto.ReadRequest, stream proto.RpcFil
 		// Surface bad-fd (or an fd↔volume mismatch) as a terminal status frame
 		// rather than a transport error so the client gets a clean errno
 		// through the FUSE layer.
-		return stream.Send(&proto.ReadFrame{Status: int32(fuse.EBADF)})
+		return stream.Send(&proto.ReadFrame{Status: proto.FsError_FS_EBADF})
 	}
 	// Held for the whole stream: fileRead closures below run until the
 	// streamer finishes.
@@ -218,7 +220,7 @@ func (r *RpcFileServerImpl) Read(request *proto.ReadRequest, stream proto.RpcFil
 		if len(data) > 0 {
 			r.metrics.BytesAdd(request.Volume, "out", float64(len(data)))
 		}
-		return stream.Send(&proto.ReadFrame{Data: data, Status: int32(st)})
+		return stream.Send(&proto.ReadFrame{Data: data, Status: fserr.FromErrno(syscall.Errno(st))})
 	}
 	return r.streamer.Stream(stream.Context(), int(request.Size), request.Offset, fileRead, emit)
 }
@@ -280,7 +282,7 @@ func (r *RpcFileServerImpl) Write(stream proto.RpcFile_WriteServer) error {
 		return status.Error(codes.Internal, "Write: idempotency cache: unexpected reply type")
 	}
 
-	if applied && fuse.Status(reply.Status) == fuse.OK && entryPath != "" {
+	if applied && reply.Status == proto.FsError_FS_OK && entryPath != "" {
 		r.emitMutatedFd(stream.Context(), first.Volume, entryPath, nil)
 	}
 
@@ -332,7 +334,7 @@ func (r *RpcFileServerImpl) applyWriteStream(stream proto.RpcFile_WriteServer, f
 		}
 	}
 
-	return &proto.WriteReply{Written: sink.Total(), Status: int32(finalStatus)}, nil
+	return &proto.WriteReply{Written: sink.Total(), Status: fserr.FromErrno(syscall.Errno(finalStatus))}, nil
 }
 
 // validateContinuationFrame enforces the "either zero or matches frame 1"
@@ -382,7 +384,7 @@ func (r *RpcFileServerImpl) Fsync(ctx context.Context, request *proto.FsyncReque
 		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 	}
 	defer entry.ReleaseRef()
-	return &proto.FsyncReply{Status: int32(entry.File.Fsync(int(request.Flags)))}, nil
+	return &proto.FsyncReply{Status: fserr.FromErrno(syscall.Errno(entry.File.Fsync(int(request.Flags))))}, nil
 }
 
 func (r *RpcFileServerImpl) Release(ctx context.Context, request *proto.ReleaseRequest) (*proto.ReleaseReply, error) {
@@ -415,7 +417,7 @@ func (r *RpcFileServerImpl) Flush(ctx context.Context, request *proto.FlushReque
 		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 	}
 	defer entry.ReleaseRef()
-	return &proto.FlushReply{Status: int32(entry.File.Flush())}, nil
+	return &proto.FlushReply{Status: fserr.FromErrno(syscall.Errno(entry.File.Flush()))}, nil
 }
 
 func (r *RpcFileServerImpl) GetLk(ctx context.Context, request *proto.GetLkRequest) (*proto.GetLkReply, error) {
@@ -433,7 +435,7 @@ func (r *RpcFileServerImpl) GetLk(ctx context.Context, request *proto.GetLkReque
 	s := entry.File.GetLk(request.Owner, lock, request.Flags, out)
 	return &proto.GetLkReply{
 		Lk:     &proto.FileLock{Start: out.Start, End: out.End, Typ: out.Typ, Pid: out.Pid},
-		Status: int32(s),
+		Status: fserr.FromErrno(syscall.Errno(s)),
 	}, nil
 }
 
@@ -448,7 +450,7 @@ func (r *RpcFileServerImpl) SetLk(ctx context.Context, request *proto.SetLkReque
 	}
 	defer entry.ReleaseRef()
 	lock := &fuse.FileLock{Start: request.Lk.Start, End: request.Lk.End, Typ: request.Lk.Typ, Pid: request.Lk.Pid}
-	return &proto.SetLkReply{Status: int32(entry.File.SetLk(request.Owner, lock, request.Flags))}, nil
+	return &proto.SetLkReply{Status: fserr.FromErrno(syscall.Errno(entry.File.SetLk(request.Owner, lock, request.Flags)))}, nil
 }
 
 func (r *RpcFileServerImpl) SetLkw(ctx context.Context, request *proto.SetLkwRequest) (*proto.SetLkwReply, error) {
@@ -462,7 +464,7 @@ func (r *RpcFileServerImpl) SetLkw(ctx context.Context, request *proto.SetLkwReq
 	}
 	defer entry.ReleaseRef()
 	lock := &fuse.FileLock{Start: request.Lk.Start, End: request.Lk.End, Typ: request.Lk.Typ, Pid: request.Lk.Pid}
-	return &proto.SetLkwReply{Status: int32(entry.File.SetLkw(request.Owner, lock, request.Flags))}, nil
+	return &proto.SetLkwReply{Status: fserr.FromErrno(syscall.Errno(entry.File.SetLkw(request.Owner, lock, request.Flags)))}, nil
 }
 
 // WriteAndFlush writes data at offset (if any) then flushes the fd, in one RPC.
@@ -487,7 +489,7 @@ func (r *RpcFileServerImpl) WriteAndFlush(ctx context.Context, req *proto.WriteA
 		if !ok {
 			// EBADF in-reply (not a transport error) keeps the errno visible at the
 			// FUSE layer. Covers both an unknown fd and an fd↔volume mismatch.
-			return &proto.WriteAndFlushReply{Status: int32(fuse.EBADF)}, nil
+			return &proto.WriteAndFlushReply{Status: proto.FsError_FS_EBADF}, nil
 		}
 		// Held for the whole write+flush+stat — released when the closure returns.
 		defer entry.ReleaseRef()
@@ -502,13 +504,13 @@ func (r *RpcFileServerImpl) WriteAndFlush(ctx context.Context, req *proto.WriteA
 		if len(req.Data) > 0 {
 			n, st := entry.File.Write(req.Data, req.Offset)
 			if st != fuse.OK {
-				reply.Status = int32(st)
+				reply.Status = fserr.FromErrno(syscall.Errno(st))
 				return reply, nil // write error: skip flush, surface at close()
 			}
 			reply.Written = n
 		}
 		st := entry.File.Flush()
-		reply.Status = int32(st)
+		reply.Status = fserr.FromErrno(syscall.Errno(st))
 		// final_attr is advisory and currently unused by the client (FUSE FLUSH
 		// returns no attrs to the kernel). The stat uses a nil caller — fine while
 		// it only feeds the bus version. A future client that consumes final_attr
@@ -543,7 +545,7 @@ func (r *RpcFileServerImpl) Allocate(ctx context.Context, request *proto.Allocat
 		}
 		r.emitMutatedFd(ctx, request.Volume, path, request.Caller)
 	}
-	return &proto.AllocateReply{Status: int32(s)}, nil
+	return &proto.AllocateReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
 }
 
 // CopyFileRange copies length bytes between two open handles entirely on
@@ -568,17 +570,17 @@ func (r *RpcFileServerImpl) CopyFileRange(ctx context.Context, request *proto.Co
 		return nil, err
 	}
 	if request.Flags != 0 {
-		return &proto.CopyFileRangeReply{Status: int32(fuse.EINVAL)}, nil
+		return &proto.CopyFileRangeReply{Status: proto.FsError_FS_EINVAL}, nil
 	}
 	return withOptionalIdempotency(sess, request.RequestId, func() (*proto.CopyFileRangeReply, error) {
 		srcEntry, ok := sessionFile(sess, request.FdIn, request.Volume)
 		if !ok {
-			return &proto.CopyFileRangeReply{Status: int32(fuse.EBADF)}, nil
+			return &proto.CopyFileRangeReply{Status: proto.FsError_FS_EBADF}, nil
 		}
 		defer srcEntry.ReleaseRef()
 		dstEntry, ok := sessionFile(sess, request.FdOut, request.Volume)
 		if !ok {
-			return &proto.CopyFileRangeReply{Status: int32(fuse.EBADF)}, nil
+			return &proto.CopyFileRangeReply{Status: proto.FsError_FS_EBADF}, nil
 		}
 		defer dstEntry.ReleaseRef()
 		copied, st := serverio.CopyFileRange(srcEntry.File, dstEntry.File, request.OffIn, request.OffOut, request.Length)
@@ -589,7 +591,7 @@ func (r *RpcFileServerImpl) CopyFileRange(ctx context.Context, request *proto.Co
 			}
 			r.emitMutatedFd(ctx, request.Volume, path, request.Caller)
 		}
-		return &proto.CopyFileRangeReply{BytesCopied: copied, Status: int32(st)}, nil
+		return &proto.CopyFileRangeReply{BytesCopied: copied, Status: fserr.FromErrno(syscall.Errno(st))}, nil
 	})
 }
 
@@ -604,13 +606,13 @@ func (r *RpcFileServerImpl) Lseek(ctx context.Context, request *proto.LseekReque
 		return nil, err
 	}
 	if request.Whence != uint32(unix.SEEK_DATA) && request.Whence != uint32(unix.SEEK_HOLE) {
-		return &proto.LseekReply{Status: int32(fuse.EINVAL)}, nil
+		return &proto.LseekReply{Status: proto.FsError_FS_EINVAL}, nil
 	}
 	entry, ok := sessionFile(sess, request.Fd, request.Volume)
 	if !ok {
-		return &proto.LseekReply{Status: int32(fuse.EBADF)}, nil
+		return &proto.LseekReply{Status: proto.FsError_FS_EBADF}, nil
 	}
 	defer entry.ReleaseRef()
 	off, st := serverio.Lseek(entry.File, request.Offset, request.Whence)
-	return &proto.LseekReply{Offset: off, Status: int32(st)}, nil
+	return &proto.LseekReply{Offset: off, Status: fserr.FromErrno(syscall.Errno(st))}, nil
 }

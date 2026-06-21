@@ -9,8 +9,8 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/cache"
 	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
 	clientio "go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/proto"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
@@ -36,10 +36,10 @@ func (s *PersistedCacheSuite) TestRestartReusesCachedAttr() {
 	}
 	b1 := cache.NewCachedBackend(inner, cfg, p1, nil, "")
 
-	inner.EXPECT().Stat(mock.Anything, "f").Return(&clientio.Attr{Ino: 42, Size: 7}, fuse.OK).Once()
+	inner.EXPECT().Stat(mock.Anything, "f").Return(&clientio.Attr{Ino: 42, Size: 7}, proto.FsError_FS_OK).Once()
 	inner.EXPECT().Close().Return(nil).Once()
 	_, st := b1.Stat(context.Background(), "f")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	// Close the backend, which owns p1 and closes it.
 	s.Require().NoError(b1.Close())
 
@@ -50,12 +50,12 @@ func (s *PersistedCacheSuite) TestRestartReusesCachedAttr() {
 	p2, err := persist.Open(persist.Options{Root: s.dir})
 	s.Require().NoError(err)
 	inner2 := iomocks.NewMockFileSystemBackend(s.T())
-	inner2.EXPECT().GetAttrIfChanged(mock.Anything, "f", uint64(0)).Return(nil, true, fuse.OK).Once()
+	inner2.EXPECT().GetAttrIfChanged(mock.Anything, "f", uint64(0)).Return(nil, true, proto.FsError_FS_OK).Once()
 	inner2.EXPECT().Close().Return(nil).Once()
 	b2 := cache.NewCachedBackend(inner2, cfg, p2, nil, "")
 	defer func() { _ = b2.Close() }()
 	a, st := b2.Stat(context.Background(), "f")
-	s.Require().Equal(fuse.OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(uint64(42), a.Ino)
 	// inner2.Stat must NOT be called — the attr comes from persist.
 }

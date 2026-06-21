@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/suite"
 	cgofuse "github.com/winfsp/cgofuse/fuse"
 	gio "go.gmountie.dev/gmountie/pkg/client/io"
+	fserr "go.gmountie.dev/gmountie/pkg/common/fserr"
+	proto "go.gmountie.dev/gmountie/pkg/proto"
 )
 
 type MetaSuite struct {
@@ -26,7 +28,7 @@ func (s *MetaSuite) SetupTest() {
 
 func (s *MetaSuite) TestGetattrOK() {
 	s.be.statAttr = &gio.Attr{Ino: 9, Size: 42, Mode: 0o100644}
-	s.be.statSt = fuse.OK
+	s.be.statSt = proto.FsError_FS_OK
 	var st cgofuse.Stat_t
 	rc := s.fs.Getattr("/dir/file", &st, ^uint64(0))
 	s.Equal(0, rc)
@@ -36,14 +38,14 @@ func (s *MetaSuite) TestGetattrOK() {
 }
 
 func (s *MetaSuite) TestGetattrENOENT() {
-	s.be.statSt = fuse.ENOENT
+	s.be.statSt = proto.FsError_FS_ENOENT
 	var st cgofuse.Stat_t
 	rc := s.fs.Getattr("/missing", &st, ^uint64(0))
-	s.Equal(-int(fuse.ENOENT), rc)
+	s.Equal(-int(fserr.ToErrno(proto.FsError_FS_ENOENT)), rc)
 }
 
 func (s *MetaSuite) TestReaddirFillsEntries() {
-	s.be.listSt = fuse.OK
+	s.be.listSt = proto.FsError_FS_OK
 	s.be.listEntries = []gio.DirEntryPlus{
 		{DirEntry: gio.DirEntry{Name: "a", Ino: 1, Mode: 0o100644}},
 		{DirEntry: gio.DirEntry{Name: "b", Ino: 2, Mode: fuse.S_IFDIR | 0o755}},
@@ -60,7 +62,7 @@ func (s *MetaSuite) TestReaddirFillsEntries() {
 
 func (s *MetaSuite) TestReadlink() {
 	s.be.readlink = "target/path"
-	s.be.readlinkSt = fuse.OK
+	s.be.readlinkSt = proto.FsError_FS_OK
 	rc, target := s.fs.Readlink("/link")
 	s.Equal(0, rc)
 	s.Equal("target/path", target)
@@ -68,7 +70,7 @@ func (s *MetaSuite) TestReadlink() {
 
 func (s *MetaSuite) TestStatfs() {
 	s.be.statfs = &gio.StatFs{Blocks: 10, Bsize: 4096, Namelen: 255}
-	s.be.statfsSt = fuse.OK
+	s.be.statfsSt = proto.FsError_FS_OK
 	var out cgofuse.Statfs_t
 	rc := s.fs.Statfs("/", &out)
 	s.Equal(0, rc)
