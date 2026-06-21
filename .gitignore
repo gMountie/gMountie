@@ -40,6 +40,9 @@ dist/
 # Local Claude Code config (personal hooks). Per-developer tooling, not product config.
 .claude/
 
+# Local "impeccable" git-hook tool cache (per-developer, not product config).
+.impeccable/
+
 # Perf harness working output: the perfbmf binary plus bench/substrate/BMF
 # artifacts produced by `task perf:bmf:build` and scripts/perf/run.sh.
 perf-out/
