@@ -29,6 +29,7 @@ type cachedBackend struct {
 	dir        *dirCache
 	data       *dataCache
 	xattr      *xattrCache
+	getxattr   *getXAttrCache
 	statfs     *statfsCache
 	access     *accessCache
 	validity   *validityTracker
@@ -65,6 +66,7 @@ func NewCachedBackend(inner io.FileSystemBackend, cfg Config, p *persist.Persist
 		dir:      newDirCacheWithPersist(acct, cfg.DirTTL, nil, p),
 		data:     newDataCacheWithPersist(acct, cfg.ChunkSizeBytes, p),
 		xattr:    newXAttrCache(acct, cfg.XAttrTTL, nil),
+		getxattr: newGetXAttrCache(cfg.XAttrTTL, nil),
 		statfs:   newStatfsCache(cfg.StatFsTTL, nil),
 		access:   newAccessCache(cfg.AttrTTL, nil),
 		validity: newValidityTracker(),
@@ -126,10 +128,13 @@ func (a *subscribeBackendAdapter) invalidateAttr(p string) {
 	a.b.attr.invalidate(p)
 	a.b.access.invalidate(p) // a remote attr (perm) change invalidates the access decision
 }
-func (a *subscribeBackendAdapter) invalidateData(p string)  { a.b.data.invalidatePath(p) }
-func (a *subscribeBackendAdapter) invalidateDir(p string)   { a.b.dir.invalidate(p) }
-func (a *subscribeBackendAdapter) invalidateXAttr(p string) { a.b.xattr.invalidate(p) }
-func (a *subscribeBackendAdapter) putNegative(p string)     { a.b.attr.putNegative(p) }
+func (a *subscribeBackendAdapter) invalidateData(p string) { a.b.data.invalidatePath(p) }
+func (a *subscribeBackendAdapter) invalidateDir(p string)  { a.b.dir.invalidate(p) }
+func (a *subscribeBackendAdapter) invalidateXAttr(p string) {
+	a.b.xattr.invalidate(p)
+	a.b.getxattr.invalidate(p)
+}
+func (a *subscribeBackendAdapter) putNegative(p string) { a.b.attr.putNegative(p) }
 
 // revalidateResult carries the outcome of a GetAttrIfChanged revalidation
 // call made by the gating logic in Stat/Lookup/ListDir/Read.
@@ -558,17 +563,33 @@ func (b *cachedBackend) StatFs(ctx context.Context, p string) (*io.StatFs, proto
 	return v, st
 }
 
+// GetXAttr is read-through against the advisory getxattr cache. The big win is
+// caching the NEGATIVE answer (ENO_XATTR / ENOTSUP / ENOSYS): the kernel and
+// tools like npm probe security.capability / system.posix_acl_* on nearly every
+// file, and absent those caches each probe was one ~WAN-RTT RPC. Caching the
+// full value also collapses the app's two-call size-probe (size=0 then real
+// read) — node.go re-derives ERANGE from len(data), so it still works from a
+// cached value. Only stable statuses are cached; transient errors re-evaluate.
 func (b *cachedBackend) GetXAttr(ctx context.Context, p, attr string) ([]byte, proto.FsError) {
-	return b.inner.GetXAttr(ctx, p, attr)
+	if data, st, ok := b.getxattr.get(p, attr); ok {
+		return data, st
+	}
+	data, st := b.inner.GetXAttr(ctx, p, attr)
+	switch st {
+	case proto.FsError_FS_OK, proto.FsError_FS_ENO_XATTR, proto.FsError_FS_ENOTSUP, proto.FsError_FS_ENOSYS:
+		b.getxattr.put(p, attr, data, st)
+	}
+	return data, st
 }
 
-// SetXAttr stores an extended attribute, then drops the cached names list and
-// the attr entry: an xattr write bumps the inode ctime, so the cached attr
-// version is now stale too.
+// SetXAttr stores an extended attribute, then drops the cached names list, the
+// per-attr value cache, and the attr entry: an xattr write bumps the inode
+// ctime, so the cached attr version is now stale too.
 func (b *cachedBackend) SetXAttr(ctx context.Context, p, attr string, data []byte, flags uint32) proto.FsError {
 	st := b.inner.SetXAttr(ctx, p, attr, data, flags)
 	if st == proto.FsError_FS_OK {
 		b.xattr.invalidate(p)
+		b.getxattr.invalidate(p)
 		b.attr.invalidate(p)
 	}
 	return st
@@ -579,6 +600,7 @@ func (b *cachedBackend) RemoveXAttr(ctx context.Context, p, attr string) proto.F
 	st := b.inner.RemoveXAttr(ctx, p, attr)
 	if st == proto.FsError_FS_OK {
 		b.xattr.invalidate(p)
+		b.getxattr.invalidate(p)
 		b.attr.invalidate(p)
 	}
 	return st
@@ -742,6 +764,7 @@ func (b *cachedBackend) Rmdir(ctx context.Context, p string) proto.FsError {
 	}
 	b.attr.invalidate(p)
 	b.access.invalidate(p)
+	b.getxattr.invalidate(p)
 	b.dir.invalidate(p)
 	parent := pathParent(p)
 	b.dir.invalidate(parent)
@@ -757,6 +780,7 @@ func (b *cachedBackend) Unlink(ctx context.Context, p string) proto.FsError {
 	}
 	b.attr.invalidate(p)
 	b.access.invalidate(p)
+	b.getxattr.invalidate(p)
 	b.data.invalidatePath(p)
 	parent := pathParent(p)
 	b.dir.invalidate(parent)
@@ -774,6 +798,8 @@ func (b *cachedBackend) Rename(ctx context.Context, oldPath, newPath string) pro
 	b.attr.invalidate(newPath)
 	b.access.invalidate(oldPath)
 	b.access.invalidate(newPath)
+	b.getxattr.invalidate(oldPath)
+	b.getxattr.invalidate(newPath)
 	b.data.invalidatePath(oldPath)
 	b.data.invalidatePath(newPath)
 	oldParent := pathParent(oldPath)

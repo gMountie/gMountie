@@ -1028,6 +1028,62 @@ func (s *CachedBackendTestSuite) TestJoinPathMatchesWirePath() {
 	}
 }
 
+// newXAttrBackend builds a verified cachedBackend with the xattr caches
+// enabled (XAttrTTL>0). The default suite Config leaves XAttrTTL==0, which
+// disables the getxattr value cache.
+func newXAttrBackend(t *testing.T, inner *iomocks.MockFileSystemBackend) *cachedBackend {
+	t.Helper()
+	cb := NewCachedBackend(inner, Config{
+		MemoryMaxBytes: 0,
+		ChunkSizeBytes: 1024,
+		AttrTTL:        time.Hour,
+		XAttrTTL:       time.Hour,
+	}, nil, nil, "").(*cachedBackend)
+	cb.validity.markGlobalVerified()
+	return cb
+}
+
+// TestGetXAttrReadThroughAndNegativeCache: a missing-xattr (ENO_XATTR) probe is
+// cached, so a second identical GetXAttr serves locally with no inner RPC — the
+// security.capability/posix_acl flood killer. .Once() proves the no-RPC claim.
+func (s *CachedBackendTestSuite) TestGetXAttrReadThroughAndNegativeCache() {
+	inner := iomocks.NewMockFileSystemBackend(s.T())
+	be := newXAttrBackend(s.T(), inner)
+
+	inner.EXPECT().GetXAttr(mock.Anything, "/f", "security.capability").
+		Return(nil, proto.FsError_FS_ENO_XATTR).Once()
+
+	_, st := be.GetXAttr(context.Background(), "/f", "security.capability")
+	s.Require().Equal(proto.FsError_FS_ENO_XATTR, st)
+	// Second probe: served from cache, inner NOT called again (Once proves it).
+	_, st = be.GetXAttr(context.Background(), "/f", "security.capability")
+	s.Require().Equal(proto.FsError_FS_ENO_XATTR, st)
+}
+
+// TestSetXAttrInvalidatesGetXAttrCache: writing an xattr drops the cached
+// per-attr value so the next GetXAttr re-fetches the now-present attribute.
+func (s *CachedBackendTestSuite) TestSetXAttrInvalidatesGetXAttrCache() {
+	inner := iomocks.NewMockFileSystemBackend(s.T())
+	be := newXAttrBackend(s.T(), inner)
+
+	// Prime a negative.
+	inner.EXPECT().GetXAttr(mock.Anything, "/f", "user.k").
+		Return(nil, proto.FsError_FS_ENO_XATTR).Once()
+	_, _ = be.GetXAttr(context.Background(), "/f", "user.k")
+
+	// SetXAttr succeeds → invalidates the value cache.
+	inner.EXPECT().SetXAttr(mock.Anything, "/f", "user.k", []byte("v"), uint32(0)).
+		Return(proto.FsError_FS_OK).Once()
+	s.Require().Equal(proto.FsError_FS_OK, be.SetXAttr(context.Background(), "/f", "user.k", []byte("v"), 0))
+
+	// Next GetXAttr must hit inner again and now see the value.
+	inner.EXPECT().GetXAttr(mock.Anything, "/f", "user.k").
+		Return([]byte("v"), proto.FsError_FS_OK).Once()
+	data, st := be.GetXAttr(context.Background(), "/f", "user.k")
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	s.Equal([]byte("v"), data)
+}
+
 func TestCachedBackendTestSuite(t *testing.T) {
 	suite.Run(t, new(CachedBackendTestSuite))
 }
