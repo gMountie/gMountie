@@ -75,3 +75,10 @@ func (s *MacProviderSuite) TestAdapterForProvider() {
 	s.Equal(adapterGoFuse, adapterForProvider(providerMacFUSE))
 	s.Equal(adapterCgoFuse, adapterForProvider(providerFuseT))
 }
+
+func (s *MacProviderSuite) TestGoFuseMacFUSEOptions() {
+	// Bare option strings for go-fuse's MountOptions.Options (NO "-o" prefixes,
+	// NO iosize — iosize rides MountOptions.MaxWrite, emitted by mount_darwin.go).
+	got := goFuseMacFUSEOptions("photos")
+	s.Equal([]string{"volname=photos", "local", "noappledouble"}, got)
+}

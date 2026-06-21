@@ -81,6 +81,10 @@ func createMountOptions(endpoint, volume string, cfg *config.FUSEConfig, maxWrit
 	if cfg.HandleKillPriv {
 		enableKillPrivCap(opts)
 	}
+	// Platform tuning for the go-fuse path (no-op on Linux; macFUSE Finder
+	// options + DirectMount-off on darwin). createMountOptions is only reached
+	// by the go-fuse mounter, so this never touches the cgofuse/FUSE-T path.
+	applyGoFusePlatformOptions(opts, volume)
 	return opts
 }
 
