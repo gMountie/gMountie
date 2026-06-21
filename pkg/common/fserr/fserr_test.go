@@ -25,7 +25,7 @@ var allErrs = []proto.FsError{
 	proto.FsError_FS_ENOSYS, proto.FsError_FS_ENOTEMPTY, proto.FsError_FS_ELOOP,
 	proto.FsError_FS_EOVERFLOW, proto.FsError_FS_EDQUOT, proto.FsError_FS_ESTALE,
 	proto.FsError_FS_ENOTSUP, proto.FsError_FS_ENO_XATTR, proto.FsError_FS_EINTR,
-	proto.FsError_FS_ETXTBSY,
+	proto.FsError_FS_ETXTBSY, proto.FsError_FS_EDEADLK, proto.FsError_FS_ENOLCK,
 }
 
 func (s *FserrSuite) TestOKIsZero() {
@@ -39,6 +39,14 @@ func (s *FserrSuite) TestEveryErrorMapsNonZeroAndRoundTrips() {
 		s.NotEqualf(syscall.Errno(0), errno, "%v mapped to 0", e)
 		s.Equalf(e, FromErrno(errno), "round-trip failed for %v", e)
 	}
+}
+
+// TestForwardMapIsInjective guards round-trip soundness: if two FsError values
+// mapped to the same errno, the reverse map would collapse them and round-trip
+// would silently break for one. len(fromErrno) must equal len(toErrno).
+func (s *FserrSuite) TestForwardMapIsInjective() {
+	s.Len(fromErrno, len(toErrno),
+		"two FsError values map to the same errno (forward map not injective)")
 }
 
 func (s *FserrSuite) TestUnknownErrnoIsEIO() {

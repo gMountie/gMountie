@@ -60,6 +60,8 @@ const (
 	FsError_FS_ENO_XATTR    FsError = 29 // missing xattr: Linux ENODATA, Darwin ENOATTR
 	FsError_FS_EINTR        FsError = 30
 	FsError_FS_ETXTBSY      FsError = 31
+	FsError_FS_EDEADLK      FsError = 32 // lock op would deadlock (fcntl F_SETLKW)
+	FsError_FS_ENOLCK       FsError = 33 // no locks available
 )
 
 // Enum value maps for FsError.
@@ -97,6 +99,8 @@ var (
 		29: "FS_ENO_XATTR",
 		30: "FS_EINTR",
 		31: "FS_ETXTBSY",
+		32: "FS_EDEADLK",
+		33: "FS_ENOLCK",
 	}
 	FsError_value = map[string]int32{
 		"FS_OK":           0,
@@ -131,6 +135,8 @@ var (
 		"FS_ENO_XATTR":    29,
 		"FS_EINTR":        30,
 		"FS_ETXTBSY":      31,
+		"FS_EDEADLK":      32,
+		"FS_ENOLCK":       33,
 	}
 )
 
@@ -294,7 +300,7 @@ const file_api_proto_common_proto_rawDesc = "" +
 	"group_name\x18\x04 \x01(\tR\tgroupName\"A\n" +
 	"\x06Caller\x12%\n" +
 	"\x05owner\x18\x01 \x01(\v2\x0f.gmountie.OwnerR\x05owner\x12\x10\n" +
-	"\x03pid\x18\x02 \x01(\rR\x03pid*\xeb\x03\n" +
+	"\x03pid\x18\x02 \x01(\rR\x03pid*\x8a\x04\n" +
 	"\aFsError\x12\t\n" +
 	"\x05FS_OK\x10\x00\x12\f\n" +
 	"\bFS_EPERM\x10\x01\x12\r\n" +
@@ -332,7 +338,10 @@ const file_api_proto_common_proto_rawDesc = "" +
 	"\fFS_ENO_XATTR\x10\x1d\x12\f\n" +
 	"\bFS_EINTR\x10\x1e\x12\x0e\n" +
 	"\n" +
-	"FS_ETXTBSY\x10\x1fB\vZ\tpkg/protob\x06proto3"
+	"FS_ETXTBSY\x10\x1f\x12\x0e\n" +
+	"\n" +
+	"FS_EDEADLK\x10 \x12\r\n" +
+	"\tFS_ENOLCK\x10!B\vZ\tpkg/protob\x06proto3"
 
 var (
 	file_api_proto_common_proto_rawDescOnce sync.Once

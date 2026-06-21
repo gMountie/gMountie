@@ -44,6 +44,8 @@ var toErrno = map[proto.FsError]syscall.Errno{
 	proto.FsError_FS_ENOTSUP:      syscall.ENOTSUP,
 	proto.FsError_FS_EINTR:        syscall.EINTR,
 	proto.FsError_FS_ETXTBSY:      syscall.ETXTBSY,
+	proto.FsError_FS_EDEADLK:      syscall.EDEADLK,
+	proto.FsError_FS_ENOLCK:       syscall.ENOLCK,
 }
 
 var fromErrno = map[syscall.Errno]proto.FsError{}
