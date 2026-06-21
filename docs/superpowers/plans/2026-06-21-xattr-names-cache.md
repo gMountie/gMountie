@@ -6,6 +6,8 @@
 
 **Architecture:** The server's readdirplus loop (already stats every entry) also `listxattr`s each entry when the client opts in via a new `with_xattr` request flag. The client primes a new advisory `xattrCache` from that one `ListDir` RPC, so the kernel's subsequent per-file `listxattr` is a local hit. The cache rides the existing attr-cache Subscribe invalidation; it is display-only (ACL enforcement stays server-side kernel-native), so it serves on TTL + invalidation without per-path revalidation.
 
+**Provider note (post-cgofuse-refactor):** Master now has two client FUSE adapters — go-fuse (`pkg/client/io/node.go`, Linux) and cgofuse (`pkg/client/io/cgofs/fs.go`, macOS). Both call the **same** `FileSystemBackend`, and `single.go` builds the backend + cache decorator **once** before `establishMount` picks the provider. So all cache-layer work (Tasks 4–7) and the single mount wiring (Task 8) are provider-agnostic: the prime benefits macOS too (cgofuse `Listxattr` at `cgofs/fs.go:314` calls `backend.ListXAttr`, served from the primed cache). The server (`pkg/server/...`) is Linux-only and was untouched by the refactor — Tasks 1–2 are unaffected. Do **not** add per-provider xattr logic; the caching lives in the decorator.
+
 **Tech Stack:** Go, `github.com/hanwen/go-fuse/v2`, gRPC/protobuf, `go-task`, testify suites, mockery v3.
 
 ## Global Constraints
@@ -29,8 +31,8 @@
 | `pkg/server/io/readdirplus.go` | per-entry `listxattr` in `ReadDirPlus`; `ReadDirPlusser` gains `withXattr` arg | Modify |
 | `pkg/server/io/bound_fs.go:471` | thread `withXattr` through `resolverBoundFS.ReadDirPlus` | Modify |
 | `pkg/server/controller/fs.go:174` | pass `req.WithXattr`; copy names into proto | Modify |
-| `pkg/client/io/backend.go` | `io.DirEntryPlus` gains `XattrNames`/`XattrListed`; `WithXattrListings` option | Modify |
-| `pkg/client/io/backend_grpc.go:288` | set `WithXattr` on request; map reply fields | Modify |
+| `pkg/client/io/backend.go` | `io.DirEntryPlus` gains `XattrNames`/`XattrListed` (struct only) | Modify |
+| `pkg/client/io/backend_grpc.go` | `WithXattrListings` option + `xattrListings` field (~line 49-68); set `WithXattr` on request (~line 313); map reply fields (`ListDir` stream loop) | Modify |
 | `pkg/client/config/cache.go` | `XAttrTTL` knob + default | Modify |
 | `pkg/client/cache/config.go` | `Config.XAttrTTL` + `ConfigFromClient` | Modify |
 | `pkg/client/cache/xattr.go` | new `xattrCache` sub-cache | Create |
@@ -310,7 +312,7 @@ func (s *BackendClientSuite) TestListDirMapsXattrNames() {
 Run: `go test ./pkg/client/io/ -run BackendClientSuite/TestListDirMapsXattrNames -v`
 Expected: FAIL — `XattrListed` undefined on `io.DirEntryPlus`.
 
-- [ ] **Step 3: Extend `io.DirEntryPlus`** in `pkg/client/io/backend.go`:
+- [ ] **Step 3: Extend `io.DirEntryPlus`** in `pkg/client/io/backend.go` (the struct lives here, ~line 65):
 
 ```go
 type DirEntryPlus struct {
@@ -321,7 +323,7 @@ type DirEntryPlus struct {
 }
 ```
 
-- [ ] **Step 4: Add the backend option** in `pkg/client/io/backend.go` (next to `WithPlusListings`, ~line 62), plus the field on `BackendClient`:
+- [ ] **Step 4: Add the backend option** in `pkg/client/io/backend_grpc.go` (next to `WithPlusListings`, ~line 62-68 — the option and the `BackendClient` field were moved here by the cgofuse refactor), plus the field on `BackendClient` (~line 51):
 
 ```go
 // xattrListings makes ListDir request per-entry xattr names (set via
@@ -814,19 +816,24 @@ git commit -m "feat(cache): drop xattr cache on Subscribe MUTATED/DELETED/RENAME
 ### Task 8: Wire the request flag at mount
 
 **Files:**
-- Modify: `pkg/client/mount/single.go` (~line 108)
+- Modify: `pkg/client/mount/single.go` (~line 106 — the `backendOpts` slice; a `WithoutReadahead()` append already follows it under `if m.cache.Enabled`)
 
 **Interfaces:**
 - Consumes: `io.WithXattrListings` (Task 3); `m.cache.Enabled`.
 
-- [ ] **Step 1: Add the option** alongside `WithPlusListings`:
+- [ ] **Step 1: Add the option** to the existing `backendOpts` slice at `single.go:106`:
 
 ```go
 	backendOpts := []io.BackendOption{
 		io.WithPlusListings(m.cache.Enabled),
 		io.WithXattrListings(m.cache.Enabled),
 	}
+	if m.cache.Enabled {
+		backendOpts = append(backendOpts, io.WithoutReadahead())
+	}
 ```
+
+This backend (and decorator) is shared across both FUSE providers, so this one edit covers Linux and macOS.
 
 - [ ] **Step 2: Build the binary to verify wiring compiles**
 
