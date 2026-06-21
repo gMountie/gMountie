@@ -32,6 +32,9 @@ go.work.sum
 out
 
 dist/
+# Mac-built darwin archives the release job downloads here for goreleaser's
+# extra_files; untracked, it would trip goreleaser's clean-tree check.
+dist-darwin/
 
 .task
 
