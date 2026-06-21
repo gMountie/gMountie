@@ -60,6 +60,15 @@ surprises.
 Releases are cut by goreleaser from the `Release` workflow (`workflow_dispatch`,
 gated on green CI).
 
+- **macOS artifacts build on a Mac runner.** The darwin client needs cgo
+  (cgofuse), so it can't be cross-compiled on the Linux runner. A
+  `darwin-binaries` job builds + archives both darwin arches on macOS (arm64
+  native, amd64 via `clang -arch x86_64`), stamping the same svu-computed
+  version; goreleaser on Linux folds those archives into the single signed
+  `checksums.txt` (`checksum.extra_files`) and the release
+  (`release.extra_files`). This keeps one unified, signed checksum set without
+  goreleaser Pro's split/prebuilt builders. See
+  [macos-mount.md](macos-mount.md) for why darwin needs cgo.
 - **Keyless signing (cosign + Sigstore/Fulcio).** Signed via the GitHub Actions
   OIDC identity and recorded in Rekor — no private key to manage. goreleaser
   signs both the container image/manifest list (`docker_signs`, `artifacts:
@@ -132,19 +141,22 @@ The server is **Linux-only**; the client (`gmountie mount`) builds and runs on
   `RESOLVE_BENEATH` API) out of the darwin build entirely, so no per-file stubs
   are needed. The tag is `linux` rather than `!darwin` because the server has
   always been Linux-only.
-- **Runtime requirement.** Mounting on macOS needs a FUSE provider — either
-  [macFUSE](https://macfuse.io) (kext) or [FUSE-T](https://www.fuse-t.org/)
-  (userspace, no kext). `hanwen/go-fuse`'s `mount_darwin.go` works with either;
-  the binary doesn't tie itself to one.
-- **Missing-driver UX.** `pkg/client/mount.wrapMountError` annotates a darwin
-  mount failure that matches a missing-provider pattern (`macfuse`, `osxfuse`,
-  `mount_macfuse`, `/dev/macfuse`, `/dev/osxfuse`) with an install hint pointing
-  at both providers. It's a no-op on Linux and on unrelated darwin errors —
-  deliberately narrow so a typo'd mountpoint doesn't get a misleading hint.
-- **Shipping & CI.** goreleaser builds the darwin archives alongside Linux (four
-  archives total); the container image stays linux-only. A `build-darwin` CI job
-  cross-compiles `./cmd/...` for both darwin arches on every push as a
-  regression guard (no Mac runner — the client is pure Go).
+- **Runtime requirement.** macOS mounts through a **cgofuse adapter** (not
+  go-fuse — see [macos-mount.md](macos-mount.md)), against a FUSE provider:
+  either [macFUSE](https://macfuse.io) (kext) or [FUSE-T](https://www.fuse-t.org/)
+  (userspace, no kext). The mounter auto-detects the installed provider
+  (preferring macFUSE), so the binary doesn't tie itself to one.
+- **Missing-driver UX.** On macOS the mounter's `detectProvider` probes the
+  macFUSE/FUSE-T install paths *before* mounting and fails with an actionable
+  "install macFUSE or FUSE-T" error rather than a cryptic `dlopen` failure. (The
+  older `wrapMountError` annotator still guards the Linux go-fuse path.)
+- **Shipping & CI.** The darwin client needs cgo (the cgofuse adapter links the
+  FUSE headers), so it can't be cross-compiled from Linux. CI builds it on a
+  macOS runner (`macos-build` lane, macFUSE installed); the release builds +
+  archives both darwin arches on a Mac (`darwin-binaries` job) which goreleaser
+  folds into the Linux release (see Release & supply chain). The container image
+  stays linux-only, and a `cgofs-conformance` lane exercises the adapter against
+  libfuse on Linux.
 
 ## Out of scope
 

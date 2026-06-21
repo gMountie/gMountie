@@ -88,6 +88,10 @@ Smaller and simpler. One mount model:
 (The earlier multi-volume/`MemFS` mounter that backed the desktop UI was
 extracted from this repo for a future separate desktop repository.)
 
+The mount itself is FUSE-bound behind a platform-independent backend seam: Linux
+mounts via `hanwen/go-fuse`, macOS via a cgofuse adapter over the same seam. See
+[macos-mount.md](macos-mount.md).
+
 The client also runs a small gRPC client wrapper that:
 - Holds the single connection to the server.
 - Establishes a session at connect time.

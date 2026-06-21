@@ -55,6 +55,7 @@ const sidebars = {
       collapsed: false,
       items: [
         'design/architecture',
+        'design/macos-mount',
         'design/caching-and-consistency',
         'design/performance',
         'design/identity-and-permissions',
