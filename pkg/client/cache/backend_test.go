@@ -735,6 +735,25 @@ func (s *CachedBackendTestSuite) TestStatFsCachedWithinTTL() {
 	s.Assert().Equal(uint64(42), v2.Bfree, "second StatFs served from cache, no RPC")
 }
 
+func (s *CachedBackendTestSuite) TestAccessCachedWithinTTL() {
+	// inner.Access expected once — the repeated identical check is served from
+	// cache (a second RPC would be an unexpected mock call and fail).
+	s.inner.EXPECT().Access(mock.Anything, "/f", uint32(4)).Return(proto.FsError_FS_OK).Once()
+	s.Equal(proto.FsError_FS_OK, s.b.Access(context.Background(), "/f", 4))
+	s.Equal(proto.FsError_FS_OK, s.b.Access(context.Background(), "/f", 4))
+}
+
+func (s *CachedBackendTestSuite) TestAccessInvalidatedOnSetAttr() {
+	// chmod (SetAttr) must drop the cached access decision, so the post-SetAttr
+	// check re-evaluates: two Access RPCs around the SetAttr.
+	s.inner.EXPECT().Access(mock.Anything, "/f", uint32(4)).Return(proto.FsError_FS_OK).Twice()
+	s.inner.EXPECT().SetAttr(mock.Anything, "/f", mock.Anything).
+		Return(&io.Attr{}, proto.FsError_FS_OK).Once()
+	s.Equal(proto.FsError_FS_OK, s.b.Access(context.Background(), "/f", 4))
+	_, _ = s.b.SetAttr(context.Background(), "/f", io.SetAttrIn{})
+	s.Equal(proto.FsError_FS_OK, s.b.Access(context.Background(), "/f", 4))
+}
+
 func (s *CachedBackendTestSuite) TestFlushDoesNotInvalidate() {
 	s.b.attr.putPositive("/f", &io.Attr{Ino: 1})
 	s.b.data.put("/f", 0, []byte("DATA"))

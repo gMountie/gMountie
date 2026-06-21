@@ -30,7 +30,7 @@ func (s *CreateMountOptionsSuite) baseCfg() *config.FUSEConfig {
 func (s *CreateMountOptionsSuite) TestHandleKillPrivOnSetsCap() {
 	cfg := s.baseCfg()
 	cfg.HandleKillPriv = true
-	opts := createMountOptions("127.0.0.1:9449", "vol", cfg, config.DefaultFUSEMaxWriteBytes)
+	opts := createMountOptions("127.0.0.1:9449", "vol", cfg, config.DefaultFUSEMaxWriteBytes, false)
 	s.NotZero(opts.ExtraCapabilities&fuse.CAP_HANDLE_KILLPRIV_V2,
 		"HandleKillPriv=true must set CAP_HANDLE_KILLPRIV_V2 in ExtraCapabilities")
 }
@@ -38,9 +38,19 @@ func (s *CreateMountOptionsSuite) TestHandleKillPrivOnSetsCap() {
 func (s *CreateMountOptionsSuite) TestHandleKillPrivOffLeavesCapUnset() {
 	cfg := s.baseCfg()
 	cfg.HandleKillPriv = false
-	opts := createMountOptions("127.0.0.1:9449", "vol", cfg, config.DefaultFUSEMaxWriteBytes)
+	opts := createMountOptions("127.0.0.1:9449", "vol", cfg, config.DefaultFUSEMaxWriteBytes, false)
 	s.Zero(opts.ExtraCapabilities&fuse.CAP_HANDLE_KILLPRIV_V2,
 		"HandleKillPriv=false must leave CAP_HANDLE_KILLPRIV_V2 unset")
+}
+
+func (s *CreateMountOptionsSuite) TestDefaultPermissionsOptionGated() {
+	cfg := s.baseCfg()
+	on := createMountOptions("127.0.0.1:9449", "vol", cfg, config.DefaultFUSEMaxWriteBytes, true)
+	s.Contains(on.Options, "default_permissions",
+		"defaultPermissions=true must add the default_permissions mount option")
+	off := createMountOptions("127.0.0.1:9449", "vol", cfg, config.DefaultFUSEMaxWriteBytes, false)
+	s.NotContains(off.Options, "default_permissions",
+		"defaultPermissions=false must not add default_permissions")
 }
 
 func TestCreateMountOptionsSuite(t *testing.T) {

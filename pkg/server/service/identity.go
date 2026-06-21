@@ -12,6 +12,11 @@ type Identity struct {
 	Caps       []string          // Phase 3 (dac_read/dac_override); empty in 1a
 	UserName   string            // populated by resolvers in 1b-2 (empty in 1a/1b-1)
 	GroupNames map[uint32]string // gid -> name, for groups the caller is in
+	// Mode is the volume's mapping mode (squash/static/system/passthrough),
+	// stamped by resolveIdentity. Surfaced over WhoAmI so the client can decide
+	// whether the kernel may enforce permissions locally (default_permissions,
+	// squash only) or must forward+cache Access.
+	Mode string
 }
 
 // ErrPrincipalNotFound is returned by resolvers when a principal cannot be

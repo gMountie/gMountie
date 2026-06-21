@@ -60,6 +60,11 @@ message Identity {
   repeated uint32 gids        = 4;
   string user_name            = 5;
   map<uint32, string> group_names = 6;
+  // mapping_mode is the volume's identity-mapping mode (squash/static/system/
+  // passthrough). The client uses it to decide whether the kernel may enforce
+  // permissions locally (default_permissions, safe only for squash) or must
+  // forward+cache Access RPCs. Empty from servers predating this field.
+  string mapping_mode         = 7;
 }
 
 service SessionService {

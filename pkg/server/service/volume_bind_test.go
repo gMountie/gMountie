@@ -100,6 +100,7 @@ func (s *BindIdentitySuite) TestResolveIdentityExported() {
 	id, err := svc.ResolveIdentity(context.Background(), "v", nil)
 	s.Require().NoError(err)
 	s.Equal(uint32(1000), id.Uid)
+	s.Equal("squash", id.Mode, "ResolveIdentity must stamp the volume's mapping mode for WhoAmI")
 }
 
 func (s *BindIdentitySuite) TestBindIdentityUnprivilegedReturnsBareFS() {

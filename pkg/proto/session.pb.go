@@ -351,13 +351,18 @@ func (x *WhoAmIRequest) GetCaller() *Caller {
 }
 
 type Identity struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Principal     string                 `protobuf:"bytes,1,opt,name=principal,proto3" json:"principal,omitempty"`
-	Uid           uint32                 `protobuf:"varint,2,opt,name=uid,proto3" json:"uid,omitempty"`
-	PrimaryGid    uint32                 `protobuf:"varint,3,opt,name=primary_gid,json=primaryGid,proto3" json:"primary_gid,omitempty"`
-	Gids          []uint32               `protobuf:"varint,4,rep,packed,name=gids,proto3" json:"gids,omitempty"`
-	UserName      string                 `protobuf:"bytes,5,opt,name=user_name,json=userName,proto3" json:"user_name,omitempty"`
-	GroupNames    map[uint32]string      `protobuf:"bytes,6,rep,name=group_names,json=groupNames,proto3" json:"group_names,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Principal  string                 `protobuf:"bytes,1,opt,name=principal,proto3" json:"principal,omitempty"`
+	Uid        uint32                 `protobuf:"varint,2,opt,name=uid,proto3" json:"uid,omitempty"`
+	PrimaryGid uint32                 `protobuf:"varint,3,opt,name=primary_gid,json=primaryGid,proto3" json:"primary_gid,omitempty"`
+	Gids       []uint32               `protobuf:"varint,4,rep,packed,name=gids,proto3" json:"gids,omitempty"`
+	UserName   string                 `protobuf:"bytes,5,opt,name=user_name,json=userName,proto3" json:"user_name,omitempty"`
+	GroupNames map[uint32]string      `protobuf:"bytes,6,rep,name=group_names,json=groupNames,proto3" json:"group_names,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// mapping_mode is the volume's identity-mapping mode (squash/static/system/
+	// passthrough). The client uses it to decide whether the kernel may enforce
+	// permissions locally (default_permissions, safe only for squash) or must
+	// forward+cache Access RPCs. Empty from servers predating this field.
+	MappingMode   string `protobuf:"bytes,7,opt,name=mapping_mode,json=mappingMode,proto3" json:"mapping_mode,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -434,6 +439,13 @@ func (x *Identity) GetGroupNames() map[uint32]string {
 	return nil
 }
 
+func (x *Identity) GetMappingMode() string {
+	if x != nil {
+		return x.MappingMode
+	}
+	return ""
+}
+
 var File_api_proto_session_proto protoreflect.FileDescriptor
 
 const file_api_proto_session_proto_rawDesc = "" +
@@ -456,7 +468,7 @@ const file_api_proto_session_proto_rawDesc = "" +
 	"\rKeepalivePing\"Q\n" +
 	"\rWhoAmIRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
-	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\"\x90\x02\n" +
+	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\"\xb3\x02\n" +
 	"\bIdentity\x12\x1c\n" +
 	"\tprincipal\x18\x01 \x01(\tR\tprincipal\x12\x10\n" +
 	"\x03uid\x18\x02 \x01(\rR\x03uid\x12\x1f\n" +
@@ -465,7 +477,8 @@ const file_api_proto_session_proto_rawDesc = "" +
 	"\x04gids\x18\x04 \x03(\rR\x04gids\x12\x1b\n" +
 	"\tuser_name\x18\x05 \x01(\tR\buserName\x12C\n" +
 	"\vgroup_names\x18\x06 \x03(\v2\".gmountie.Identity.GroupNamesEntryR\n" +
-	"groupNames\x1a=\n" +
+	"groupNames\x12!\n" +
+	"\fmapping_mode\x18\a \x01(\tR\vmappingMode\x1a=\n" +
 	"\x0fGroupNamesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\rR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x012\x9b\x02\n" +

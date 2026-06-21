@@ -45,7 +45,7 @@ type Mounter interface {
 // from the supplied FUSEConfig. maxWriteBytes is the (already-negotiated)
 // ceiling for FUSE WRITE/READ — go-fuse sets the kernel's max_read equal
 // to MaxWrite, so this single knob drives both directions.
-func createMountOptions(endpoint, volume string, cfg *config.FUSEConfig, maxWriteBytes int) *fuse.MountOptions {
+func createMountOptions(endpoint, volume string, cfg *config.FUSEConfig, maxWriteBytes int, defaultPermissions bool) *fuse.MountOptions {
 	opts := &fuse.MountOptions{
 		AllowOther:     false,
 		SingleThreaded: false,
@@ -57,6 +57,15 @@ func createMountOptions(endpoint, volume string, cfg *config.FUSEConfig, maxWrit
 		Name:           FuseFSName,
 		FsName:         fmt.Sprintf("%s://%s/%s", FuseFSName, endpoint, volume),
 		Logger:         zap.NewStdLog(log.Log.Named("fuse")),
+	}
+	// default_permissions lets the kernel enforce permissions locally from the
+	// cached attrs instead of sending an ACCESS op (one RPC per check) to the
+	// server. Only enabled for squash mounts, where every file presents as the
+	// single mapping identity (rewritten to the local user) so the local check
+	// matches the server's — see single.go. AllowOther is off, so only the
+	// mounting user accesses the mount, which keeps the local check meaningful.
+	if defaultPermissions {
+		opts.Options = append(opts.Options, "default_permissions")
 	}
 	// go-fuse v2.10.1 has no `EnableWriteback` field; the writeback page
 	// cache is controlled via the CAP_WRITEBACK_CACHE capability bit.

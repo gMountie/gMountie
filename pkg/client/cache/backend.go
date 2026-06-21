@@ -30,6 +30,7 @@ type cachedBackend struct {
 	data       *dataCache
 	xattr      *xattrCache
 	statfs     *statfsCache
+	access     *accessCache
 	validity   *validityTracker
 	subscriber *subscribeConsumer
 	subCancel  context.CancelFunc
@@ -65,6 +66,7 @@ func NewCachedBackend(inner io.FileSystemBackend, cfg Config, p *persist.Persist
 		data:     newDataCacheWithPersist(acct, cfg.ChunkSizeBytes, p),
 		xattr:    newXAttrCache(acct, cfg.XAttrTTL, nil),
 		statfs:   newStatfsCache(cfg.StatFsTTL, nil),
+		access:   newAccessCache(cfg.AttrTTL, nil),
 		validity: newValidityTracker(),
 		persist:  p,
 	}
@@ -120,7 +122,10 @@ func (b *cachedBackend) Close() error {
 // subscriber is independently testable without a full cachedBackend.
 type subscribeBackendAdapter struct{ b *cachedBackend }
 
-func (a *subscribeBackendAdapter) invalidateAttr(p string)  { a.b.attr.invalidate(p) }
+func (a *subscribeBackendAdapter) invalidateAttr(p string) {
+	a.b.attr.invalidate(p)
+	a.b.access.invalidate(p) // a remote attr (perm) change invalidates the access decision
+}
 func (a *subscribeBackendAdapter) invalidateData(p string)  { a.b.data.invalidatePath(p) }
 func (a *subscribeBackendAdapter) invalidateDir(p string)   { a.b.dir.invalidate(p) }
 func (a *subscribeBackendAdapter) invalidateXAttr(p string) { a.b.xattr.invalidate(p) }
@@ -501,7 +506,17 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 }
 
 func (b *cachedBackend) Access(ctx context.Context, p string, mode uint32) proto.FsError {
-	return b.inner.Access(ctx, p, mode)
+	if st, ok := b.access.get(p, mode); ok {
+		return st
+	}
+	st := b.inner.Access(ctx, p, mode)
+	// Cache only stable access decisions; transient errors (EIO, timeouts, etc.)
+	// must re-evaluate. The cache is invalidated on any perm/existence change.
+	switch st {
+	case proto.FsError_FS_OK, proto.FsError_FS_EACCES, proto.FsError_FS_EPERM, proto.FsError_FS_ENOENT:
+		b.access.put(p, mode, st)
+	}
+	return st
 }
 
 // Readlink is a pass-through. The link target is content of the link inode,
@@ -525,6 +540,7 @@ func (b *cachedBackend) Symlink(ctx context.Context, target, linkPath string) (*
 	b.dir.invalidate(parent)
 	b.attr.invalidate(parent)
 	b.attr.invalidate(linkPath)
+	b.access.invalidate(linkPath)
 	if a != nil {
 		b.attr.putPositive(linkPath, a)
 	}
@@ -605,6 +621,7 @@ func (b *cachedBackend) Create(ctx context.Context, parent, name string, flags, 
 	b.dir.invalidate(parent)
 	b.attr.invalidate(parent)
 	b.attr.invalidate(full) // drop any negative entry from a prior failed Stat
+	b.access.invalidate(full)
 	if a != nil {
 		b.attr.putPositive(full, a)
 	}
@@ -711,6 +728,7 @@ func (b *cachedBackend) Mkdir(ctx context.Context, p string, mode uint32) (*io.A
 	b.dir.invalidate(parent)
 	b.attr.invalidate(parent)
 	b.attr.invalidate(p) // drop any negative-cached entry for the just-created path
+	b.access.invalidate(p)
 	if a != nil {
 		b.attr.putPositive(p, a)
 	}
@@ -723,6 +741,7 @@ func (b *cachedBackend) Rmdir(ctx context.Context, p string) proto.FsError {
 		return st
 	}
 	b.attr.invalidate(p)
+	b.access.invalidate(p)
 	b.dir.invalidate(p)
 	parent := pathParent(p)
 	b.dir.invalidate(parent)
@@ -737,6 +756,7 @@ func (b *cachedBackend) Unlink(ctx context.Context, p string) proto.FsError {
 		return st
 	}
 	b.attr.invalidate(p)
+	b.access.invalidate(p)
 	b.data.invalidatePath(p)
 	parent := pathParent(p)
 	b.dir.invalidate(parent)
@@ -752,6 +772,8 @@ func (b *cachedBackend) Rename(ctx context.Context, oldPath, newPath string) pro
 	}
 	b.attr.invalidate(oldPath)
 	b.attr.invalidate(newPath)
+	b.access.invalidate(oldPath)
+	b.access.invalidate(newPath)
 	b.data.invalidatePath(oldPath)
 	b.data.invalidatePath(newPath)
 	oldParent := pathParent(oldPath)
@@ -774,6 +796,9 @@ func (b *cachedBackend) Rename(ctx context.Context, oldPath, newPath string) pro
 // conservatively rather than assuming nothing changed.
 func (b *cachedBackend) SetAttr(ctx context.Context, p string, in io.SetAttrIn) (*io.Attr, proto.FsError) {
 	a, st := b.inner.SetAttr(ctx, p, in)
+	// chmod/chown change the access decision; invalidate even on partial failure
+	// (the server applies size→mode→owner→times in order before stopping).
+	b.access.invalidate(p)
 	// A requested size change makes every cached chunk suspect on success
 	// AND on failure: size applies first server-side, so even a failed call
 	// may already have truncated the file.
