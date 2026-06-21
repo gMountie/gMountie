@@ -103,7 +103,10 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 	// own sequential prefetch (span over-read), and two prefetchers on one gRPC
 	// connection halve WAN read throughput (measured). Without the cache, the
 	// io-layer readahead stays on — it's the prefetcher in that path.
-	backendOpts := []io.BackendOption{io.WithPlusListings(m.cache.Enabled)}
+	backendOpts := []io.BackendOption{
+		io.WithPlusListings(m.cache.Enabled),
+		io.WithXattrListings(m.cache.Enabled),
+	}
 	if m.cache.Enabled {
 		backendOpts = append(backendOpts, io.WithoutReadahead())
 	}
