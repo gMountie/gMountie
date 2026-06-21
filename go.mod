@@ -21,6 +21,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/thanhpk/randstr v1.0.6
 	github.com/typomedia/diskspeed v0.1.0
+	github.com/winfsp/cgofuse v1.6.0
 	github.com/zeebo/xxh3 v1.1.0
 	go.etcd.io/bbolt v1.4.3
 	go.uber.org/goleak v1.3.0
@@ -148,7 +149,6 @@ require (
 	github.com/u-root/u-root v0.15.1-0.20251208185023-2f8c7e763cf8 // indirect
 	github.com/u-root/uio v0.0.0-20240224005618-d2acac8f3701 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
-	github.com/winfsp/cgofuse v1.6.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/detectors/gcp v1.42.0 // indirect
