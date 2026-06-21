@@ -21,8 +21,78 @@ permissions:
 
 jobs:
 
+  # Build the macOS client on a real Mac: it selects the cgofuse adapter, which
+  # needs cgo + the FUSE headers, so it can't be cross-compiled on the Linux
+  # release runner. Archives match goreleaser's linux naming; the release job
+  # downloads them and goreleaser folds them into the single checksums.txt and
+  # the release via the extra_files globs in .goreleaser.yaml.
+  darwin-binaries:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+
+    - name: Setup Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
+
+    - name: Install macFUSE (FUSE headers for the cgofuse build)
+      run: brew install --cask macfuse
+
+    - name: Install svu
+      run: go install github.com/caarlos0/svu@v1.12.0
+
+    - name: Build + archive darwin binaries
+      env:
+        RELEASE_TYPE: ${{ github.event.inputs.type }}
+      run: |
+        set -euo pipefail
+        export PATH="$PATH:$(go env GOPATH)/bin"
+        # Compute the same tag the release job will (svu is deterministic for a
+        # given history), so the darwin archive name + version ldflags match the
+        # Linux artifacts. Snapshot is best-effort (it is not published).
+        case "$RELEASE_TYPE" in
+          production) TAG="$(svu next)" ;;
+          alpha)      TAG="$(svu prerelease --pre-release alpha)" ;;
+          *)          TAG="$(svu next)" ;;
+        esac
+        VERSION="${TAG#v}"
+        COMMIT="$(git rev-parse HEAD)"
+        DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        LDFLAGS="-s -w -X go.gmountie.dev/gmountie/pkg.version=${VERSION} -X go.gmountie.dev/gmountie/pkg.commit=${COMMIT} -X go.gmountie.dev/gmountie/pkg.date=${DATE}"
+        mkdir -p dist-darwin
+        for arch in arm64 amd64; do
+          echo "== building darwin/${arch} (version=${VERSION}) =="
+          rm -rf stage && mkdir -p stage
+          if [ "$arch" = "amd64" ]; then
+            CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 CC="clang -arch x86_64" \
+              go build -trimpath -buildvcs=true -ldflags "$LDFLAGS" -o stage/gmountie ./cmd
+          else
+            CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 \
+              go build -trimpath -buildvcs=true -ldflags "$LDFLAGS" -o stage/gmountie ./cmd
+          fi
+          cp LICENSE README.md CHANGELOG.md stage/
+          cp -R examples stage/examples
+          tar -C stage -czf "dist-darwin/gMountie_${VERSION}_darwin_${arch}.tar.gz" \
+            gmountie LICENSE README.md CHANGELOG.md examples
+        done
+        echo "== darwin archives ==" && ls -la dist-darwin/
+
+    - name: Upload darwin archives
+      uses: actions/upload-artifact@v4
+      with:
+        name: darwin-archives
+        path: dist-darwin/
+        if-no-files-found: error
+
   release:
     runs-on: ubuntu-latest
+    needs: darwin-binaries
     timeout-minutes: 45
     steps:
     - name: Checkout
@@ -107,6 +177,16 @@ jobs:
       # --skip=sign: don't keyless-sign throwaway snapshot artifacts (docker
       # signing already no-ops since snapshots aren't pushed).
       run: echo "flags=--snapshot --skip=sign" >> "$GITHUB_ENV"
+
+    # The darwin-binaries job built + archived the macOS client (cgo, on a Mac).
+    # Place its archives where goreleaser's checksum.extra_files /
+    # release.extra_files globs expect them (dist-darwin/), so they land in the
+    # single signed checksums.txt and the release.
+    - name: Download darwin archives
+      uses: actions/download-artifact@v4
+      with:
+        name: darwin-archives
+        path: dist-darwin
 
     - name: Run GoReleaser
       uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7

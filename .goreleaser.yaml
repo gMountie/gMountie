@@ -8,11 +8,15 @@ before:
     - go mod tidy
 
 builds:
+  # Linux only: the darwin client now selects the cgofuse adapter, which needs
+  # cgo + FUSE headers and can't be cross-compiled here. The darwin-binaries job
+  # (release.yml) builds + archives macOS on a real Mac; goreleaser folds those
+  # archives into the checksums (checksum.extra_files) and the release
+  # (release.extra_files) below.
   - env:
       - CGO_ENABLED=0
     goos:
       - linux
-      - darwin
     id: gMountie
     main: cmd/main.go
     binary: gmountie
@@ -80,6 +84,11 @@ archives:
 checksum:
   name_template: 'checksums.txt'
   algorithm: sha256
+  # Fold the externally-built darwin archives (downloaded to dist-darwin/ by the
+  # release job) into the single checksums.txt, so its cosign signature covers
+  # macOS too — no second checksum file.
+  extra_files:
+    - glob: dist-darwin/*.tar.gz
 
 # SPDX SBOM per release archive (syft default). These cover the archived
 # binaries only — the container image is signed (cosign, see docker_signs
@@ -125,6 +134,10 @@ release:
   # workflow is already gated on green CI for the commit, so a manual
   # "publish" click on top of that would just be ceremony.
   draft: false
+  # Upload the externally-built darwin archives (the darwin-binaries job builds
+  # them on a Mac) alongside goreleaser's Linux archives.
+  extra_files:
+    - glob: dist-darwin/*.tar.gz
   # `auto` flips prerelease=true when the tag has a semver prerelease
   # suffix, so anything cut by svu's `prerelease --pre-release alpha`
   # (v0.2.0-alpha.N) lands on GitHub flagged as a Pre-release.
