@@ -92,12 +92,20 @@ Layers and touch points:
    `FS_EIO` (logged once at debug so we can spot gaps).
 3. **Client seam (`pkg/client/io/`).** This is the larger mechanical change and
    the one judgement call — see "Seam representation" below.
-4. **Mount adapters.**
-   - go-fuse (`pkg/client/io/node.go`): `FsError` → `fuse.Status` (Linux errno).
-   - cgofuse (`pkg/client/io/cgofs/`): `FsError` → cgofuse's **host-correct**
-     errno constants (cgofuse defines `ENOENT`/`ENOTEMPTY`/… from `<errno.h>` per
-     build platform), so Darwin (and Windows later) come out right for free. This
-     also replaces the inline `-int(fuse.EBADF)` returns.
+4. **Mapping package (`pkg/common/fserr`).** A single shared package converts
+   between `FsError` and the **host kernel's** errno using Go's `syscall.Errno`
+   — whose `syscall.E*` constants are already per-GOOS-correct (`syscall.ENOTEMPTY`
+   compiles to 39 on a linux build, 66 on a darwin build). So one
+   `ToErrno(FsError) syscall.Errno` serves *both* client adapters host-correctly,
+   and `FromErrno(syscall.Errno) FsError` serves the server. Only the handful of
+   codes whose **name** differs across OSes (`ENODATA` on Linux vs `ENOATTR` on
+   Darwin for a missing xattr) need a build-tagged shim (`fserr_linux.go` /
+   `fserr_darwin.go`); the rest share a name and live in one file.
+5. **Mount adapters.**
+   - go-fuse (`pkg/client/io/node.go`): `fserr.ToErrno(FsError)` → Linux errno.
+   - cgofuse (`pkg/client/io/cgofs/`): `-int(fserr.ToErrno(FsError))` → host errno
+     (Darwin on a mac build, Linux on the `-tags cgofuse` benchmark build). This
+     also replaces the inline `-int(fuse.EBADF)` Linux-isms.
 
 ### The `FsError` enum (scope)
 
@@ -121,12 +129,14 @@ different number, which only a canonical name can carry.
 **30 methods returning `fuse.Status`** — itself a Linux-flavoured type the
 existing design notes flagged for neutralising. Two ways to land the client side:
 
-- **(A, recommended) Neutralise the seam.** Change the seam to return the
-  canonical `io.FsError` (a Go mirror of the proto enum). `BackendClient` returns
-  `FsError` straight from the wire; each adapter maps `FsError → its kernel`.
-  Cleanest and fully OS-neutral end-to-end, no Linux hop. Cost: a mechanical
-  sweep across the 30 signatures, the cache decorator, both adapters, the
-  generated mocks (`task gen:mocks`), and tests.
+- **(A, recommended) Neutralise the seam.** Change the seam to return
+  `proto.FsError` directly (the generated enum). Because the wire `status` field
+  itself becomes `FsError`, `BackendClient` returns `reply.Status` unchanged — no
+  parallel Go mirror to keep in sync. Each adapter maps `FsError → its kernel`
+  via `fserr.ToErrno`. Cleanest and fully OS-neutral end-to-end, no Linux hop.
+  Cost: a mechanical sweep across the ~30 signatures, the cache decorator
+  (`pkg/client/cache/backend.go`), both adapters, the generated mocks
+  (`task gen:mocks`), and tests.
 - **(B, smaller) Keep the seam as `fuse.Status`.** `BackendClient` maps
   `FsError → fuse.Status` (Linux errno); go-fuse adapter unchanged; only the
   cgofuse adapter maps `fuse.Status → host errno`. Fixes the bug and neutralises
@@ -147,12 +157,14 @@ dual-encoding.
 
 ## Testing
 
-- **Enum mapping (table-driven, both directions, runs anywhere):** `toFsError`
-  (server) and `FsError → fuse.Status` / `FsError → cgofuse errno` (client) round-
-  trip every enum value; assert the divergent cases explicitly (`ENOTEMPTY` →
-  66 on Darwin, `FS_ENO_XATTR` → `ENOATTR` on Darwin / `ENODATA` on Linux,
-  `EAGAIN` → 35 on Darwin). The Darwin-target assertions compile under the
-  `darwin`/`cgofuse` tag against cgofuse's constants.
+- **Enum mapping (table-driven, both directions):** `fserr.FromErrno` and
+  `fserr.ToErrno` round-trip every enum value, and every `FsError` (except `FS_OK`)
+  maps to a non-zero errno and back. On Linux CI these assert the Linux numbers
+  (`FS_ENOTEMPTY → 39`); the Darwin numbers (`→ 66`, `FS_ENO_XATTR → ENOATTR`,
+  `EAGAIN → 35`) only realize on a darwin build, so a build-tagged test asserts
+  them on the mac runner. Host-correctness is *structural* — it comes from
+  `syscall.E*` being per-GOOS — so the Linux test mainly proves the table is
+  complete and total (no `FsError` falls through to `EIO` unexpectedly).
 - **Adapter conformance:** the existing cgofs conformance suite asserts a backend
   error surfaces as the correct host errc.
 - **Regression:** the go-fuse path's errno behaviour is unchanged (Linux errno in,
