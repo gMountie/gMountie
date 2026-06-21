@@ -451,6 +451,32 @@ func (s *BackendClientTestSuite) TestListDir_RetriesOnUnavailable() {
 	s.fsClient.AssertNumberOfCalls(s.T(), "ReadDir", 2)
 }
 
+// TestListDirMapsXattrNames: a backend constructed with WithXattrListings(true)
+// stamps WithXattr on the request and maps XattrListed/XattrNames from the
+// per-entry reply into io.DirEntryPlus.
+func (s *BackendClientTestSuite) TestListDirMapsXattrNames() {
+	xattrBackend := NewBackendClient(s.client, "testVolume", WithXattrListings(true))
+	stream := newReadDirStreamStub(s.T(), &proto.ReadDirBatch{
+		Status: int32(fuse.OK),
+		Entries: []*proto.DirEntryPlus{
+			{
+				Entry:       &proto.DirEntry{Name: "f", Mode: 0o644},
+				XattrListed: true,
+				XattrNames:  []string{"user.a"},
+			},
+		},
+	})
+	s.fsClient.EXPECT().ReadDir(mock.Anything, mock.MatchedBy(func(req *proto.ReadDirRequest) bool {
+		return req.WithXattr
+	}), mock.Anything).Return(stream, nil)
+
+	entries, st := xattrBackend.ListDir(context.Background(), "")
+	s.Require().Equal(fuse.OK, st)
+	s.Require().Len(entries, 1)
+	s.True(entries[0].XattrListed)
+	s.Equal([]string{"user.a"}, entries[0].XattrNames)
+}
+
 func (s *BackendClientTestSuite) TestAccess() {
 	s.fsClient.EXPECT().Access(mock.Anything, mock.MatchedBy(func(req *proto.AccessRequest) bool {
 		return req.Volume == "testVolume" && req.Path == "/test" && req.Mode == 0444
