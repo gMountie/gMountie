@@ -19,6 +19,11 @@ import (
 	"go.uber.org/zap"
 )
 
+// mappingModeSquash is the WhoAmI mapping_mode value (matching the server's
+// config.MappingModeSquash) for which the kernel may enforce permissions locally
+// via default_permissions instead of forwarding an Access RPC per check.
+const mappingModeSquash = "squash"
+
 // SingleVolumeMounter is the interface for the mounter that supports a single volume
 type SingleVolumeMounter interface {
 	Mount(volumeName, path string) error
@@ -133,6 +138,7 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 	// Fetch the server identity so we can rewrite UIDs/GIDs to local values.
 	// raw_ids=true skips this and leaves the kernel seeing the raw server IDs.
 	var rewriter *io.IDRewriter
+	useDefaultPermissions := false
 	if !m.rawIDs {
 		ctx, cancel := context.WithTimeout(context.Background(), m.client.MetaTimeout())
 		defer cancel()
@@ -141,10 +147,17 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 			log.Log.Warn("WhoAmI failed, mounting with raw IDs", zap.String("volume", volume), zap.Error(err))
 		} else {
 			rewriter = io.NewIDRewriter(identityFromProto(idResp), uint32(os.Getuid()), uint32(os.Getgid()))
+			// Squash maps every file to the one principal identity, which the
+			// rewriter (set above) presents as the local user. So the kernel can
+			// enforce permissions locally via default_permissions and skip the
+			// per-check Access RPC. Other modes present foreign owners, where
+			// local enforcement would false-deny, so they keep forwarding (and
+			// caching) Access. raw_ids leaves rewriter nil and stays false.
+			useDefaultPermissions = idResp.GetMappingMode() == mappingModeSquash
 		}
 	}
 
-	handle, err := establishMount(mountPath, volume, m.client.GetEndpoint(), backend, rewriter, m.fuse, maxWrite, m.client.MetaTimeout())
+	handle, err := establishMount(mountPath, volume, m.client.GetEndpoint(), backend, rewriter, m.fuse, maxWrite, m.client.MetaTimeout(), useDefaultPermissions)
 	if err != nil {
 		return err
 	}

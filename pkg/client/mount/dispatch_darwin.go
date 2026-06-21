@@ -14,15 +14,15 @@ import (
 // establishMount on darwin selects the adapter by detected backend: macFUSE uses
 // go-fuse (cgo-free code, full node.go features), FUSE-T uses cgofuse (kextless).
 // detectProvider honors the fuse.provider config (auto → probe dylibs).
-func establishMount(mountPath, volume, endpoint string, backend io.FileSystemBackend, rewriter *io.IDRewriter, cfg *config.FUSEConfig, maxWrite int, metaTimeout time.Duration) (mountHandle, error) {
+func establishMount(mountPath, volume, endpoint string, backend io.FileSystemBackend, rewriter *io.IDRewriter, cfg *config.FUSEConfig, maxWrite int, metaTimeout time.Duration, defaultPermissions bool) (mountHandle, error) {
 	provider, err := detectProvider(fuseProvider(cfg.Provider), pathExists)
 	if err != nil {
 		return nil, errors.Wrap(err, "detect FUSE provider")
 	}
 	switch adapterForProvider(provider) {
 	case adapterCgoFuse:
-		return establishCgoFuse(mountPath, volume, endpoint, backend, rewriter, cfg, maxWrite, metaTimeout)
+		return establishCgoFuse(mountPath, volume, endpoint, backend, rewriter, cfg, maxWrite, metaTimeout, defaultPermissions)
 	default:
-		return establishGoFuse(mountPath, volume, endpoint, backend, rewriter, cfg, maxWrite, metaTimeout)
+		return establishGoFuse(mountPath, volume, endpoint, backend, rewriter, cfg, maxWrite, metaTimeout, defaultPermissions)
 	}
 }

@@ -88,12 +88,13 @@ func (c *SessionController) WhoAmI(ctx context.Context, req *proto.WhoAmIRequest
 		return nil, status.Errorf(codes.PermissionDenied, "whoami: %v", err)
 	}
 	return &proto.Identity{
-		Principal:  id.Principal,
-		Uid:        id.Uid,
-		PrimaryGid: id.Gid,
-		Gids:       id.Gids,
-		UserName:   id.UserName,
-		GroupNames: id.GroupNames,
+		Principal:   id.Principal,
+		Uid:         id.Uid,
+		PrimaryGid:  id.Gid,
+		Gids:        id.Gids,
+		UserName:    id.UserName,
+		GroupNames:  id.GroupNames,
+		MappingMode: id.Mode,
 	}, nil
 }
 

@@ -58,7 +58,13 @@ func (h *cgofuseHandle) Unmount(mountPath string) error {
 // and transparently falls back to the NFS backend if that mount fails (e.g. the
 // extension is installed but not enabled). Same signature as establishGoFuse so
 // single.go stays platform-agnostic via establishMount dispatchers.
-func establishCgoFuse(mountPath, volume, endpoint string, fsBackend io.FileSystemBackend, rewriter *io.IDRewriter, cfg *config.FUSEConfig, maxWrite int, metaTimeout time.Duration) (mountHandle, error) {
+//
+// defaultPermissions is accepted for signature symmetry with establishGoFuse but
+// not applied here: the cgofuse/FUSE-T path doesn't take the go-fuse
+// default_permissions mount option, and the client-side Access cache (always on
+// in the cache decorator) covers the Access-amplification reduction for it.
+func establishCgoFuse(mountPath, volume, endpoint string, fsBackend io.FileSystemBackend, rewriter *io.IDRewriter, cfg *config.FUSEConfig, maxWrite int, metaTimeout time.Duration, defaultPermissions bool) (mountHandle, error) {
+	_ = defaultPermissions
 	opts, label, allowFallback, err := cgofuseMountSetup(volume, cfg, maxWrite, "")
 	if err != nil {
 		return nil, err

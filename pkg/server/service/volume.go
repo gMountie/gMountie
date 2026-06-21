@@ -351,19 +351,29 @@ func (s *VolumeServiceImpl) resolveIdentity(ctx context.Context, volume string, 
 		return Identity{}, errors.Errorf("volume %s not found", volume)
 	}
 	m := entry.mapping
-	if m.Mode == config.MappingModePassthrough {
-		return passthroughIdentity(m, caller), nil
-	}
-	if m.Mode == config.MappingModeSquash {
+	var (
+		id  Identity
+		err error
+	)
+	switch m.Mode {
+	case config.MappingModePassthrough:
+		id = passthroughIdentity(m, caller)
+	case config.MappingModeSquash:
 		// Squash maps every caller to one fixed identity, independent of the
 		// authenticated principal, so no principal is required.
-		return entry.resolver.Resolve("")
+		id, err = entry.resolver.Resolve("")
+	default:
+		p, ok := principal.FromContext(ctx)
+		if !ok {
+			return Identity{}, errors.Errorf("no authenticated principal for volume %s (mode %s)", volume, m.Mode)
+		}
+		id, err = entry.resolver.Resolve(p)
 	}
-	p, ok := principal.FromContext(ctx)
-	if !ok {
-		return Identity{}, errors.Errorf("no authenticated principal for volume %s (mode %s)", volume, m.Mode)
+	if err != nil {
+		return Identity{}, err
 	}
-	return entry.resolver.Resolve(p)
+	id.Mode = string(m.Mode) // stamp the mode so WhoAmI can surface it
+	return id, nil
 }
 
 // passthroughIdentity derives the identity directly from the wire caller,

@@ -23,11 +23,11 @@ func (h *gofuseHandle) Unmount(mountPath string) error {
 
 // establishGoFuse mounts via go-fuse (Linux default; macFUSE on darwin). Mirrors
 // the prior inline body of SingleVolumeMounterImpl.Mount.
-func establishGoFuse(mountPath, volume, endpoint string, backend io.FileSystemBackend, rewriter *io.IDRewriter, cfg *config.FUSEConfig, maxWrite int, metaTimeout time.Duration) (mountHandle, error) {
+func establishGoFuse(mountPath, volume, endpoint string, backend io.FileSystemBackend, rewriter *io.IDRewriter, cfg *config.FUSEConfig, maxWrite int, metaTimeout time.Duration, defaultPermissions bool) (mountHandle, error) {
 	// metaTimeout is unused on the go-fuse path (kept for signature symmetry with the cgofuse
 	// mounter; retryOp owns the effective per-op deadline).
 	root := io.NewMountieRoot(backend, rewriter, cfg.DirectIO)
-	mountOpts := createMountOptions(endpoint, volume, cfg, maxWrite)
+	mountOpts := createMountOptions(endpoint, volume, cfg, maxWrite, defaultPermissions)
 	fsOpts := buildFSOptions(mountOpts, cfg)
 	server, err := gofs.Mount(mountPath, root, fsOpts)
 	if err := wrapMountError(err); err != nil {
