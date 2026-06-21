@@ -29,6 +29,7 @@ type cachedBackend struct {
 	dir        *dirCache
 	data       *dataCache
 	xattr      *xattrCache
+	statfs     *statfsCache
 	validity   *validityTracker
 	subscriber *subscribeConsumer
 	subCancel  context.CancelFunc
@@ -63,6 +64,7 @@ func NewCachedBackend(inner io.FileSystemBackend, cfg Config, p *persist.Persist
 		dir:      newDirCacheWithPersist(acct, cfg.DirTTL, nil, p),
 		data:     newDataCacheWithPersist(acct, cfg.ChunkSizeBytes, p),
 		xattr:    newXAttrCache(acct, cfg.XAttrTTL, nil),
+		statfs:   newStatfsCache(cfg.StatFsTTL, nil),
 		validity: newValidityTracker(),
 		persist:  p,
 	}
@@ -530,7 +532,14 @@ func (b *cachedBackend) Symlink(ctx context.Context, target, linkPath string) (*
 }
 
 func (b *cachedBackend) StatFs(ctx context.Context, p string) (*io.StatFs, proto.FsError) {
-	return b.inner.StatFs(ctx, p)
+	if v, ok := b.statfs.get(p); ok {
+		return v, proto.FsError_FS_OK
+	}
+	v, st := b.inner.StatFs(ctx, p)
+	if st == proto.FsError_FS_OK {
+		b.statfs.put(p, v)
+	}
+	return v, st
 }
 
 func (b *cachedBackend) GetXAttr(ctx context.Context, p, attr string) ([]byte, proto.FsError) {

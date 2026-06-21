@@ -717,6 +717,21 @@ func (s *CachedBackendTestSuite) TestReleaseDoesNotInvalidate() {
 	s.Assert().NotNil(s.b.data.get("/f", 0))
 }
 
+func (s *CachedBackendTestSuite) TestStatFsCachedWithinTTL() {
+	// SetupTest leaves StatFsTTL unset (cache off); enable it for this test.
+	s.b.statfs = newStatfsCache(time.Minute, nil)
+	// inner.StatFs is expected exactly once — the second call must be served
+	// from cache (a second RPC would be an unexpected mock call and fail).
+	s.inner.EXPECT().StatFs(mock.Anything, "/").
+		Return(&io.StatFs{Bfree: 42}, proto.FsError_FS_OK).Once()
+	v1, st := s.b.StatFs(context.Background(), "/")
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	s.Assert().Equal(uint64(42), v1.Bfree)
+	v2, st := s.b.StatFs(context.Background(), "/")
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	s.Assert().Equal(uint64(42), v2.Bfree, "second StatFs served from cache, no RPC")
+}
+
 func (s *CachedBackendTestSuite) TestFlushDoesNotInvalidate() {
 	s.b.attr.putPositive("/f", &io.Attr{Ino: 1})
 	s.b.data.put("/f", 0, []byte("DATA"))
