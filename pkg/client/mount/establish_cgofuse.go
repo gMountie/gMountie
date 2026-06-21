@@ -33,11 +33,11 @@ func (h *cgofuseHandle) Unmount(mountPath string) error {
 	return nil
 }
 
-// establishMount mounts via cgofuse (macOS now; Windows later). Builds the
-// adapter, starts the FUSE host in a goroutine, and blocks until the adapter's
-// Init fires (mount live) or a timeout elapses. Same signature as the go-fuse
-// establishMount so single.go is platform-agnostic.
-func establishMount(mountPath, volume, endpoint string, backend io.FileSystemBackend, rewriter *io.IDRewriter, cfg *config.FUSEConfig, maxWrite int, metaTimeout time.Duration) (mountHandle, error) {
+// establishCgoFuse mounts via cgofuse (FUSE-T on macOS; Linux libfuse benchmark).
+// Builds the adapter, starts the FUSE host in a goroutine, and blocks until the
+// adapter's Init fires (mount live) or a timeout elapses. Same signature as
+// establishGoFuse so single.go is platform-agnostic via establishMount dispatchers.
+func establishCgoFuse(mountPath, volume, endpoint string, backend io.FileSystemBackend, rewriter *io.IDRewriter, cfg *config.FUSEConfig, maxWrite int, metaTimeout time.Duration) (mountHandle, error) {
 	opts, providerLabel, err := cgofuseMountSetup(volume, cfg, maxWrite)
 	if err != nil {
 		return nil, err
