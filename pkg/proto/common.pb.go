@@ -21,6 +21,146 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// FsError is the canonical, OS-neutral filesystem error for RpcFs/RpcFile
+// replies. The wire never carries a raw OS errno: the server maps its native
+// errno to FsError, and each client maps FsError back to its host errno
+// (pkg/common/fserr). 0 == FS_OK (success), matching proto3 zero-default.
+type FsError int32
+
+const (
+	FsError_FS_OK           FsError = 0
+	FsError_FS_EPERM        FsError = 1
+	FsError_FS_ENOENT       FsError = 2
+	FsError_FS_EIO          FsError = 3
+	FsError_FS_ENXIO        FsError = 4
+	FsError_FS_EBADF        FsError = 5
+	FsError_FS_EAGAIN       FsError = 6
+	FsError_FS_EACCES       FsError = 7
+	FsError_FS_EBUSY        FsError = 8
+	FsError_FS_EEXIST       FsError = 9
+	FsError_FS_EXDEV        FsError = 10
+	FsError_FS_ENOTDIR      FsError = 11
+	FsError_FS_EISDIR       FsError = 12
+	FsError_FS_EINVAL       FsError = 13
+	FsError_FS_EMFILE       FsError = 14
+	FsError_FS_ENFILE       FsError = 15
+	FsError_FS_EFBIG        FsError = 16
+	FsError_FS_ENOSPC       FsError = 17
+	FsError_FS_EROFS        FsError = 18
+	FsError_FS_EMLINK       FsError = 19
+	FsError_FS_ERANGE       FsError = 20
+	FsError_FS_ENAMETOOLONG FsError = 21
+	FsError_FS_ENOSYS       FsError = 22
+	FsError_FS_ENOTEMPTY    FsError = 23
+	FsError_FS_ELOOP        FsError = 24
+	FsError_FS_EOVERFLOW    FsError = 25
+	FsError_FS_EDQUOT       FsError = 26
+	FsError_FS_ESTALE       FsError = 27
+	FsError_FS_ENOTSUP      FsError = 28
+	FsError_FS_ENO_XATTR    FsError = 29 // missing xattr: Linux ENODATA, Darwin ENOATTR
+	FsError_FS_EINTR        FsError = 30
+	FsError_FS_ETXTBSY      FsError = 31
+)
+
+// Enum value maps for FsError.
+var (
+	FsError_name = map[int32]string{
+		0:  "FS_OK",
+		1:  "FS_EPERM",
+		2:  "FS_ENOENT",
+		3:  "FS_EIO",
+		4:  "FS_ENXIO",
+		5:  "FS_EBADF",
+		6:  "FS_EAGAIN",
+		7:  "FS_EACCES",
+		8:  "FS_EBUSY",
+		9:  "FS_EEXIST",
+		10: "FS_EXDEV",
+		11: "FS_ENOTDIR",
+		12: "FS_EISDIR",
+		13: "FS_EINVAL",
+		14: "FS_EMFILE",
+		15: "FS_ENFILE",
+		16: "FS_EFBIG",
+		17: "FS_ENOSPC",
+		18: "FS_EROFS",
+		19: "FS_EMLINK",
+		20: "FS_ERANGE",
+		21: "FS_ENAMETOOLONG",
+		22: "FS_ENOSYS",
+		23: "FS_ENOTEMPTY",
+		24: "FS_ELOOP",
+		25: "FS_EOVERFLOW",
+		26: "FS_EDQUOT",
+		27: "FS_ESTALE",
+		28: "FS_ENOTSUP",
+		29: "FS_ENO_XATTR",
+		30: "FS_EINTR",
+		31: "FS_ETXTBSY",
+	}
+	FsError_value = map[string]int32{
+		"FS_OK":           0,
+		"FS_EPERM":        1,
+		"FS_ENOENT":       2,
+		"FS_EIO":          3,
+		"FS_ENXIO":        4,
+		"FS_EBADF":        5,
+		"FS_EAGAIN":       6,
+		"FS_EACCES":       7,
+		"FS_EBUSY":        8,
+		"FS_EEXIST":       9,
+		"FS_EXDEV":        10,
+		"FS_ENOTDIR":      11,
+		"FS_EISDIR":       12,
+		"FS_EINVAL":       13,
+		"FS_EMFILE":       14,
+		"FS_ENFILE":       15,
+		"FS_EFBIG":        16,
+		"FS_ENOSPC":       17,
+		"FS_EROFS":        18,
+		"FS_EMLINK":       19,
+		"FS_ERANGE":       20,
+		"FS_ENAMETOOLONG": 21,
+		"FS_ENOSYS":       22,
+		"FS_ENOTEMPTY":    23,
+		"FS_ELOOP":        24,
+		"FS_EOVERFLOW":    25,
+		"FS_EDQUOT":       26,
+		"FS_ESTALE":       27,
+		"FS_ENOTSUP":      28,
+		"FS_ENO_XATTR":    29,
+		"FS_EINTR":        30,
+		"FS_ETXTBSY":      31,
+	}
+)
+
+func (x FsError) Enum() *FsError {
+	p := new(FsError)
+	*p = x
+	return p
+}
+
+func (x FsError) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FsError) Descriptor() protoreflect.EnumDescriptor {
+	return file_api_proto_common_proto_enumTypes[0].Descriptor()
+}
+
+func (FsError) Type() protoreflect.EnumType {
+	return &file_api_proto_common_proto_enumTypes[0]
+}
+
+func (x FsError) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FsError.Descriptor instead.
+func (FsError) EnumDescriptor() ([]byte, []int) {
+	return file_api_proto_common_proto_rawDescGZIP(), []int{0}
+}
+
 type Owner struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Uid           uint32                 `protobuf:"varint,1,opt,name=uid,proto3" json:"uid,omitempty"`
@@ -154,7 +294,45 @@ const file_api_proto_common_proto_rawDesc = "" +
 	"group_name\x18\x04 \x01(\tR\tgroupName\"A\n" +
 	"\x06Caller\x12%\n" +
 	"\x05owner\x18\x01 \x01(\v2\x0f.gmountie.OwnerR\x05owner\x12\x10\n" +
-	"\x03pid\x18\x02 \x01(\rR\x03pidB\vZ\tpkg/protob\x06proto3"
+	"\x03pid\x18\x02 \x01(\rR\x03pid*\xeb\x03\n" +
+	"\aFsError\x12\t\n" +
+	"\x05FS_OK\x10\x00\x12\f\n" +
+	"\bFS_EPERM\x10\x01\x12\r\n" +
+	"\tFS_ENOENT\x10\x02\x12\n" +
+	"\n" +
+	"\x06FS_EIO\x10\x03\x12\f\n" +
+	"\bFS_ENXIO\x10\x04\x12\f\n" +
+	"\bFS_EBADF\x10\x05\x12\r\n" +
+	"\tFS_EAGAIN\x10\x06\x12\r\n" +
+	"\tFS_EACCES\x10\a\x12\f\n" +
+	"\bFS_EBUSY\x10\b\x12\r\n" +
+	"\tFS_EEXIST\x10\t\x12\f\n" +
+	"\bFS_EXDEV\x10\n" +
+	"\x12\x0e\n" +
+	"\n" +
+	"FS_ENOTDIR\x10\v\x12\r\n" +
+	"\tFS_EISDIR\x10\f\x12\r\n" +
+	"\tFS_EINVAL\x10\r\x12\r\n" +
+	"\tFS_EMFILE\x10\x0e\x12\r\n" +
+	"\tFS_ENFILE\x10\x0f\x12\f\n" +
+	"\bFS_EFBIG\x10\x10\x12\r\n" +
+	"\tFS_ENOSPC\x10\x11\x12\f\n" +
+	"\bFS_EROFS\x10\x12\x12\r\n" +
+	"\tFS_EMLINK\x10\x13\x12\r\n" +
+	"\tFS_ERANGE\x10\x14\x12\x13\n" +
+	"\x0fFS_ENAMETOOLONG\x10\x15\x12\r\n" +
+	"\tFS_ENOSYS\x10\x16\x12\x10\n" +
+	"\fFS_ENOTEMPTY\x10\x17\x12\f\n" +
+	"\bFS_ELOOP\x10\x18\x12\x10\n" +
+	"\fFS_EOVERFLOW\x10\x19\x12\r\n" +
+	"\tFS_EDQUOT\x10\x1a\x12\r\n" +
+	"\tFS_ESTALE\x10\x1b\x12\x0e\n" +
+	"\n" +
+	"FS_ENOTSUP\x10\x1c\x12\x10\n" +
+	"\fFS_ENO_XATTR\x10\x1d\x12\f\n" +
+	"\bFS_EINTR\x10\x1e\x12\x0e\n" +
+	"\n" +
+	"FS_ETXTBSY\x10\x1fB\vZ\tpkg/protob\x06proto3"
 
 var (
 	file_api_proto_common_proto_rawDescOnce sync.Once
@@ -168,13 +346,15 @@ func file_api_proto_common_proto_rawDescGZIP() []byte {
 	return file_api_proto_common_proto_rawDescData
 }
 
+var file_api_proto_common_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_api_proto_common_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_api_proto_common_proto_goTypes = []any{
-	(*Owner)(nil),  // 0: gmountie.Owner
-	(*Caller)(nil), // 1: gmountie.Caller
+	(FsError)(0),   // 0: gmountie.FsError
+	(*Owner)(nil),  // 1: gmountie.Owner
+	(*Caller)(nil), // 2: gmountie.Caller
 }
 var file_api_proto_common_proto_depIdxs = []int32{
-	0, // 0: gmountie.Caller.owner:type_name -> gmountie.Owner
+	1, // 0: gmountie.Caller.owner:type_name -> gmountie.Owner
 	1, // [1:1] is the sub-list for method output_type
 	1, // [1:1] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
@@ -192,13 +372,14 @@ func file_api_proto_common_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_common_proto_rawDesc), len(file_api_proto_common_proto_rawDesc)),
-			NumEnums:      0,
+			NumEnums:      1,
 			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_api_proto_common_proto_goTypes,
 		DependencyIndexes: file_api_proto_common_proto_depIdxs,
+		EnumInfos:         file_api_proto_common_proto_enumTypes,
 		MessageInfos:      file_api_proto_common_proto_msgTypes,
 	}.Build()
 	File_api_proto_common_proto = out.File

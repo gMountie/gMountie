@@ -13,3 +13,42 @@ message Caller {
   Owner owner = 1;
   uint32 pid = 2;
 }
+
+// FsError is the canonical, OS-neutral filesystem error for RpcFs/RpcFile
+// replies. The wire never carries a raw OS errno: the server maps its native
+// errno to FsError, and each client maps FsError back to its host errno
+// (pkg/common/fserr). 0 == FS_OK (success), matching proto3 zero-default.
+enum FsError {
+  FS_OK = 0;
+  FS_EPERM = 1;
+  FS_ENOENT = 2;
+  FS_EIO = 3;
+  FS_ENXIO = 4;
+  FS_EBADF = 5;
+  FS_EAGAIN = 6;
+  FS_EACCES = 7;
+  FS_EBUSY = 8;
+  FS_EEXIST = 9;
+  FS_EXDEV = 10;
+  FS_ENOTDIR = 11;
+  FS_EISDIR = 12;
+  FS_EINVAL = 13;
+  FS_EMFILE = 14;
+  FS_ENFILE = 15;
+  FS_EFBIG = 16;
+  FS_ENOSPC = 17;
+  FS_EROFS = 18;
+  FS_EMLINK = 19;
+  FS_ERANGE = 20;
+  FS_ENAMETOOLONG = 21;
+  FS_ENOSYS = 22;
+  FS_ENOTEMPTY = 23;
+  FS_ELOOP = 24;
+  FS_EOVERFLOW = 25;
+  FS_EDQUOT = 26;
+  FS_ESTALE = 27;
+  FS_ENOTSUP = 28;
+  FS_ENO_XATTR = 29;  // missing xattr: Linux ENODATA, Darwin ENOATTR
+  FS_EINTR = 30;
+  FS_ETXTBSY = 31;
+}
