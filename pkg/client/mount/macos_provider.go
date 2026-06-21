@@ -97,3 +97,13 @@ func adapterForProvider(p fuseProvider) adapterKind {
 	}
 	return adapterGoFuse
 }
+
+// goFuseMacFUSEOptions returns the macFUSE mount options as bare strings for
+// go-fuse's MountOptions.Options (it joins them as a single -o list and adds
+// -o iosize=MaxWrite itself in mount_darwin.go). "local" makes Finder show a
+// browsable volume (fixes "terminal sees files, Finder doesn't"); "volname"
+// names it; "noappledouble" suppresses ._*/.DS_Store chatter. go-fuse on darwin
+// is only ever the macFUSE path, so these are unconditional here.
+func goFuseMacFUSEOptions(volume string) []string {
+	return []string{"volname=" + volume, "local", "noappledouble"}
+}
