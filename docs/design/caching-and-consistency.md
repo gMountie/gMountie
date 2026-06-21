@@ -106,8 +106,11 @@ so the cache is served on TTL (`cache.xattr_ttl`, default 5 min) plus
 Subscribe MUTATED/DELETED/RENAMED push invalidation — no per-path
 revalidation is needed. The cache stores names only; `GetXAttr` values are
 not cached (values are large, content-dependent, and their caching is deferred
-to a future phase). For the full design rationale see
-`docs/superpowers/specs/2026-06-21-xattr-names-cache-design.md`.
+to a future phase). Because proto3 cannot distinguish an empty `repeated` field
+from an unset one, each `ReadDir` entry carries an explicit `xattr_listed` bool
+alongside `xattr_names`: the client primes the cache — including an empty
+"no xattrs" list, which is a valid positive hit — only when that bool is set,
+and falls back to a direct `ListXAttr` otherwise.
 
 ### 2.4 Data cache
 
@@ -372,11 +375,13 @@ read is preferable to a stale-data bug.
 | `Unlink(path)` | Attr + all data for `path`; dir for `path`'s parent; **adds** negative attr for `path` |
 | `Rmdir(path)` | Attr + dir for `path`; dir for `path`'s parent; adds negative attr for `path` |
 | `Rename(old, new)` | Attr + data for both `old` and `new`; dir for both parents; adds negative attr for `old`; drops any negative attr for `new` |
+| `SetXAttr(path, attr, ...)` / `RemoveXAttr(path, attr)` | XAttr names + attr for `path`, on success only. An xattr write changes the inode's ctime, so the cached attr version is stale too |
 | `Release(fh)` / `Flush(fh)` / `Fsync(fh)` | Nothing (no observable state change beyond what `Write` already invalidated) |
 | `SetLk` / `SetLkw` / `GetLk` | Nothing (lock state is not cached) |
 
-Read-only ops (`Stat`, `Lookup`, `ListDir`, `Read`, `Access`, `StatFs`,
-`GetXAttr`, `Open`) **populate** the cache on a miss; they never invalidate.
+Read-only ops (`Stat`, `Lookup`, `ListDir`, `Read`, `ListXAttr`, `Access`,
+`StatFs`, `Open`) **populate** the cache on a miss; they never invalidate.
+(`GetXAttr` is read-only but a pure pass-through — values are not cached.)
 
 Invalidation is symmetric between local mutations and Subscribe events: both
 paths call the same `invalidateAttr` / `invalidateData` / `invalidateDir`
