@@ -49,6 +49,9 @@ type BackendClient struct {
 	// plusListings makes ListDir request per-entry attributes (the
 	// READDIRPLUS win). Set via WithPlusListings; default false.
 	plusListings bool
+	// xattrListings makes ListDir request per-entry xattr names (set via
+	// WithXattrListings; default false). Enabled only when the client cache is on.
+	xattrListings bool
 	// noReadahead disables per-fd readahead on this backend's handles. Set via
 	// WithoutReadahead; default false. Used when a cache decorator does its own
 	// sequential prefetch — two prefetchers on one connection halve WAN
@@ -66,6 +69,12 @@ type BackendOption func(*BackendClient)
 // default is false and the mount factory enables it iff the cache is on.
 func WithPlusListings(enabled bool) BackendOption {
 	return func(b *BackendClient) { b.plusListings = enabled }
+}
+
+// WithXattrListings makes ListDir ask the server to listxattr each entry so the
+// cache can prime per-file xattr names from one ReadDir RPC.
+func WithXattrListings(enabled bool) BackendOption {
+	return func(b *BackendClient) { b.xattrListings = enabled }
 }
 
 // WithoutReadahead disables this backend's per-fd readahead. The cache decorator
@@ -307,10 +316,11 @@ func (b *BackendClient) ListDir(ctx context.Context, path string) ([]DirEntryPlu
 	res, err := retryOp(b.client, ctx, "ReadDir", classIdempotentRead, b.client.MetaTimeout(),
 		func(ctx context.Context) (listDirResult, error) {
 			stream, err := b.client.Fs().ReadDir(ctx, &proto.ReadDirRequest{
-				Volume: b.volume,
-				Caller: callerFromCtx(ctx),
-				Path:   path,
-				Plus:   b.plusListings,
+				Volume:    b.volume,
+				Caller:    callerFromCtx(ctx),
+				Path:      path,
+				Plus:      b.plusListings,
+				WithXattr: b.xattrListings,
 			}, grpc.WaitForReady(true))
 			if err != nil {
 				return listDirResult{}, err
@@ -340,7 +350,9 @@ func (b *BackendClient) ListDir(ctx context.Context, path string) ([]DirEntryPlu
 							Mode: entry.Mode,
 							Name: entry.Name,
 						},
-						Attr: attrFromProto(e.GetAttributes()),
+						Attr:        attrFromProto(e.GetAttributes()),
+						XattrNames:  e.GetXattrNames(),
+						XattrListed: e.GetXattrListed(),
 					})
 				}
 			}

@@ -61,10 +61,13 @@ type DirEntry struct {
 
 // DirEntryPlus pairs a directory entry with its attrs when the backend was
 // asked for a plus listing (Attr nil otherwise, or when the per-entry stat
-// failed server-side).
+// failed server-side). When WithXattrListings is enabled XattrListed is true
+// and XattrNames carries the entry's xattr names (empty slice == no xattrs).
 type DirEntryPlus struct {
 	DirEntry
-	Attr *Attr
+	Attr        *Attr
+	XattrNames  []string // entry's xattr names when the server listed them
+	XattrListed bool     // true == server ran listxattr for this entry
 }
 
 // StatFs mirrors the per-volume statfs reply.
