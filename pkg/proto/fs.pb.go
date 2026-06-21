@@ -1453,6 +1453,7 @@ type ReadDirRequest struct {
 	Caller        *Caller                `protobuf:"bytes,2,opt,name=caller,proto3" json:"caller,omitempty"`
 	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
 	Plus          bool                   `protobuf:"varint,4,opt,name=plus,proto3" json:"plus,omitempty"`
+	WithXattr     bool                   `protobuf:"varint,5,opt,name=with_xattr,json=withXattr,proto3" json:"with_xattr,omitempty"` // ask the server to listxattr each entry (cache-only)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1515,10 +1516,23 @@ func (x *ReadDirRequest) GetPlus() bool {
 	return false
 }
 
+func (x *ReadDirRequest) GetWithXattr() bool {
+	if x != nil {
+		return x.WithXattr
+	}
+	return false
+}
+
 type DirEntryPlus struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Entry         *DirEntry              `protobuf:"bytes,1,opt,name=entry,proto3" json:"entry,omitempty"`
-	Attributes    *Attr                  `protobuf:"bytes,2,opt,name=attributes,proto3" json:"attributes,omitempty"` // set when plus=true and the per-entry stat succeeded
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Entry      *DirEntry              `protobuf:"bytes,1,opt,name=entry,proto3" json:"entry,omitempty"`
+	Attributes *Attr                  `protobuf:"bytes,2,opt,name=attributes,proto3" json:"attributes,omitempty"` // set when plus=true and the per-entry stat succeeded
+	// xattr_listed is true when with_xattr was requested AND the per-entry
+	// listxattr succeeded. It is the prime signal: proto3 cannot distinguish an
+	// empty repeated field (no xattrs) from "not requested", so the client primes
+	// its xattr cache only when this bool is set.
+	XattrListed   bool     `protobuf:"varint,3,opt,name=xattr_listed,json=xattrListed,proto3" json:"xattr_listed,omitempty"`
+	XattrNames    []string `protobuf:"bytes,4,rep,name=xattr_names,json=xattrNames,proto3" json:"xattr_names,omitempty"` // entry's xattr names; empty == no xattrs
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1563,6 +1577,20 @@ func (x *DirEntryPlus) GetEntry() *DirEntry {
 func (x *DirEntryPlus) GetAttributes() *Attr {
 	if x != nil {
 		return x.Attributes
+	}
+	return nil
+}
+
+func (x *DirEntryPlus) GetXattrListed() bool {
+	if x != nil {
+		return x.XattrListed
+	}
+	return false
+}
+
+func (x *DirEntryPlus) GetXattrNames() []string {
+	if x != nil {
+		return x.XattrNames
 	}
 	return nil
 }
@@ -2770,17 +2798,22 @@ const file_api_proto_fs_proto_rawDesc = "" +
 	"\n" +
 	"attributes\x18\x01 \x01(\v2\x0e.gmountie.AttrR\n" +
 	"attributes\x12\x16\n" +
-	"\x06status\x18\x02 \x01(\x05R\x06status\"z\n" +
+	"\x06status\x18\x02 \x01(\x05R\x06status\"\x99\x01\n" +
 	"\x0eReadDirRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
 	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x12\n" +
 	"\x04path\x18\x03 \x01(\tR\x04path\x12\x12\n" +
-	"\x04plus\x18\x04 \x01(\bR\x04plus\"h\n" +
+	"\x04plus\x18\x04 \x01(\bR\x04plus\x12\x1d\n" +
+	"\n" +
+	"with_xattr\x18\x05 \x01(\bR\twithXattr\"\xac\x01\n" +
 	"\fDirEntryPlus\x12(\n" +
 	"\x05entry\x18\x01 \x01(\v2\x12.gmountie.DirEntryR\x05entry\x12.\n" +
 	"\n" +
 	"attributes\x18\x02 \x01(\v2\x0e.gmountie.AttrR\n" +
-	"attributes\"X\n" +
+	"attributes\x12!\n" +
+	"\fxattr_listed\x18\x03 \x01(\bR\vxattrListed\x12\x1f\n" +
+	"\vxattr_names\x18\x04 \x03(\tR\n" +
+	"xattrNames\"X\n" +
 	"\fReadDirBatch\x120\n" +
 	"\aentries\x18\x01 \x03(\v2\x16.gmountie.DirEntryPlusR\aentries\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\x05R\x06status\"\xb6\x01\n" +
