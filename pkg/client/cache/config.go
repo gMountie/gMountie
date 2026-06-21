@@ -21,6 +21,7 @@ type Config struct {
 	AttrTTL          time.Duration
 	DirTTL           time.Duration
 	NegativeTTL      time.Duration
+	XAttrTTL         time.Duration
 }
 
 // ConfigFromClient builds a runtime Config from the operator-facing
@@ -36,5 +37,6 @@ func ConfigFromClient(cfg clientconfig.CacheConfig) Config {
 		AttrTTL:          cfg.AttrTTL,
 		DirTTL:           cfg.DirTTL,
 		NegativeTTL:      cfg.NegativeTTL,
+		XAttrTTL:         cfg.XAttrTTL,
 	}
 }
