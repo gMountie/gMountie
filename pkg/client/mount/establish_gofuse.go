@@ -1,4 +1,4 @@
-//go:build !darwin && !cgofuse
+//go:build !cgofuse
 
 package mount
 
@@ -21,9 +21,9 @@ func (h *gofuseHandle) Unmount(mountPath string) error {
 	return stopServer(h.server, mountPath)
 }
 
-// establishMount mounts via go-fuse (Linux). Mirrors the prior inline body of
-// SingleVolumeMounterImpl.Mount.
-func establishMount(mountPath, volume, endpoint string, backend io.FileSystemBackend, rewriter *io.IDRewriter, cfg *config.FUSEConfig, maxWrite int, metaTimeout time.Duration) (mountHandle, error) {
+// establishGoFuse mounts via go-fuse (Linux default; macFUSE on darwin). Mirrors
+// the prior inline body of SingleVolumeMounterImpl.Mount.
+func establishGoFuse(mountPath, volume, endpoint string, backend io.FileSystemBackend, rewriter *io.IDRewriter, cfg *config.FUSEConfig, maxWrite int, metaTimeout time.Duration) (mountHandle, error) {
 	// metaTimeout is unused on the go-fuse path (kept for signature symmetry with the cgofuse
 	// mounter; retryOp owns the effective per-op deadline).
 	root := io.NewMountieRoot(backend, rewriter, cfg.DirectIO)
