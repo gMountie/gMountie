@@ -1,8 +1,6 @@
 package mount
 
 import (
-	"context"
-	"os"
 	"path/filepath"
 
 	"go.gmountie.dev/gmountie/pkg/client/cache"
@@ -99,15 +97,8 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 		}
 	}()
 
-	maxWrite := negotiateMaxWriteBytes(m.client, m.fuse)
+	params, rewriter := negotiateMountParams(m.client, m.fuse, m.rawIDs, volume)
 
-	// Plus listings (per-entry attrs on ReadDir) only pay off when the cache
-	// decorator below can prime its attr cache from them — without a cache
-	// the extra attrs are wasted bytes, so the knob tracks cache.Enabled.
-	// With the cache on, also disable the io-layer readahead: the cache does its
-	// own sequential prefetch (span over-read), and two prefetchers on one gRPC
-	// connection halve WAN read throughput (measured). Without the cache, the
-	// io-layer readahead stays on — it's the prefetcher in that path.
 	backendOpts := []io.BackendOption{
 		io.WithPlusListings(m.cache.Enabled),
 		io.WithXattrListings(m.cache.Enabled),
@@ -115,13 +106,11 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 	if m.cache.Enabled {
 		backendOpts = append(backendOpts, io.WithoutReadahead())
 	}
-	var backend io.FileSystemBackend = io.NewBackendClient(m.client, volume, backendOpts...)
+	transport := io.NewBackendClient(m.client, volume, backendOpts...)
+
+	var layers []backendLayer
 	if m.cache.Enabled {
 		root := filepath.Join(m.cache.Path, volume)
-		// Wire the persist GC/accounting observability sink to the client
-		// metrics. Guard nil: a client built without metrics leaves the sink
-		// nil, which persist.Open turns into its no-op (never wrap a nil
-		// *metrics.Metrics — the adapter would panic).
 		var gcMetrics persist.GCMetrics
 		if cm := m.client.Metrics(); cm != nil {
 			gcMetrics = persistGCMetrics{cm}
@@ -131,33 +120,17 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 			return errors.Wrap(err, "open cache persist")
 		}
 		m.persists.Store(volume, p)
-		backend = cache.NewCachedBackend(backend, cache.ConfigFromClient(m.cache), p, m.client.Fs(), volume)
+		client := m.client // capture for the closure
+		cacheCfg := cache.ConfigFromClient(m.cache)
+		layers = append(layers, backendLayer{pos: posCache, build: func(inner io.FileSystemBackend) io.FileSystemBackend {
+			return cache.NewCachedBackend(inner, cacheCfg, p, client.Fs(), volume)
+		}})
 	}
+
+	backend := composeBackend(transport, layers)
 	m.backends.Store(volume, backend)
 
-	// Fetch the server identity so we can rewrite UIDs/GIDs to local values.
-	// raw_ids=true skips this and leaves the kernel seeing the raw server IDs.
-	var rewriter *io.IDRewriter
-	useDefaultPermissions := false
-	if !m.rawIDs {
-		ctx, cancel := context.WithTimeout(context.Background(), m.client.MetaTimeout())
-		defer cancel()
-		idResp, err := m.client.WhoAmI(ctx, volume)
-		if err != nil {
-			log.Log.Warn("WhoAmI failed, mounting with raw IDs", zap.String("volume", volume), zap.Error(err))
-		} else {
-			rewriter = io.NewIDRewriter(identityFromProto(idResp), uint32(os.Getuid()), uint32(os.Getgid()))
-			// Squash maps every file to the one principal identity, which the
-			// rewriter (set above) presents as the local user. So the kernel can
-			// enforce permissions locally via default_permissions and skip the
-			// per-check Access RPC. Other modes present foreign owners, where
-			// local enforcement would false-deny, so they keep forwarding (and
-			// caching) Access. raw_ids leaves rewriter nil and stays false.
-			useDefaultPermissions = idResp.GetMappingMode() == mappingModeSquash
-		}
-	}
-
-	handle, err := establishMount(mountPath, volume, m.client.GetEndpoint(), backend, rewriter, m.fuse, maxWrite, m.client.MetaTimeout(), useDefaultPermissions)
+	handle, err := establishMount(mountPath, volume, m.client.GetEndpoint(), backend, rewriter, m.fuse, params.MaxWriteBytes, m.client.MetaTimeout(), params.DefaultPermissions)
 	if err != nil {
 		return err
 	}
