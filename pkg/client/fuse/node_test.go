@@ -1,4 +1,4 @@
-package io_test
+package fuse_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	iomocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/io"
+	clientfuse "go.gmountie.dev/gmountie/pkg/client/fuse"
 	clientio "go.gmountie.dev/gmountie/pkg/client/io"
 	fserr "go.gmountie.dev/gmountie/pkg/common/fserr"
 	"go.gmountie.dev/gmountie/pkg/proto"
@@ -37,7 +38,7 @@ type NodeAdapterTestSuite struct {
 
 func (s *NodeAdapterTestSuite) SetupTest() {
 	s.backend = iomocks.NewMockFileSystemBackend(s.T())
-	s.root = clientio.NewMountieRoot(s.backend, false)
+	s.root = clientfuse.NewMountieRoot(s.backend, false)
 	// fs.NewNodeFS wires up the rawBridge so Inode.NewInode() can run
 	// without a real FUSE mount. We never call Mount, so no kernel
 	// interaction; the bridge just satisfies the in-memory inode tree.

@@ -12,8 +12,8 @@ import (
 	"go.uber.org/zap"
 
 	"go.gmountie.dev/gmountie/pkg/client/config"
+	"go.gmountie.dev/gmountie/pkg/client/fuse/cgofs"
 	"go.gmountie.dev/gmountie/pkg/client/io"
-	"go.gmountie.dev/gmountie/pkg/client/io/cgofs"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 )
 

@@ -9,7 +9,7 @@
 // on demand via Inode.Path(nil) rather than cached on the struct — go-fuse
 // mutates the inode tree under us (Rename's MvChild, hardlinks) and a cached
 // path would go stale, sending subsequent ops to the old name on the server.
-package io
+package fuse
 
 import (
 	"context"
@@ -18,11 +18,12 @@ import (
 	"strings"
 	"syscall"
 
+	clientio "go.gmountie.dev/gmountie/pkg/client/io"
 	fserr "go.gmountie.dev/gmountie/pkg/common/fserr"
 	"go.gmountie.dev/gmountie/pkg/proto"
 
 	"github.com/hanwen/go-fuse/v2/fs"
-	"github.com/hanwen/go-fuse/v2/fuse"
+	gofuse "github.com/hanwen/go-fuse/v2/fuse"
 )
 
 // sqliteShmSuffix is the SQLite WAL shared-memory sidecar suffix. SQLite
@@ -44,7 +45,7 @@ const sqliteShmSuffix = "-shm"
 type gMountieNode struct {
 	fs.Inode
 
-	backend FileSystemBackend
+	backend clientio.FileSystemBackend
 	// directIOAlways forces FOPEN_DIRECT_IO on every Open/Create (the
 	// fuse.direct_io escape hatch for mmap-heavy workloads). Independently,
 	// SQLite -shm sidecars always open direct-IO; see wantDirectIO.
@@ -58,7 +59,7 @@ type gMountieNode struct {
 // directIOAlways forces direct-IO on every handle (fuse.direct_io); even when
 // false, SQLite -shm sidecars still open direct-IO (see wantDirectIO).
 // Mount code passes the returned value to fs.Mount.
-func NewMountieRoot(backend FileSystemBackend, directIOAlways bool) fs.InodeEmbedder {
+func NewMountieRoot(backend clientio.FileSystemBackend, directIOAlways bool) fs.InodeEmbedder {
 	return &gMountieNode{backend: backend, directIOAlways: directIOAlways}
 }
 
@@ -71,7 +72,7 @@ func (n *gMountieNode) path() string {
 }
 
 // newChild attaches a child inode sharing this node's backend.
-func (n *gMountieNode) newChild(ctx context.Context, a *Attr) *fs.Inode {
+func (n *gMountieNode) newChild(ctx context.Context, a *clientio.Attr) *fs.Inode {
 	return n.NewInode(ctx, &gMountieNode{
 		backend:        n.backend,
 		directIOAlways: n.directIOAlways,
@@ -84,8 +85,8 @@ func (n *gMountieNode) newChild(ctx context.Context, a *Attr) *fs.Inode {
 // gMountieFile is the open-file adapter satisfying fs.FileReader,
 // fs.FileWriter, fs.FileFlusher, fs.FileFsyncer, fs.FileReleaser.
 type gMountieFile struct {
-	backend FileSystemBackend
-	fh      FileHandle
+	backend clientio.FileSystemBackend
+	fh      clientio.FileHandle
 }
 
 // Compile-time interface assertions — these ensure the node satisfies
@@ -122,11 +123,11 @@ var (
 	_ fs.FileLseeker   = (*gMountieFile)(nil)
 )
 
-// setAttrFromBackend populates a fuse.Attr from a backend Attr. It is a plain
+// setAttrFromBackend populates a gofuse.Attr from a backend Attr. It is a plain
 // field copy — the backend (with the identity layer composed outermost) has
 // already rewritten Uid/Gid to local display ids, so no rewrite happens here.
 // Used by Getattr/Lookup/Create/Mkdir/Setattr/Symlink handlers.
-func setAttrFromBackend(dst *fuse.Attr, a *Attr) {
+func setAttrFromBackend(dst *gofuse.Attr, a *clientio.Attr) {
 	dst.Ino = a.Ino
 	dst.Size = a.Size
 	dst.Blocks = a.Blocks
@@ -155,7 +156,7 @@ func childPath(parent, name string) string {
 
 // --- Lookup ---
 
-func (n *gMountieNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+func (n *gMountieNode) Lookup(ctx context.Context, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	a, st := n.backend.Lookup(ctx, n.path(), name)
 	if st != proto.FsError_FS_OK {
 		return nil, fserr.ToErrno(st)
@@ -174,9 +175,9 @@ func (n *gMountieNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno
 	// Only the dirent part feeds the kernel here; per-entry attrs (plus
 	// listings) are consumed by the cache layer, which primes its attr
 	// cache before the entries reach this adapter.
-	fuseEntries := make([]fuse.DirEntry, 0, len(entries))
+	fuseEntries := make([]gofuse.DirEntry, 0, len(entries))
 	for _, e := range entries {
-		fuseEntries = append(fuseEntries, fuse.DirEntry{
+		fuseEntries = append(fuseEntries, gofuse.DirEntry{
 			Mode: e.Mode,
 			Name: e.Name,
 			Ino:  e.Ino,
@@ -187,7 +188,7 @@ func (n *gMountieNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno
 
 // --- Getattr ---
 
-func (n *gMountieNode) Getattr(ctx context.Context, _ fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+func (n *gMountieNode) Getattr(ctx context.Context, _ fs.FileHandle, out *gofuse.AttrOut) syscall.Errno {
 	a, st := n.backend.Stat(ctx, n.path())
 	if st != proto.FsError_FS_OK {
 		return fserr.ToErrno(st)
@@ -213,15 +214,15 @@ func (n *gMountieNode) Getattr(ctx context.Context, _ fs.FileHandle, out *fuse.A
 // local→server on the request and server→local on the reply, so this adapter
 // is namespace-agnostic. The fs.FileHandle argument is ignored, as before —
 // the wire SetAttr is path-based.
-func (n *gMountieNode) Setattr(ctx context.Context, _ fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
+func (n *gMountieNode) Setattr(ctx context.Context, _ fs.FileHandle, in *gofuse.SetAttrIn, out *gofuse.AttrOut) syscall.Errno {
 	p := n.path()
-	var req SetAttrIn
+	var req clientio.SetAttrIn
 	if sz, ok := in.GetSize(); ok {
-		req.Valid |= fuse.FATTR_SIZE
+		req.Valid |= gofuse.FATTR_SIZE
 		req.Size = sz
 	}
 	if mode, ok := in.GetMode(); ok {
-		req.Valid |= fuse.FATTR_MODE
+		req.Valid |= gofuse.FATTR_MODE
 		req.Mode = mode
 	}
 	// UID/GID are passed through as LOCAL ids with their valid bits set; the
@@ -229,19 +230,19 @@ func (n *gMountieNode) Setattr(ctx context.Context, _ fs.FileHandle, in *fuse.Se
 	// the request reaches the wire (see pkg/client/io/identity), so this adapter
 	// no longer touches ids.
 	if uid, ok := in.GetUID(); ok {
-		req.Valid |= fuse.FATTR_UID
+		req.Valid |= gofuse.FATTR_UID
 		req.Uid = uid
 	}
 	if gid, ok := in.GetGID(); ok {
-		req.Valid |= fuse.FATTR_GID
+		req.Valid |= gofuse.FATTR_GID
 		req.Gid = gid
 	}
 	if atime, ok := in.GetATime(); ok {
-		req.Valid |= fuse.FATTR_ATIME
+		req.Valid |= gofuse.FATTR_ATIME
 		req.Atime = &atime
 	}
 	if mtime, ok := in.GetMTime(); ok {
-		req.Valid |= fuse.FATTR_MTIME
+		req.Valid |= gofuse.FATTR_MTIME
 		req.Mtime = &mtime
 	}
 	a, st := n.backend.SetAttr(ctx, p, req)
@@ -249,7 +250,7 @@ func (n *gMountieNode) Setattr(ctx context.Context, _ fs.FileHandle, in *fuse.Se
 		return fserr.ToErrno(st)
 	}
 	// The server omits attrs only when its post-apply stat failed. Fall back
-	// to Stat rather than handing the kernel a zero fuse.Attr — the kernel
+	// to Stat rather than handing the kernel a zero gofuse.Attr — the kernel
 	// would cache the zero (Mode=0, Size=0) for AttrTimeout (same poisoning
 	// concern as Create's fallback).
 	if a == nil {
@@ -282,14 +283,14 @@ func (n *gMountieNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, u
 	}
 	var fuseFlags uint32
 	if n.wantDirectIO(p) {
-		fuseFlags = fuse.FOPEN_DIRECT_IO
+		fuseFlags = gofuse.FOPEN_DIRECT_IO
 	}
 	return &gMountieFile{backend: n.backend, fh: h}, fuseFlags, 0
 }
 
 // --- Create ---
 
-func (n *gMountieNode) Create(ctx context.Context, name string, flags, mode uint32, out *fuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
+func (n *gMountieNode) Create(ctx context.Context, name string, flags, mode uint32, out *gofuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
 	parent := n.path()
 	handle, attr, st := n.backend.Create(ctx, parent, name, flags, mode)
 	if st != proto.FsError_FS_OK {
@@ -313,14 +314,14 @@ func (n *gMountieNode) Create(ctx context.Context, name string, flags, mode uint
 	setAttrFromBackend(&out.Attr, attr)
 	var fuseFlags uint32
 	if n.wantDirectIO(full) {
-		fuseFlags = fuse.FOPEN_DIRECT_IO
+		fuseFlags = gofuse.FOPEN_DIRECT_IO
 	}
 	return n.newChild(ctx, attr), &gMountieFile{backend: n.backend, fh: handle}, fuseFlags, 0
 }
 
 // --- Mkdir ---
 
-func (n *gMountieNode) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+func (n *gMountieNode) Mkdir(ctx context.Context, name string, mode uint32, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	full := childPath(n.path(), name)
 	a, st := n.backend.Mkdir(ctx, full, mode)
 	if st != proto.FsError_FS_OK {
@@ -347,7 +348,7 @@ func (n *gMountieNode) Mkdir(ctx context.Context, name string, mode uint32, out 
 // Symlink creates a new symbolic link `name` whose target is `target` (an
 // arbitrary string — confinement enforces on resolve, not on creation).
 // Returns the new inode so the kernel can populate its dentry.
-func (n *gMountieNode) Symlink(ctx context.Context, target, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+func (n *gMountieNode) Symlink(ctx context.Context, target, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	full := childPath(n.path(), name)
 	a, st := n.backend.Symlink(ctx, target, full)
 	if st != proto.FsError_FS_OK {
@@ -398,7 +399,7 @@ func (n *gMountieNode) Unlink(ctx context.Context, name string) syscall.Errno {
 func (n *gMountieNode) Rename(ctx context.Context, name string, newParent fs.InodeEmbedder, newName string, _ uint32) syscall.Errno {
 	np, ok := newParent.(*gMountieNode)
 	if !ok {
-		return syscall.Errno(fuse.EINVAL)
+		return syscall.Errno(gofuse.EINVAL)
 	}
 	oldP := childPath(n.path(), name)
 	newP := childPath(np.path(), newName)
@@ -433,7 +434,7 @@ func (n *gMountieNode) CopyFileRange(ctx context.Context, fhIn fs.FileHandle, of
 
 // --- Statfs ---
 
-func (n *gMountieNode) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
+func (n *gMountieNode) Statfs(ctx context.Context, out *gofuse.StatfsOut) syscall.Errno {
 	s, st := n.backend.StatFs(ctx, n.path())
 	if st != proto.FsError_FS_OK {
 		return fserr.ToErrno(st)
@@ -463,7 +464,7 @@ func (n *gMountieNode) Getxattr(ctx context.Context, attr string, dest []byte) (
 		return 0, fserr.ToErrno(st)
 	}
 	if len(data) > len(dest) {
-		return uint32(len(data)), syscall.Errno(fuse.ERANGE)
+		return uint32(len(data)), syscall.Errno(gofuse.ERANGE)
 	}
 	return uint32(copy(dest, data)), 0
 }
@@ -504,12 +505,12 @@ func (n *gMountieNode) Listxattr(ctx context.Context, dest []byte) (uint32, sysc
 
 // --- File handle ops ---
 
-func (f *gMountieFile) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
+func (f *gMountieFile) Read(ctx context.Context, dest []byte, off int64) (gofuse.ReadResult, syscall.Errno) {
 	n, st := f.backend.Read(ctx, f.fh, off, dest)
 	if st != proto.FsError_FS_OK {
 		return nil, fserr.ToErrno(st)
 	}
-	return fuse.ReadResultData(dest[:n]), 0
+	return gofuse.ReadResultData(dest[:n]), 0
 }
 
 func (f *gMountieFile) Write(ctx context.Context, data []byte, off int64) (uint32, syscall.Errno) {
@@ -536,15 +537,15 @@ func (f *gMountieFile) Allocate(ctx context.Context, off, size uint64, mode uint
 	return fserr.ToErrno(f.backend.Allocate(ctx, f.fh, off, size, mode))
 }
 
-func (f *gMountieFile) Getlk(ctx context.Context, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) syscall.Errno {
+func (f *gMountieFile) Getlk(ctx context.Context, owner uint64, lk *gofuse.FileLock, flags uint32, out *gofuse.FileLock) syscall.Errno {
 	return fserr.ToErrno(f.backend.GetLk(ctx, f.fh, owner, lk, flags, out))
 }
 
-func (f *gMountieFile) Setlk(ctx context.Context, owner uint64, lk *fuse.FileLock, flags uint32) syscall.Errno {
+func (f *gMountieFile) Setlk(ctx context.Context, owner uint64, lk *gofuse.FileLock, flags uint32) syscall.Errno {
 	return fserr.ToErrno(f.backend.SetLk(ctx, f.fh, owner, lk, flags))
 }
 
-func (f *gMountieFile) Setlkw(ctx context.Context, owner uint64, lk *fuse.FileLock, flags uint32) syscall.Errno {
+func (f *gMountieFile) Setlkw(ctx context.Context, owner uint64, lk *gofuse.FileLock, flags uint32) syscall.Errno {
 	return fserr.ToErrno(f.backend.SetLkw(ctx, f.fh, owner, lk, flags))
 }
 
