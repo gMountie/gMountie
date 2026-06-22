@@ -23,7 +23,7 @@ func TestMetaSuite(t *testing.T) { suite.Run(t, new(MetaSuite)) }
 
 func (s *MetaSuite) SetupTest() {
 	s.be = &fakeBackend{}
-	s.fs = New(s.be, nil)
+	s.fs = New(s.be)
 }
 
 func (s *MetaSuite) TestGetattrOK() {

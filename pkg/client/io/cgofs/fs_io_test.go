@@ -28,7 +28,7 @@ func TestIOSuite(t *testing.T) { suite.Run(t, new(IOSuite)) }
 
 func (s *IOSuite) SetupTest() {
 	s.be = &fakeBackend{}
-	s.fs = New(s.be, nil)
+	s.fs = New(s.be)
 }
 
 func (s *IOSuite) TestOpenReadRelease() {

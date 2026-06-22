@@ -50,7 +50,7 @@ func (s *NodeAdapterTestSuite) TestRootOpen_RegularFileNoDirectIO() {
 // direct-IO, the documented escape hatch for general mmap workloads (LMDB…).
 func (s *NodeAdapterTestSuite) TestRootOpen_GlobalDirectIO() {
 	backend := iomocks.NewMockFileSystemBackend(s.T())
-	root := clientio.NewMountieRoot(backend, nil, true /* directIOAlways */)
+	root := clientio.NewMountieRoot(backend, true /* directIOAlways */)
 	fs.NewNodeFS(root, &fs.Options{})
 
 	fh := iomocks.NewMockFileHandle(s.T())

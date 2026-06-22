@@ -36,13 +36,15 @@ const sqliteShmSuffix = "-shm"
 
 // gMountieNode is an inode of a gMountie mount (root and descendants alike).
 // Its path relative to the mount root is derived on demand from the inode
-// tree's current position (see path()); never cache it. backend and rewriter
-// are shared across the whole tree (copied at construction time).
+// tree's current position (see path()); never cache it. backend is shared
+// across the whole tree (copied at construction time). UID/GID rewriting is
+// no longer done here — the identity backend layer (pkg/client/io/identity),
+// composed outermost, rewrites server↔local ids so this adapter is pure
+// type-translation.
 type gMountieNode struct {
 	fs.Inode
 
-	backend  FileSystemBackend
-	rewriter *IDRewriter
+	backend FileSystemBackend
 	// directIOAlways forces FOPEN_DIRECT_IO on every Open/Create (the
 	// fuse.direct_io escape hatch for mmap-heavy workloads). Independently,
 	// SQLite -shm sidecars always open direct-IO; see wantDirectIO.
@@ -50,13 +52,14 @@ type gMountieNode struct {
 }
 
 // NewMountieRoot constructs the root inode wrapping a FileSystemBackend.
-// rewriter translates server uid/gid ↔ local uid/gid; pass nil for
-// passthrough (raw_ids mounts or when WhoAmI returned no identity).
+// UID/GID rewriting is handled by the identity backend layer (composed
+// outermost), not here — the backend passed in already yields local display
+// ids on the way up and expects local ids on SetAttr on the way down.
 // directIOAlways forces direct-IO on every handle (fuse.direct_io); even when
 // false, SQLite -shm sidecars still open direct-IO (see wantDirectIO).
 // Mount code passes the returned value to fs.Mount.
-func NewMountieRoot(backend FileSystemBackend, rewriter *IDRewriter, directIOAlways bool) fs.InodeEmbedder {
-	return &gMountieNode{backend: backend, rewriter: rewriter, directIOAlways: directIOAlways}
+func NewMountieRoot(backend FileSystemBackend, directIOAlways bool) fs.InodeEmbedder {
+	return &gMountieNode{backend: backend, directIOAlways: directIOAlways}
 }
 
 // path returns the inode's path relative to the mount root, with no
@@ -67,11 +70,10 @@ func (n *gMountieNode) path() string {
 	return n.Path(nil)
 }
 
-// newChild attaches a child inode sharing this node's backend/rewriter.
+// newChild attaches a child inode sharing this node's backend.
 func (n *gMountieNode) newChild(ctx context.Context, a *Attr) *fs.Inode {
 	return n.NewInode(ctx, &gMountieNode{
 		backend:        n.backend,
-		rewriter:       n.rewriter,
 		directIOAlways: n.directIOAlways,
 	}, fs.StableAttr{
 		Mode: a.Mode,
@@ -120,11 +122,11 @@ var (
 	_ fs.FileLseeker   = (*gMountieFile)(nil)
 )
 
-// setAttrFromBackend populates a fuse.Attr from a backend Attr and applies
-// the mount's IDRewriter so the caller sees local display uid/gid rather than
-// raw server ids. rw may be nil (identity transform). Used by
-// Getattr/Lookup/Create/Mkdir/Setattr handlers.
-func setAttrFromBackend(dst *fuse.Attr, a *Attr, rw *IDRewriter) {
+// setAttrFromBackend populates a fuse.Attr from a backend Attr. It is a plain
+// field copy — the backend (with the identity layer composed outermost) has
+// already rewritten Uid/Gid to local display ids, so no rewrite happens here.
+// Used by Getattr/Lookup/Create/Mkdir/Setattr/Symlink handlers.
+func setAttrFromBackend(dst *fuse.Attr, a *Attr) {
 	dst.Ino = a.Ino
 	dst.Size = a.Size
 	dst.Blocks = a.Blocks
@@ -140,7 +142,6 @@ func setAttrFromBackend(dst *fuse.Attr, a *Attr, rw *IDRewriter) {
 	dst.Gid = a.Gid
 	dst.Rdev = a.Rdev
 	dst.Blksize = a.Blksize
-	dst.Uid, dst.Gid = rw.Inbound(dst.Uid, dst.Gid)
 }
 
 // childPath joins the parent path with the child name. Uses path.Join
@@ -159,7 +160,7 @@ func (n *gMountieNode) Lookup(ctx context.Context, name string, out *fuse.EntryO
 	if st != proto.FsError_FS_OK {
 		return nil, fserr.ToErrno(st)
 	}
-	setAttrFromBackend(&out.Attr, a, n.rewriter)
+	setAttrFromBackend(&out.Attr, a)
 	return n.newChild(ctx, a), 0
 }
 
@@ -191,7 +192,7 @@ func (n *gMountieNode) Getattr(ctx context.Context, _ fs.FileHandle, out *fuse.A
 	if st != proto.FsError_FS_OK {
 		return fserr.ToErrno(st)
 	}
-	setAttrFromBackend(&out.Attr, a, n.rewriter)
+	setAttrFromBackend(&out.Attr, a)
 	return 0
 }
 
@@ -207,10 +208,11 @@ func (n *gMountieNode) Getattr(ctx context.Context, _ fs.FileHandle, out *fuse.A
 // interpret the _NOW bits, and GetATime()/GetMTime() already fold them into
 // time.Now() — the wire carries plain FATTR_ATIME/MTIME with the concrete
 // timestamp. A single-half chown forwards just the set bit; the server
-// resolves the unset half (no client-side Stat-to-fill). rw.Outbound maps
-// local→server ids before the wire; rw.Inbound is applied by
-// setAttrFromBackend on the returned attrs. The fs.FileHandle argument is
-// ignored, as before — the wire SetAttr is path-based.
+// resolves the unset half (no client-side Stat-to-fill). UID/GID are forwarded
+// as LOCAL ids; the identity backend layer (composed outermost) maps
+// local→server on the request and server→local on the reply, so this adapter
+// is namespace-agnostic. The fs.FileHandle argument is ignored, as before —
+// the wire SetAttr is path-based.
 func (n *gMountieNode) Setattr(ctx context.Context, _ fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
 	p := n.path()
 	var req SetAttrIn
@@ -222,20 +224,17 @@ func (n *gMountieNode) Setattr(ctx context.Context, _ fs.FileHandle, in *fuse.Se
 		req.Valid |= fuse.FATTR_MODE
 		req.Mode = mode
 	}
-	uid, uidOK := in.GetUID()
-	gid, gidOK := in.GetGID()
-	if uidOK || gidOK {
-		// Outbound rewrites uid and gid independently, so rewriting a half
-		// whose bit is unset is harmless — that half never reaches the wire.
-		uid, gid = n.rewriter.Outbound(uid, gid)
-		if uidOK {
-			req.Valid |= fuse.FATTR_UID
-			req.Uid = uid
-		}
-		if gidOK {
-			req.Valid |= fuse.FATTR_GID
-			req.Gid = gid
-		}
+	// UID/GID are passed through as LOCAL ids with their valid bits set; the
+	// identity backend layer (composed outermost) rewrites local→server before
+	// the request reaches the wire (see pkg/client/io/identity), so this adapter
+	// no longer touches ids.
+	if uid, ok := in.GetUID(); ok {
+		req.Valid |= fuse.FATTR_UID
+		req.Uid = uid
+	}
+	if gid, ok := in.GetGID(); ok {
+		req.Valid |= fuse.FATTR_GID
+		req.Gid = gid
 	}
 	if atime, ok := in.GetATime(); ok {
 		req.Valid |= fuse.FATTR_ATIME
@@ -259,7 +258,7 @@ func (n *gMountieNode) Setattr(ctx context.Context, _ fs.FileHandle, in *fuse.Se
 			return fserr.ToErrno(st)
 		}
 	}
-	setAttrFromBackend(&out.Attr, a, n.rewriter)
+	setAttrFromBackend(&out.Attr, a)
 	return 0
 }
 
@@ -311,7 +310,7 @@ func (n *gMountieNode) Create(ctx context.Context, name string, flags, mode uint
 		}
 		attr = a
 	}
-	setAttrFromBackend(&out.Attr, attr, n.rewriter)
+	setAttrFromBackend(&out.Attr, attr)
 	var fuseFlags uint32
 	if n.wantDirectIO(full) {
 		fuseFlags = fuse.FOPEN_DIRECT_IO
@@ -339,7 +338,7 @@ func (n *gMountieNode) Mkdir(ctx context.Context, name string, mode uint32, out 
 			return nil, fserr.ToErrno(sst)
 		}
 	}
-	setAttrFromBackend(&out.Attr, a, n.rewriter)
+	setAttrFromBackend(&out.Attr, a)
 	return n.newChild(ctx, a), 0
 }
 
@@ -365,7 +364,7 @@ func (n *gMountieNode) Symlink(ctx context.Context, target, name string, out *fu
 			return nil, fserr.ToErrno(sst)
 		}
 	}
-	setAttrFromBackend(&out.Attr, a, n.rewriter)
+	setAttrFromBackend(&out.Attr, a)
 	return n.newChild(ctx, a), 0
 }
 

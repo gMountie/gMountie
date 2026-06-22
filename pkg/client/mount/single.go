@@ -8,6 +8,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/io"
 	"go.gmountie.dev/gmountie/pkg/client/io/cache"
 	"go.gmountie.dev/gmountie/pkg/client/io/cache/persist"
+	"go.gmountie.dev/gmountie/pkg/client/io/identity"
 	"go.gmountie.dev/gmountie/pkg/client/io/observer"
 	"go.gmountie.dev/gmountie/pkg/client/metrics"
 	"go.gmountie.dev/gmountie/pkg/proto"
@@ -142,10 +143,20 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 		}})
 	}
 
+	// The identity layer is OUTERMOST: it rewrites server↔local uid/gid so the
+	// FUSE adapters see local display ids while the cache (and its Subscribe
+	// invalidation stream) keeps storing server ids. A nil rewriter (raw_ids /
+	// no WhoAmI identity) means NewLayer returns inner unchanged.
+	if rewriter != nil {
+		layers = append(layers, backendLayer{pos: posIdentity, build: func(inner io.FileSystemBackend) io.FileSystemBackend {
+			return identity.NewLayer(inner, rewriter)
+		}})
+	}
+
 	backend := composeBackend(transport, layers)
 	m.backends.Store(volume, backend)
 
-	handle, err := establishMount(mountPath, volume, m.client.GetEndpoint(), backend, rewriter, m.fuse, params.MaxWriteBytes, m.client.MetaTimeout(), params.DefaultPermissions)
+	handle, err := establishMount(mountPath, volume, m.client.GetEndpoint(), backend, m.fuse, params.MaxWriteBytes, m.client.MetaTimeout(), params.DefaultPermissions)
 	if err != nil {
 		return err
 	}

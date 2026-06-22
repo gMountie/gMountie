@@ -21,7 +21,9 @@ func (s *AttrSuite) TestFillStatCopiesFieldsAndTimes() {
 		Atime: 100, Atimensec: 5, Mtime: 200, Mtimensec: 6, Ctime: 300, Ctimensec: 7,
 	}
 	var st cgofuse.Stat_t
-	fillStat(&st, a, nil) // nil rewriter = identity
+	// fillStat is now a plain field copy — uid/gid are already-rewritten local
+	// display ids supplied by the identity backend layer, so they pass through.
+	fillStat(&st, a)
 	s.Equal(uint64(7), st.Ino)
 	s.Equal(int64(1024), st.Size)
 	s.Equal(uint32(0o100644), st.Mode)
@@ -33,16 +35,6 @@ func (s *AttrSuite) TestFillStatCopiesFieldsAndTimes() {
 	s.Equal(int64(6), st.Mtim.Nsec)
 	s.Equal(int64(300), st.Ctim.Sec)
 	s.Equal(int64(7), st.Ctim.Nsec)
-}
-
-func (s *AttrSuite) TestFillStatAppliesRewriter() {
-	// Server identity uid=1000 maps to local uid=501.
-	rw := gio.NewIDRewriter(&gio.Identity{Uid: 1000, Gid: 1000}, 501, 20)
-	a := &gio.Attr{Mode: 0o100644, Uid: 1000, Gid: 1000}
-	var st cgofuse.Stat_t
-	fillStat(&st, a, rw)
-	s.Equal(uint32(501), st.Uid)
-	s.Equal(uint32(20), st.Gid)
 }
 
 func (s *AttrSuite) TestFillStatfs() {

@@ -236,28 +236,28 @@ func RunBackendContract(t *testing.T, name string, newBackend func() io.FileSyst
 		// knownVersion 0 won't match, so this returns the real attrs + version.
 		// (A cached Stat may serve an optimistic attr whose Version lags the
 		// backend's, so we don't use it as the revalidation baseline.)
-		cur, changed, st := b.GetAttrIfChanged(ctx, "rev.txt", 0)
+		cur, notModified, st := b.GetAttrIfChanged(ctx, "rev.txt", 0)
 		require.Equal(t, proto.FsError_FS_OK, st)
-		require.False(t, changed, "version 0 never matches -> reports modified with attrs")
+		require.False(t, notModified, "version 0 never matches -> reports modified with attrs")
 		require.NotNil(t, cur)
 		baseVersion := cur.Version
 
-		// Same version -> not changed: (nil, true, OK).
-		got, changed, st := b.GetAttrIfChanged(ctx, "rev.txt", baseVersion)
+		// Same version -> not modified: (nil, true, OK).
+		got, notModified, st := b.GetAttrIfChanged(ctx, "rev.txt", baseVersion)
 		require.Equal(t, proto.FsError_FS_OK, st)
-		assert.True(t, changed, "unchanged version reports changed==true (not-modified)")
+		assert.True(t, notModified, "unchanged version reports notModified==true")
 		assert.Nil(t, got, "not-modified returns nil attrs")
 
-		// Mutate, then the prior knownVersion -> changed: (attr, false, OK).
+		// Mutate, then the prior knownVersion -> modified: (attr, false, OK).
 		fh2, st := b.Open(ctx, "rev.txt", uint32(syscall.O_WRONLY))
 		require.Equal(t, proto.FsError_FS_OK, st)
 		_, st = b.Write(ctx, fh2, 0, []byte("v2-longer"))
 		require.Equal(t, proto.FsError_FS_OK, st)
 		require.Equal(t, proto.FsError_FS_OK, b.Release(ctx, fh2))
 
-		got, changed, st = b.GetAttrIfChanged(ctx, "rev.txt", baseVersion)
+		got, notModified, st = b.GetAttrIfChanged(ctx, "rev.txt", baseVersion)
 		require.Equal(t, proto.FsError_FS_OK, st)
-		assert.False(t, changed, "stale version reports changed==false (modified)")
+		assert.False(t, notModified, "stale version reports notModified==false (modified)")
 		require.NotNil(t, got, "modified returns fresh attrs")
 
 		// Missing path -> ENOENT.

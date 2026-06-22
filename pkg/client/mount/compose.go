@@ -13,7 +13,8 @@ import (
 type layerPos int
 
 const (
-	posObserver  layerPos = iota // metrics / tracing / audit — outermost
+	posIdentity  layerPos = iota // uid/gid rewrite — OUTERMOST (above observer+cache)
+	posObserver                  // metrics / tracing / audit
 	posCache                     // read/attr/dir/data cache
 	posWritePath                 // writeBatcher / WAL slot (reserved; empty now)
 	posTransport                 // the gRPC leaf — innermost, always present
@@ -26,7 +27,10 @@ type backendLayer struct {
 }
 
 // composeBackend wraps transport (innermost) with each layer, innermost-first,
-// so the result is node -> observer -> cache -> [writePath] -> transport.
+// so the result is node -> identity -> observer -> cache -> [writePath] ->
+// transport. The identity layer sits OUTERMOST so the cache (and the Subscribe
+// invalidation stream it consumes) keeps storing SERVER ids while the node/
+// cgofs adapters see LOCAL display ids.
 func composeBackend(transport io.FileSystemBackend, layers []backendLayer) io.FileSystemBackend {
 	sorted := make([]backendLayer, len(layers))
 	copy(sorted, layers)

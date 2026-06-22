@@ -55,65 +55,73 @@ func NewLayer(inner io.FileSystemBackend, rw *io.IDRewriter) io.FileSystemBacken
 	return &layer{inner: inner, rw: rw}
 }
 
-// rewriteInbound applies the server→local rewrite to a returned attr in place.
-// nil-safe: a nil attr (server-omitted reply, or the not-modified
-// GetAttrIfChanged case) is left untouched.
-func (l *layer) rewriteInbound(a *io.Attr) {
+// inbound returns a COPY of a with its uid/gid rewritten server→local. It must
+// NOT mutate a in place: a is owned by the inner backend, and a cache layer
+// below us returns (and stores) the very pointer it holds — mutating it would
+// corrupt the cache entry AND double-rewrite it on the next hit (a 500 that no
+// longer matches the server uid would then map to nobody). This mirrors the old
+// adapters, which copied fields into a fresh fuse.Attr / Stat_t and rewrote that
+// copy, never the backend's attr. nil-safe: a nil attr (server-omitted reply or
+// the not-modified GetAttrIfChanged case) returns nil unchanged.
+func (l *layer) inbound(a *io.Attr) *io.Attr {
 	if a == nil {
-		return
+		return nil
 	}
-	a.Uid, a.Gid = l.rw.Inbound(a.Uid, a.Gid)
+	cp := *a
+	cp.Uid, cp.Gid = l.rw.Inbound(cp.Uid, cp.Gid)
+	return &cp
 }
 
 // --- Inbound (rewrite attrs flowing up) ---
 
 func (l *layer) Stat(ctx context.Context, path string) (*io.Attr, proto.FsError) {
 	a, st := l.inner.Stat(ctx, path)
-	l.rewriteInbound(a)
-	return a, st
+	return l.inbound(a), st
 }
 
 func (l *layer) GetAttrIfChanged(ctx context.Context, path string, knownVersion uint64) (*io.Attr, bool, proto.FsError) {
 	a, notModified, st := l.inner.GetAttrIfChanged(ctx, path, knownVersion)
-	// a is nil on the not-modified path and on errors; rewriteInbound no-ops.
-	l.rewriteInbound(a)
-	return a, notModified, st
+	// a is nil on the not-modified path and on errors; inbound returns nil.
+	return l.inbound(a), notModified, st
 }
 
 func (l *layer) Lookup(ctx context.Context, parent, name string) (*io.Attr, proto.FsError) {
 	a, st := l.inner.Lookup(ctx, parent, name)
-	l.rewriteInbound(a)
-	return a, st
+	return l.inbound(a), st
 }
 
 func (l *layer) ListDir(ctx context.Context, path string) ([]io.DirEntryPlus, proto.FsError) {
 	entries, st := l.inner.ListDir(ctx, path)
-	// Rewrite each per-entry attr so a cache decorator BELOW us still stored the
-	// server ids (it's inner), while the listing attrs surfaced upward carry
-	// local ids — upward coherence with Stat/Lookup. Entries without a plus
-	// attr (Attr nil) are left as-is.
-	for i := range entries {
-		l.rewriteInbound(entries[i].Attr)
+	if st != proto.FsError_FS_OK {
+		return entries, st
 	}
-	return entries, st
+	// Return a fresh slice whose per-entry Attr is a rewritten COPY: a cache
+	// decorator below us stored (and may still hold) the entry attr pointers,
+	// so we must not mutate them in place (that would corrupt the cache and
+	// double-rewrite). The DirEntry value part is copied by the struct copy;
+	// only Attr is replaced. Entries without a plus attr (Attr nil) are left
+	// nil. Surfaced attrs carry local ids — upward coherence with Stat/Lookup.
+	out := make([]io.DirEntryPlus, len(entries))
+	for i := range entries {
+		out[i] = entries[i]
+		out[i].Attr = l.inbound(entries[i].Attr)
+	}
+	return out, st
 }
 
 func (l *layer) Create(ctx context.Context, parent, name string, flags, mode uint32) (io.FileHandle, *io.Attr, proto.FsError) {
 	fh, a, st := l.inner.Create(ctx, parent, name, flags, mode)
-	l.rewriteInbound(a)
-	return fh, a, st
+	return fh, l.inbound(a), st
 }
 
 func (l *layer) Mkdir(ctx context.Context, path string, mode uint32) (*io.Attr, proto.FsError) {
 	a, st := l.inner.Mkdir(ctx, path, mode)
-	l.rewriteInbound(a)
-	return a, st
+	return l.inbound(a), st
 }
 
 func (l *layer) Symlink(ctx context.Context, target, linkPath string) (*io.Attr, proto.FsError) {
 	a, st := l.inner.Symlink(ctx, target, linkPath)
-	l.rewriteInbound(a)
-	return a, st
+	return l.inbound(a), st
 }
 
 // --- Outbound (rewrite the SetAttr request flowing down) ---
@@ -126,11 +134,11 @@ func (l *layer) SetAttr(ctx context.Context, path string, in io.SetAttrIn) (*io.
 		in.Uid, in.Gid = l.rw.Outbound(in.Uid, in.Gid)
 	}
 	a, st := l.inner.SetAttr(ctx, path, in)
-	// The reply carries the resulting attrs; rewrite them back server→local so
-	// the caller sees local display ids (matches node.go applying Inbound to
-	// the SetAttr reply via setAttrFromBackend).
-	l.rewriteInbound(a)
-	return a, st
+	// The reply carries the resulting attrs; surface a COPY rewritten back
+	// server→local so the caller sees local display ids (matches node.go
+	// applying Inbound to the SetAttr reply via setAttrFromBackend). Copy, not
+	// in-place, for the same cache-aliasing reason as the other inbound methods.
+	return l.inbound(a), st
 }
 
 // --- Forwarded unchanged (no identity-bearing payload) ---

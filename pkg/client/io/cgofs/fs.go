@@ -16,13 +16,14 @@ import (
 
 // MountieCgoFS adapts io.FileSystemBackend to cgofuse's FileSystemInterface.
 // It is the macOS/Windows sibling of the go-fuse gMountieNode and delegates
-// every op to the same backend. backend + rewriter are set at construction
-// and shared for the mount's lifetime; the handle table maps cgofuse's uint64
-// handles to io.FileHandle objects.
+// every op to the same backend. backend is set at construction and shared for
+// the mount's lifetime; the handle table maps cgofuse's uint64 handles to
+// io.FileHandle objects. UID/GID rewriting is no longer done here — the
+// identity backend layer (pkg/client/io/identity), composed outermost,
+// rewrites server↔local ids so this adapter is pure type-translation.
 type MountieCgoFS struct {
 	cgofuse.FileSystemBase
 	backend   gio.FileSystemBackend
-	rewriter  *gio.IDRewriter
 	handles   *handleTable
 	ready     chan struct{}
 	done      chan struct{}
@@ -30,15 +31,16 @@ type MountieCgoFS struct {
 	doneOnce  sync.Once
 }
 
-// New builds an adapter over backend. rw may be nil (raw_ids / no rewrite).
+// New builds an adapter over backend. UID/GID rewriting is handled by the
+// identity backend layer (composed outermost), not here — backend already
+// yields local display ids upward and expects local ids on SetAttr downward.
 // Per-op deadlines are owned by the gRPC backend (retryOp), not the adapter.
-func New(backend gio.FileSystemBackend, rw *gio.IDRewriter) *MountieCgoFS {
+func New(backend gio.FileSystemBackend) *MountieCgoFS {
 	return &MountieCgoFS{
-		backend:  backend,
-		rewriter: rw,
-		handles:  newHandleTable(),
-		ready:    make(chan struct{}),
-		done:     make(chan struct{}),
+		backend: backend,
+		handles: newHandleTable(),
+		ready:   make(chan struct{}),
+		done:    make(chan struct{}),
 	}
 }
 
@@ -69,7 +71,7 @@ func (fs *MountieCgoFS) Getattr(path string, stat *cgofuse.Stat_t, fh uint64) in
 	if st != proto.FsError_FS_OK {
 		return errc(st)
 	}
-	fillStat(stat, a, fs.rewriter)
+	fillStat(stat, a)
 	return 0
 }
 
@@ -271,8 +273,11 @@ func (fs *MountieCgoFS) Chmod(path string, mode uint32) int {
 func (fs *MountieCgoFS) Chown(path string, uid uint32, gid uint32) int {
 	ctx, cancel := fs.opCtx()
 	defer cancel()
-	suid, sgid := fs.rewriter.Outbound(uid, gid)
-	in := gio.SetAttrIn{Valid: uint32(fuse.FATTR_UID | fuse.FATTR_GID), Uid: suid, Gid: sgid}
+	// Pass LOCAL uid/gid with both valid bits set; the identity backend layer
+	// (composed outermost) rewrites local→server before the wire. cgofuse always
+	// supplies both ids, so both bits are always set — matching the layer's
+	// (uid|gid)-bit gate that runs Outbound on both halves.
+	in := gio.SetAttrIn{Valid: uint32(fuse.FATTR_UID | fuse.FATTR_GID), Uid: uid, Gid: gid}
 	_, st := fs.backend.SetAttr(ctx, clean(path), in)
 	return errc(st)
 }

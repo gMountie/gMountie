@@ -256,6 +256,71 @@ func (s *LayerSuite) TestNilRewriterIsTransparent() {
 	s.Same(inner, got, "nil rewriter -> NewLayer returns inner unchanged (no decorator)")
 }
 
+// aliasingInner is a minimal inner backend that returns the SAME *io.Attr
+// pointer on every Stat / Lookup, and the same per-entry attr pointer on every
+// ListDir — modeling the cache, which hands up a pointer into its own stored
+// state and forbids mutation. It is the discriminating fixture: memfs builds a
+// fresh attr per call and so can never expose an in-place-mutation bug.
+type aliasingInner struct {
+	clientio.PassthroughBackend
+	attr  *clientio.Attr
+	entry *clientio.Attr
+}
+
+func (a *aliasingInner) Stat(context.Context, string) (*clientio.Attr, proto.FsError) {
+	return a.attr, proto.FsError_FS_OK
+}
+
+func (a *aliasingInner) Lookup(context.Context, string, string) (*clientio.Attr, proto.FsError) {
+	return a.attr, proto.FsError_FS_OK
+}
+
+func (a *aliasingInner) ListDir(context.Context, string) ([]clientio.DirEntryPlus, proto.FsError) {
+	return []clientio.DirEntryPlus{{
+		DirEntry: clientio.DirEntry{Name: "child", Ino: 1},
+		Attr:     a.entry,
+	}}, proto.FsError_FS_OK
+}
+
+// TestInboundDoesNotMutateInnerAttr is the regression guard for the
+// cache-aliasing hazard: the layer must rewrite a COPY, never the *io.Attr the
+// inner returned. If it mutated in place, (1) the inner's stored attr would
+// hold local ids and (2) a SECOND read would re-run Inbound on a local id that
+// no longer matches the server identity → nobody. Both are asserted.
+func (s *LayerSuite) TestInboundDoesNotMutateInnerAttr() {
+	inner := &aliasingInner{
+		attr:  &clientio.Attr{Ino: 1, Uid: serverUID, Gid: serverGID},
+		entry: &clientio.Attr{Ino: 2, Uid: serverUID, Gid: serverGID},
+	}
+	be := identity.NewLayer(inner, s.rw)
+
+	// First Stat: rewritten to local.
+	a1, st := be.Stat(s.ctx, "x")
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	s.Equal(uint32(localUID), a1.Uid)
+	// Inner's stored attr is untouched (still server ids).
+	s.Equal(uint32(serverUID), inner.attr.Uid, "inner attr must NOT be mutated")
+	s.Equal(uint32(serverGID), inner.attr.Gid)
+	// Second Stat over the SAME stored pointer still rewrites correctly — not
+	// nobody (which is what double-rewrite would produce).
+	a2, st := be.Stat(s.ctx, "x")
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	s.Equal(uint32(localUID), a2.Uid, "second read must still map to local, not nobody")
+
+	// Same guarantee for Lookup and ListDir per-entry attrs.
+	la, _ := be.Lookup(s.ctx, "", "x")
+	s.Equal(uint32(localUID), la.Uid)
+	s.Equal(uint32(serverUID), inner.attr.Uid, "Lookup must not mutate inner attr")
+
+	entries, st := be.ListDir(s.ctx, "d")
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	s.Require().Len(entries, 1)
+	s.Equal(uint32(localUID), entries[0].Attr.Uid)
+	s.Equal(uint32(serverUID), inner.entry.Uid, "ListDir must not mutate the inner entry attr")
+	entries2, _ := be.ListDir(s.ctx, "d")
+	s.Equal(uint32(localUID), entries2[0].Attr.Uid, "second ListDir still local, not nobody")
+}
+
 func (s *LayerSuite) TestNilRewriterNoInboundRewrite() {
 	inner := memfs.New()
 	be := identity.NewLayer(inner, nil) // == inner

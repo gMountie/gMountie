@@ -22,9 +22,9 @@ func TestMutSuite(t *testing.T) { suite.Run(t, new(MutSuite)) }
 
 func (s *MutSuite) SetupTest() {
 	s.be = &fakeBackend{statAttr: &gio.Attr{}, statSt: proto.FsError_FS_OK}
-	// rewriter: local uid 501 -> server uid 1000
-	rw := gio.NewIDRewriter(&gio.Identity{Uid: 1000, Gid: 1000}, 501, 20)
-	s.fs = New(s.be, rw)
+	// No rewriter here: the adapter no longer rewrites uid/gid — the identity
+	// backend layer (tested in pkg/client/io/identity) does, composed outermost.
+	s.fs = New(s.be)
 }
 
 func (s *MutSuite) TestChmodSetsModeBit() {
@@ -34,12 +34,16 @@ func (s *MutSuite) TestChmodSetsModeBit() {
 	s.Equal(uint32(0o600), s.be.setAttrIn.Mode)
 }
 
-func (s *MutSuite) TestChownAppliesOutboundRewrite() {
+func (s *MutSuite) TestChownForwardsLocalIDsWithBothBits() {
+	// The adapter no longer rewrites: it forwards the LOCAL ids with both valid
+	// bits set, leaving the local→server Outbound to the identity layer. cgofuse
+	// always supplies both ids, so both bits are always set.
 	rc := s.fs.Chown("/f", 501, 20)
 	s.Equal(0, rc)
 	s.NotZero(s.be.setAttrIn.Valid & uint32(fuse.FATTR_UID))
-	s.Equal(uint32(1000), s.be.setAttrIn.Uid) // 501 -> 1000 via Outbound
-	s.Equal(uint32(1000), s.be.setAttrIn.Gid) // 20 -> 1000 via Outbound
+	s.NotZero(s.be.setAttrIn.Valid & uint32(fuse.FATTR_GID))
+	s.Equal(uint32(501), s.be.setAttrIn.Uid) // forwarded verbatim (no rewrite)
+	s.Equal(uint32(20), s.be.setAttrIn.Gid)  // forwarded verbatim (no rewrite)
 }
 
 func (s *MutSuite) TestUtimensSetsTimes() {

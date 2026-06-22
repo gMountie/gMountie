@@ -20,7 +20,7 @@ func TestXattrSuite(t *testing.T) { suite.Run(t, new(XattrSuite)) }
 
 func (s *XattrSuite) SetupTest() {
 	s.be = &fakeBackend{}
-	s.fs = New(s.be, nil)
+	s.fs = New(s.be)
 }
 
 func (s *XattrSuite) TestGetxattr() {

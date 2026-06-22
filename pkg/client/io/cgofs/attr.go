@@ -7,10 +7,11 @@ import (
 	gio "go.gmountie.dev/gmountie/pkg/client/io"
 )
 
-// fillStat maps an io.Attr to a cgofuse Stat_t, applying the mount's
-// IDRewriter so the caller sees local display uid/gid (mirrors
-// setAttrFromBackend in node.go). rw may be nil (identity transform).
-func fillStat(dst *cgofuse.Stat_t, a *gio.Attr, rw *gio.IDRewriter) {
+// fillStat maps an io.Attr to a cgofuse Stat_t. It is a plain field copy —
+// the backend (with the identity layer composed outermost) has already
+// rewritten Uid/Gid to local display ids, so no rewrite happens here (mirrors
+// setAttrFromBackend in node.go).
+func fillStat(dst *cgofuse.Stat_t, a *gio.Attr) {
 	dst.Ino = a.Ino
 	dst.Size = int64(a.Size)
 	dst.Blocks = int64(a.Blocks)
@@ -21,8 +22,8 @@ func fillStat(dst *cgofuse.Stat_t, a *gio.Attr, rw *gio.IDRewriter) {
 	dst.Atim = cgofuse.Timespec{Sec: int64(a.Atime), Nsec: int64(a.Atimensec)}
 	dst.Mtim = cgofuse.Timespec{Sec: int64(a.Mtime), Nsec: int64(a.Mtimensec)}
 	dst.Ctim = cgofuse.Timespec{Sec: int64(a.Ctime), Nsec: int64(a.Ctimensec)}
-	// rw.Inbound is nil-receiver-safe (nil rewriter = identity); no guard needed, mirroring node.go setAttrFromBackend.
-	dst.Uid, dst.Gid = rw.Inbound(a.Uid, a.Gid)
+	dst.Uid = a.Uid
+	dst.Gid = a.Gid
 }
 
 // fillStatfs maps an io.StatFs to a cgofuse Statfs_t.
