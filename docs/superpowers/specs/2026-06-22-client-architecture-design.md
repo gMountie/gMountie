@@ -102,6 +102,8 @@ ordering bug. **No new wire surface** (see §Server guard).
 | 2 | Canonical layer order `cache → [writeBatcher] → transport` | backend | **NOW** (declares the order; writeBatcher slot is empty until #3) |
 | 5 | `MountParams` resolved pre-build from existing RPCs, threaded as one value | control | **NOW** |
 | — | `PassthroughBackend` base (observer layers only) | backend | **NOW** |
+| 6 | **Metrics observer layer** (boundary signals) — the first real consumer of the stack | backend | **NOW** |
+| 7 | **`metrics.Sink` interface** (leaf pkg, per-client injected) + migrate cache/io off the global dispatcher | cross-cut | **NOW (staged)** |
 | 3 | Lift `WriteCoalescer` out of the transport leaf into a `writeBatcher` handle-layer | handle | **DESIGN-ONLY / DEFER** |
 | 4 | Route the invalidation stream up through the chain | backend | **DESIGN-ONLY / DEFER** |
 
@@ -145,10 +147,59 @@ Verified against the code 2026-06-22:
   transport-fused coalescer.)
 
 **Honest scope of the NOW subset.** #1/#2/#5 + the passthrough base make the stack
-extensible for **observer layers** (metrics, tracing, audit) and fix the
-capability-ordering wart. They do **not** by themselves enable **semantic
+extensible for **observer layers**, and the **metrics layer (#6) is the concrete
+first consumer that proves it end-to-end** — so the now-work is consumer-driven,
+not scaffolding-on-spec. They do **not** by themselves enable **semantic
 write-path layers** — that's what #3/#4 unlock. The now-work is the clean
 foundation and the honest 80%; it does not claim full extensibility.
+
+## First consumer: metrics observer layer + `Sink` (moves #6/#7)
+
+The metrics layer is the concrete consumer that anchors the now-refactor (so we
+build extensibility *with* a user, not on spec) and the foundation for future
+**OTel metrics + audit**.
+
+**Current state (the debt this pays down).** Client metrics today are:
+- a gRPC interceptor (`grpc/interceptor_metrics.go`) for RPC-level signals
+  (in-flight, retries), and
+- a **package-level global dispatcher** in `pkg/client/metrics/metrics.go`
+  (`RegisterInstance`/`UnregisterInstance`, a global `instances` slice with
+  refcounting + `sameCollectors` dedup, and free functions `metrics.CacheHit`,
+  `metrics.CacheMiss`, `metrics.CacheRevalidation`, `metrics.SubscribeEventReceived`,
+  `metrics.OnRetry`) called from `cache/*` and `io/retry.go`.
+
+That global mutable dispatcher exists **only to dodge an import cycle**
+(`io → grpc → metrics`, stated at `metrics.go:345-347`). It is coupling debt.
+
+**Design — two complementary pieces:**
+
+1. **`metrics.Sink` (Recorder) interface** in a leaf package (no deps on io/grpc),
+   **injected per-client** into the observer layer, the cache layer, and the
+   interceptor. Removes the import cycle (layers depend on the interface, not the
+   other way), so the global `instances` slice + refcount machinery is **deleted**.
+   Per-client injection gives multi-client isolation for free. **OTel and audit
+   become additional `Sink` implementations; Prometheus is the default Sink.**
+2. **Metrics observer layer** — a `PassthroughBackend`-based decorator emitting
+   *boundary* signals (per-op latency, count, bytes, error code, hit/miss as seen
+   from outside) through the injected `Sink`.
+
+**Boundary vs. internal signals (the honest split).** An outer observer can only
+see the boundary. Layer-*internal* signals — memory-vs-disk tier hit, dedupe hits,
+revalidation results, subscribe-stream state, persist-GC counters, disk bytes —
+are visible only *inside* the cache/persist layer and **stay emitted there**, but
+**through the injected `Sink`**, not package globals. So: boundary → observer
+layer; internal → stays home, emits via `Sink`. Not "one metrics layer to rule
+them all."
+
+**Migration (option b, staged):**
+- Stage 1: define `metrics.Sink`, build the observer layer on it, default
+  Prometheus sink. (Anchors the refactor.)
+- Stage 2: rewire the existing `cache/*` + `io/retry.go` call sites off the global
+  dispatcher onto the injected `Sink`; delete `RegisterInstance`/refcount/
+  `sameCollectors`. One clean mechanism remains.
+
+Each stage is independently reviewable; behavior-preserving (same Prometheus
+series) until an OTel/audit `Sink` is added later.
 
 ## Server (light — not extended now)
 
