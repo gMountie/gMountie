@@ -36,6 +36,7 @@ const (
 	RpcFs_Subscribe_FullMethodName        = "/gmountie.RpcFs/Subscribe"
 	RpcFs_SetAttr_FullMethodName          = "/gmountie.RpcFs/SetAttr"
 	RpcFs_ReadDir_FullMethodName          = "/gmountie.RpcFs/ReadDir"
+	RpcFs_Recall_FullMethodName           = "/gmountie.RpcFs/Recall"
 )
 
 // RpcFsClient is the client API for RpcFs service.
@@ -64,6 +65,10 @@ type RpcFsClient interface {
 	Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SubscribeEvent], error)
 	SetAttr(ctx context.Context, in *SetAttrRequest, opts ...grpc.CallOption) (*SetAttrReply, error)
 	ReadDir(ctx context.Context, in *ReadDirRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadDirBatch], error)
+	// Recall is the coherence control plane: the client opens this bidi stream
+	// once per mount; the server pushes RecallMsg when another client contends a
+	// delegated subtree; the client replies RecallAck when it has released it.
+	Recall(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RecallAck, RecallMsg], error)
 }
 
 type rpcFsClient struct {
@@ -262,6 +267,19 @@ func (c *rpcFsClient) ReadDir(ctx context.Context, in *ReadDirRequest, opts ...g
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RpcFs_ReadDirClient = grpc.ServerStreamingClient[ReadDirBatch]
 
+func (c *rpcFsClient) Recall(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RecallAck, RecallMsg], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &RpcFs_ServiceDesc.Streams[2], RpcFs_Recall_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[RecallAck, RecallMsg]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RpcFs_RecallClient = grpc.BidiStreamingClient[RecallAck, RecallMsg]
+
 // RpcFsServer is the server API for RpcFs service.
 // All implementations must embed UnimplementedRpcFsServer
 // for forward compatibility.
@@ -288,6 +306,10 @@ type RpcFsServer interface {
 	Subscribe(*SubscribeRequest, grpc.ServerStreamingServer[SubscribeEvent]) error
 	SetAttr(context.Context, *SetAttrRequest) (*SetAttrReply, error)
 	ReadDir(*ReadDirRequest, grpc.ServerStreamingServer[ReadDirBatch]) error
+	// Recall is the coherence control plane: the client opens this bidi stream
+	// once per mount; the server pushes RecallMsg when another client contends a
+	// delegated subtree; the client replies RecallAck when it has released it.
+	Recall(grpc.BidiStreamingServer[RecallAck, RecallMsg]) error
 	mustEmbedUnimplementedRpcFsServer()
 }
 
@@ -348,6 +370,9 @@ func (UnimplementedRpcFsServer) SetAttr(context.Context, *SetAttrRequest) (*SetA
 }
 func (UnimplementedRpcFsServer) ReadDir(*ReadDirRequest, grpc.ServerStreamingServer[ReadDirBatch]) error {
 	return status.Error(codes.Unimplemented, "method ReadDir not implemented")
+}
+func (UnimplementedRpcFsServer) Recall(grpc.BidiStreamingServer[RecallAck, RecallMsg]) error {
+	return status.Error(codes.Unimplemented, "method Recall not implemented")
 }
 func (UnimplementedRpcFsServer) mustEmbedUnimplementedRpcFsServer() {}
 func (UnimplementedRpcFsServer) testEmbeddedByValue()               {}
@@ -662,6 +687,13 @@ func _RpcFs_ReadDir_Handler(srv interface{}, stream grpc.ServerStream) error {
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RpcFs_ReadDirServer = grpc.ServerStreamingServer[ReadDirBatch]
 
+func _RpcFs_Recall_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(RpcFsServer).Recall(&grpc.GenericServerStream[RecallAck, RecallMsg]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RpcFs_RecallServer = grpc.BidiStreamingServer[RecallAck, RecallMsg]
+
 // RpcFs_ServiceDesc is the grpc.ServiceDesc for RpcFs service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -740,6 +772,12 @@ var RpcFs_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "ReadDir",
 			Handler:       _RpcFs_ReadDir_Handler,
 			ServerStreams: true,
+		},
+		{
+			StreamName:    "Recall",
+			Handler:       _RpcFs_Recall_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
 		},
 	},
 	Metadata: "api/proto/fs.proto",

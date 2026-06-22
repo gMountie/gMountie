@@ -34,12 +34,14 @@ message CreateRequest {
   uint32 mode = 5;
   string session_id = 6;
   string request_id = 7;
+  DelegationRequest delegation = 8;
 }
 
 message CreateReply {
   uint64 fd = 1;
   FsError status = 2;
   Attr attributes = 3;   // lets the client fill EntryOut without a post-create GetAttr
+  DelegationGrant grant = 4;
 }
 
 message ReadRequest {
@@ -67,11 +69,13 @@ message WriteFrame {
   string request_id = 4;
   int64 offset = 5;
   bytes data = 6;
+  DelegationRequest delegation = 7;
 }
 
 message WriteReply {
   uint32 written = 1;
   FsError status = 2;
+  DelegationGrant grant = 3;
 }
 
 message FsyncRequest {
@@ -174,10 +178,12 @@ message AllocateRequest {
   uint64 size = 6;
   uint32 mode = 7;
   string session_id = 8;
+  DelegationRequest delegation = 9;
 }
 
 message AllocateReply {
   FsError status = 1;
+  DelegationGrant grant = 2;
 }
 
 message CopyFileRangeRequest {
