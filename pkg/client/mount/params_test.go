@@ -48,9 +48,9 @@ func (s *MountParamsSuite) TestSquashModeReturnsRewriterAndDefaultPermissions() 
 	s.client.EXPECT().Version().Return(ver).Once()
 
 	identity := &proto.Identity{
-		Uid:        1000,
-		PrimaryGid: 1000,
-		Gids:       []uint32{1000},
+		Uid:         1000,
+		PrimaryGid:  1000,
+		Gids:        []uint32{1000},
 		MappingMode: mappingModeSquash,
 	}
 	s.client.EXPECT().WhoAmI(mock.Anything, "vol").Return(identity, nil).Once()

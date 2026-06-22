@@ -3,8 +3,8 @@ package mount
 import (
 	"testing"
 
-	"go.gmountie.dev/gmountie/pkg/client/io"
 	"github.com/stretchr/testify/suite"
+	"go.gmountie.dev/gmountie/pkg/client/io"
 )
 
 type ComposeSuite struct{ suite.Suite }
