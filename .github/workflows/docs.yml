@@ -35,7 +35,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # On a release event, check out the tagged commit so the published
           # docs match the release. Empty on workflow_dispatch, which makes

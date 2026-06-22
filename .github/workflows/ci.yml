@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
@@ -64,7 +64,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
@@ -83,7 +83,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # Non-GitHub-org mutable actions are pinned to commit SHAs (dependabot
       # updates SHA pins fine); the comment tracks the resolved tag.
       - uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f # v1.5.3 (current v1)
@@ -128,7 +128,7 @@ jobs:
     # streaming suite moves real gigabytes.
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
@@ -155,7 +155,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
@@ -200,7 +200,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
@@ -216,7 +216,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
@@ -237,7 +237,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
@@ -260,7 +260,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: shellcheck
         run: shellcheck -s sh website/static/install.sh
       - name: unit tests
@@ -279,7 +279,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # Install cosign so the installer's signature-verification branch actually
       # runs here — otherwise that path (and the checksums.txt byte-exactness it
       # depends on) is never exercised in CI.
