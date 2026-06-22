@@ -4,6 +4,14 @@
 proto shapes are *not* fixed here. Expect a refactor pass before we write the
 implementation plan.
 
+**Phase 2 (WAL) is PAUSED as of 2026-06-22** — kept on the roadmap, not being
+implemented yet. Current focus is the extensibility refactor (the seams that
+both the lease feature and a future WAL need). The replay-dedup fork (open
+question 4) is **decided: fork (a)** — the server becomes stateful and holds a
+durable per-`(identity, volume)` seq-watermark; **prefer an SQL store if its
+per-op latency benchmarks acceptably** (measure before committing). Revisit the
+mechanics when WAL resumes.
+
 **Date:** 2026-06-22
 **Branch:** `worktree-rwo-wal`
 
@@ -181,6 +189,12 @@ These are the things to settle in the "let's talk" pass before the plan:
    Note: even with a seq cursor, the ack-loss boundary (op applied, ack lost) is
    the classic double-apply window — only a stable cross-session dedup key
    (`identity, volume, seq`) closes it.
+
+   **DECIDED (2026-06-22): fork (a).** The server holds a durable
+   per-`(identity, volume)` seq-watermark; replay `≤ watermark` is a no-op.
+   Prefer an SQL store for the watermark **if** its per-op latency benchmarks
+   acceptably on the hot path (measure first — a write-path round-trip to SQL per
+   op could dominate). Implementation deferred with the rest of Phase 2.
 5. **Lease state ownership** — keep it OFF the closed `sessionImpl` struct; a
    side `LeaseManager` on `AppContext` keyed by volume, holders indexed by
    session (lease is `(volume, session)` state, since one session spans volumes).
