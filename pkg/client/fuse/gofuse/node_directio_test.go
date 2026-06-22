@@ -1,4 +1,4 @@
-package fuse_test
+package gofuse_test
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	iomocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/io"
-	clientfuse "go.gmountie.dev/gmountie/pkg/client/fuse"
+	gofusepkg "go.gmountie.dev/gmountie/pkg/client/fuse/gofuse"
 	clientio "go.gmountie.dev/gmountie/pkg/client/io"
 	"go.gmountie.dev/gmountie/pkg/proto"
 )
@@ -51,7 +51,7 @@ func (s *NodeAdapterTestSuite) TestRootOpen_RegularFileNoDirectIO() {
 // direct-IO, the documented escape hatch for general mmap workloads (LMDB…).
 func (s *NodeAdapterTestSuite) TestRootOpen_GlobalDirectIO() {
 	backend := iomocks.NewMockFileSystemBackend(s.T())
-	root := clientfuse.NewMountieRoot(backend, true /* directIOAlways */)
+	root := gofusepkg.NewMountieRoot(backend, true /* directIOAlways */)
 	fs.NewNodeFS(root, &fs.Options{})
 
 	fh := iomocks.NewMockFileHandle(s.T())
