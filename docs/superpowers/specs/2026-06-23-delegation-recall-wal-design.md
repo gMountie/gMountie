@@ -1,7 +1,8 @@
-# Delegation + Recall + WAL — design (IN PROGRESS)
+# Delegation + Recall + WAL — design
 
-**Status:** Brainstorming in progress (2026-06-23). Settled decisions below; open
-questions still being worked. Resume the brainstorm from §"Open questions".
+**Status:** Phase 1 design APPROVED (2026-06-23). Phase 1 (delegation + recall
+infrastructure, no deferral) is fully specified below and ready for an
+implementation plan. Phase 2 (WAL) gates are recorded but out of scope this cycle.
 **Supersedes:** the **volume-level RWO** lease model in
 [docs/design/rwo-wal.md](../../design/rwo-wal.md) — that doc's *failure model,
 WAL mechanics, and replay-dedup fork (a)* still hold; its *§2 access-mode lease
@@ -98,6 +99,69 @@ clients cache + batch aggressively **without locking the share**: optimistic
   dedup on reconnect. Speedup *and* the bounded machine-death loss window appear
   here, on machinery already trusted.
 
+## Phase 1 design (APPROVED — this cycle's build scope)
+
+Ship the full coherence layer (grant / track / arbitrate / recall) with `close()`
+still flushing durably — nothing deferred, so it **cannot lose data**. User-visible
+win = **read-side: skip open-time revalidation while delegated.**
+
+**Negotiation: demand-driven, NO handshake (SETTLED).** No mount-time capability
+exchange. The client just starts piggybacking delegation requests; a server that
+doesn't support them ignores the field. ("No BC" → no capability gate needed.)
+Resolves open-Q #3.
+
+**Phase 1 ships the read-side win (SETTLED).** Skip-revalidation is real on
+metadata-heavy WAN workloads *and* exercises the recall path end-to-end — the
+whole point of de-risking. Phase 1 is not purely infrastructural. Resolves
+open-Q #2.
+
+### Server (new, all in-memory soft state)
+- **Delegation table** — delegated-root → `{session, identity, gen}`; path-trie
+  indexed for containment/prefix lookup. Rebuilt from client re-requests on
+  restart (non-durable).
+- **Cooldown table** — recently-recalled root → `until`; TTL'd + LRU-capped.
+- **Arbiter** — the single authority. Per (piggybacked) request: containment
+  check vs delegation + cooldown tables → grant largest non-cooling sub-root or
+  deny. Owns the **per-region arbitration lock** enforcing the
+  recall→flush→handoff barrier (landmine #2, lock-enforced not stream-ordered).
+  Self-access never recalls.
+
+### Wire (proto — free to break)
+- **Delegation request** = a field on existing op RPCs (piggybacked, zero extra
+  RTT); response carries `{granted_root, excluded_paths, retry_after}`.
+- **Recall** = a **dedicated server→client bidi stream** (NOT Subscribe — recall
+  needs ordered ack/completion that fire-and-forget invalidation lacks):
+  `Recall{root}` → `RecallAck{root, done}`.
+
+### Client (new)
+- **Active-write-set tracker** — computes the LCA subtree to request, promotes
+  upward as writes spread, piggybacks the request.
+- **Recall handler** — on `Recall`: **invalidate read cache for affected paths**,
+  then drop delegation + skip-revalidation, then ack. (Correctness-critical:
+  drop-without-invalidate is a stale-read bug.)
+- **Skip-revalidation gate** — while holding a delegation for a path, suppress
+  open-time revalidation RTTs (the perf payoff).
+
+### Data flow (happy path)
+Client writes under `/dir`, piggybacks "delegate `/dir`" → arbiter grants →
+opens under `/dir` skip revalidation. Remote B reads `/dir/file` → arbiter recalls
+A → A invalidates cache + acks → B served → cooldown starts.
+
+### Error handling
+Recall timeout → drop delegation (no data at risk; close already durable).
+Cross-subtree rename → forced synchronous, path-ordered locking. Recalls coalesce;
+late contenders queue.
+
+### Testing
+Unit: arbiter containment / cooldown / narrower-grant; path lock-ordering.
+Integration on the FUSE-capable VM/CI (two in-process mounts): grant →
+skip-reval RTT-count assertion; B-reads → A-recalled → cache-invalidated → no
+stale read; cross-subtree rename goes synchronous; thrash → cooldown holds it
+synchronous.
+
+### Explicitly NOT in Phase 1
+WAL, deferred `close()`, replay, fencing-by-gen, SQL watermark — all Phase-2 gated.
+
 ## Data-safety model (SETTLED — the "will it eat my data" map)
 
 1. **Always safe:** `fsync`/`fdatasync` = hard barrier, durable before return.
@@ -178,6 +242,9 @@ delegated region. The server's delegation table is authoritative:
 
 B's stall = **recall RTT + the holder's flush duration** (a large WAL isn't free;
 don't round to "one RTT"). In the common 1-client/volume case it never fires.
+**In Phase 1 the flush is a no-op** (`close()` already durable), so handoff =
+cache-invalidate + ack and the stall is just the recall RTT; the flush-duration
+term is a Phase-2 phenomenon.
 
 ## Re-acquisition + thrash prevention (SETTLED): server-side hysteresis
 
@@ -280,37 +347,33 @@ Plus two invariants to state explicitly:
 
 ---
 
-## Open questions (RESUME THE BRAINSTORM HERE)
+## Open questions
 
-1. **Multi-batcher containment + carving — data structures.** The *policy* is
-   settled (server-side cooldown, narrower-than-requested grants, carve around
-   cooling paths). Open = the concrete server-side representation: how the
-   delegation table + cooldown table are indexed for the overlap/containment
-   check on every (piggybacked) request without it becoming a hot-path cost.
-   Path-prefix tree? Interval/trie? Decide at plan time.
-2. ~~What Phase 1 delivers observably~~ — **RESOLVED**: read-side
-   skip-revalidation (recalled on remote write); write-batching is Phase 2. Test
-   via RTT-count assertions (revalidation suppressed while delegated).
-3. **Mount-time negotiation surface.** Where does "I want delegations" live — a
-   mount flag, a field on WhoAmI / an existing RPC, or a new lease/delegation
-   RPC? Likely a proto change; touches SingleVolumeMounter.
-4. **Recall wire protocol.** Extend Subscribe: recall message + ack/completion +
-   timeout; liveness reusing grace-period reap + boot-epoch reclaim, scoped
-   per-delegation.
-5. **Delegation acquisition cost / piggybacking** — confirm no per-file RTT;
-   demand-based promotion mechanics.
-6. **SQL latency benchmark** for the watermark (Phase 2, fork (a)) — measure
-   before committing to SQL on the hot path.
-7. **Layer-stack placement** — the per-fd handle-layer seam
-   ([client-architecture.md](../../design/client-architecture.md) §9) is a
-   Phase 2 prerequisite for where the WAL sits.
-8. **ROX (read-only-many)** — later freebie, out of scope.
+**Phase 1 — all resolved (design approved):**
+- ~~Phase 1 observable value~~ → **read-side skip-revalidation** (ship it).
+- ~~Mount-time negotiation~~ → **demand-driven, no handshake.**
+- ~~Recall wire protocol~~ → **dedicated server→client bidi stream**, `Recall` /
+  `RecallAck{done}`; liveness via the existing grace-period reap + boot-epoch.
+- ~~Delegation acquisition cost~~ → **piggybacked field on existing op RPCs**, no
+  per-file RTT; client-driven LCA promotion.
+
+**Phase 1 — plan-time detail (decide in writing-plans, not blocking):**
+- **Containment data structure** — path-trie vs interval index for the
+  delegation + cooldown overlap check; must stay off the hot path.
+
+**Phase 2 — deferred (out of scope this cycle):**
+- **Fencing by delegation-gen** (landmine #1, the boot-epoch hole) — gate #1.
+- **SQL latency benchmark** for the watermark/revocation store before committing
+  SQL on the hot path.
+- **Layer-stack placement** — the per-fd handle-layer seam
+  ([client-architecture.md](../../design/client-architecture.md) §9) is a
+  prerequisite for where the WAL sits.
+- **ROX (read-only-many)** — later freebie, out of scope.
 
 ## Process state
 
-Mid `superpowers:brainstorming`. Next steps when resumed: finish the open
-questions (esp. #1, #2, #3 for Phase 1), present the full Phase-1 design for
-approval, finalize this spec, then `superpowers:writing-plans`. Feature lives in
-worktree `worktree-delegation-wal`; design + implementation ship in one PR
-(consolidate-related-PRs). Fold this superpowers spec into docs/design/ when the
-feature ships.
+Phase 1 design **APPROVED** (2026-06-23). Next: `superpowers:writing-plans` for
+the Phase 1 implementation plan. Feature lives in worktree
+`worktree-delegation-wal`; design + implementation ship in **one PR**
+(consolidate-related-PRs). Fold this superpowers spec into `docs/design/` (and
+sidebars) when the feature ships; `git rm` the transient spec then.
