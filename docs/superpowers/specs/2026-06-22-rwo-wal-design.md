@@ -97,8 +97,10 @@ Two independent sub-problems:
 2. **Unflushed WAL.** Resolved by the **boot-epoch-gated session reclaim
    (#119)** acting as referee:
    - **Same client reconnects within grace (boot epoch matches)** → replay WAL
-     from last-acked seq → **zero data loss**. This is the pod-restart /
-     network-blip case — the common one, and #119's whole reason to exist.
+     from last-acked seq. This is the pod-restart / network-blip case — the
+     common one, and #119's whole reason to exist. **Replay safety, however,
+     depends on cross-session dedup (open question 4) — boot-epoch gating is
+     NOT sufficient on its own.** See the caveat below.
    - **Grace expires / new epoch / different client** → old WAL is declared dead
      and discarded *before* the lease is handed off.
    - **Client machine/disk gone** → the unflushed window is lost, irreducibly —
@@ -106,13 +108,26 @@ Two independent sub-problems:
      accepted risk for RWO's target workloads (scratch, checkpoints, build
      trees). `fsync`'d data is safe.
 
+> **CAVEAT — boot-epoch gating ≠ replay dedup (corrected after code review).**
+> Boot-epoch gating makes the lease *handoff* safe; it does **nothing** for
+> *deduplicating* replayed operations. They are two separate mechanisms. The
+> server's current idempotency cache is keyed on `(session, random request-UUID)`,
+> is LRU-by-count (4096), has no TTL, and is **discarded on session reap**. A
+> client reconnecting after a crash gets a *new* session with an *empty* cache,
+> and its replayed ops carry their *original* UUIDs — so any op the server
+> applied-but-didn't-ack before the drop will be **re-applied**. "Zero data loss
+> on reconnect" is therefore an *unearned* claim until open question 4 is
+> resolved. This is a Phase-2 design decision, not an implementation detail.
+
 ### Load-bearing invariant
 
 **Never hand the exclusive lease to a new writer while a recoverable WAL might
-still exist.** The boot-epoch gate is the arbiter: same epoch within grace →
-resume + replay + keep the lease; anything else → discard WAL, *then* hand off.
-Two clients' logs must never race over the same volume. This single ordering
-rule is the core correctness argument.
+still exist.** The boot-epoch gate is the arbiter *for the lease handoff*: same
+epoch within grace → resume + (attempt) replay + keep the lease; anything else →
+discard WAL, *then* hand off. Two clients' logs must never race over the same
+volume. This ordering rule is the core *handoff* correctness argument — it is
+necessary but, per the caveat above, **not sufficient** for replay correctness,
+which additionally requires cross-session dedup.
 
 ## Durability contract (summary)
 
@@ -146,9 +161,32 @@ These are the things to settle in the "let's talk" pass before the plan:
    likely refactor — today's write path (write-through cache → coalescer →
    `WriteAndFlush`) probably needs reshaping so deferred closes and cross-file
    ordering have a natural home.
-4. **Server-side replay/apply path** and how it reuses (or outgrows) the
-   `request_id` idempotency cache — that cache's retention has to cover the WAL
-   replay horizon, or replay double-applies.
-5. **Lease state ownership** — does it belong to `SessionManager`,
-   `VolumeService`, or a new component, and how does it serialize with
-   bind-identity/ACL checks already done per request.
+4. **Replay dedup — THE Phase-2 decision (a fork the user must pick).** The
+   existing `request_id` idempotency cache is a *retry-window* dedup, not a
+   *replay-horizon* dedup: per-session, LRU-by-count (4096), no TTL,
+   success-only, dropped on reap, keyed on a random UUID with no ordering. It is
+   wrong on **both** axes for replay (not durable across sessions; not keyed on
+   anything stable). There is also **no sequence primitive anywhere today** — a
+   client-assigned monotone seq per `(identity, volume)` is net-new end to end
+   (carried on every mutating request, echoed as `acked_seq` in replies). The
+   two viable designs:
+   - **(a) Durable server-side seq-watermark** per `(writer-identity, volume)`:
+     replay of any op `≤ watermark` is a no-op; survives restart; always safe.
+     Most robust, but adds durable server state + a new wire seq.
+   - **(b) Client-side replay from the seq cursor + an idempotency audit of the
+     deferred op-set.** Absolute-offset writes are already idempotent; but
+     `O_EXCL`-create, `rename`, and other state-dependent ops are **not** — they
+     must carry a generation, be excluded from deferral, or force a synchronous
+     flush. This is an explicit op-by-op audit, not "accept corruption."
+   Note: even with a seq cursor, the ack-loss boundary (op applied, ack lost) is
+   the classic double-apply window — only a stable cross-session dedup key
+   (`identity, volume, seq`) closes it.
+5. **Lease state ownership** — keep it OFF the closed `sessionImpl` struct; a
+   side `LeaseManager` on `AppContext` keyed by volume, holders indexed by
+   session (lease is `(volume, session)` state, since one session spans volumes).
+   Acquire at `WhoAmI` (the one volume-scoped per-mount RPC — there is no server
+   `Mount` RPC); **enforce on every mutating RPC**, not just at acquire (a client
+   can skip `WhoAmI` and just write, so acquire-time admission alone is not hard
+   enforcement); release on every session-death path (`reap`/`ReleaseAll`/
+   `ReapIf`/`Stop`/grace-expiry); reclaim own lease on `Resume`. Serialize the
+   lease check **after** ACL/bind, **before** the io call.
