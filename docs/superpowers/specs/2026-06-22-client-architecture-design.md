@@ -62,7 +62,7 @@ Two composition planes, both already present, both generalized:
   backend decorators cannot express write-batching — this plane is the real
   data-path seam.
 
-### Three invariants (load-bearing — get these wrong and it's unbuildable later)
+### Four invariants (load-bearing — get these wrong and it's unbuildable later)
 
 1. **Per-fd state lives on the handle chain, and layers join the Unwrap walk.**
    `resolveHandle` currently hard-asserts `*grpcFileHandle`; the target is that it
@@ -85,6 +85,11 @@ Two composition planes, both already present, both generalized:
    around the chain to the raw client. (This is the cache-coherence path — the
    async-persist stale Heisenbug lives here — which is exactly why the routing
    change is deferred until a consumer can validate it; see #4.)
+4. **Retry lives only in the transport leaf.** `retryOp` (`backend_grpc.go`) is the
+   single retry point; no other layer adds its own retry. Otherwise a transient
+   failure gets retried once per layer it passes through — a nested retry storm
+   with multiplied deadlines. Layers above the transport propagate errors; they
+   do not re-attempt.
 
 ### Capability flow
 
@@ -98,12 +103,14 @@ ordering bug. **No new wire surface** (see §Server guard).
 
 | # | Move | Plane | Status |
 |---|------|-------|--------|
-| 1 | Composition list replaces the `if`-ladder (`single.go`) | backend | **NOW** |
+| 1 | **Constrained** composition (named positions / declared priority, not a free-form list) replaces the `if`-ladder (`single.go`) | backend | **NOW** |
 | 2 | Canonical layer order `cache → [writeBatcher] → transport` | backend | **NOW** (declares the order; writeBatcher slot is empty until #3) |
 | 5 | `MountParams` resolved pre-build from existing RPCs, threaded as one value | control | **NOW** |
 | — | `PassthroughBackend` base (observer layers only) | backend | **NOW** |
 | 6 | **Metrics observer layer** (boundary signals) — the first real consumer of the stack | backend | **NOW** |
 | 7 | **`metrics.Sink` interface** (leaf pkg, per-client injected) + migrate cache/io off the global dispatcher | cross-cut | **NOW (staged)** |
+| 8 | **`FileSystemBackend` conformance test suite** (one testify suite run against every impl) | test | **NOW** |
+| 9 | **Written behavioral contract** on the interface (ordering / retry-ownership / idempotency / error semantics) | interface docs | **NOW** |
 | 3 | Lift `WriteCoalescer` out of the transport leaf into a `writeBatcher` handle-layer | handle | **DESIGN-ONLY / DEFER** |
 | 4 | Route the invalidation stream up through the chain | backend | **DESIGN-ONLY / DEFER** |
 
@@ -200,6 +207,29 @@ them all."
 
 Each stage is independently reviewable; behavior-preserving (same Prometheus
 series) until an OTel/audit `Sink` is added later.
+
+## Foundations that make extension safe (moves #8/#9)
+
+These are not optional polish — they are what makes an *extensible* interface
+actually *safe to extend*.
+
+**#8 — `FileSystemBackend` conformance test suite.** One testify suite (per the
+repo's suite convention) parameterized over an implementation, run against the
+transport leaf, the cache, the new metrics observer, and every future layer. It
+is the thing that **enforces** invariant #2 (semantic layers must consciously
+handle every op): a reflection check asserts each semantic layer overrides the
+full mutating surface, so a future 31st method *breaks the build* until handled,
+rather than silently forwarding into a stale-cache bug. It also makes each new
+layer cheap to verify — drop it into the suite and the contract is checked.
+
+**#9 — Written behavioral contract on the interface.** The op semantics
+(write/flush/release ordering, who owns retry — invariant #4, idempotency
+expectations, error/`FsError` propagation) currently live as scattered code
+comments — rich ones in `Write`/`Flush`/`Release`, but tribal. Lift them into a
+documented contract on `FileSystemBackend`. Layers (and self-hosters) cannot
+compose correctly against undocumented behavior; this is a precondition for
+extension, not documentation-for-its-own-sake. The conformance suite (#8) is the
+executable half of the same contract.
 
 ## Server (light — not extended now)
 
