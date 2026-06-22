@@ -101,12 +101,27 @@ type FileHandle interface {
 	Unwrap() FileHandle
 }
 
-// FileSystemBackend is the seam between the go-fuse adapter (node.go) and
-// the gRPC layer (BackendClient in backend_grpc.go). Sub-spec B of Phase 4
-// will plug a cache decorator at this interface.
+// FileSystemBackend is the client's filesystem operation surface and the
+// decorator seam: layers wrap an inner FileSystemBackend.
 //
-// Semantics mirror FUSE ops: path-keyed for metadata, FileHandle-keyed for
-// I/O. Implementations must be safe for concurrent calls.
+// Behavioral contract (all layers must honor):
+//   - Status: every op returns proto.FsError; FS_OK (0) means success. Layers
+//     propagate the inner status unchanged unless they deliberately handle it.
+//   - Retry ownership: ONLY the transport leaf retries (see retryOp). No other
+//     layer re-attempts a failed op; layers above propagate errors upward.
+//   - Idempotency: mutating ops carry a request_id at the transport so the
+//     server dedups a retried attempt. Layers must not duplicate a mutating op.
+//   - Ordering/durability: writes may be buffered and acked optimistically;
+//     durability is established on Flush/Fsync/Release. A layer that defers a
+//     write must drain at these boundaries (today only the transport does).
+//   - Handles: Open/Create return a FileHandle; a layer that wraps handles must
+//     implement FileHandle.Unwrap() returning its inner so resolveHandle reaches
+//     the transport leaf.
+//   - Invalidation flows UP: the transport owns the Subscribe stream; events
+//     propagate outward (transport -> ... -> cache -> node).
+//   - Observer vs semantic: observer layers (metrics/trace/audit) may embed
+//     PassthroughBackend; semantic layers (cache, write-batcher, WAL) must
+//     implement every method explicitly.
 type FileSystemBackend interface {
 	// Stat returns the attributes of path. Used by Getattr.
 	Stat(ctx context.Context, path string) (*Attr, proto.FsError)

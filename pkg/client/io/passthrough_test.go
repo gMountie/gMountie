@@ -2,6 +2,7 @@ package io
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"go.gmountie.dev/gmountie/pkg/proto"
@@ -46,5 +47,25 @@ func (s *PassthroughSuite) TestForwardsClose() {
 
 // Compile-time assertion: PassthroughBackend implements the full interface.
 var _ FileSystemBackend = (*PassthroughBackend)(nil)
+
+// semanticBackendTypes lists every SEMANTIC layer (changes behavior). Add new
+// ones here; the test fails if any embeds PassthroughBackend (silent-forward
+// hazard). Observer layers (metrics/trace/audit) are intentionally absent.
+func semanticBackendTypes() []reflect.Type {
+	return []reflect.Type{
+		reflect.TypeOf(BackendClient{}),
+	}
+}
+
+func (s *PassthroughSuite) TestSemanticLayersDoNotEmbedPassthrough() {
+	ptName := reflect.TypeOf(PassthroughBackend{}).Name()
+	for _, t := range semanticBackendTypes() {
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			s.Falsef(f.Anonymous && f.Type.Name() == ptName,
+				"%s embeds PassthroughBackend; semantic layers must implement the full interface explicitly", t.Name())
+		}
+	}
+}
 
 func TestPassthroughSuite(t *testing.T) { suite.Run(t, new(PassthroughSuite)) }
