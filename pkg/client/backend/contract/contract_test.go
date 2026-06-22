@@ -82,8 +82,8 @@ func (s *ContractSuite) TestIdentityOverMemfs() {
 		serverGID := uint32(os.Getgid())
 		// localUID/localGID differ from the server identity so Inbound/Outbound
 		// are non-trivial transforms, not the identity map.
-		rw := backend.NewIDRewriter(
-			&backend.Identity{Uid: serverUID, Gid: serverGID, Gids: []uint32{serverGID}},
+		rw := identity.NewIDRewriter(
+			&identity.Identity{Uid: serverUID, Gid: serverGID, Gids: []uint32{serverGID}},
 			serverUID+1000, serverGID+1000,
 		)
 		return identity.NewLayer(memfs.New(), rw)

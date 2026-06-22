@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	"go.gmountie.dev/gmountie/pkg/client/backend"
+	"go.gmountie.dev/gmountie/pkg/client/backend/identity"
 	"go.gmountie.dev/gmountie/pkg/client/config"
 	"go.gmountie.dev/gmountie/pkg/client/grpc"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
@@ -24,7 +24,7 @@ type MountParams struct {
 // negotiateMountParams runs version negotiation and (unless rawIDs) WhoAmI,
 // returning the resolved params and an optional IDRewriter. Soft-fails to
 // configured/raw defaults exactly as the prior inline code did.
-func negotiateMountParams(client grpc.Client, fuseCfg *config.FUSEConfig, rawIDs bool, volume string) (MountParams, *backend.IDRewriter) {
+func negotiateMountParams(client grpc.Client, fuseCfg *config.FUSEConfig, rawIDs bool, volume string) (MountParams, *identity.IDRewriter) {
 	params := MountParams{MaxWriteBytes: negotiateMaxWriteBytes(client, fuseCfg)}
 	if rawIDs {
 		return params, nil
@@ -36,7 +36,7 @@ func negotiateMountParams(client grpc.Client, fuseCfg *config.FUSEConfig, rawIDs
 		log.Log.Warn("WhoAmI failed, mounting with raw IDs", zap.String("volume", volume), zap.Error(err))
 		return params, nil
 	}
-	rewriter := backend.NewIDRewriter(identityFromProto(idResp), uint32(os.Getuid()), uint32(os.Getgid()))
+	rewriter := identity.NewIDRewriter(identityFromProto(idResp), uint32(os.Getuid()), uint32(os.Getgid()))
 	params.DefaultPermissions = idResp.GetMappingMode() == mappingModeSquash
 	return params, rewriter
 }

@@ -1,4 +1,4 @@
-package backend
+package identity
 
 import (
 	"testing"

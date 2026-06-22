@@ -72,13 +72,13 @@ func NewSingleVolumeMounter(client grpc.Client, fuseCfg *config.FUSEConfig, cach
 }
 
 // identityFromProto converts a proto.Identity wire message to the
-// backend.Identity type used by IDRewriter. Returns nil when p is nil, which
+// identity.Identity type used by IDRewriter. Returns nil when p is nil, which
 // makes NewIDRewriter produce a nil (no-op) rewriter.
-func identityFromProto(p *proto.Identity) *backend.Identity {
+func identityFromProto(p *proto.Identity) *identity.Identity {
 	if p == nil {
 		return nil
 	}
-	return &backend.Identity{Uid: p.Uid, Gid: p.PrimaryGid, Gids: p.Gids}
+	return &identity.Identity{Uid: p.Uid, Gid: p.PrimaryGid, Gids: p.Gids}
 }
 
 // Mount mounts a volume

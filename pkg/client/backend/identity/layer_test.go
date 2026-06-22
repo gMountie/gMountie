@@ -35,7 +35,7 @@ type LayerSuite struct {
 	ctx   context.Context
 	inner backend.FileSystemBackend // raw memfs (server-id namespace)
 	layer backend.FileSystemBackend // identity.NewLayer(inner, rw)
-	rw    *backend.IDRewriter
+	rw    *identity.IDRewriter
 }
 
 func TestLayerSuite(t *testing.T) { suite.Run(t, new(LayerSuite)) }
@@ -43,8 +43,8 @@ func TestLayerSuite(t *testing.T) { suite.Run(t, new(LayerSuite)) }
 func (s *LayerSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.inner = memfs.New()
-	s.rw = backend.NewIDRewriter(
-		&backend.Identity{Uid: serverUID, Gid: serverGID, Gids: []uint32{serverGID, suppGID}},
+	s.rw = identity.NewIDRewriter(
+		&identity.Identity{Uid: serverUID, Gid: serverGID, Gids: []uint32{serverGID, suppGID}},
 		localUID, localGID,
 	)
 	s.layer = identity.NewLayer(s.inner, s.rw)

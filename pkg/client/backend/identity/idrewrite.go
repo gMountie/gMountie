@@ -1,4 +1,4 @@
-package backend
+package identity
 
 // nobodyID is the conventional unprivileged display id for files the mounting
 // user neither owns nor shares a (primary) group with.

@@ -41,7 +41,7 @@ const setAttrIDMask = backend.FATTR_UID | backend.FATTR_GID
 // op) and overrides only the identity-bearing ops below.
 type layer struct {
 	backend.PassthroughBackend
-	rw *backend.IDRewriter
+	rw *IDRewriter
 }
 
 // NewLayer wraps inner so attrs flowing up have their uid/gid rewritten
@@ -50,9 +50,9 @@ type layer struct {
 //
 // When rw is nil the rewrite is the identity transform, so NewLayer returns
 // inner unchanged — no decorator is interposed (raw_ids mounts, or when WhoAmI
-// returned no identity). backend.IDRewriter is itself nil-safe, but returning inner
+// returned no identity). IDRewriter is itself nil-safe, but returning inner
 // avoids a redundant pass-through layer entirely.
-func NewLayer(inner backend.FileSystemBackend, rw *backend.IDRewriter) backend.FileSystemBackend {
+func NewLayer(inner backend.FileSystemBackend, rw *IDRewriter) backend.FileSystemBackend {
 	if rw == nil {
 		return inner
 	}
