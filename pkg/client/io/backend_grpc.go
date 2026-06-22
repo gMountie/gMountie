@@ -641,8 +641,8 @@ func timeToFileTime(t *time.Time) *proto.FileTime {
 // proto pins the same numeric values go-fuse exports, so the bits pass
 // through untranslated — but kernel-only bits (FATTR_FH, FATTR_LOCKOWNER,
 // FATTR_*_NOW, ...) are masked out here so they can never leak onto the wire.
-const setAttrValidMask = fuse.FATTR_MODE | fuse.FATTR_UID | fuse.FATTR_GID |
-	fuse.FATTR_SIZE | fuse.FATTR_ATIME | fuse.FATTR_MTIME
+const setAttrValidMask = FATTR_MODE | FATTR_UID | FATTR_GID |
+	FATTR_SIZE | FATTR_ATIME | FATTR_MTIME
 
 // SetAttr applies the fields named by in.Valid in one RPC, replacing the
 // removed Truncate/Chmod/Chown/Utimens fan-out (up to 4 serial RPCs + a
@@ -1399,7 +1399,7 @@ func (b *BackendClient) Lseek(ctx context.Context, fh FileHandle, offset uint64,
 // query is a pure read, idempotent within the session, so a transient error
 // retries; on a session change the fd (and its locks) are gone and retryOp stops
 // — so a missed reply can't leave us reasoning about a phantom lock on a dead fd.
-func (b *BackendClient) GetLk(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) proto.FsError {
+func (b *BackendClient) GetLk(ctx context.Context, fh FileHandle, owner uint64, lk *FileLock, flags uint32, out *FileLock) proto.FsError {
 	h := resolveHandle(fh)
 	if h == nil {
 		return proto.FsError_FS_EBADF
@@ -1424,7 +1424,7 @@ func (b *BackendClient) GetLk(ctx context.Context, fh FileHandle, owner uint64, 
 		return fdOpStatus(err)
 	}
 	if res.Lk != nil {
-		*out = fuse.FileLock{Start: res.Lk.Start, End: res.Lk.End, Typ: res.Lk.Typ, Pid: res.Lk.Pid}
+		*out = FileLock{Start: res.Lk.Start, End: res.Lk.End, Typ: res.Lk.Typ, Pid: res.Lk.Pid}
 	}
 	return res.Status
 }
@@ -1433,7 +1433,7 @@ func (b *BackendClient) GetLk(ctx context.Context, fh FileHandle, owner uint64, 
 // re-applying the same (owner, region, type) lock on the same fd within the
 // session is idempotent, so a transient error retries; a session change kills
 // the fd (and any locks it held) and retryOp stops — see GetLk.
-func (b *BackendClient) SetLk(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError {
+func (b *BackendClient) SetLk(ctx context.Context, fh FileHandle, owner uint64, lk *FileLock, flags uint32) proto.FsError {
 	h := resolveHandle(fh)
 	if h == nil {
 		return proto.FsError_FS_EBADF
@@ -1463,7 +1463,7 @@ func (b *BackendClient) SetLk(ctx context.Context, fh FileHandle, owner uint64, 
 // SetLkw attempts a blocking lock acquisition (fcntl(F_SETLKW)). Not routed
 // through retryOp: the blocking wait must stay cancellable (see the inline note
 // below) rather than be detached and retried.
-func (b *BackendClient) SetLkw(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError {
+func (b *BackendClient) SetLkw(ctx context.Context, fh FileHandle, owner uint64, lk *FileLock, flags uint32) proto.FsError {
 	h := resolveHandle(fh)
 	if h == nil {
 		return proto.FsError_FS_EBADF

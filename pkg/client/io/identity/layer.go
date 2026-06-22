@@ -22,8 +22,6 @@ import (
 
 	"go.gmountie.dev/gmountie/pkg/client/io"
 	"go.gmountie.dev/gmountie/pkg/proto"
-
-	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
 // setAttrIDMask is the set of SetAttrIn.Valid bits that carry an ownership
@@ -32,7 +30,7 @@ import (
 // Outbound. Rewriting a half whose bit is unset is harmless — that half never
 // reaches the wire because the inner SetAttr ignores value fields whose bit is
 // clear.
-const setAttrIDMask = fuse.FATTR_UID | fuse.FATTR_GID
+const setAttrIDMask = io.FATTR_UID | io.FATTR_GID
 
 // layer is the identity-rewrite decorator over an inner FileSystemBackend.
 type layer struct {
@@ -195,15 +193,15 @@ func (l *layer) Allocate(ctx context.Context, fh io.FileHandle, off, size uint64
 	return l.inner.Allocate(ctx, fh, off, size, mode)
 }
 
-func (l *layer) GetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) proto.FsError {
+func (l *layer) GetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32, out *io.FileLock) proto.FsError {
 	return l.inner.GetLk(ctx, fh, owner, lk, flags, out)
 }
 
-func (l *layer) SetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError {
+func (l *layer) SetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32) proto.FsError {
 	return l.inner.SetLk(ctx, fh, owner, lk, flags)
 }
 
-func (l *layer) SetLkw(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError {
+func (l *layer) SetLkw(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32) proto.FsError {
 	return l.inner.SetLkw(ctx, fh, owner, lk, flags)
 }
 

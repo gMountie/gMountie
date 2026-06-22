@@ -3,8 +3,6 @@ package io
 import (
 	"context"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
-
 	"go.gmountie.dev/gmountie/pkg/proto"
 )
 
@@ -76,13 +74,13 @@ func (p *PassthroughBackend) Fsync(ctx context.Context, fh FileHandle, flags int
 func (p *PassthroughBackend) Allocate(ctx context.Context, fh FileHandle, off, size uint64, mode uint32) proto.FsError {
 	return p.Inner.Allocate(ctx, fh, off, size, mode)
 }
-func (p *PassthroughBackend) GetLk(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) proto.FsError {
+func (p *PassthroughBackend) GetLk(ctx context.Context, fh FileHandle, owner uint64, lk *FileLock, flags uint32, out *FileLock) proto.FsError {
 	return p.Inner.GetLk(ctx, fh, owner, lk, flags, out)
 }
-func (p *PassthroughBackend) SetLk(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError {
+func (p *PassthroughBackend) SetLk(ctx context.Context, fh FileHandle, owner uint64, lk *FileLock, flags uint32) proto.FsError {
 	return p.Inner.SetLk(ctx, fh, owner, lk, flags)
 }
-func (p *PassthroughBackend) SetLkw(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError {
+func (p *PassthroughBackend) SetLkw(ctx context.Context, fh FileHandle, owner uint64, lk *FileLock, flags uint32) proto.FsError {
 	return p.Inner.SetLkw(ctx, fh, owner, lk, flags)
 }
 func (p *PassthroughBackend) CopyFileRange(ctx context.Context, fhIn FileHandle, offIn uint64, fhOut FileHandle, offOut uint64, length, flags uint64) (uint64, proto.FsError) {

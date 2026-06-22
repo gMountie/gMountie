@@ -10,9 +10,35 @@ import (
 	"time"
 
 	"go.gmountie.dev/gmountie/pkg/proto"
-
-	"github.com/hanwen/go-fuse/v2/fuse"
 )
+
+// FATTR_* are the SETATTR valid-bitmask bits carried in SetAttrIn.Valid. They
+// mirror the kernel/go-fuse fuse.FATTR_* values EXACTLY and MUST stay in sync:
+// SetAttrIn.Valid travels over the wire (proto) to the server, which interprets
+// these bits, so changing a value would silently break SetAttr semantics. (Pin
+// guard: backend_grpc_test.go asserts io.FATTR_* == fuse.FATTR_*.) Only the
+// bits the codebase sets/masks are defined; kernel-only bits (FH, *_NOW,
+// LOCKOWNER, ...) are deliberately omitted — the adapter strips them.
+const (
+	FATTR_MODE  = (1 << 0)
+	FATTR_UID   = (1 << 1)
+	FATTR_GID   = (1 << 2)
+	FATTR_SIZE  = (1 << 3)
+	FATTR_ATIME = (1 << 4)
+	FATTR_MTIME = (1 << 5)
+)
+
+// FileLock is the presentation-agnostic byte-range lock descriptor passed to
+// GetLk/SetLk/SetLkw. It mirrors go-fuse's fuse.FileLock field-for-field; the
+// gofuse adapter translates between the two at its boundary, and the transport
+// copies these fields onto proto.FileLock unchanged, so lock RPCs are
+// byte-identical over the wire.
+type FileLock struct {
+	Start uint64
+	End   uint64
+	Typ   uint32
+	Pid   uint32
+}
 
 // Attr is the per-inode attribute snapshot returned by Stat/Lookup. Keeps
 // FileSystemBackend decoupled from pkg/proto's wire types.
@@ -174,13 +200,13 @@ type FileSystemBackend interface {
 	Allocate(ctx context.Context, fh FileHandle, off, size uint64, mode uint32) proto.FsError
 	// GetLk queries the lock state for a region of the file
 	// (fcntl(F_GETLK)).
-	GetLk(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) proto.FsError
+	GetLk(ctx context.Context, fh FileHandle, owner uint64, lk *FileLock, flags uint32, out *FileLock) proto.FsError
 	// SetLk attempts to acquire a lock without blocking
 	// (fcntl(F_SETLK)).
-	SetLk(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError
+	SetLk(ctx context.Context, fh FileHandle, owner uint64, lk *FileLock, flags uint32) proto.FsError
 	// SetLkw attempts to acquire a lock, blocking until it can be
 	// granted (fcntl(F_SETLKW)).
-	SetLkw(ctx context.Context, fh FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError
+	SetLkw(ctx context.Context, fh FileHandle, owner uint64, lk *FileLock, flags uint32) proto.FsError
 	// CopyFileRange copies length bytes server-side from fhIn@offIn to
 	// fhOut@offOut without the data crossing the wire. flags must be 0.
 	// Short counts are legal (source EOF); callers reissue.

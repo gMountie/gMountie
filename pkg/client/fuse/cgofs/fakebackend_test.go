@@ -7,8 +7,6 @@ import (
 
 	gio "go.gmountie.dev/gmountie/pkg/client/io"
 	proto "go.gmountie.dev/gmountie/pkg/proto"
-
-	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
 // fakeBackend is a programmable io.FileSystemBackend test double. Each field
@@ -104,13 +102,13 @@ func (f *fakeBackend) Fsync(ctx context.Context, fh gio.FileHandle, flags int64)
 func (f *fakeBackend) Allocate(ctx context.Context, fh gio.FileHandle, off, size uint64, mode uint32) proto.FsError {
 	return proto.FsError_FS_OK
 }
-func (f *fakeBackend) GetLk(ctx context.Context, fh gio.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) proto.FsError {
+func (f *fakeBackend) GetLk(ctx context.Context, fh gio.FileHandle, owner uint64, lk *gio.FileLock, flags uint32, out *gio.FileLock) proto.FsError {
 	return proto.FsError_FS_ENOSYS
 }
-func (f *fakeBackend) SetLk(ctx context.Context, fh gio.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError {
+func (f *fakeBackend) SetLk(ctx context.Context, fh gio.FileHandle, owner uint64, lk *gio.FileLock, flags uint32) proto.FsError {
 	return proto.FsError_FS_ENOSYS
 }
-func (f *fakeBackend) SetLkw(ctx context.Context, fh gio.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError {
+func (f *fakeBackend) SetLkw(ctx context.Context, fh gio.FileHandle, owner uint64, lk *gio.FileLock, flags uint32) proto.FsError {
 	return proto.FsError_FS_ENOSYS
 }
 func (f *fakeBackend) CopyFileRange(ctx context.Context, in gio.FileHandle, io1 uint64, out gio.FileHandle, oo uint64, length, flags uint64) (uint64, proto.FsError) {

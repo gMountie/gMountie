@@ -14,7 +14,6 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/metrics"
 	"go.gmountie.dev/gmountie/pkg/proto"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
 	"google.golang.org/grpc"
 )
 
@@ -646,7 +645,7 @@ func (b *cachedBackend) ListXAttr(ctx context.Context, p string) ([]string, prot
 	return names, st
 }
 
-func (b *cachedBackend) GetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) proto.FsError {
+func (b *cachedBackend) GetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32, out *io.FileLock) proto.FsError {
 	return b.inner.GetLk(ctx, unwrapHandle(fh), owner, lk, flags, out)
 }
 
@@ -744,11 +743,11 @@ func (b *cachedBackend) Allocate(ctx context.Context, fh io.FileHandle, off, siz
 	return proto.FsError_FS_OK
 }
 
-func (b *cachedBackend) SetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError {
+func (b *cachedBackend) SetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32) proto.FsError {
 	return b.inner.SetLk(ctx, unwrapHandle(fh), owner, lk, flags)
 }
 
-func (b *cachedBackend) SetLkw(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError {
+func (b *cachedBackend) SetLkw(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32) proto.FsError {
 	return b.inner.SetLkw(ctx, unwrapHandle(fh), owner, lk, flags)
 }
 
@@ -864,7 +863,7 @@ func (b *cachedBackend) SetAttr(ctx context.Context, p string, in io.SetAttrIn) 
 	// A requested size change makes every cached chunk suspect on success
 	// AND on failure: size applies first server-side, so even a failed call
 	// may already have truncated the file.
-	if in.Valid&fuse.FATTR_SIZE != 0 {
+	if in.Valid&io.FATTR_SIZE != 0 {
 		b.data.invalidatePath(p)
 	}
 	if st != proto.FsError_FS_OK {

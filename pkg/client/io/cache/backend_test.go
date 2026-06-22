@@ -11,7 +11,6 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/io/cache/persist"
 	"go.gmountie.dev/gmountie/pkg/proto"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
@@ -643,7 +642,7 @@ func (s *CachedBackendTestSuite) TestSetAttrWithSizeInvalidatesDataAndPrimesAttr
 	s.b.data.put("/f", 0, make([]byte, 1024))
 	s.b.data.put("/f", 1, make([]byte, 1024))
 	s.b.attr.putPositive("/f", &io.Attr{Size: 2048, Mode: 0o644})
-	in := io.SetAttrIn{Valid: fuse.FATTR_SIZE | fuse.FATTR_MODE, Size: 100, Mode: 0o600}
+	in := io.SetAttrIn{Valid: io.FATTR_SIZE | io.FATTR_MODE, Size: 100, Mode: 0o600}
 	final := &io.Attr{Ino: 9, Size: 100, Mode: 0o600}
 	s.inner.EXPECT().SetAttr(mock.Anything, "/f", in).Return(final, proto.FsError_FS_OK).Once()
 
@@ -666,7 +665,7 @@ func (s *CachedBackendTestSuite) TestSetAttrWithSizeInvalidatesDataAndPrimesAttr
 func (s *CachedBackendTestSuite) TestSetAttrWithoutSizeKeepsDataAndPrimesAttr() {
 	s.b.data.put("/f", 0, []byte("DATA"))
 	s.b.attr.putPositive("/f", &io.Attr{Mode: 0o644})
-	in := io.SetAttrIn{Valid: fuse.FATTR_MODE, Mode: 0o600}
+	in := io.SetAttrIn{Valid: io.FATTR_MODE, Mode: 0o600}
 	s.inner.EXPECT().SetAttr(mock.Anything, "/f", in).
 		Return(&io.Attr{Mode: 0o600}, proto.FsError_FS_OK).Once()
 
@@ -686,7 +685,7 @@ func (s *CachedBackendTestSuite) TestSetAttrWithoutSizeKeepsDataAndPrimesAttr() 
 func (s *CachedBackendTestSuite) TestSetAttrFailureStillInvalidates() {
 	s.b.data.put("/f", 0, []byte("DATA"))
 	s.b.attr.putPositive("/f", &io.Attr{Size: 4, Mode: 0o644})
-	in := io.SetAttrIn{Valid: fuse.FATTR_SIZE | fuse.FATTR_MODE, Size: 0, Mode: 0o600}
+	in := io.SetAttrIn{Valid: io.FATTR_SIZE | io.FATTR_MODE, Size: 0, Mode: 0o600}
 	s.inner.EXPECT().SetAttr(mock.Anything, "/f", in).Return(nil, proto.FsError_FS_EPERM).Once()
 
 	_, st := s.b.SetAttr(context.Background(), "/f", in)
@@ -795,8 +794,8 @@ func (s *CachedBackendTestSuite) TestLockOpsPassthroughNoCacheMutations() {
 	s.b.attr.putPositive("/f", &io.Attr{Ino: 1})
 	s.b.data.put("/f", 0, []byte("DATA"))
 	h, innerH := s.openCachedHandle("/f")
-	lk := &fuse.FileLock{}
-	out := &fuse.FileLock{}
+	lk := &io.FileLock{}
+	out := &io.FileLock{}
 	// All three lock ops should pass through with the unwrapped handle.
 	s.inner.EXPECT().GetLk(mock.Anything, innerH, uint64(1), lk, uint32(0), out).
 		Return(proto.FsError_FS_OK).Once()

@@ -27,8 +27,6 @@ import (
 
 	"go.gmountie.dev/gmountie/pkg/client/io"
 	"go.gmountie.dev/gmountie/pkg/proto"
-
-	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
 const (
@@ -530,17 +528,17 @@ func (fs *memFS) Allocate(_ context.Context, fh io.FileHandle, off, size uint64,
 	return proto.FsError_FS_OK
 }
 
-func (fs *memFS) GetLk(_ context.Context, fh io.FileHandle, _ uint64, _ *fuse.FileLock, _ uint32, _ *fuse.FileLock) proto.FsError {
+func (fs *memFS) GetLk(_ context.Context, fh io.FileHandle, _ uint64, _ *io.FileLock, _ uint32, _ *io.FileLock) proto.FsError {
 	_, st := resolveHandle(fh)
 	return st
 }
 
-func (fs *memFS) SetLk(_ context.Context, fh io.FileHandle, _ uint64, _ *fuse.FileLock, _ uint32) proto.FsError {
+func (fs *memFS) SetLk(_ context.Context, fh io.FileHandle, _ uint64, _ *io.FileLock, _ uint32) proto.FsError {
 	_, st := resolveHandle(fh)
 	return st
 }
 
-func (fs *memFS) SetLkw(_ context.Context, fh io.FileHandle, _ uint64, _ *fuse.FileLock, _ uint32) proto.FsError {
+func (fs *memFS) SetLkw(_ context.Context, fh io.FileHandle, _ uint64, _ *io.FileLock, _ uint32) proto.FsError {
 	_, st := resolveHandle(fh)
 	return st
 }
@@ -739,7 +737,7 @@ func (fs *memFS) SetAttr(_ context.Context, path string, in io.SetAttrIn) (*io.A
 		return nil, st
 	}
 	// Apply in the documented server order: size -> mode -> owner -> times.
-	if in.Valid&fuse.FATTR_SIZE != 0 {
+	if in.Valid&io.FATTR_SIZE != 0 {
 		if n.isDir() {
 			return nil, proto.FsError_FS_EISDIR
 		}
@@ -752,19 +750,19 @@ func (fs *memFS) SetAttr(_ context.Context, path string, in io.SetAttrIn) (*io.A
 			n.data = grown
 		}
 	}
-	if in.Valid&fuse.FATTR_MODE != 0 {
+	if in.Valid&io.FATTR_MODE != 0 {
 		n.mode = (n.mode & syscall.S_IFMT) | (in.Mode & 0o7777)
 	}
-	if in.Valid&fuse.FATTR_UID != 0 {
+	if in.Valid&io.FATTR_UID != 0 {
 		n.uid = in.Uid
 	}
-	if in.Valid&fuse.FATTR_GID != 0 {
+	if in.Valid&io.FATTR_GID != 0 {
 		n.gid = in.Gid
 	}
-	if in.Valid&fuse.FATTR_ATIME != 0 && in.Atime != nil {
+	if in.Valid&io.FATTR_ATIME != 0 && in.Atime != nil {
 		n.atime = *in.Atime
 	}
-	if in.Valid&fuse.FATTR_MTIME != 0 && in.Mtime != nil {
+	if in.Valid&io.FATTR_MTIME != 0 && in.Mtime != nil {
 		n.mtime = *in.Mtime
 	}
 	n.ctime = time.Now()

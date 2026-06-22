@@ -577,7 +577,8 @@ func (s *NodeAdapterTestSuite) TestFileAllocate() {
 func (s *NodeAdapterTestSuite) TestFileGetlk() {
 	fh, mockFH := s.openFile()
 	lk := &fuse.FileLock{Start: 0, End: 16, Typ: 1, Pid: 99}
-	s.backend.EXPECT().GetLk(mock.Anything, mockFH, uint64(42), lk, uint32(0), mock.AnythingOfType("*fuse.FileLock")).
+	wantLk := &clientio.FileLock{Start: 0, End: 16, Typ: 1, Pid: 99} // adapter converts fuse→io at the boundary
+	s.backend.EXPECT().GetLk(mock.Anything, mockFH, uint64(42), wantLk, uint32(0), mock.AnythingOfType("*io.FileLock")).
 		Return(proto.FsError_FS_OK)
 	out := &fuse.FileLock{}
 	errno := fh.(fs.FileGetlker).Getlk(context.Background(), 42, lk, 0, out)
@@ -587,7 +588,8 @@ func (s *NodeAdapterTestSuite) TestFileGetlk() {
 func (s *NodeAdapterTestSuite) TestFileSetlk() {
 	fh, mockFH := s.openFile()
 	lk := &fuse.FileLock{Start: 10, End: 20, Typ: 1, Pid: 5}
-	s.backend.EXPECT().SetLk(mock.Anything, mockFH, uint64(7), lk, uint32(0)).Return(proto.FsError_FS_OK)
+	wantLk := &clientio.FileLock{Start: 10, End: 20, Typ: 1, Pid: 5} // adapter converts fuse→io at the boundary
+	s.backend.EXPECT().SetLk(mock.Anything, mockFH, uint64(7), wantLk, uint32(0)).Return(proto.FsError_FS_OK)
 	errno := fh.(fs.FileSetlker).Setlk(context.Background(), 7, lk, 0)
 	s.Assert().Equal(syscall.Errno(0), errno)
 }
@@ -595,7 +597,8 @@ func (s *NodeAdapterTestSuite) TestFileSetlk() {
 func (s *NodeAdapterTestSuite) TestFileSetlkw() {
 	fh, mockFH := s.openFile()
 	lk := &fuse.FileLock{Start: 10, End: 20, Typ: 1, Pid: 5}
-	s.backend.EXPECT().SetLkw(mock.Anything, mockFH, uint64(7), lk, uint32(0)).Return(proto.FsError_FS_OK)
+	wantLk := &clientio.FileLock{Start: 10, End: 20, Typ: 1, Pid: 5} // adapter converts fuse→io at the boundary
+	s.backend.EXPECT().SetLkw(mock.Anything, mockFH, uint64(7), wantLk, uint32(0)).Return(proto.FsError_FS_OK)
 	errno := fh.(fs.FileSetlkwer).Setlkw(context.Background(), 7, lk, 0)
 	s.Assert().Equal(syscall.Errno(0), errno)
 }

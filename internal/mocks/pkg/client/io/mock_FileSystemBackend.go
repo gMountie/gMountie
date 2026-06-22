@@ -7,7 +7,6 @@ package io
 import (
 	"context"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
 	mock "github.com/stretchr/testify/mock"
 	"go.gmountie.dev/gmountie/pkg/client/io"
 	"go.gmountie.dev/gmountie/pkg/proto"
@@ -613,7 +612,7 @@ func (_c *MockFileSystemBackend_GetAttrIfChanged_Call) RunAndReturn(run func(ctx
 }
 
 // GetLk provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) GetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) proto.FsError {
+func (_mock *MockFileSystemBackend) GetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32, out *io.FileLock) proto.FsError {
 	ret := _mock.Called(ctx, fh, owner, lk, flags, out)
 
 	if len(ret) == 0 {
@@ -621,7 +620,7 @@ func (_mock *MockFileSystemBackend) GetLk(ctx context.Context, fh io.FileHandle,
 	}
 
 	var r0 proto.FsError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, *fuse.FileLock, uint32, *fuse.FileLock) proto.FsError); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, *io.FileLock, uint32, *io.FileLock) proto.FsError); ok {
 		r0 = returnFunc(ctx, fh, owner, lk, flags, out)
 	} else {
 		r0 = ret.Get(0).(proto.FsError)
@@ -638,14 +637,14 @@ type MockFileSystemBackend_GetLk_Call struct {
 //   - ctx context.Context
 //   - fh io.FileHandle
 //   - owner uint64
-//   - lk *fuse.FileLock
+//   - lk *io.FileLock
 //   - flags uint32
-//   - out *fuse.FileLock
+//   - out *io.FileLock
 func (_e *MockFileSystemBackend_Expecter) GetLk(ctx interface{}, fh interface{}, owner interface{}, lk interface{}, flags interface{}, out interface{}) *MockFileSystemBackend_GetLk_Call {
 	return &MockFileSystemBackend_GetLk_Call{Call: _e.mock.On("GetLk", ctx, fh, owner, lk, flags, out)}
 }
 
-func (_c *MockFileSystemBackend_GetLk_Call) Run(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock)) *MockFileSystemBackend_GetLk_Call {
+func (_c *MockFileSystemBackend_GetLk_Call) Run(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32, out *io.FileLock)) *MockFileSystemBackend_GetLk_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -659,17 +658,17 @@ func (_c *MockFileSystemBackend_GetLk_Call) Run(run func(ctx context.Context, fh
 		if args[2] != nil {
 			arg2 = args[2].(uint64)
 		}
-		var arg3 *fuse.FileLock
+		var arg3 *io.FileLock
 		if args[3] != nil {
-			arg3 = args[3].(*fuse.FileLock)
+			arg3 = args[3].(*io.FileLock)
 		}
 		var arg4 uint32
 		if args[4] != nil {
 			arg4 = args[4].(uint32)
 		}
-		var arg5 *fuse.FileLock
+		var arg5 *io.FileLock
 		if args[5] != nil {
-			arg5 = args[5].(*fuse.FileLock)
+			arg5 = args[5].(*io.FileLock)
 		}
 		run(
 			arg0,
@@ -688,7 +687,7 @@ func (_c *MockFileSystemBackend_GetLk_Call) Return(fsError proto.FsError) *MockF
 	return _c
 }
 
-func (_c *MockFileSystemBackend_GetLk_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) proto.FsError) *MockFileSystemBackend_GetLk_Call {
+func (_c *MockFileSystemBackend_GetLk_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32, out *io.FileLock) proto.FsError) *MockFileSystemBackend_GetLk_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -1662,7 +1661,7 @@ func (_c *MockFileSystemBackend_SetAttr_Call) RunAndReturn(run func(ctx context.
 }
 
 // SetLk provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) SetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError {
+func (_mock *MockFileSystemBackend) SetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32) proto.FsError {
 	ret := _mock.Called(ctx, fh, owner, lk, flags)
 
 	if len(ret) == 0 {
@@ -1670,7 +1669,7 @@ func (_mock *MockFileSystemBackend) SetLk(ctx context.Context, fh io.FileHandle,
 	}
 
 	var r0 proto.FsError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, *fuse.FileLock, uint32) proto.FsError); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, *io.FileLock, uint32) proto.FsError); ok {
 		r0 = returnFunc(ctx, fh, owner, lk, flags)
 	} else {
 		r0 = ret.Get(0).(proto.FsError)
@@ -1687,13 +1686,13 @@ type MockFileSystemBackend_SetLk_Call struct {
 //   - ctx context.Context
 //   - fh io.FileHandle
 //   - owner uint64
-//   - lk *fuse.FileLock
+//   - lk *io.FileLock
 //   - flags uint32
 func (_e *MockFileSystemBackend_Expecter) SetLk(ctx interface{}, fh interface{}, owner interface{}, lk interface{}, flags interface{}) *MockFileSystemBackend_SetLk_Call {
 	return &MockFileSystemBackend_SetLk_Call{Call: _e.mock.On("SetLk", ctx, fh, owner, lk, flags)}
 }
 
-func (_c *MockFileSystemBackend_SetLk_Call) Run(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32)) *MockFileSystemBackend_SetLk_Call {
+func (_c *MockFileSystemBackend_SetLk_Call) Run(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32)) *MockFileSystemBackend_SetLk_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -1707,9 +1706,9 @@ func (_c *MockFileSystemBackend_SetLk_Call) Run(run func(ctx context.Context, fh
 		if args[2] != nil {
 			arg2 = args[2].(uint64)
 		}
-		var arg3 *fuse.FileLock
+		var arg3 *io.FileLock
 		if args[3] != nil {
-			arg3 = args[3].(*fuse.FileLock)
+			arg3 = args[3].(*io.FileLock)
 		}
 		var arg4 uint32
 		if args[4] != nil {
@@ -1731,13 +1730,13 @@ func (_c *MockFileSystemBackend_SetLk_Call) Return(fsError proto.FsError) *MockF
 	return _c
 }
 
-func (_c *MockFileSystemBackend_SetLk_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError) *MockFileSystemBackend_SetLk_Call {
+func (_c *MockFileSystemBackend_SetLk_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32) proto.FsError) *MockFileSystemBackend_SetLk_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // SetLkw provides a mock function for the type MockFileSystemBackend
-func (_mock *MockFileSystemBackend) SetLkw(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError {
+func (_mock *MockFileSystemBackend) SetLkw(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32) proto.FsError {
 	ret := _mock.Called(ctx, fh, owner, lk, flags)
 
 	if len(ret) == 0 {
@@ -1745,7 +1744,7 @@ func (_mock *MockFileSystemBackend) SetLkw(ctx context.Context, fh io.FileHandle
 	}
 
 	var r0 proto.FsError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, *fuse.FileLock, uint32) proto.FsError); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.FileHandle, uint64, *io.FileLock, uint32) proto.FsError); ok {
 		r0 = returnFunc(ctx, fh, owner, lk, flags)
 	} else {
 		r0 = ret.Get(0).(proto.FsError)
@@ -1762,13 +1761,13 @@ type MockFileSystemBackend_SetLkw_Call struct {
 //   - ctx context.Context
 //   - fh io.FileHandle
 //   - owner uint64
-//   - lk *fuse.FileLock
+//   - lk *io.FileLock
 //   - flags uint32
 func (_e *MockFileSystemBackend_Expecter) SetLkw(ctx interface{}, fh interface{}, owner interface{}, lk interface{}, flags interface{}) *MockFileSystemBackend_SetLkw_Call {
 	return &MockFileSystemBackend_SetLkw_Call{Call: _e.mock.On("SetLkw", ctx, fh, owner, lk, flags)}
 }
 
-func (_c *MockFileSystemBackend_SetLkw_Call) Run(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32)) *MockFileSystemBackend_SetLkw_Call {
+func (_c *MockFileSystemBackend_SetLkw_Call) Run(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32)) *MockFileSystemBackend_SetLkw_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -1782,9 +1781,9 @@ func (_c *MockFileSystemBackend_SetLkw_Call) Run(run func(ctx context.Context, f
 		if args[2] != nil {
 			arg2 = args[2].(uint64)
 		}
-		var arg3 *fuse.FileLock
+		var arg3 *io.FileLock
 		if args[3] != nil {
-			arg3 = args[3].(*fuse.FileLock)
+			arg3 = args[3].(*io.FileLock)
 		}
 		var arg4 uint32
 		if args[4] != nil {
@@ -1806,7 +1805,7 @@ func (_c *MockFileSystemBackend_SetLkw_Call) Return(fsError proto.FsError) *Mock
 	return _c
 }
 
-func (_c *MockFileSystemBackend_SetLkw_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *fuse.FileLock, flags uint32) proto.FsError) *MockFileSystemBackend_SetLkw_Call {
+func (_c *MockFileSystemBackend_SetLkw_Call) RunAndReturn(run func(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32) proto.FsError) *MockFileSystemBackend_SetLkw_Call {
 	_c.Call.Return(run)
 	return _c
 }

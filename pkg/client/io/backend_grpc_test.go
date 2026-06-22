@@ -291,7 +291,7 @@ func (s *BackendClientTestSuite) TestRelease_CancelledParentDoesNotAbortRPC() {
 func (s *BackendClientTestSuite) TestSetLkw_StaysCancellable() {
 	parent, cancel := context.WithCancel(context.Background())
 	cancel()
-	lk := &fuse.FileLock{Start: 0, End: 0, Typ: 1, Pid: 1}
+	lk := &FileLock{Start: 0, End: 0, Typ: 1, Pid: 1}
 
 	s.fileClient.EXPECT().SetLkw(
 		mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() != nil }),
@@ -687,6 +687,16 @@ func (s *BackendClientTestSuite) TestSetAttr_WireFattrContract() {
 	s.Assert().Equal(8, fuse.FATTR_SIZE)
 	s.Assert().Equal(16, fuse.FATTR_ATIME)
 	s.Assert().Equal(32, fuse.FATTR_MTIME)
+
+	// De-fuse parity: the local io.FATTR_* constants the contract now uses MUST
+	// equal go-fuse's, since SetAttrIn.Valid still travels the wire untranslated.
+	// If a go-fuse bump or an edit to backend.go diverges them, this fails here.
+	s.Assert().Equal(fuse.FATTR_MODE, FATTR_MODE)
+	s.Assert().Equal(fuse.FATTR_UID, FATTR_UID)
+	s.Assert().Equal(fuse.FATTR_GID, FATTR_GID)
+	s.Assert().Equal(fuse.FATTR_SIZE, FATTR_SIZE)
+	s.Assert().Equal(fuse.FATTR_ATIME, FATTR_ATIME)
+	s.Assert().Equal(fuse.FATTR_MTIME, FATTR_MTIME)
 }
 
 // TestSetAttr_RetryReusesRequestID — same Phase 1d idempotency property the
@@ -1276,9 +1286,9 @@ func (s *BackendClientTestSuite) TestAllocate_BadHandleEBADF() {
 }
 
 // TestGetLk verifies the lock state query translates the inbound
-// fuse.FileLock to the proto and folds the reply back into *out.
+// FileLock to the proto and folds the reply back into *out.
 func (s *BackendClientTestSuite) TestGetLk() {
-	lk := &fuse.FileLock{Start: 0, End: 16, Typ: 1, Pid: 99}
+	lk := &FileLock{Start: 0, End: 16, Typ: 1, Pid: 99}
 	s.fileClient.EXPECT().GetLk(mock.Anything, mock.MatchedBy(func(req *proto.GetLkRequest) bool {
 		return req.Volume == "testVolume" && req.Fd == 1 && req.Owner == 42 && req.Flags == 0 &&
 			req.SessionId == "test-session" && req.Lk != nil &&
@@ -1289,7 +1299,7 @@ func (s *BackendClientTestSuite) TestGetLk() {
 	}, nil)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
-	var out fuse.FileLock
+	var out FileLock
 	st := s.backend.GetLk(context.Background(), h, 42, lk, 0, &out)
 	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(uint64(0), out.Start)
@@ -1303,19 +1313,19 @@ func (s *BackendClientTestSuite) TestGetLk_Error() {
 		Return(nil, context.DeadlineExceeded)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
-	var out fuse.FileLock
-	st := s.backend.GetLk(context.Background(), h, 0, &fuse.FileLock{}, 0, &out)
+	var out FileLock
+	st := s.backend.GetLk(context.Background(), h, 0, &FileLock{}, 0, &out)
 	s.Assert().Equal(proto.FsError_FS_EIO, st)
 }
 
 func (s *BackendClientTestSuite) TestGetLk_BadHandleEBADF() {
-	var out fuse.FileLock
-	st := s.backend.GetLk(context.Background(), badHandle{}, 0, &fuse.FileLock{}, 0, &out)
+	var out FileLock
+	st := s.backend.GetLk(context.Background(), badHandle{}, 0, &FileLock{}, 0, &out)
 	s.Assert().Equal(proto.FsError_FS_EBADF, st)
 }
 
 func (s *BackendClientTestSuite) TestSetLk() {
-	lk := &fuse.FileLock{Start: 10, End: 20, Typ: 1, Pid: 5}
+	lk := &FileLock{Start: 10, End: 20, Typ: 1, Pid: 5}
 	s.fileClient.EXPECT().SetLk(mock.Anything, mock.MatchedBy(func(req *proto.SetLkRequest) bool {
 		return req.Volume == "testVolume" && req.Fd == 1 && req.Owner == 7 && req.Flags == 0 &&
 			req.SessionId == "test-session" && req.Lk != nil &&
@@ -1332,17 +1342,17 @@ func (s *BackendClientTestSuite) TestSetLk_Error() {
 		Return(nil, context.DeadlineExceeded)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
-	st := s.backend.SetLk(context.Background(), h, 0, &fuse.FileLock{}, 0)
+	st := s.backend.SetLk(context.Background(), h, 0, &FileLock{}, 0)
 	s.Assert().Equal(proto.FsError_FS_EIO, st)
 }
 
 func (s *BackendClientTestSuite) TestSetLk_BadHandleEBADF() {
-	st := s.backend.SetLk(context.Background(), badHandle{}, 0, &fuse.FileLock{}, 0)
+	st := s.backend.SetLk(context.Background(), badHandle{}, 0, &FileLock{}, 0)
 	s.Assert().Equal(proto.FsError_FS_EBADF, st)
 }
 
 func (s *BackendClientTestSuite) TestSetLkw() {
-	lk := &fuse.FileLock{Start: 10, End: 20, Typ: 1, Pid: 5}
+	lk := &FileLock{Start: 10, End: 20, Typ: 1, Pid: 5}
 	s.fileClient.EXPECT().SetLkw(mock.Anything, mock.MatchedBy(func(req *proto.SetLkwRequest) bool {
 		return req.Volume == "testVolume" && req.Fd == 1 && req.Owner == 7 && req.Flags == 0 &&
 			req.SessionId == "test-session" && req.Lk != nil &&
@@ -1359,12 +1369,12 @@ func (s *BackendClientTestSuite) TestSetLkw_Error() {
 		Return(nil, context.DeadlineExceeded)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
-	st := s.backend.SetLkw(context.Background(), h, 0, &fuse.FileLock{}, 0)
+	st := s.backend.SetLkw(context.Background(), h, 0, &FileLock{}, 0)
 	s.Assert().Equal(proto.FsError_FS_EIO, st)
 }
 
 func (s *BackendClientTestSuite) TestSetLkw_BadHandleEBADF() {
-	st := s.backend.SetLkw(context.Background(), badHandle{}, 0, &fuse.FileLock{}, 0)
+	st := s.backend.SetLkw(context.Background(), badHandle{}, 0, &FileLock{}, 0)
 	s.Assert().Equal(proto.FsError_FS_EBADF, st)
 }
 

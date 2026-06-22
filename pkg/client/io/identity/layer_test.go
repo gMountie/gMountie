@@ -9,7 +9,6 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/io/memfs"
 	"go.gmountie.dev/gmountie/pkg/proto"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -56,7 +55,7 @@ func (s *LayerSuite) SetupTest() {
 // layer must translate server→local.
 func (s *LayerSuite) setOwnership(path string, uid, gid uint32) {
 	_, st := s.inner.SetAttr(s.ctx, path, clientio.SetAttrIn{
-		Valid: fuse.FATTR_UID | fuse.FATTR_GID, Uid: uid, Gid: gid,
+		Valid: clientio.FATTR_UID | clientio.FATTR_GID, Uid: uid, Gid: gid,
 	})
 	s.Require().Equal(proto.FsError_FS_OK, st)
 }
@@ -184,7 +183,7 @@ func (s *LayerSuite) TestSetAttrOutboundRewriteBothBits() {
 	// Caller sets owner to LOCAL ids; layer must Outbound them to SERVER ids
 	// before the inner sees the request, and Inbound the reply back to local.
 	a, st := s.layer.SetAttr(s.ctx, "chown", clientio.SetAttrIn{
-		Valid: fuse.FATTR_UID | fuse.FATTR_GID, Uid: localUID, Gid: localGID,
+		Valid: clientio.FATTR_UID | clientio.FATTR_GID, Uid: localUID, Gid: localGID,
 	})
 	s.Require().Equal(proto.FsError_FS_OK, st)
 	// Inner now stores server ids (Outbound applied).
@@ -204,7 +203,7 @@ func (s *LayerSuite) TestSetAttrOutboundRewriteBothBits() {
 func (s *LayerSuite) TestSetAttrOutboundUIDOnlyStillRewrites() {
 	s.createFile("chuid", foreignID, serverGID) // start uid foreign, gid server
 	a, st := s.layer.SetAttr(s.ctx, "chuid", clientio.SetAttrIn{
-		Valid: fuse.FATTR_UID, Uid: localUID, // only uid bit set
+		Valid: clientio.FATTR_UID, Uid: localUID, // only uid bit set
 	})
 	s.Require().Equal(proto.FsError_FS_OK, st)
 	innerAttr, ist := s.inner.Stat(s.ctx, "chuid")
@@ -219,7 +218,7 @@ func (s *LayerSuite) TestSetAttrOutboundUIDOnlyStillRewrites() {
 // touch ownership: the gate is (uid|gid) bits, so Outbound never runs.
 func (s *LayerSuite) TestSetAttrNonOwnerBitsNoRewrite() {
 	s.createFile("sz", serverUID, serverGID)
-	_, st := s.layer.SetAttr(s.ctx, "sz", clientio.SetAttrIn{Valid: fuse.FATTR_SIZE, Size: 7})
+	_, st := s.layer.SetAttr(s.ctx, "sz", clientio.SetAttrIn{Valid: clientio.FATTR_SIZE, Size: 7})
 	s.Require().Equal(proto.FsError_FS_OK, st)
 	innerAttr, ist := s.inner.Stat(s.ctx, "sz")
 	s.Require().Equal(proto.FsError_FS_OK, ist)
@@ -328,7 +327,7 @@ func (s *LayerSuite) TestNilRewriterNoInboundRewrite() {
 	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().Equal(proto.FsError_FS_OK, be.Release(s.ctx, fh))
 	_, st = inner.SetAttr(s.ctx, "raw", clientio.SetAttrIn{
-		Valid: fuse.FATTR_UID | fuse.FATTR_GID, Uid: foreignID, Gid: foreignID,
+		Valid: clientio.FATTR_UID | clientio.FATTR_GID, Uid: foreignID, Gid: foreignID,
 	})
 	s.Require().Equal(proto.FsError_FS_OK, st)
 	a, st := be.Stat(s.ctx, "raw")

@@ -20,7 +20,6 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/io"
 	"go.gmountie.dev/gmountie/pkg/proto"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -208,7 +207,7 @@ func RunBackendContract(t *testing.T, name string, newBackend func() io.FileSyst
 		require.Equal(t, proto.FsError_FS_OK, st)
 		require.Equal(t, proto.FsError_FS_OK, b.Release(ctx, fh))
 
-		_, st = b.SetAttr(ctx, "trunc.txt", io.SetAttrIn{Valid: fuse.FATTR_SIZE, Size: 4})
+		_, st = b.SetAttr(ctx, "trunc.txt", io.SetAttrIn{Valid: io.FATTR_SIZE, Size: 4})
 		require.Equal(t, proto.FsError_FS_OK, st)
 
 		a, st := b.Stat(ctx, "trunc.txt")
