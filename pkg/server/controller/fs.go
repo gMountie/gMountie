@@ -47,7 +47,7 @@ func (r *RpcServerImpl) Register(server *grpc.Server) {
 }
 
 func (r *RpcServerImpl) GetAttr(ctx context.Context, request *proto.GetAttrRequest) (*proto.GetAttrReply, error) {
-	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +71,7 @@ func (r *RpcServerImpl) Mkdir(ctx context.Context, request *proto.MkdirRequest) 
 	if err != nil {
 		return nil, err
 	}
-	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func (r *RpcServerImpl) Rmdir(ctx context.Context, request *proto.RmdirRequest) 
 	if err != nil {
 		return nil, err
 	}
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func (r *RpcServerImpl) Rename(ctx context.Context, request *proto.RenameRequest
 	if err != nil {
 		return nil, err
 	}
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +128,7 @@ func (r *RpcServerImpl) Readlink(ctx context.Context, request *proto.ReadlinkReq
 	// Read-only path op, identity-bound like Access. Returns the link target
 	// verbatim — confinement is enforced when something tries to FOLLOW it,
 	// not when reading the link string itself.
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +144,7 @@ func (r *RpcServerImpl) Symlink(ctx context.Context, request *proto.SymlinkReque
 	if err != nil {
 		return nil, err
 	}
-	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +174,7 @@ const readDirBatchSize = 512
 // stream carries ONE terminal batch with the status and the RPC itself
 // succeeds; only bind errors surface as gRPC errors (matching GetAttr).
 func (r *RpcServerImpl) ReadDir(req *proto.ReadDirRequest, stream proto.RpcFs_ReadDirServer) error {
-	fs, id, err := r.fsService.BindIdentity(stream.Context(), req.Volume, req.Caller)
+	fs, id, err := r.fsService.BindIdentity(stream.Context(), req.Volume, CallerFromProto(req.Caller))
 	if err != nil {
 		return err
 	}
@@ -255,7 +255,7 @@ func (r *RpcServerImpl) Unlink(ctx context.Context, request *proto.UnlinkRequest
 	if err != nil {
 		return nil, err
 	}
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +268,7 @@ func (r *RpcServerImpl) Unlink(ctx context.Context, request *proto.UnlinkRequest
 }
 
 func (r *RpcServerImpl) Access(ctx context.Context, request *proto.AccessRequest) (*proto.AccessReply, error) {
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +301,7 @@ func (r *RpcServerImpl) SetAttr(ctx context.Context, request *proto.SetAttrReque
 	if err != nil {
 		return nil, err
 	}
-	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}
@@ -409,7 +409,7 @@ func xattrWriteAllowed(attr string) bool {
 }
 
 func (r *RpcServerImpl) GetXAttr(ctx context.Context, request *proto.GetXAttrRequest) (*proto.GetXAttrReply, error) {
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}
@@ -425,7 +425,7 @@ func (r *RpcServerImpl) SetXAttr(ctx context.Context, request *proto.SetXAttrReq
 	if !xattrWriteAllowed(request.Attribute) {
 		return &proto.SetXAttrReply{Status: proto.FsError_FS_EPERM}, nil
 	}
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}
@@ -445,7 +445,7 @@ func (r *RpcServerImpl) RemoveXAttr(ctx context.Context, request *proto.RemoveXA
 	if !xattrWriteAllowed(request.Attribute) {
 		return &proto.RemoveXAttrReply{Status: proto.FsError_FS_EPERM}, nil
 	}
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}
@@ -460,7 +460,7 @@ func (r *RpcServerImpl) RemoveXAttr(ctx context.Context, request *proto.RemoveXA
 // ListXAttr is read-only and identity-bound like GetXAttr — no session or
 // idempotency machinery.
 func (r *RpcServerImpl) ListXAttr(ctx context.Context, request *proto.ListXAttrRequest) (*proto.ListXAttrReply, error) {
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}
@@ -475,7 +475,7 @@ func (r *RpcServerImpl) GetAttrIfChanged(ctx context.Context, request *proto.Get
 	// Caller is honored in passthrough mode (so the cache revalidation runs as
 	// the real uid/gid instead of anon); mapped modes use the ctx principal
 	// and ignore Caller.
-	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}
