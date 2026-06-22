@@ -25,7 +25,11 @@ type entry struct {
 // delegationTable is the containment index. Not safe for concurrent use; the
 // Arbiter serializes access under its own mutex.
 type delegationTable struct {
-	entries []entry // invariant: roots are pairwise non-overlapping
+	entries []entry // invariant: same-owner roots are pairwise non-overlapping.
+	// Carving may keep a foreign narrower root alongside a wider root that
+	// contains it; such a narrower root is always inserted BEFORE its covering
+	// root (new roots append last), so ownerOf's first-match returns the most
+	// specific owner.
 }
 
 func newDelegationTable() *delegationTable { return &delegationTable{} }

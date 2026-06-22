@@ -39,3 +39,20 @@ func (s *CooldownSuite) TestSweepEvictsExpired() {
 	c.sweep(t0.Add(time.Hour))
 	s.Equal(0, c.len())
 }
+
+func (s *CooldownSuite) TestCapEvictsOldest() {
+	c := newCooldownTable(cooldownConfig{Base: time.Second, Max: time.Minute, Cap: 2})
+	t0 := time.Unix(0, 0)
+	// Trip three distinct roots: a at t0, b at t0+1s, c at t0+2s
+	c.trip("a", t0)
+	c.trip("b", t0.Add(time.Second))
+	c.trip("c", t0.Add(2*time.Second))
+	// Cap is 2, so we expect len == 2 and "a" to have been evicted
+	s.Equal(2, c.len())
+	// "a" should no longer be cooling (oldest was evicted)
+	s.False(c.cooling("a", t0.Add(3*time.Second)))
+	// "b" and "c" should still be cooling (or may have expired depending on the window)
+	// but they were the more recent ones
+	s.True(c.cooling("b", t0.Add(time.Second+500*time.Millisecond)))
+	s.True(c.cooling("c", t0.Add(2*time.Second+500*time.Millisecond)))
+}
