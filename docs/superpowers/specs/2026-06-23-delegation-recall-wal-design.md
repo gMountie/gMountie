@@ -106,18 +106,33 @@ clients cache + batch aggressively **without locking the share**: optimistic
 2. **Lost but recovered:** client *process* dies, machine lives (pod restart) →
    boot-epoch reclaim (PR #119) replays WAL from last server-acked seq → zero
    loss. Contention while alive → recall flushes → zero loss.
-3. **Genuinely lost — one scenario only:** client *machine* dies (power/disk
-   loss) with un-`fsync`'d WAL → that bounded window is gone. **Identical to a
-   local FS losing dirty page cache on power loss.** Target workloads
-   (node_modules, build trees, scratch, checkpoints) regenerate it.
+3. **Genuinely lost:** client *machine* dies (power/disk loss) **— or a network
+   partition that outlasts the grace period** (at which point the client is
+   operationally indistinguishable from dead) — with un-`fsync`'d WAL → that
+   bounded window is gone. **Identical to a local FS losing dirty page cache on
+   power loss**, and to NFS/SMB lease expiry. Target workloads (node_modules,
+   build trees, scratch, checkpoints) regenerate it. Not "exactly machine death"
+   — it's machine death *or* partition > grace, which is wider but still bounded.
 
 ### Two implementation landmines (MUST nail or it eats data in nastier ways)
 
-1. **Replay dedup** — reconnect replaying an applied-but-unacked op without dedup
-   = doubled append / re-run rename = corruption. Fix = **durable server-side
-   seq-watermark per `(identity, volume)`** (rwo-wal.md fork (a)); replay of any
-   op ≤ watermark is a no-op. SQL store only if it benchmarks on the hot path.
-   Non-negotiable for Phase 2.
+1. **Replay dedup + delegation fencing — ONE durable structure.** Two distinct
+   replay hazards, same fix:
+   - *Doubled apply:* reconnect replaying an applied-but-unacked op = doubled
+     append / re-run rename → corruption. Dedup via **durable seq-watermark per
+     `(identity, volume)`**; replay ≤ watermark is a no-op.
+   - *Superseded replay (the boot-epoch hole):* holder A's machine dies with
+     un-acked deferred writes; grace expires; server hands `/dir` to B. A reboots
+     → **new boot epoch → #119 reclaim replays A's WAL** → A's writes are
+     `> watermark` (never acked) → **not deduped → they clobber B.** The
+     watermark is per `(identity, volume)`; B advancing its own watermark never
+     fences A. **Boot-epoch reclaim is the hole, not the fix.**
+   - **Fix: fence by delegation GENERATION, not boot epoch.** When the server
+     revokes A's delegation and hands the region to B, it **durably records the
+     revoked delegation-gen**. WAL replay must present a still-live delegation;
+     any op tagged with a revoked gen is **rejected regardless of seq**. The
+     seq-watermark and the revocation record are the same durable store.
+     SQL only if it benchmarks on the hot path. **Phase-2 gate #1.**
 2. **Recall-before-handoff** — server must NOT let a contender touch a path until
    the holder's recall flush is **durably complete**. Sloppy race = stale read /
    clobbered write. Handoff invariant must be airtight.
@@ -198,6 +213,70 @@ Arbitration loop: **client pulls (piggybacked) → server checks containment +
 cooldown → grants the largest non-cooling sub-root, or denies → recall on
 contention restarts the cooldown.** Delegation table + cooldown table together
 are the single source of truth; the client is purely advisory.
+
+---
+
+## Corner cases (SWEPT) — split by phase
+
+Most of the scary set is **Phase 2** (needs the WAL to exist). Phase 1 has no
+deferral, so its *live* set collapses to four — all must be in the Phase 1 design.
+
+### Phase 1 (live now — no deferral)
+
+1. **Recall timeout** → server just **drops** the delegation. No deferred data to
+   lose; the holder loses skip-revalidation and resumes revalidating.
+2. **Cache-invalidate on recall (correctness requirement).** When the holder
+   processes a recall it MUST **invalidate its read cache for the affected paths**
+   — not merely drop the delegation + skip-revalidation flag — or its very next
+   read serves stale. A delegation drop without a cache flush is a stale-read bug.
+3. **Cross-subtree `rename`/`link`** (source and dest not both under one held
+   delegation) → **forced synchronous**, arbitrated against *all* involved
+   subtrees (recall any holders first). Add a **path lock-ordering rule** (acquire
+   subtree locks in canonical path order) so two crossing renames from different
+   clients can't deadlock the arbitration.
+4. **Recall coalescing** → one recall in flight per region; a third contender
+   **queues** on the in-flight handoff rather than starting a second recall.
+
+Plus two invariants to state explicitly:
+- **Self-access never recalls.** Single-client build churn (npm/build trees) must
+  not trip its own cooldown. It won't — cooldown keys on a *recall*, and a holder
+  accessing its own subtree never recalls — but say it.
+- **Held write-delegation subsumes read-invalidation** for its subtree: any remote
+  writer is recalled first, so while held, the holder needs no separate cache
+  invalidations there. (Positive property — the "symmetric coherence" framing.)
+
+### Phase 2 gates (deferred with the WAL — must be designed before deferral ships)
+
+- **Fencing by delegation-gen** (landmine #1, the boot-epoch hole) — gate #1.
+- **`fsync` = WAL barrier:** flush all ops up to the fsync'd op, durable before
+  return; preserves intra-log order (rename-after-create).
+- **Deferred-op failure (ENOSPC/EIO) on replay or flush:** a flush that fails
+  during a recall **aborts the handoff** — server must NOT serve the contender
+  (would expose incoherent state); holder learns the flush failed; contender
+  retries/errors via the existing retry-window.
+- **Identity-bound replay:** WAL ops are replayed under the holder's bound
+  identity (record principal per delegation); identity revocation reaps the
+  session and **discards** un-replayed WAL (consistent with the client-death
+  bucket; ties into cloud revocation reconciliation).
+- **mmap / writeback loss window** — deferred dirty pages, same machine-death
+  bucket.
+- **Deletion of the delegated root** collapses/relocates the delegation.
+
+### Cross-cutting (both phases)
+
+- **Server restart = soft-state rebuild.** Delegation + cooldown tables are
+  **non-durable** (optimization, rebuilt from client re-requests); only the
+  watermark + revocation records are hard state. Confirms the table can be
+  in-memory.
+- **Handoff barrier is a server arbitration-LOCK obligation, never transport
+  ordering.** With recall on a dedicated stream, A's flush, B's contending op,
+  and the recall ride different connections — the barrier (landmine #2) MUST be
+  enforced at the server's per-region arbitration lock, never inferred from
+  stream/message order. (True whether recall splits off or overloads Subscribe.)
+- **Same identity, two mounts/sessions** of one volume → separate delegations
+  that contend with each other (correct, mildly wasteful; share-across-sessions
+  is a later optimization, YAGNI).
+- **Cooldown table growth** — TTL'd + capped + LRU-evicted (hardening).
 
 ---
 
