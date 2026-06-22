@@ -11,6 +11,41 @@ message DirEntry {
   uint64 off = 4;
 }
 
+// DelegationRequest is piggybacked on a mutating op: "while you're processing
+// this, please grant me a write-delegation rooted here." root is a volume-
+// relative path. Empty/absent = no request (the op is still arbitrated for
+// recall-on-contention regardless).
+message DelegationRequest {
+  string root = 1;
+}
+
+// DelegationGrant is piggybacked on a mutating reply. granted_root may be
+// SHORTER than the requested root (server carved around cooling/!owned paths);
+// empty granted_root = denied. excluded_paths are sub-paths under granted_root
+// the client must treat as undelegated. retry_after_ms hints when to re-request
+// a denied/cooling root (advisory only).
+message DelegationGrant {
+  string          granted_root   = 1;
+  repeated string excluded_paths = 2;
+  uint64          retry_after_ms = 3;
+}
+
+// RecallMsg is pushed server->client on the Recall stream: "release your
+// delegation covering root; flush+invalidate, then ack." recall_id correlates
+// the ack.
+message RecallMsg {
+  string root      = 1;
+  uint64 recall_id = 2;
+}
+
+// RecallAck is the client's confirmation that the recall is complete (cache
+// invalidated, delegation dropped). done is always true in Phase 1 (no partial
+// flush); it exists for Phase 2 progress reporting.
+message RecallAck {
+  uint64 recall_id = 1;
+  bool   done      = 2;
+}
+
 // FileTime is an optional absolute timestamp. Field types match Attr's
 // mtime/mtimensec so conversions are lossless. A nil FileTime message means
 // UTIME_OMIT — leave that timestamp unchanged.
@@ -113,10 +148,12 @@ message UnlinkRequest {
   string path = 3;
   string request_id = 4;
   string session_id = 5;
+  DelegationRequest delegation = 6;
 }
 
 message UnlinkReply {
   FsError status = 1;
+  DelegationGrant grant = 2;
 }
 
 message AccessRequest {
@@ -162,11 +199,13 @@ message SetAttrRequest {
   FileTime mtime      = 10;
   string   request_id = 11;
   string   session_id = 12;
+  DelegationRequest delegation = 13;
 }
 
 message SetAttrReply {
   Attr  attributes = 1;  // final attrs on success — no trailing GetAttr
   FsError status     = 2;
+  DelegationGrant grant = 3;
 }
 
 // ReadDirRequest streams the directory in batches, optionally with per-entry
@@ -205,11 +244,13 @@ message MkdirRequest {
   uint32 mode = 4;
   string request_id = 5;
   string session_id = 6;
+  DelegationRequest delegation = 7;
 }
 
 message MkdirReply {
   FsError status     = 1;
   Attr  attributes = 2;  // fills EntryOut without a post-create GetAttr (mirrors CreateReply)
+  DelegationGrant grant = 3;
 }
 
 message RmdirRequest {
@@ -218,10 +259,12 @@ message RmdirRequest {
   string path = 3;
   string request_id = 4;
   string session_id = 5;
+  DelegationRequest delegation = 6;
 }
 
 message RmdirReply {
   FsError status = 1;
+  DelegationGrant grant = 2;
 }
 
 message RenameRequest {
@@ -231,10 +274,12 @@ message RenameRequest {
   string new_name = 4;
   string request_id = 5;
   string session_id = 6;
+  DelegationRequest delegation = 7;
 }
 
 message RenameReply {
   FsError status = 1;
+  DelegationGrant grant = 2;
 }
 
 // SymlinkRequest creates a new symbolic link `link_path` whose target is
@@ -247,11 +292,13 @@ message SymlinkRequest {
   string link_path = 4;   // the new dirent to create within the volume tree
   string request_id = 5;
   string session_id = 6;
+  DelegationRequest delegation = 7;
 }
 
 message SymlinkReply {
   FsError status     = 1;
   Attr  attributes = 2;  // fills EntryOut without a post-create GetAttr (mirrors CreateReply)
+  DelegationGrant grant = 3;
 }
 
 message GetXAttrRequest {
@@ -275,10 +322,12 @@ message SetXAttrRequest {
   uint32 flags = 6;       // XATTR_CREATE / XATTR_REPLACE
   string request_id = 7;
   string session_id = 8;
+  DelegationRequest delegation = 9;
 }
 
 message SetXAttrReply {
   FsError status = 1;
+  DelegationGrant grant = 2;
 }
 
 message RemoveXAttrRequest {
@@ -288,10 +337,12 @@ message RemoveXAttrRequest {
   string attribute = 4;
   string request_id = 5;
   string session_id = 6;
+  DelegationRequest delegation = 7;
 }
 
 message RemoveXAttrReply {
   FsError status = 1;
+  DelegationGrant grant = 2;
 }
 
 message ListXAttrRequest {
@@ -327,4 +378,8 @@ service RpcFs {
   rpc Subscribe (SubscribeRequest) returns (stream SubscribeEvent);
   rpc SetAttr (SetAttrRequest) returns (SetAttrReply);
   rpc ReadDir (ReadDirRequest) returns (stream ReadDirBatch);
+  // Recall is the coherence control plane: the client opens this bidi stream
+  // once per mount; the server pushes RecallMsg when another client contends a
+  // delegated subtree; the client replies RecallAck when it has released it.
+  rpc Recall (stream RecallAck) returns (stream RecallMsg);
 }
