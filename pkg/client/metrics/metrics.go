@@ -1,8 +1,6 @@
 package metrics
 
 import (
-	"sync"
-
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -37,6 +35,9 @@ type Metrics struct {
 	// chunk stays in the memory tier, so a drop is a future cache miss, never
 	// data loss — but a high rate means the disk cache isn't keeping up.
 	CachePersistDropped prometheus.Counter
+
+	// Op-level boundary metrics, emitted by the metrics observer layer.
+	OpSeconds *prometheus.HistogramVec
 }
 
 // NewMetrics constructs the set of client collectors. They are NOT
@@ -111,6 +112,11 @@ func NewMetrics() *Metrics {
 			Name: "gmountie_cache_disk_bytes_used",
 			Help: "Currently-accounted bytes in the persist chunks/ tree.",
 		}),
+		OpSeconds: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "gmountie_client_op_seconds",
+			Help:    "FileSystemBackend op latency in seconds, by op and FsError code.",
+			Buckets: prometheus.DefBuckets,
+		}, []string{"op", "code"}),
 	}
 }
 
@@ -123,6 +129,7 @@ func (m *Metrics) MustRegister(r prometheus.Registerer) {
 		m.CacheUnverifiedDurationSecs,
 		m.ChunksUnlinked, m.GhostEntriesDeleted, m.RefcountUnderflows,
 		m.OrphansReclaimed, m.TmpReclaimed, m.BudgetEvictions, m.DiskBytesUsed,
+		m.OpSeconds,
 	)
 }
 
@@ -138,6 +145,7 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 		m.CacheUnverifiedDurationSecs,
 		m.ChunksUnlinked, m.GhostEntriesDeleted, m.RefcountUnderflows,
 		m.OrphansReclaimed, m.TmpReclaimed, m.BudgetEvictions, m.DiskBytesUsed,
+		m.OpSeconds,
 	}
 	for _, c := range collectors {
 		if err := r.Register(c); err != nil {
@@ -148,6 +156,10 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 			// Adopt the previously-registered collector so future
 			// calls through m hit the same instance.
 			switch existing := ar.ExistingCollector.(type) {
+			case *prometheus.HistogramVec:
+				if c == prometheus.Collector(m.OpSeconds) {
+					m.OpSeconds = existing
+				}
 			case *prometheus.CounterVec:
 				switch c {
 				case prometheus.Collector(m.RetryTotal):
@@ -249,6 +261,11 @@ func (m *Metrics) CacheUnverifiedAdd(seconds float64) {
 	m.CacheUnverifiedDurationSecs.Add(seconds)
 }
 
+// ObserveOp records one op's latency, labelled by op name and FsError code.
+func (m *Metrics) ObserveOp(op string, seconds float64, code string) {
+	m.OpSeconds.WithLabelValues(op, code).Observe(seconds)
+}
+
 // --- Persist GC / disk-accounting setters (blind spot #4) ---
 
 // ChunkUnlinkedInc bumps the chunks-unlinked counter for the given reason
@@ -272,155 +289,3 @@ func (m *Metrics) BudgetEvictionInc() { m.BudgetEvictions.Inc() }
 
 // DiskBytesUsedSet sets the disk-bytes-used gauge.
 func (m *Metrics) DiskBytesUsedSet(n int64) { m.DiskBytesUsed.Set(float64(n)) }
-
-// --- Per-instance hook registry ---
-//
-// The dispatchers below call every registered *Metrics instance so that
-// multi-client processes (including tests building multiple clients in one
-// process) do not cross-wire. Each NewClientFromConfig registers its
-// private *Metrics via RegisterInstance; the dispatchers fan-out to all
-// of them. Protected by instancesMu.
-//
-// Entries are deduplicated by UNDERLYING COLLECTOR, not by wrapper pointer:
-// when two Metrics values registered against the same prometheus Registerer,
-// the second adopted the first's collectors (AlreadyRegisteredError handling
-// in Register), so fanning out to both would increment the same CounterVec
-// twice per event. Entries are refcounted so the fan-out survives until the
-// LAST client sharing the collectors has closed.
-
-var (
-	instancesMu sync.RWMutex
-	instances   []*instanceEntry
-)
-
-// instanceEntry refcounts one distinct collector set in the dispatcher.
-type instanceEntry struct {
-	m    *Metrics
-	refs int
-}
-
-// sameCollectors reports whether two Metrics share the same underlying
-// collectors. RetryTotal is the proxy: Register's AlreadyRegisteredError
-// adoption replaces all collectors together, so comparing one is enough.
-func sameCollectors(a, b *Metrics) bool {
-	return a == b || a.RetryTotal == b.RetryTotal
-}
-
-// RegisterInstance adds m to the global dispatcher. A Metrics whose
-// collectors are already registered (same pointer, or a wrapper that adopted
-// an existing collector set via Register) only bumps the refcount — the
-// fan-out increments each underlying collector exactly once per event.
-// Called by the client factory after Register() succeeds so the prometheus
-// series are in place; paired with UnregisterInstance from ClientImpl.Close.
-func RegisterInstance(m *Metrics) {
-	instancesMu.Lock()
-	defer instancesMu.Unlock()
-	for _, e := range instances {
-		if sameCollectors(e.m, m) {
-			e.refs++
-			return
-		}
-	}
-	instances = append(instances, &instanceEntry{m: m, refs: 1})
-}
-
-// UnregisterInstance drops one reference to m's collector set, removing the
-// entry from the dispatcher when the last reference is gone. Called by
-// ClientImpl.Close so closed clients stop receiving fan-out (and tests can
-// clean up instances registered within a single test case).
-func UnregisterInstance(m *Metrics) {
-	instancesMu.Lock()
-	defer instancesMu.Unlock()
-	for i, e := range instances {
-		if sameCollectors(e.m, m) {
-			e.refs--
-			if e.refs <= 0 {
-				instances = append(instances[:i], instances[i+1:]...)
-			}
-			return
-		}
-	}
-}
-
-// OnRetry fires RetryInc on all registered instances. Called by the
-// io-layer retry helper; living in this package avoids an import cycle
-// (pkg/client/io → pkg/client/grpc → pkg/client/metrics).
-func OnRetry(op, code string) {
-	instancesMu.RLock()
-	defer instancesMu.RUnlock()
-	for _, e := range instances {
-		e.m.RetryInc(op, code)
-	}
-}
-
-// CacheHit fires CacheHitInc on all registered instances.
-func CacheHit(tier, cacheType string) {
-	instancesMu.RLock()
-	defer instancesMu.RUnlock()
-	for _, e := range instances {
-		e.m.CacheHitInc(tier, cacheType)
-	}
-}
-
-// CacheMiss fires CacheMissInc on all registered instances.
-func CacheMiss(cacheType string) {
-	instancesMu.RLock()
-	defer instancesMu.RUnlock()
-	for _, e := range instances {
-		e.m.CacheMissInc(cacheType)
-	}
-}
-
-// CacheDedupeHit fires CacheDedupeHitInc on all registered instances.
-func CacheDedupeHit() {
-	instancesMu.RLock()
-	defer instancesMu.RUnlock()
-	for _, e := range instances {
-		e.m.CacheDedupeHitInc()
-	}
-}
-
-// CachePersistDropped fires CachePersistDroppedInc on all registered instances.
-func CachePersistDropped() {
-	instancesMu.RLock()
-	defer instancesMu.RUnlock()
-	for _, e := range instances {
-		e.m.CachePersistDroppedInc()
-	}
-}
-
-// CacheRevalidation fires CacheRevalidationInc on all registered instances.
-func CacheRevalidation(result string) {
-	instancesMu.RLock()
-	defer instancesMu.RUnlock()
-	for _, e := range instances {
-		e.m.CacheRevalidationInc(result)
-	}
-}
-
-// SubscribeEventReceived fires SubscribeEventReceivedInc on all registered instances.
-func SubscribeEventReceived(kind string) {
-	instancesMu.RLock()
-	defer instancesMu.RUnlock()
-	for _, e := range instances {
-		e.m.SubscribeEventReceivedInc(kind)
-	}
-}
-
-// SubscribeStreamStateChanged fires SubscribeStreamStateSet on all registered instances.
-func SubscribeStreamStateChanged(up bool) {
-	instancesMu.RLock()
-	defer instancesMu.RUnlock()
-	for _, e := range instances {
-		e.m.SubscribeStreamStateSet(up)
-	}
-}
-
-// CacheUnverifiedElapsed fires CacheUnverifiedAdd on all registered instances.
-func CacheUnverifiedElapsed(seconds float64) {
-	instancesMu.RLock()
-	defer instancesMu.RUnlock()
-	for _, e := range instances {
-		e.m.CacheUnverifiedAdd(seconds)
-	}
-}

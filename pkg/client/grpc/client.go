@@ -137,9 +137,8 @@ type ClientImpl struct {
 	// metrics is the per-client collector set. Set via WithMetrics; nil
 	// means no in-flight interceptor is wired (the factory always provides one).
 	metrics *metrics.Metrics
-	// closed makes Close idempotent: the metrics dispatcher registration is
-	// refcounted, so a double Close must not drop another live client's
-	// reference.
+	// closed makes Close idempotent so a double Close tears down the
+	// connections only once.
 	closed atomic.Bool
 	// backgroundTasks are launched on lifeCtx once construction succeeds (e.g.
 	// the certificate-renewal loop). Close cancels lifeCtx so each returns.
@@ -223,10 +222,11 @@ func WithBackgroundTask(fn func(ctx context.Context)) ClientOption {
 }
 
 // WithMetrics attaches a pre-built *metrics.Metrics to the client. The
-// factory (NewClientFromConfig) uses this to avoid overwriting the package-
-// level metric hooks when multiple clients are constructed in the same process
-// (e.g. in tests). If not supplied, NewClient itself does not register or
-// wire any metrics — the factory is the only production code path that does.
+// factory (NewClientFromConfig) builds and registers the collector set, then
+// injects it here; the cache and io layers emit through this same per-client
+// Recorder, so there is no package-level dispatcher to keep in sync. If not
+// supplied, NewClient wires no metrics — the factory is the only production
+// code path that does.
 func WithMetrics(m *metrics.Metrics) ClientOption {
 	return func(c *ClientImpl) {
 		c.metrics = m
@@ -389,17 +389,13 @@ func (c *ClientImpl) Connect() error {
 	return nil
 }
 
-// Close closes the gRPC ClientImpl connection. It also unregisters this
-// client's metrics from the package-level dispatcher — without that, closed
-// clients keep receiving OnRetry/cache fan-out forever and the dispatcher
-// double-counts events once a second client registers. Idempotent: only the
-// first Close tears down.
+// Close closes the gRPC ClientImpl connection. Idempotent: only the first
+// Close cancels the lifetime, closes the handshake, and tears down the
+// connections. The per-client metrics collector set needs no teardown —
+// the cache/io layers hold it directly (no package-global dispatcher).
 func (c *ClientImpl) Close() error {
 	if !c.closed.CompareAndSwap(false, true) {
 		return nil
-	}
-	if c.metrics != nil {
-		metrics.UnregisterInstance(c.metrics)
 	}
 	if c.lifeCancel != nil {
 		c.lifeCancel()

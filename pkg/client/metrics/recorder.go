@@ -1,0 +1,45 @@
+package metrics
+
+// Recorder is the per-client metrics sink injected into the layers (cache,
+// the metrics observer) and used by the transport retry path. *Metrics is the
+// default Prometheus implementation; OTel/audit backends implement Recorder
+// later without touching the layers. Defining it here (a leaf package with no
+// io/grpc deps) removes the old import cycle that the package-global dispatcher
+// existed to dodge.
+type Recorder interface {
+	RetryInc(op, code string)
+	CacheHitInc(tier, cacheType string)
+	CacheMissInc(cacheType string)
+	CacheDedupeHitInc()
+	CachePersistDroppedInc()
+	CacheRevalidationInc(result string)
+	SubscribeEventReceivedInc(kind string)
+	SubscribeStreamStateSet(up bool)
+	CacheUnverifiedAdd(seconds float64)
+	InFlightInc(op string)
+	InFlightDec(op string)
+	ObserveOp(op string, seconds float64, code string)
+}
+
+var _ Recorder = (*Metrics)(nil)
+
+// NopRecorder is a no-op Recorder. The cache constructor substitutes it when no
+// recorder is injected (e.g. tests, or a client built without metrics) so the
+// emission call sites never have to nil-check. It is hand-written production
+// code, not a generated mock.
+type NopRecorder struct{}
+
+func (NopRecorder) RetryInc(string, string)           {}
+func (NopRecorder) CacheHitInc(string, string)        {}
+func (NopRecorder) CacheMissInc(string)               {}
+func (NopRecorder) CacheDedupeHitInc()                {}
+func (NopRecorder) CachePersistDroppedInc()           {}
+func (NopRecorder) CacheRevalidationInc(string)       {}
+func (NopRecorder) SubscribeEventReceivedInc(string)  {}
+func (NopRecorder) SubscribeStreamStateSet(bool)      {}
+func (NopRecorder) CacheUnverifiedAdd(float64)        {}
+func (NopRecorder) InFlightInc(string)                {}
+func (NopRecorder) InFlightDec(string)                {}
+func (NopRecorder) ObserveOp(string, float64, string) {}
+
+var _ Recorder = NopRecorder{}

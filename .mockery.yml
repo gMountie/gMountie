@@ -14,10 +14,13 @@ packages:
   go.gmountie.dev/gmountie/pkg/client/grpc:
     config:
       all: true
-  go.gmountie.dev/gmountie/pkg/client/io:
+  go.gmountie.dev/gmountie/pkg/client/backend:
     interfaces:
       FileSystemBackend: {}
       FileHandle: {}
+  go.gmountie.dev/gmountie/pkg/client/metrics:
+    interfaces:
+      Recorder: {}
   go.gmountie.dev/gmountie/pkg/proto:
     config:
       all: true

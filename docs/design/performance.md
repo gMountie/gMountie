@@ -123,7 +123,7 @@ path; `WriteAndFlush` carries only the residual tail after streaming completes.
 
 ### 2.5 Client readahead and write coalescing
 
-**Readahead:** `pkg/client/io/readahead.go` tracks sequential access patterns
+**Readahead:** `pkg/client/backend/readahead.go` tracks sequential access patterns
 per open file descriptor. After `readahead_threshold` (default 3) strictly
 sequential reads it keeps up to `readahead_window` chunks of
 `readahead_chunk_bytes` in flight ahead of the consumer, each issued as its own
@@ -162,7 +162,7 @@ chunk holds `readahead_chunk_bytes` until drained, so a deep window costs up to
 pooling that buffer is a
 deferred follow-up (§5.1).
 
-**Write coalescing:** `pkg/client/io/coalesce.go` accumulates contiguous small
+**Write coalescing:** `pkg/client/backend/coalesce.go` accumulates contiguous small
 writes per fd into a single buffer up to `write_coalesce_bytes` (default 1 MiB).
 When the buffer overflows, the client flushes via streaming `Write`. At `FLUSH`
 time (`WriteAndFlush`) the remaining buffer is drained in one RPC. This reduces
@@ -200,7 +200,7 @@ Writeback changes write semantics in ways users must understand:
 A custom Snappy codec is registered in the server's gRPC encoding registry. It
 is applied **per-call and only on streaming Read and Write RPCs**
 (`grpc.UseCompressor("snappy")` at the two call sites in
-`pkg/client/io/backend_grpc.go`). Metadata RPCs flow uncompressed.
+`pkg/client/backend/backend_grpc.go`). Metadata RPCs flow uncompressed.
 
 The current default is `rpc.compression: none` (off). **Why:**
 
@@ -281,7 +281,7 @@ CLIENT  Snappy decompress      ← CPU pass (pooled memory)
 ```
 
 Write is the same in reverse, plus the coalescer's accumulation copies
-(`pkg/client/io/coalesce.go`) when small-write coalescing buffers a frame.
+(`pkg/client/backend/coalesce.go`) when small-write coalescing buffers a frame.
 
 That is 4 user-space passes of the payload on top of the two unavoidable kernel
 boundaries.

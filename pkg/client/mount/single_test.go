@@ -8,15 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
-	"go.gmountie.dev/gmountie/pkg/client/config"
-	"go.gmountie.dev/gmountie/pkg/proto"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
 
 	"go.gmountie.dev/gmountie/internal/mocks/pkg/client/grpc"
 	mockProto "go.gmountie.dev/gmountie/internal/mocks/pkg/proto"
-
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/suite"
+	"go.gmountie.dev/gmountie/pkg/client/backend/cache/persist"
+	"go.gmountie.dev/gmountie/pkg/client/config"
+	"go.gmountie.dev/gmountie/pkg/proto"
 )
 
 type SingleVolumeMounterTestSuite struct {

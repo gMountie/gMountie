@@ -35,7 +35,7 @@ import (
 	"testing"
 	"time"
 
-	clientio "go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/backend/transport"
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/test/e2e/utils"
 
@@ -137,7 +137,7 @@ func (s *ResilienceSuite) TestResumesWithinGrace() {
 	s.Require().NoError(appCtx.Start())
 	defer func() { s.Require().NoError(appCtx.Close()) }()
 
-	backend := clientio.NewBackendClient(appCtx.GetClient(), appCtx.GetVolumes()[0].Name)
+	backend := transport.NewBackendClient(appCtx.GetClient(), appCtx.GetVolumes()[0].Name)
 	startID := appCtx.GetClient().SessionID()
 	s.Require().NotEmpty(startID)
 
@@ -180,7 +180,7 @@ func (s *ResilienceSuite) TestFdOpFailsCleanlyPastGrace() {
 	s.Require().NoError(appCtx.Start())
 	defer func() { s.Require().NoError(appCtx.Close()) }()
 
-	backend := clientio.NewBackendClient(appCtx.GetClient(), "vol")
+	backend := transport.NewBackendClient(appCtx.GetClient(), "vol")
 
 	// Open an fd on the pre-drop session.
 	fh, st := backend.Open(context.Background(), "/data.bin", uint32(os.O_RDONLY))
@@ -233,7 +233,7 @@ func (s *ResilienceSuite) TestWriteFailsCleanlyOnReap() {
 	s.Require().NoError(appCtx.Start())
 	defer func() { s.Require().NoError(appCtx.Close()) }()
 
-	backend := clientio.NewBackendClient(appCtx.GetClient(), "vol")
+	backend := transport.NewBackendClient(appCtx.GetClient(), "vol")
 
 	fh, st := backend.Open(context.Background(), "/out.bin", uint32(os.O_WRONLY))
 	s.Require().Equal(proto.FsError_FS_OK, st, "Open for write before the drop must succeed")
@@ -294,7 +294,7 @@ func (s *ResilienceSuite) TestNoDoubleApplyPastGrace() {
 	s.Require().NoError(appCtx.Start())
 	defer func() { s.Require().NoError(appCtx.Close()) }()
 
-	backend := clientio.NewBackendClient(appCtx.GetClient(), "vol")
+	backend := transport.NewBackendClient(appCtx.GetClient(), "vol")
 	oldID := appCtx.GetClient().SessionID()
 	s.Require().NotEmpty(oldID)
 
@@ -351,7 +351,7 @@ func (s *ResilienceSuite) TestFdOpReclaimsAcrossRestart() {
 	s.Require().NoError(appCtx.Start())
 	defer func() { s.Require().NoError(appCtx.Close()) }()
 
-	backend := clientio.NewBackendClient(appCtx.GetClient(), "vol")
+	backend := transport.NewBackendClient(appCtx.GetClient(), "vol")
 
 	// Open an fd on the pre-restart session.
 	fh, st := backend.Open(context.Background(), "/data.bin", uint32(os.O_RDONLY))

@@ -43,7 +43,7 @@ TLS at the transport layer ships too: the server auto-generates a certificate, a
 
 ## Idempotency and retries
 
-Where the protocol can, RPCs are designed to be **idempotent**: the same `Read(volume, fd, offset, length)` returns the same bytes; `Write` carries the offset rather than relying on an implicit cursor. The client retries transient failures (`Unavailable`, `DeadlineExceeded`) on operations whose retry is safe, inside a wall-clock window (`rpc.retry_window`, default 60 s) with fresh per-attempt deadlines — see the implementation in `pkg/client/io/retry.go`.
+Where the protocol can, RPCs are designed to be **idempotent**: the same `Read(volume, fd, offset, length)` returns the same bytes; `Write` carries the offset rather than relying on an implicit cursor. The client retries transient failures (`Unavailable`, `DeadlineExceeded`) on operations whose retry is safe, inside a wall-clock window (`rpc.retry_window`, default 60 s) with fresh per-attempt deadlines — see the implementation in `pkg/client/backend/transport/retry.go`.
 
 Operations with side effects whose retry is *not* obviously safe (`Mkdir` on an existing dir, `Unlink` of a file that may have been deleted concurrently) aren't blindly retried; the client surfaces the underlying error and lets the caller decide.
 

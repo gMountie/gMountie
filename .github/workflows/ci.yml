@@ -225,7 +225,7 @@ jobs:
       - name: Install libfuse (FUSE2 headers for cgofuse)
         run: sudo apt-get update && sudo apt-get install -y libfuse-dev
       - name: Run cgofs adapter suites (no mount)
-        run: CGO_ENABLED=1 go test -tags cgofuse ./pkg/client/io/cgofs/... -v
+        run: CGO_ENABLED=1 go test -tags cgofuse ./pkg/client/fuse/cgofs/... -v
 
   macos-build:
     # Build the darwin client with cgo on a real macOS runner. The cgofuse
