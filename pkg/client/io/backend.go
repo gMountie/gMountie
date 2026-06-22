@@ -117,6 +117,8 @@ type FileHandle interface {
 //   - Handles: Open/Create return a FileHandle; a layer that wraps handles must
 //     implement FileHandle.Unwrap() returning its inner so resolveHandle reaches
 //     the transport leaf.
+//   - Concurrency: implementations must be safe for concurrent calls — go-fuse
+//     dispatches ops concurrently, including multiple ops on one handle.
 //   - Invalidation flows UP: the transport owns the Subscribe stream; events
 //     propagate outward (transport -> ... -> cache -> node).
 //   - Observer vs semantic: observer layers (metrics/trace/audit) may embed

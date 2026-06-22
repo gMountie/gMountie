@@ -4,10 +4,11 @@ import (
 	"context"
 	"testing"
 
-	metricsmocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/metrics"
-	"go.gmountie.dev/gmountie/pkg/proto"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+
+	metricsmocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/metrics"
+	"go.gmountie.dev/gmountie/pkg/proto"
 )
 
 type MetricsLayerSuite struct {

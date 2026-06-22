@@ -3,8 +3,9 @@ package io
 import (
 	"context"
 
-	"go.gmountie.dev/gmountie/pkg/proto"
 	"github.com/hanwen/go-fuse/v2/fuse"
+
+	"go.gmountie.dev/gmountie/pkg/proto"
 )
 
 // PassthroughBackend is an embeddable base for OBSERVER layers — layers that

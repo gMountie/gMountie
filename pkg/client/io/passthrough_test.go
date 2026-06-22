@@ -5,15 +5,16 @@ import (
 	"reflect"
 	"testing"
 
-	"go.gmountie.dev/gmountie/pkg/proto"
 	"github.com/stretchr/testify/suite"
+
+	"go.gmountie.dev/gmountie/pkg/proto"
 )
 
 // recordingBackend records the last method called and returns canned values.
 type recordingBackend struct {
 	FileSystemBackend // embed so unimplemented methods panic loudly if hit unexpectedly
-	lastCall string
-	closed   bool
+	lastCall          string
+	closed            bool
 }
 
 func (r *recordingBackend) Stat(_ context.Context, path string) (*Attr, proto.FsError) {
@@ -41,7 +42,7 @@ func (s *PassthroughSuite) TestForwardsStat() {
 }
 
 func (s *PassthroughSuite) TestForwardsClose() {
-	s.NoError(s.pt.Close())
+	s.Require().NoError(s.pt.Close())
 	s.True(s.inner.closed)
 }
 
