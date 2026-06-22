@@ -6,7 +6,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/suite"
 
-	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
+	"go.gmountie.dev/gmountie/pkg/client/io/cache/persist"
 	"go.gmountie.dev/gmountie/pkg/client/metrics"
 )
 

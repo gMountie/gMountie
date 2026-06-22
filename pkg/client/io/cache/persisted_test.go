@@ -6,9 +6,9 @@ import (
 	"time"
 
 	iomocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/io"
-	"go.gmountie.dev/gmountie/pkg/client/cache"
-	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
 	clientio "go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/io/cache"
+	"go.gmountie.dev/gmountie/pkg/client/io/cache/persist"
 	"go.gmountie.dev/gmountie/pkg/proto"
 
 	"github.com/stretchr/testify/mock"

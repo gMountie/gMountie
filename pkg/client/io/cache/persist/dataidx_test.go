@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
+	"go.gmountie.dev/gmountie/pkg/client/io/cache/persist"
 
 	"github.com/stretchr/testify/suite"
 )

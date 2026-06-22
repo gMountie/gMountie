@@ -7,8 +7,8 @@ import (
 
 	iomocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/io"
 	metricsmocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/metrics"
-	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
 	"go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/io/cache/persist"
 	"go.gmountie.dev/gmountie/pkg/proto"
 
 	"github.com/hanwen/go-fuse/v2/fuse"

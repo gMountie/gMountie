@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
+	"go.gmountie.dev/gmountie/pkg/client/io/cache/persist"
 )
 
 type ConcurrencySuite struct {

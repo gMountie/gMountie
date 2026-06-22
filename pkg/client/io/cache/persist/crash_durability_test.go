@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
+	"go.gmountie.dev/gmountie/pkg/client/io/cache/persist"
 )
 
 // CrashDurabilitySuite covers issue #113's crash-teardown gap. The existing

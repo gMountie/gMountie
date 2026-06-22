@@ -26,7 +26,7 @@ exactly this purpose:
                  ↓
      ┌────────────────────────┐
      │  cache.cachedBackend   │   ← inserted when cfg.Cache.Enabled = true
-     │  (pkg/client/cache/)   │
+     │  (pkg/client/io/cache/) │
      └────────────────────────┘
                  ↓
        io.BackendClient        (gRPC translator, pkg/client/io/)
@@ -392,7 +392,7 @@ asynchronously from a different client's mutations.
 
 ### 6.1 On-disk layout
 
-The persistence layer lives in `pkg/client/cache/persist/`. Each volume gets
+The persistence layer lives in `pkg/client/io/cache/persist/`. Each volume gets
 its own directory under `cache.path`:
 
 ```

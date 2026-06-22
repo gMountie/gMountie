@@ -3,12 +3,12 @@ package mount
 import (
 	"path/filepath"
 
-	"go.gmountie.dev/gmountie/pkg/client/cache"
-	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
 	"go.gmountie.dev/gmountie/pkg/client/config"
 	"go.gmountie.dev/gmountie/pkg/client/grpc"
 	"go.gmountie.dev/gmountie/pkg/client/io"
-	observer "go.gmountie.dev/gmountie/pkg/client/io/observer"
+	"go.gmountie.dev/gmountie/pkg/client/io/cache"
+	"go.gmountie.dev/gmountie/pkg/client/io/cache/persist"
+	"go.gmountie.dev/gmountie/pkg/client/io/observer"
 	"go.gmountie.dev/gmountie/pkg/client/metrics"
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
