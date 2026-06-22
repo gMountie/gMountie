@@ -1,21 +1,21 @@
 name: Actionlint
 
 # Lints the GitHub Actions workflows (config in .github/actionlint.yaml,
-# which was previously never executed anywhere). Path-filtered: only runs
-# when workflow files or the actionlint config change.
+# which was previously never executed anywhere).
+#
+# Deliberately NOT trigger-level path-filtered: a `paths:` filter on the
+# trigger means PRs that don't touch workflow files produce NO check run
+# at all, so if `actionlint` is a required status check those PRs stay
+# permanently pending and can never merge. Instead the job always runs and
+# short-circuits INTERNALLY (a skipped step still lets the job report
+# success), so a conclusion is always reported and merges stay unblocked.
 on:
   push:
     branches:
       - master
-    paths:
-      - '.github/workflows/**'
-      - '.github/actionlint.yaml'
   pull_request:
     branches:
       - master
-    paths:
-      - '.github/workflows/**'
-      - '.github/actionlint.yaml'
 
 permissions:
   contents: read
@@ -26,13 +26,48 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Need history (and, for PRs, the base ref) so the change guard
+          # below can diff the workflow files against the merge base.
+          fetch-depth: 0
+      # Internal short-circuit: only do the lint work when workflow files or
+      # the actionlint config actually changed. This replaces the old
+      # trigger-level `paths:` filter — the job still runs (and reports a
+      # conclusion) on every PR, it just no-ops cheaply when irrelevant.
+      - name: Detect workflow changes
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$BASE_SHA"
+          else
+            # push: compare against the previous commit on the branch.
+            base="${{ github.event.before }}"
+          fi
+          # If we have no usable base (e.g. first push / all-zero SHA), lint
+          # to be safe rather than skip.
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$base" "${{ github.sha }}" \
+              -- '.github/workflows/**' '.github/actionlint.yaml' | grep -q .; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No workflow/actionlint changes — skipping actionlint."
+          fi
       # Pinned binary download with digest verification — avoids adding
       # another mutable third-party action to the supply chain.
       - name: Install actionlint
+        if: steps.changes.outputs.changed == 'true'
         run: |
           curl -fsSL -o /tmp/actionlint.tar.gz \
             https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
           echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  /tmp/actionlint.tar.gz" | sha256sum -c -
           tar -C /tmp -xzf /tmp/actionlint.tar.gz actionlint
       - name: actionlint
+        if: steps.changes.outputs.changed == 'true'
         run: /tmp/actionlint -color
