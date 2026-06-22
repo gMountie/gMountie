@@ -13,8 +13,8 @@ import (
 
 	"go.gmountie.dev/gmountie/internal/mocks/pkg/client/grpc"
 	mockProto "go.gmountie.dev/gmountie/internal/mocks/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/client/backend/cache/persist"
 	"go.gmountie.dev/gmountie/pkg/client/config"
-	"go.gmountie.dev/gmountie/pkg/client/io/cache/persist"
 	"go.gmountie.dev/gmountie/pkg/proto"
 )
 

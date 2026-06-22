@@ -3,14 +3,14 @@ package mount
 import (
 	"path/filepath"
 
+	"go.gmountie.dev/gmountie/pkg/client/backend"
+	"go.gmountie.dev/gmountie/pkg/client/backend/cache"
+	"go.gmountie.dev/gmountie/pkg/client/backend/cache/persist"
+	"go.gmountie.dev/gmountie/pkg/client/backend/identity"
+	"go.gmountie.dev/gmountie/pkg/client/backend/observer"
+	"go.gmountie.dev/gmountie/pkg/client/backend/transport"
 	"go.gmountie.dev/gmountie/pkg/client/config"
 	"go.gmountie.dev/gmountie/pkg/client/grpc"
-	"go.gmountie.dev/gmountie/pkg/client/io"
-	"go.gmountie.dev/gmountie/pkg/client/io/cache"
-	"go.gmountie.dev/gmountie/pkg/client/io/cache/persist"
-	"go.gmountie.dev/gmountie/pkg/client/io/identity"
-	"go.gmountie.dev/gmountie/pkg/client/io/observer"
-	"go.gmountie.dev/gmountie/pkg/client/io/transport"
 	"go.gmountie.dev/gmountie/pkg/client/metrics"
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
@@ -49,7 +49,7 @@ type SingleVolumeMounterImpl struct {
 	// unmount keeps failing with EBUSY.
 	mountPaths *xsync.MapOf[string, string]
 	persists   *xsync.MapOf[string, *persist.Persist]
-	backends   *xsync.MapOf[string, io.FileSystemBackend]
+	backends   *xsync.MapOf[string, backend.FileSystemBackend]
 }
 
 // NewSingleVolumeMounter creates a new SingleVolumeMounterImpl. fuseCfg
@@ -67,18 +67,18 @@ func NewSingleVolumeMounter(client grpc.Client, fuseCfg *config.FUSEConfig, cach
 		mounts:     xsync.NewMapOf[string, mountHandle](),
 		mountPaths: xsync.NewMapOf[string, string](),
 		persists:   xsync.NewMapOf[string, *persist.Persist](),
-		backends:   xsync.NewMapOf[string, io.FileSystemBackend](),
+		backends:   xsync.NewMapOf[string, backend.FileSystemBackend](),
 	}
 }
 
 // identityFromProto converts a proto.Identity wire message to the
-// io.Identity type used by IDRewriter. Returns nil when p is nil, which
+// backend.Identity type used by IDRewriter. Returns nil when p is nil, which
 // makes NewIDRewriter produce a nil (no-op) rewriter.
-func identityFromProto(p *proto.Identity) *io.Identity {
+func identityFromProto(p *proto.Identity) *backend.Identity {
 	if p == nil {
 		return nil
 	}
-	return &io.Identity{Uid: p.Uid, Gid: p.PrimaryGid, Gids: p.Gids}
+	return &backend.Identity{Uid: p.Uid, Gid: p.PrimaryGid, Gids: p.Gids}
 }
 
 // Mount mounts a volume
@@ -133,13 +133,13 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 		if cm := client.Metrics(); cm != nil {
 			rec = cm
 		}
-		layers = append(layers, backendLayer{pos: posCache, build: func(inner io.FileSystemBackend) io.FileSystemBackend {
+		layers = append(layers, backendLayer{pos: posCache, build: func(inner backend.FileSystemBackend) backend.FileSystemBackend {
 			return cache.NewCachedBackend(inner, cacheCfg, p, client.Fs(), volume, rec)
 		}})
 	}
 
 	if rec := m.client.Metrics(); rec != nil {
-		layers = append(layers, backendLayer{pos: posObserver, build: func(inner io.FileSystemBackend) io.FileSystemBackend {
+		layers = append(layers, backendLayer{pos: posObserver, build: func(inner backend.FileSystemBackend) backend.FileSystemBackend {
 			return observer.NewMetricsLayer(inner, rec)
 		}})
 	}
@@ -149,7 +149,7 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 	// invalidation stream) keeps storing server ids. A nil rewriter (raw_ids /
 	// no WhoAmI identity) means NewLayer returns inner unchanged.
 	if rewriter != nil {
-		layers = append(layers, backendLayer{pos: posIdentity, build: func(inner io.FileSystemBackend) io.FileSystemBackend {
+		layers = append(layers, backendLayer{pos: posIdentity, build: func(inner backend.FileSystemBackend) backend.FileSystemBackend {
 			return identity.NewLayer(inner, rewriter)
 		}})
 	}

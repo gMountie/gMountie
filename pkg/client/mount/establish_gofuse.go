@@ -5,9 +5,9 @@ package mount
 import (
 	"time"
 
+	"go.gmountie.dev/gmountie/pkg/client/backend"
 	"go.gmountie.dev/gmountie/pkg/client/config"
 	gofuse "go.gmountie.dev/gmountie/pkg/client/fuse/gofuse"
-	"go.gmountie.dev/gmountie/pkg/client/io"
 
 	gofs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -24,7 +24,7 @@ func (h *gofuseHandle) Unmount(mountPath string) error {
 
 // establishGoFuse mounts via go-fuse (Linux default; macFUSE on darwin). Mirrors
 // the prior inline body of SingleVolumeMounterImpl.Mount.
-func establishGoFuse(mountPath, volume, endpoint string, backend io.FileSystemBackend, cfg *config.FUSEConfig, maxWrite int, metaTimeout time.Duration, defaultPermissions bool) (mountHandle, error) {
+func establishGoFuse(mountPath, volume, endpoint string, backend backend.FileSystemBackend, cfg *config.FUSEConfig, maxWrite int, metaTimeout time.Duration, defaultPermissions bool) (mountHandle, error) {
 	// metaTimeout is unused on the go-fuse path (kept for signature symmetry with the cgofuse
 	// mounter; retryOp owns the effective per-op deadline). UID/GID rewriting is
 	// done by the identity backend layer (composed in single.go), not here.

@@ -144,7 +144,7 @@ uids and FUSE-emitted Chown ops carry the right wire uid.
 
 - `SessionService.WhoAmI(volume, caller)` returns the principal's
   resolved `Identity` (uid, gid, gids, user_name, group_names).
-- `pkg/client/io/idrewrite.go` translates inbound attrs (server-side
+- `pkg/client/backend/idrewrite.go` translates inbound attrs (server-side
   uid/gid → local uid/gid for `ls -l`) and outbound `Chown` (local
   uid/gid → server-side).
 - `--raw-ids` / config `mount.raw_ids: true` disables rewriting for

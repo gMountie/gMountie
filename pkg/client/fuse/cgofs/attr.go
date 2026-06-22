@@ -4,14 +4,14 @@ package cgofs
 
 import (
 	cgofuse "github.com/winfsp/cgofuse/fuse"
-	gio "go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/backend"
 )
 
 // fillStat maps an io.Attr to a cgofuse Stat_t. It is a plain field copy —
 // the backend (with the identity layer composed outermost) has already
 // rewritten Uid/Gid to local display ids, so no rewrite happens here (mirrors
 // setAttrFromBackend in node.go).
-func fillStat(dst *cgofuse.Stat_t, a *gio.Attr) {
+func fillStat(dst *cgofuse.Stat_t, a *backend.Attr) {
 	dst.Ino = a.Ino
 	dst.Size = int64(a.Size)
 	dst.Blocks = int64(a.Blocks)
@@ -27,7 +27,7 @@ func fillStat(dst *cgofuse.Stat_t, a *gio.Attr) {
 }
 
 // fillStatfs maps an io.StatFs to a cgofuse Statfs_t.
-func fillStatfs(dst *cgofuse.Statfs_t, s *gio.StatFs) {
+func fillStatfs(dst *cgofuse.Statfs_t, s *backend.StatFs) {
 	dst.Bsize = uint64(s.Bsize)
 	dst.Frsize = uint64(s.Frsize)
 	dst.Blocks = s.Blocks

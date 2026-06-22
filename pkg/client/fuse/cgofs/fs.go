@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync"
 
-	gio "go.gmountie.dev/gmountie/pkg/client/io"
-	"go.gmountie.dev/gmountie/pkg/client/io/transport"
+	"go.gmountie.dev/gmountie/pkg/client/backend"
+	"go.gmountie.dev/gmountie/pkg/client/backend/transport"
 	proto "go.gmountie.dev/gmountie/pkg/proto"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -20,11 +20,11 @@ import (
 // every op to the same backend. backend is set at construction and shared for
 // the mount's lifetime; the handle table maps cgofuse's uint64 handles to
 // io.FileHandle objects. UID/GID rewriting is no longer done here — the
-// identity backend layer (pkg/client/io/identity), composed outermost,
+// identity backend layer (pkg/client/backend/identity), composed outermost,
 // rewrites server↔local ids so this adapter is pure type-translation.
 type MountieCgoFS struct {
 	cgofuse.FileSystemBase
-	backend   gio.FileSystemBackend
+	backend   backend.FileSystemBackend
 	handles   *handleTable
 	ready     chan struct{}
 	done      chan struct{}
@@ -36,7 +36,7 @@ type MountieCgoFS struct {
 // identity backend layer (composed outermost), not here — backend already
 // yields local display ids upward and expects local ids on SetAttr downward.
 // Per-op deadlines are owned by the gRPC backend (retryOp), not the adapter.
-func New(backend gio.FileSystemBackend) *MountieCgoFS {
+func New(backend backend.FileSystemBackend) *MountieCgoFS {
 	return &MountieCgoFS{
 		backend: backend,
 		handles: newHandleTable(),
@@ -226,7 +226,7 @@ func (fs *MountieCgoFS) Release(path string, fh uint64) int {
 func (fs *MountieCgoFS) Truncate(path string, size int64, fh uint64) int {
 	ctx, cancel := fs.opCtx()
 	defer cancel()
-	in := gio.SetAttrIn{Valid: uint32(fuse.FATTR_SIZE), Size: uint64(size)}
+	in := backend.SetAttrIn{Valid: uint32(fuse.FATTR_SIZE), Size: uint64(size)}
 	_, st := fs.backend.SetAttr(ctx, clean(path), in)
 	return errc(st)
 }
@@ -266,7 +266,7 @@ func (fs *MountieCgoFS) Symlink(target string, newpath string) int {
 func (fs *MountieCgoFS) Chmod(path string, mode uint32) int {
 	ctx, cancel := fs.opCtx()
 	defer cancel()
-	in := gio.SetAttrIn{Valid: uint32(fuse.FATTR_MODE), Mode: mode}
+	in := backend.SetAttrIn{Valid: uint32(fuse.FATTR_MODE), Mode: mode}
 	_, st := fs.backend.SetAttr(ctx, clean(path), in)
 	return errc(st)
 }
@@ -278,7 +278,7 @@ func (fs *MountieCgoFS) Chown(path string, uid uint32, gid uint32) int {
 	// (composed outermost) rewrites local→server before the wire. cgofuse always
 	// supplies both ids, so both bits are always set — matching the layer's
 	// (uid|gid)-bit gate that runs Outbound on both halves.
-	in := gio.SetAttrIn{Valid: uint32(fuse.FATTR_UID | fuse.FATTR_GID), Uid: uid, Gid: gid}
+	in := backend.SetAttrIn{Valid: uint32(fuse.FATTR_UID | fuse.FATTR_GID), Uid: uid, Gid: gid}
 	_, st := fs.backend.SetAttr(ctx, clean(path), in)
 	return errc(st)
 }
@@ -286,7 +286,7 @@ func (fs *MountieCgoFS) Chown(path string, uid uint32, gid uint32) int {
 func (fs *MountieCgoFS) Utimens(path string, tmsp []cgofuse.Timespec) int {
 	ctx, cancel := fs.opCtx()
 	defer cancel()
-	in := gio.SetAttrIn{Valid: uint32(fuse.FATTR_ATIME | fuse.FATTR_MTIME)}
+	in := backend.SetAttrIn{Valid: uint32(fuse.FATTR_ATIME | fuse.FATTR_MTIME)}
 	if len(tmsp) >= 2 {
 		at := tmsp[0].Time()
 		mt := tmsp[1].Time()

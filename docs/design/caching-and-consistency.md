@@ -20,16 +20,16 @@ time. The `FileSystemBackend` interface was introduced as the seam for
 exactly this purpose:
 
 ```
-       go-fuse fs.Node*        (pkg/client/io/node.go)
+       go-fuse fs.Node*        (pkg/client/backend/node.go)
                  ↓
        io.FileSystemBackend   (interface)
                  ↓
      ┌────────────────────────┐
      │  cache.cachedBackend   │   ← inserted when cfg.Cache.Enabled = true
-     │  (pkg/client/io/cache/) │
+     │  (pkg/client/backend/cache/) │
      └────────────────────────┘
                  ↓
-       io.BackendClient        (gRPC translator, pkg/client/io/)
+       io.BackendClient        (gRPC translator, pkg/client/backend/)
                  ↓
        gRPC wire / server
 ```
@@ -392,7 +392,7 @@ asynchronously from a different client's mutations.
 
 ### 6.1 On-disk layout
 
-The persistence layer lives in `pkg/client/io/cache/persist/`. Each volume gets
+The persistence layer lives in `pkg/client/backend/cache/persist/`. Each volume gets
 its own directory under `cache.path`:
 
 ```

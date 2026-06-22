@@ -11,9 +11,9 @@ import (
 	cgofuse "github.com/winfsp/cgofuse/fuse"
 	"go.uber.org/zap"
 
+	"go.gmountie.dev/gmountie/pkg/client/backend"
 	"go.gmountie.dev/gmountie/pkg/client/config"
 	"go.gmountie.dev/gmountie/pkg/client/fuse/cgofs"
-	"go.gmountie.dev/gmountie/pkg/client/io"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 )
 
@@ -63,7 +63,7 @@ func (h *cgofuseHandle) Unmount(mountPath string) error {
 // not applied here: the cgofuse/FUSE-T path doesn't take the go-fuse
 // default_permissions mount option, and the client-side Access cache (always on
 // in the cache decorator) covers the Access-amplification reduction for it.
-func establishCgoFuse(mountPath, volume, endpoint string, fsBackend io.FileSystemBackend, cfg *config.FUSEConfig, maxWrite int, metaTimeout time.Duration, defaultPermissions bool) (mountHandle, error) {
+func establishCgoFuse(mountPath, volume, endpoint string, fsBackend backend.FileSystemBackend, cfg *config.FUSEConfig, maxWrite int, metaTimeout time.Duration, defaultPermissions bool) (mountHandle, error) {
 	_ = defaultPermissions
 	opts, label, allowFallback, err := cgofuseMountSetup(volume, cfg, maxWrite, "")
 	if err != nil {
@@ -92,7 +92,7 @@ func establishCgoFuse(mountPath, volume, endpoint string, fsBackend io.FileSyste
 // adapter's Init fires (mount live), the mount exits without starting, or a
 // timeout elapses. Returns a non-nil error on the latter two so the caller can
 // decide whether to fall back to another backend.
-func mountCgoFuseOnce(mountPath, volume string, fsBackend io.FileSystemBackend, opts []string, label string, readyTimeout time.Duration) (mountHandle, error) {
+func mountCgoFuseOnce(mountPath, volume string, fsBackend backend.FileSystemBackend, opts []string, label string, readyTimeout time.Duration) (mountHandle, error) {
 	adapter := cgofs.New(fsBackend)
 	host := cgofuse.NewFileSystemHost(adapter)
 

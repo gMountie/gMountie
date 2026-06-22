@@ -7,7 +7,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/suite"
-	gio "go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/backend"
 	fserr "go.gmountie.dev/gmountie/pkg/common/fserr"
 	proto "go.gmountie.dev/gmountie/pkg/proto"
 )
@@ -15,8 +15,8 @@ import (
 // recHandle is an io.FileHandle that records its path.
 type recHandle struct{ p string }
 
-func (h *recHandle) Path() string           { return h.p }
-func (h *recHandle) Unwrap() gio.FileHandle { return h }
+func (h *recHandle) Path() string               { return h.p }
+func (h *recHandle) Unwrap() backend.FileHandle { return h }
 
 type IOSuite struct {
 	suite.Suite
@@ -63,7 +63,7 @@ func (s *IOSuite) TestWrite() {
 }
 
 func (s *IOSuite) TestTruncateMapsToSetAttrSize() {
-	s.be.statAttr = &gio.Attr{}
+	s.be.statAttr = &backend.Attr{}
 	s.be.statSt = proto.FsError_FS_OK
 	rc := s.fs.Truncate("/f", 128, ^uint64(0))
 	s.Equal(0, rc)

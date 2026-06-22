@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	iomocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/io"
+	iomocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/backend"
+	"go.gmountie.dev/gmountie/pkg/client/backend"
 	gofusepkg "go.gmountie.dev/gmountie/pkg/client/fuse/gofuse"
-	clientio "go.gmountie.dev/gmountie/pkg/client/io"
 	fserr "go.gmountie.dev/gmountie/pkg/common/fserr"
 	"go.gmountie.dev/gmountie/pkg/proto"
 
@@ -25,8 +25,8 @@ import (
 // propagation).
 //
 // The suite lives in package io_test so it can use the
-// internal/mocks/pkg/client/io package, which itself imports
-// gmountie/pkg/client/io (an internal test would deadlock the import
+// internal/mocks/pkg/client/backend package, which itself imports
+// gmountie/pkg/client/backend (an internal test would deadlock the import
 // graph). Adapters are exercised via the exported fs.NodeXXX /
 // fs.FileXXX interfaces they implement on the value returned from
 // NewMountieRoot.
@@ -58,7 +58,7 @@ func rootAs[T any](s *NodeAdapterTestSuite) T {
 
 func (s *NodeAdapterTestSuite) TestRootLookup_Found() {
 	s.backend.EXPECT().Lookup(mock.Anything, "", "child").Return(
-		&clientio.Attr{Ino: 42, Mode: fuse.S_IFREG | 0o644}, proto.FsError_FS_OK,
+		&backend.Attr{Ino: 42, Mode: fuse.S_IFREG | 0o644}, proto.FsError_FS_OK,
 	)
 	out := &fuse.EntryOut{}
 	inode, errno := rootAs[fs.NodeLookuper](s).Lookup(context.Background(), "child", out)
@@ -83,7 +83,7 @@ func (s *NodeAdapterTestSuite) TestRootLookup_NotFound() {
 // without the bridge, so we attach the child here ourselves.
 func (s *NodeAdapterTestSuite) childNode(name string, ino uint64) fs.InodeEmbedder {
 	s.backend.EXPECT().Lookup(mock.Anything, "", name).Return(
-		&clientio.Attr{Ino: ino, Mode: fuse.S_IFDIR | 0o755}, proto.FsError_FS_OK,
+		&backend.Attr{Ino: ino, Mode: fuse.S_IFDIR | 0o755}, proto.FsError_FS_OK,
 	).Once()
 	out := &fuse.EntryOut{}
 	inode, errno := rootAs[fs.NodeLookuper](s).Lookup(context.Background(), name, out)
@@ -97,9 +97,9 @@ func (s *NodeAdapterTestSuite) childNode(name string, ino uint64) fs.InodeEmbedd
 
 func (s *NodeAdapterTestSuite) TestRootReaddir_Happy() {
 	s.backend.EXPECT().ListDir(mock.Anything, "").Return(
-		[]clientio.DirEntryPlus{
-			{DirEntry: clientio.DirEntry{Ino: 1, Mode: fuse.S_IFREG | 0o644, Name: "a"}},
-			{DirEntry: clientio.DirEntry{Ino: 2, Mode: fuse.S_IFDIR | 0o755, Name: "b"}},
+		[]backend.DirEntryPlus{
+			{DirEntry: backend.DirEntry{Ino: 1, Mode: fuse.S_IFREG | 0o644, Name: "a"}},
+			{DirEntry: backend.DirEntry{Ino: 2, Mode: fuse.S_IFDIR | 0o755, Name: "b"}},
 		}, proto.FsError_FS_OK,
 	)
 	stream, errno := rootAs[fs.NodeReaddirer](s).Readdir(context.Background())
@@ -140,7 +140,7 @@ func (s *NodeAdapterTestSuite) TestRootCreate_Happy() {
 		Return(fh, nil, proto.FsError_FS_OK)
 	// proto.CreateReply carries no Attr today; createAt falls back to Stat.
 	s.backend.EXPECT().Stat(mock.Anything, "new.txt").Return(
-		&clientio.Attr{Ino: 7, Mode: fuse.S_IFREG | 0o644}, proto.FsError_FS_OK,
+		&backend.Attr{Ino: 7, Mode: fuse.S_IFREG | 0o644}, proto.FsError_FS_OK,
 	)
 	out := &fuse.EntryOut{}
 	inode, file, _, errno := rootAs[fs.NodeCreater](s).Create(context.Background(), "new.txt", 0, 0o644, out)
@@ -184,7 +184,7 @@ func (s *NodeAdapterTestSuite) TestRootCreate_StatFailureSurfacesError() {
 
 func (s *NodeAdapterTestSuite) TestRootGetattr_DelegatesToStat() {
 	s.backend.EXPECT().Stat(mock.Anything, "").Return(
-		&clientio.Attr{Ino: 1, Size: 1024, Mode: fuse.S_IFDIR | 0o755}, proto.FsError_FS_OK,
+		&backend.Attr{Ino: 1, Size: 1024, Mode: fuse.S_IFDIR | 0o755}, proto.FsError_FS_OK,
 	)
 	out := &fuse.AttrOut{}
 	errno := rootAs[fs.NodeGetattrer](s).Getattr(context.Background(), nil, out)
@@ -200,12 +200,12 @@ func (s *NodeAdapterTestSuite) TestRootGetattr_DelegatesToStat() {
 // the reply — no Stat expectation is registered, so any trailing Stat fails
 // the test (absence proof).
 func (s *NodeAdapterTestSuite) TestRootSetattr_SingleRPC_ModeSizeMtime() {
-	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.MatchedBy(func(in clientio.SetAttrIn) bool {
+	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.MatchedBy(func(in backend.SetAttrIn) bool {
 		return in.Valid == fuse.FATTR_SIZE|fuse.FATTR_MODE|fuse.FATTR_MTIME &&
 			in.Size == 512 && in.Mode == 0o600 &&
 			in.Atime == nil &&
 			in.Mtime != nil && in.Mtime.Unix() == 1577836800
-	})).Return(&clientio.Attr{Ino: 1, Size: 512, Mode: fuse.S_IFREG | 0o600, Mtime: 1577836800}, proto.FsError_FS_OK).Once()
+	})).Return(&backend.Attr{Ino: 1, Size: 512, Mode: fuse.S_IFREG | 0o600, Mtime: 1577836800}, proto.FsError_FS_OK).Once()
 	in := &fuse.SetAttrIn{}
 	in.Valid = fuse.FATTR_SIZE | fuse.FATTR_MODE | fuse.FATTR_MTIME
 	in.Size = 512
@@ -227,10 +227,10 @@ func (s *NodeAdapterTestSuite) TestRootSetattr_SingleRPC_ModeSizeMtime() {
 func (s *NodeAdapterTestSuite) TestRootSetattr_NowBitResolvesToConcreteTime() {
 	before := time.Now().Add(-time.Minute)
 	after := time.Now().Add(time.Minute)
-	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.MatchedBy(func(in clientio.SetAttrIn) bool {
+	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.MatchedBy(func(in backend.SetAttrIn) bool {
 		return in.Valid == uint32(fuse.FATTR_MTIME) && // _NOW bit stripped
 			in.Mtime != nil && in.Mtime.After(before) && in.Mtime.Before(after)
-	})).Return(&clientio.Attr{Ino: 1}, proto.FsError_FS_OK).Once()
+	})).Return(&backend.Attr{Ino: 1}, proto.FsError_FS_OK).Once()
 	in := &fuse.SetAttrIn{}
 	in.Valid = fuse.FATTR_MTIME | fuse.FATTR_MTIME_NOW
 	in.Mtime = 0 // kernel sends no meaningful timestamp with _NOW
@@ -240,10 +240,10 @@ func (s *NodeAdapterTestSuite) TestRootSetattr_NowBitResolvesToConcreteTime() {
 }
 
 func (s *NodeAdapterTestSuite) TestRootSetattr_SizeOnly() {
-	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.MatchedBy(func(in clientio.SetAttrIn) bool {
+	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.MatchedBy(func(in backend.SetAttrIn) bool {
 		return in.Valid == uint32(fuse.FATTR_SIZE) && in.Size == 4096 &&
 			in.Atime == nil && in.Mtime == nil
-	})).Return(&clientio.Attr{Ino: 1, Size: 4096}, proto.FsError_FS_OK).Once()
+	})).Return(&backend.Attr{Ino: 1, Size: 4096}, proto.FsError_FS_OK).Once()
 	in := &fuse.SetAttrIn{}
 	in.Valid = fuse.FATTR_SIZE
 	in.Size = 4096
@@ -254,11 +254,11 @@ func (s *NodeAdapterTestSuite) TestRootSetattr_SizeOnly() {
 }
 
 func (s *NodeAdapterTestSuite) TestRootSetattr_TimesOnly() {
-	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.MatchedBy(func(in clientio.SetAttrIn) bool {
+	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.MatchedBy(func(in backend.SetAttrIn) bool {
 		return in.Valid == fuse.FATTR_ATIME|fuse.FATTR_MTIME &&
 			in.Atime != nil && in.Atime.Unix() == 100 &&
 			in.Mtime != nil && in.Mtime.Unix() == 200
-	})).Return(&clientio.Attr{Ino: 1, Atime: 100, Mtime: 200}, proto.FsError_FS_OK).Once()
+	})).Return(&backend.Attr{Ino: 1, Atime: 100, Mtime: 200}, proto.FsError_FS_OK).Once()
 	in := &fuse.SetAttrIn{}
 	in.Valid = fuse.FATTR_ATIME | fuse.FATTR_MTIME
 	in.Atime = 100
@@ -275,9 +275,9 @@ func (s *NodeAdapterTestSuite) TestRootSetattr_TimesOnly() {
 // the unset uid. The server resolves the unset half now (Task 12), so the
 // client just forwards the GID bit — no Stat expectation is registered.
 func (s *NodeAdapterTestSuite) TestRootSetattr_GidOnly_ForwardsBitNoStat() {
-	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.MatchedBy(func(in clientio.SetAttrIn) bool {
+	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.MatchedBy(func(in backend.SetAttrIn) bool {
 		return in.Valid == uint32(fuse.FATTR_GID) && in.Gid == 2000
-	})).Return(&clientio.Attr{Ino: 1, Uid: 1000, Gid: 2000}, proto.FsError_FS_OK).Once()
+	})).Return(&backend.Attr{Ino: 1, Uid: 1000, Gid: 2000}, proto.FsError_FS_OK).Once()
 	in := &fuse.SetAttrIn{}
 	in.Valid = fuse.FATTR_GID
 	in.Owner = fuse.Owner{Gid: 2000}
@@ -305,9 +305,9 @@ func (s *NodeAdapterTestSuite) TestRootSetattr_BackendErrorPropagates() {
 // call (Stat etc.) is expected — the strict mock enforces the absence
 // proof.
 func (s *NodeAdapterTestSuite) TestRootSetattr_Valid0_FHOnly() {
-	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.MatchedBy(func(in clientio.SetAttrIn) bool {
+	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.MatchedBy(func(in backend.SetAttrIn) bool {
 		return in.Valid == 0 // all contract bits were masked out
-	})).Return(&clientio.Attr{Ino: 5, Mode: fuse.S_IFREG | 0o644, Size: 128}, proto.FsError_FS_OK).Once()
+	})).Return(&backend.Attr{Ino: 5, Mode: fuse.S_IFREG | 0o644, Size: 128}, proto.FsError_FS_OK).Once()
 	in := &fuse.SetAttrIn{}
 	in.Valid = fuse.FATTR_FH // kernel-only bit; no contract bit survives masking
 	out := &fuse.AttrOut{}
@@ -324,7 +324,7 @@ func (s *NodeAdapterTestSuite) TestRootSetattr_Valid0_FHOnly() {
 func (s *NodeAdapterTestSuite) TestRootSetattr_NilAttrsFallsBackToStat() {
 	s.backend.EXPECT().SetAttr(mock.Anything, "", mock.Anything).Return(nil, proto.FsError_FS_OK).Once()
 	s.backend.EXPECT().Stat(mock.Anything, "").Return(
-		&clientio.Attr{Ino: 1, Mode: fuse.S_IFREG | 0o600}, proto.FsError_FS_OK,
+		&backend.Attr{Ino: 1, Mode: fuse.S_IFREG | 0o600}, proto.FsError_FS_OK,
 	).Once()
 	in := &fuse.SetAttrIn{}
 	in.Valid = fuse.FATTR_MODE
@@ -342,7 +342,7 @@ func (s *NodeAdapterTestSuite) TestRootSetattr_NilAttrsFallsBackToStat() {
 // proves the absence (the Mkdir RTT win).
 func (s *NodeAdapterTestSuite) TestRootMkdir_Happy() {
 	s.backend.EXPECT().Mkdir(mock.Anything, "newdir", uint32(0o755)).Return(
-		&clientio.Attr{Ino: 9, Mode: fuse.S_IFDIR | 0o755}, proto.FsError_FS_OK,
+		&backend.Attr{Ino: 9, Mode: fuse.S_IFDIR | 0o755}, proto.FsError_FS_OK,
 	).Once()
 	out := &fuse.EntryOut{}
 	inode, errno := rootAs[fs.NodeMkdirer](s).Mkdir(context.Background(), "newdir", 0o755, out)
@@ -359,7 +359,7 @@ func (s *NodeAdapterTestSuite) TestRootMkdir_Happy() {
 func (s *NodeAdapterTestSuite) TestRootMkdir_NilAttrsFallsBackToStat() {
 	s.backend.EXPECT().Mkdir(mock.Anything, "newdir", uint32(0o755)).Return(nil, proto.FsError_FS_OK).Once()
 	s.backend.EXPECT().Stat(mock.Anything, "newdir").Return(
-		&clientio.Attr{Ino: 9, Mode: fuse.S_IFDIR | 0o755}, proto.FsError_FS_OK,
+		&backend.Attr{Ino: 9, Mode: fuse.S_IFDIR | 0o755}, proto.FsError_FS_OK,
 	).Once()
 	out := &fuse.EntryOut{}
 	inode, errno := rootAs[fs.NodeMkdirer](s).Mkdir(context.Background(), "newdir", 0o755, out)
@@ -383,7 +383,7 @@ func (s *NodeAdapterTestSuite) TestRootMkdir_BackendErrorPropagates() {
 // proof of the trailing Stat.
 func (s *NodeAdapterTestSuite) TestRootSymlink_Happy() {
 	s.backend.EXPECT().Symlink(mock.Anything, "/elsewhere", "lnk").Return(
-		&clientio.Attr{Ino: 13, Mode: fuse.S_IFLNK | 0o777}, proto.FsError_FS_OK,
+		&backend.Attr{Ino: 13, Mode: fuse.S_IFLNK | 0o777}, proto.FsError_FS_OK,
 	).Once()
 	out := &fuse.EntryOut{}
 	inode, errno := rootAs[fs.NodeSymlinker](s).Symlink(context.Background(), "/elsewhere", "lnk", out)
@@ -398,7 +398,7 @@ func (s *NodeAdapterTestSuite) TestRootSymlink_Happy() {
 func (s *NodeAdapterTestSuite) TestRootSymlink_NilAttrsFallsBackToStat() {
 	s.backend.EXPECT().Symlink(mock.Anything, "/elsewhere", "lnk").Return(nil, proto.FsError_FS_OK).Once()
 	s.backend.EXPECT().Stat(mock.Anything, "lnk").Return(
-		&clientio.Attr{Ino: 13, Mode: fuse.S_IFLNK | 0o777}, proto.FsError_FS_OK,
+		&backend.Attr{Ino: 13, Mode: fuse.S_IFLNK | 0o777}, proto.FsError_FS_OK,
 	).Once()
 	out := &fuse.EntryOut{}
 	inode, errno := rootAs[fs.NodeSymlinker](s).Symlink(context.Background(), "/elsewhere", "lnk", out)
@@ -450,7 +450,7 @@ func (s *NodeAdapterTestSuite) TestRootRename_UnknownParent_EINVAL() {
 
 func (s *NodeAdapterTestSuite) TestRootStatfs() {
 	s.backend.EXPECT().StatFs(mock.Anything, "").Return(
-		&clientio.StatFs{Blocks: 100, Bfree: 50, Bsize: 4096, Namelen: 255}, proto.FsError_FS_OK,
+		&backend.StatFs{Blocks: 100, Bfree: 50, Bsize: 4096, Namelen: 255}, proto.FsError_FS_OK,
 	)
 	out := &fuse.StatfsOut{}
 	errno := rootAs[fs.NodeStatfser](s).Statfs(context.Background(), out)
@@ -492,7 +492,7 @@ func (s *NodeAdapterTestSuite) TestRootGetxattr_Erange() {
 func (s *NodeAdapterTestSuite) TestNodeLookup_BuildsChildPath() {
 	sub := s.childNode("sub", 11)
 	s.backend.EXPECT().Lookup(mock.Anything, "sub", "child").Return(
-		&clientio.Attr{Ino: 12, Mode: fuse.S_IFREG | 0o644}, proto.FsError_FS_OK,
+		&backend.Attr{Ino: 12, Mode: fuse.S_IFREG | 0o644}, proto.FsError_FS_OK,
 	)
 	out := &fuse.EntryOut{}
 	inode, errno := sub.(fs.NodeLookuper).Lookup(context.Background(), "child", out)
@@ -516,7 +516,7 @@ func (s *NodeAdapterTestSuite) openFile() (fs.FileHandle, *iomocks.MockFileHandl
 func (s *NodeAdapterTestSuite) TestFileRead_Happy() {
 	fh, mockFH := s.openFile()
 	s.backend.EXPECT().Read(mock.Anything, mockFH, int64(0), mock.Anything).
-		RunAndReturn(func(_ context.Context, _ clientio.FileHandle, _ int64, dst []byte) (int, proto.FsError) {
+		RunAndReturn(func(_ context.Context, _ backend.FileHandle, _ int64, dst []byte) (int, proto.FsError) {
 			copy(dst, []byte("hello"))
 			return 5, proto.FsError_FS_OK
 		})
@@ -577,8 +577,8 @@ func (s *NodeAdapterTestSuite) TestFileAllocate() {
 func (s *NodeAdapterTestSuite) TestFileGetlk() {
 	fh, mockFH := s.openFile()
 	lk := &fuse.FileLock{Start: 0, End: 16, Typ: 1, Pid: 99}
-	wantLk := &clientio.FileLock{Start: 0, End: 16, Typ: 1, Pid: 99} // adapter converts fuse→io at the boundary
-	s.backend.EXPECT().GetLk(mock.Anything, mockFH, uint64(42), wantLk, uint32(0), mock.AnythingOfType("*io.FileLock")).
+	wantLk := &backend.FileLock{Start: 0, End: 16, Typ: 1, Pid: 99} // adapter converts fuse→io at the boundary
+	s.backend.EXPECT().GetLk(mock.Anything, mockFH, uint64(42), wantLk, uint32(0), mock.AnythingOfType("*backend.FileLock")).
 		Return(proto.FsError_FS_OK)
 	out := &fuse.FileLock{}
 	errno := fh.(fs.FileGetlker).Getlk(context.Background(), 42, lk, 0, out)
@@ -588,7 +588,7 @@ func (s *NodeAdapterTestSuite) TestFileGetlk() {
 func (s *NodeAdapterTestSuite) TestFileSetlk() {
 	fh, mockFH := s.openFile()
 	lk := &fuse.FileLock{Start: 10, End: 20, Typ: 1, Pid: 5}
-	wantLk := &clientio.FileLock{Start: 10, End: 20, Typ: 1, Pid: 5} // adapter converts fuse→io at the boundary
+	wantLk := &backend.FileLock{Start: 10, End: 20, Typ: 1, Pid: 5} // adapter converts fuse→io at the boundary
 	s.backend.EXPECT().SetLk(mock.Anything, mockFH, uint64(7), wantLk, uint32(0)).Return(proto.FsError_FS_OK)
 	errno := fh.(fs.FileSetlker).Setlk(context.Background(), 7, lk, 0)
 	s.Assert().Equal(syscall.Errno(0), errno)
@@ -597,7 +597,7 @@ func (s *NodeAdapterTestSuite) TestFileSetlk() {
 func (s *NodeAdapterTestSuite) TestFileSetlkw() {
 	fh, mockFH := s.openFile()
 	lk := &fuse.FileLock{Start: 10, End: 20, Typ: 1, Pid: 5}
-	wantLk := &clientio.FileLock{Start: 10, End: 20, Typ: 1, Pid: 5} // adapter converts fuse→io at the boundary
+	wantLk := &backend.FileLock{Start: 10, End: 20, Typ: 1, Pid: 5} // adapter converts fuse→io at the boundary
 	s.backend.EXPECT().SetLkw(mock.Anything, mockFH, uint64(7), wantLk, uint32(0)).Return(proto.FsError_FS_OK)
 	errno := fh.(fs.FileSetlkwer).Setlkw(context.Background(), 7, lk, 0)
 	s.Assert().Equal(syscall.Errno(0), errno)

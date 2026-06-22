@@ -8,7 +8,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/suite"
 	cgofuse "github.com/winfsp/cgofuse/fuse"
-	gio "go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/backend"
 	proto "go.gmountie.dev/gmountie/pkg/proto"
 )
 
@@ -21,9 +21,9 @@ type MutSuite struct {
 func TestMutSuite(t *testing.T) { suite.Run(t, new(MutSuite)) }
 
 func (s *MutSuite) SetupTest() {
-	s.be = &fakeBackend{statAttr: &gio.Attr{}, statSt: proto.FsError_FS_OK}
+	s.be = &fakeBackend{statAttr: &backend.Attr{}, statSt: proto.FsError_FS_OK}
 	// No rewriter here: the adapter no longer rewrites uid/gid — the identity
-	// backend layer (tested in pkg/client/io/identity) does, composed outermost.
+	// backend layer (tested in pkg/client/backend/identity) does, composed outermost.
 	s.fs = New(s.be)
 }
 

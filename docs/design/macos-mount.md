@@ -9,10 +9,10 @@ shared and unchanged.
 
 ## Architecture
 
-`FileSystemBackend` (`pkg/client/io/backend.go`) is a FUSE-independent interface
+`FileSystemBackend` (`pkg/client/backend/backend.go`) is a FUSE-independent interface
 (path-keyed metadata, `FileHandle`-keyed I/O). `gMountieNode`
-(`pkg/client/io/node.go`, go-fuse's `fs.Node*`) consumes it on Linux and on macOS
-when macFUSE is installed; `MountieCgoFS` (`pkg/client/io/cgofs/`, cgofuse's
+(`pkg/client/backend/node.go`, go-fuse's `fs.Node*`) consumes it on Linux and on macOS
+when macFUSE is installed; `MountieCgoFS` (`pkg/client/backend/cgofs/`, cgofuse's
 `FileSystemInterface`) consumes the same seam on macOS when FUSE-T is detected.
 The gRPC `BackendClient` (with the optional cache decorator) implements the seam
 underneath. Nothing below the seam — RPC, cache, identity — changes between

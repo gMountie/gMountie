@@ -8,9 +8,9 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"
 
-	iomocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/io"
+	iomocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/backend"
+	"go.gmountie.dev/gmountie/pkg/client/backend"
 	gofusepkg "go.gmountie.dev/gmountie/pkg/client/fuse/gofuse"
-	clientio "go.gmountie.dev/gmountie/pkg/client/io"
 	"go.gmountie.dev/gmountie/pkg/proto"
 )
 
@@ -67,7 +67,7 @@ func (s *NodeAdapterTestSuite) TestRootOpen_GlobalDirectIO() {
 func (s *NodeAdapterTestSuite) TestRootCreate_ShmGetsDirectIO() {
 	fh := iomocks.NewMockFileHandle(s.T())
 	s.backend.EXPECT().Create(mock.Anything, "", "notes.db-shm", uint32(0), uint32(0o644)).Return(
-		fh, &clientio.Attr{Ino: 7, Mode: fuse.S_IFREG | 0o644}, proto.FsError_FS_OK,
+		fh, &backend.Attr{Ino: 7, Mode: fuse.S_IFREG | 0o644}, proto.FsError_FS_OK,
 	)
 	out := &fuse.EntryOut{}
 	_, _, flags, errno := rootAs[fs.NodeCreater](s).Create(context.Background(), "notes.db-shm", 0, 0o644, out)

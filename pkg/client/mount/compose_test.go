@@ -4,15 +4,15 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/suite"
-	"go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/backend"
 )
 
 type ComposeSuite struct{ suite.Suite }
 
 func (s *ComposeSuite) TestFoldsOutermostFirstRegardlessOfSliceOrder() {
 	var order []string
-	mk := func(name string) func(io.FileSystemBackend) io.FileSystemBackend {
-		return func(inner io.FileSystemBackend) io.FileSystemBackend {
+	mk := func(name string) func(backend.FileSystemBackend) backend.FileSystemBackend {
+		return func(inner backend.FileSystemBackend) backend.FileSystemBackend {
 			order = append(order, name)
 			return inner // identity wrapper for the test
 		}
@@ -29,7 +29,7 @@ func (s *ComposeSuite) TestFoldsOutermostFirstRegardlessOfSliceOrder() {
 	s.Equal([]string{"cache", "observer"}, order)
 }
 
-// PassthroughCounter is a minimal io.FileSystemBackend for composition tests.
-type PassthroughCounter struct{ io.PassthroughBackend }
+// PassthroughCounter is a minimal backend.FileSystemBackend for composition tests.
+type PassthroughCounter struct{ backend.PassthroughBackend }
 
 func TestComposeSuite(t *testing.T) { suite.Run(t, new(ComposeSuite)) }

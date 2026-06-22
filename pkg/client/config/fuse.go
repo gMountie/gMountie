@@ -46,7 +46,7 @@ const (
 	// path relies on). It is an opt-in escape hatch for mmap-heavy workloads
 	// (LMDB, SQLite with a large mmap_size) that would otherwise SIGBUS on a
 	// shared writable mmap. Note SQLite WAL -shm sidecars are opened direct-IO
-	// unconditionally regardless of this flag (see pkg/client/io node.go).
+	// unconditionally regardless of this flag (see pkg/client/backend node.go).
 	DefaultFUSEDirectIO = false
 	// DefaultFUSEAttrTimeout is the default kernel dentry-attribute cache
 	// lifetime. 1 s matches go-fuse's built-in default and is a safe

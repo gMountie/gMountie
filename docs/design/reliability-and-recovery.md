@@ -104,7 +104,7 @@ enumeration of all open handles.
 ### 4.1 Sanitized reopen flags
 
 `grpcFileHandle` stores a `reopenFlags uint32` produced by
-`sanitizeReopenFlags` at construction time (`pkg/client/io/reclaim.go`).
+`sanitizeReopenFlags` at construction time (`pkg/client/backend/reclaim.go`).
 The sanitizer strips `O_CREAT | O_EXCL | O_TRUNC` and preserves the access
 mode and `O_APPEND`:
 

@@ -14,7 +14,7 @@ packages:
   go.gmountie.dev/gmountie/pkg/client/grpc:
     config:
       all: true
-  go.gmountie.dev/gmountie/pkg/client/io:
+  go.gmountie.dev/gmountie/pkg/client/backend:
     interfaces:
       FileSystemBackend: {}
       FileHandle: {}

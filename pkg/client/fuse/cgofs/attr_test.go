@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 	cgofuse "github.com/winfsp/cgofuse/fuse"
-	gio "go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/backend"
 )
 
 type AttrSuite struct{ suite.Suite }
@@ -15,7 +15,7 @@ type AttrSuite struct{ suite.Suite }
 func TestAttrSuite(t *testing.T) { suite.Run(t, new(AttrSuite)) }
 
 func (s *AttrSuite) TestFillStatCopiesFieldsAndTimes() {
-	a := &gio.Attr{
+	a := &backend.Attr{
 		Ino: 7, Size: 1024, Blocks: 2, Mode: 0o100644, Nlink: 1,
 		Uid: 1000, Gid: 1000, Rdev: 0, Blksize: 4096,
 		Atime: 100, Atimensec: 5, Mtime: 200, Mtimensec: 6, Ctime: 300, Ctimensec: 7,
@@ -38,7 +38,7 @@ func (s *AttrSuite) TestFillStatCopiesFieldsAndTimes() {
 }
 
 func (s *AttrSuite) TestFillStatfs() {
-	in := &gio.StatFs{Blocks: 10, Bfree: 4, Bavail: 3, Files: 100, Ffree: 50, Bsize: 4096, Namelen: 255, Frsize: 4096}
+	in := &backend.StatFs{Blocks: 10, Bfree: 4, Bavail: 3, Files: 100, Ffree: 50, Bsize: 4096, Namelen: 255, Frsize: 4096}
 	var out cgofuse.Statfs_t
 	fillStatfs(&out, in)
 	s.Equal(uint64(10), out.Blocks)

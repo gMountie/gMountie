@@ -3,7 +3,7 @@ package cgofs
 import (
 	"sync"
 
-	gio "go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/backend"
 )
 
 // handleTable maps cgofuse's uint64 file handles to io.FileHandle objects.
@@ -12,15 +12,15 @@ import (
 type handleTable struct {
 	mu   sync.Mutex
 	next uint64
-	m    map[uint64]gio.FileHandle
+	m    map[uint64]backend.FileHandle
 }
 
 func newHandleTable() *handleTable {
-	return &handleTable{next: 1, m: make(map[uint64]gio.FileHandle)}
+	return &handleTable{next: 1, m: make(map[uint64]backend.FileHandle)}
 }
 
 // add stores fh and returns a fresh non-zero handle id.
-func (t *handleTable) add(fh gio.FileHandle) uint64 {
+func (t *handleTable) add(fh backend.FileHandle) uint64 {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	id := t.next
@@ -29,14 +29,14 @@ func (t *handleTable) add(fh gio.FileHandle) uint64 {
 	return id
 }
 
-func (t *handleTable) get(id uint64) (gio.FileHandle, bool) {
+func (t *handleTable) get(id uint64) (backend.FileHandle, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	fh, ok := t.m[id]
 	return fh, ok
 }
 
-func (t *handleTable) remove(id uint64) (gio.FileHandle, bool) {
+func (t *handleTable) remove(id uint64) (backend.FileHandle, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	fh, ok := t.m[id]

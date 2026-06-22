@@ -8,7 +8,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/suite"
 	cgofuse "github.com/winfsp/cgofuse/fuse"
-	gio "go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/backend"
 	fserr "go.gmountie.dev/gmountie/pkg/common/fserr"
 	proto "go.gmountie.dev/gmountie/pkg/proto"
 )
@@ -27,7 +27,7 @@ func (s *MetaSuite) SetupTest() {
 }
 
 func (s *MetaSuite) TestGetattrOK() {
-	s.be.statAttr = &gio.Attr{Ino: 9, Size: 42, Mode: 0o100644}
+	s.be.statAttr = &backend.Attr{Ino: 9, Size: 42, Mode: 0o100644}
 	s.be.statSt = proto.FsError_FS_OK
 	var st cgofuse.Stat_t
 	rc := s.fs.Getattr("/dir/file", &st, ^uint64(0))
@@ -46,9 +46,9 @@ func (s *MetaSuite) TestGetattrENOENT() {
 
 func (s *MetaSuite) TestReaddirFillsEntries() {
 	s.be.listSt = proto.FsError_FS_OK
-	s.be.listEntries = []gio.DirEntryPlus{
-		{DirEntry: gio.DirEntry{Name: "a", Ino: 1, Mode: 0o100644}},
-		{DirEntry: gio.DirEntry{Name: "b", Ino: 2, Mode: fuse.S_IFDIR | 0o755}},
+	s.be.listEntries = []backend.DirEntryPlus{
+		{DirEntry: backend.DirEntry{Name: "a", Ino: 1, Mode: 0o100644}},
+		{DirEntry: backend.DirEntry{Name: "b", Ino: 2, Mode: fuse.S_IFDIR | 0o755}},
 	}
 	var names []string
 	fill := func(name string, stat *cgofuse.Stat_t, ofst int64) bool {
@@ -69,7 +69,7 @@ func (s *MetaSuite) TestReadlink() {
 }
 
 func (s *MetaSuite) TestStatfs() {
-	s.be.statfs = &gio.StatFs{Blocks: 10, Bsize: 4096, Namelen: 255}
+	s.be.statfs = &backend.StatFs{Blocks: 10, Bsize: 4096, Namelen: 255}
 	s.be.statfsSt = proto.FsError_FS_OK
 	var out cgofuse.Statfs_t
 	rc := s.fs.Statfs("/", &out)

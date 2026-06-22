@@ -18,7 +18,7 @@ import (
 	"strings"
 	"syscall"
 
-	clientio "go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/backend"
 	fserr "go.gmountie.dev/gmountie/pkg/common/fserr"
 	"go.gmountie.dev/gmountie/pkg/proto"
 
@@ -39,13 +39,13 @@ const sqliteShmSuffix = "-shm"
 // Its path relative to the mount root is derived on demand from the inode
 // tree's current position (see path()); never cache it. backend is shared
 // across the whole tree (copied at construction time). UID/GID rewriting is
-// no longer done here — the identity backend layer (pkg/client/io/identity),
+// no longer done here — the identity backend layer (pkg/client/backend/identity),
 // composed outermost, rewrites server↔local ids so this adapter is pure
 // type-translation.
 type gMountieNode struct {
 	fs.Inode
 
-	backend clientio.FileSystemBackend
+	backend backend.FileSystemBackend
 	// directIOAlways forces FOPEN_DIRECT_IO on every Open/Create (the
 	// fuse.direct_io escape hatch for mmap-heavy workloads). Independently,
 	// SQLite -shm sidecars always open direct-IO; see wantDirectIO.
@@ -59,7 +59,7 @@ type gMountieNode struct {
 // directIOAlways forces direct-IO on every handle (fuse.direct_io); even when
 // false, SQLite -shm sidecars still open direct-IO (see wantDirectIO).
 // Mount code passes the returned value to fs.Mount.
-func NewMountieRoot(backend clientio.FileSystemBackend, directIOAlways bool) fs.InodeEmbedder {
+func NewMountieRoot(backend backend.FileSystemBackend, directIOAlways bool) fs.InodeEmbedder {
 	return &gMountieNode{backend: backend, directIOAlways: directIOAlways}
 }
 
@@ -72,7 +72,7 @@ func (n *gMountieNode) path() string {
 }
 
 // newChild attaches a child inode sharing this node's backend.
-func (n *gMountieNode) newChild(ctx context.Context, a *clientio.Attr) *fs.Inode {
+func (n *gMountieNode) newChild(ctx context.Context, a *backend.Attr) *fs.Inode {
 	return n.NewInode(ctx, &gMountieNode{
 		backend:        n.backend,
 		directIOAlways: n.directIOAlways,
@@ -85,8 +85,8 @@ func (n *gMountieNode) newChild(ctx context.Context, a *clientio.Attr) *fs.Inode
 // gMountieFile is the open-file adapter satisfying fs.FileReader,
 // fs.FileWriter, fs.FileFlusher, fs.FileFsyncer, fs.FileReleaser.
 type gMountieFile struct {
-	backend clientio.FileSystemBackend
-	fh      clientio.FileHandle
+	backend backend.FileSystemBackend
+	fh      backend.FileHandle
 }
 
 // Compile-time interface assertions — these ensure the node satisfies
@@ -127,7 +127,7 @@ var (
 // field copy — the backend (with the identity layer composed outermost) has
 // already rewritten Uid/Gid to local display ids, so no rewrite happens here.
 // Used by Getattr/Lookup/Create/Mkdir/Setattr/Symlink handlers.
-func setAttrFromBackend(dst *fuse.Attr, a *clientio.Attr) {
+func setAttrFromBackend(dst *fuse.Attr, a *backend.Attr) {
 	dst.Ino = a.Ino
 	dst.Size = a.Size
 	dst.Blocks = a.Blocks
@@ -216,33 +216,33 @@ func (n *gMountieNode) Getattr(ctx context.Context, _ fs.FileHandle, out *fuse.A
 // the wire SetAttr is path-based.
 func (n *gMountieNode) Setattr(ctx context.Context, _ fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
 	p := n.path()
-	var req clientio.SetAttrIn
+	var req backend.SetAttrIn
 	if sz, ok := in.GetSize(); ok {
-		req.Valid |= clientio.FATTR_SIZE
+		req.Valid |= backend.FATTR_SIZE
 		req.Size = sz
 	}
 	if mode, ok := in.GetMode(); ok {
-		req.Valid |= clientio.FATTR_MODE
+		req.Valid |= backend.FATTR_MODE
 		req.Mode = mode
 	}
 	// UID/GID are passed through as LOCAL ids with their valid bits set; the
 	// identity backend layer (composed outermost) rewrites local→server before
-	// the request reaches the wire (see pkg/client/io/identity), so this adapter
+	// the request reaches the wire (see pkg/client/backend/identity), so this adapter
 	// no longer touches ids.
 	if uid, ok := in.GetUID(); ok {
-		req.Valid |= clientio.FATTR_UID
+		req.Valid |= backend.FATTR_UID
 		req.Uid = uid
 	}
 	if gid, ok := in.GetGID(); ok {
-		req.Valid |= clientio.FATTR_GID
+		req.Valid |= backend.FATTR_GID
 		req.Gid = gid
 	}
 	if atime, ok := in.GetATime(); ok {
-		req.Valid |= clientio.FATTR_ATIME
+		req.Valid |= backend.FATTR_ATIME
 		req.Atime = &atime
 	}
 	if mtime, ok := in.GetMTime(); ok {
-		req.Valid |= clientio.FATTR_MTIME
+		req.Valid |= backend.FATTR_MTIME
 		req.Mtime = &mtime
 	}
 	a, st := n.backend.SetAttr(ctx, p, req)
@@ -538,20 +538,20 @@ func (f *gMountieFile) Allocate(ctx context.Context, off, size uint64, mode uint
 }
 
 func (f *gMountieFile) Getlk(ctx context.Context, owner uint64, lk *fuse.FileLock, flags uint32, out *fuse.FileLock) syscall.Errno {
-	in := clientio.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid}
-	var res clientio.FileLock
+	in := backend.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid}
+	var res backend.FileLock
 	st := f.backend.GetLk(ctx, f.fh, owner, &in, flags, &res)
 	*out = fuse.FileLock{Start: res.Start, End: res.End, Typ: res.Typ, Pid: res.Pid}
 	return fserr.ToErrno(st)
 }
 
 func (f *gMountieFile) Setlk(ctx context.Context, owner uint64, lk *fuse.FileLock, flags uint32) syscall.Errno {
-	in := clientio.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid}
+	in := backend.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid}
 	return fserr.ToErrno(f.backend.SetLk(ctx, f.fh, owner, &in, flags))
 }
 
 func (f *gMountieFile) Setlkw(ctx context.Context, owner uint64, lk *fuse.FileLock, flags uint32) syscall.Errno {
-	in := clientio.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid}
+	in := backend.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid}
 	return fserr.ToErrno(f.backend.SetLkw(ctx, f.fh, owner, &in, flags))
 }
 
