@@ -14,6 +14,24 @@ services:
     # Run as the unprivileged uid baked into the image (matches the
     # Dockerfile USER and the chart's runAsUser).
     user: "1000:1000"
+    # Container hardening, parity with the Helm chart's securityContext
+    # (deployments/charts/gmountie-server/values.yaml): drop every Linux
+    # capability and forbid privilege escalation. The quick-start server runs
+    # as uid 1000 (Dockerfile USER gmountie) and does loopback-confined FS, so
+    # it needs NO caps — the SETUID/SETGID/CHOWN/DAC_* caps are only for the
+    # chart's root-mode identity/AssumeUser preset, which this compose does not
+    # use.
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    # Read-only root filesystem. The server only writes to the data volume
+    # (/data, the named volume below) and to /tmp (provided as a tmpfs). The
+    # config is mounted read-only via `configs:` at /config.yaml; no TLS cert
+    # files are written in this quick-start.
+    read_only: true
+    tmpfs:
+      - /tmp
     command:
       - --config
       - /config.yaml
@@ -40,6 +58,17 @@ services:
   init-permissions:
     image: alpine:3.20
     command: chown 1000:1000 /data
+    # Runs as root to chown the root-owned volume, then exits. Keep only the
+    # one capability it needs (CHOWN) and forbid privilege escalation; the
+    # root fs is read-only since the only thing it mutates is the mounted
+    # /data volume.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
     volumes:
       - data-volume:/data
     restart: "no"
