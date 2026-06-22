@@ -196,14 +196,16 @@ func newDataCacheWithChunkPersist(acct *accountant, chunkSizeBytes int, p chunkP
 	)
 	genCounter := func(path string) *atomic.Uint64 {
 		if v, ok := gens.Load(path); ok { // hot path: no allocation, no lock
-			return v.(*atomic.Uint64)
+			c, _ := v.(*atomic.Uint64)
+			return c
 		}
 		// First touch (or first after a prune): seed from the high-water so a
 		// re-created entry cannot collide with a pre-delete in-flight job's gen.
 		seed := new(atomic.Uint64)
 		seed.Store(globalGen.Load())
 		actual, _ := gens.LoadOrStore(path, seed) // concurrent first-touchers converge
-		return actual.(*atomic.Uint64)
+		c, _ := actual.(*atomic.Uint64)
+		return c
 	}
 	curGen := func(path string) uint64 { return genCounter(path).Load() }
 	bumpGen := func(path string) { genCounter(path).Store(globalGen.Add(1)) }
@@ -310,11 +312,16 @@ func newDataCacheWithChunkPersist(acct *accountant, chunkSizeBytes int, p chunkP
 		}
 		poisoned.Delete(path)
 		// Prune the path's generation entry now that its whole disk tier is
-		// cleared: this bounds the gens map to live paths instead of leaking one
-		// entry per path ever written. Sound because the bumpGen above already
-		// advanced globalGen past any in-flight job's captured gen, so a later
-		// re-create seeds high and those jobs still drop. Success path only —
-		// a poisoned path keeps its counter (the error branch returned above).
+		// cleared: this reclaims the entry on full-path invalidation, bounding the
+		// write/delete-churn growth (the #118 shape — paths repeatedly written and
+		// invalidated). Sound because the bumpGen above already advanced globalGen
+		// past any in-flight job's captured gen, so a later re-create seeds high
+		// and those jobs still drop. Success path only — a poisoned path keeps its
+		// counter (the error branch returned above). NOTE: a read-only walk over
+		// many distinct, never-invalidated paths still accumulates one entry each
+		// (genCounter creates them on read-miss); fully bounding that needs an
+		// eviction-time prune (sound under the same high-water seed) and is a
+		// follow-up.
 		gens.Delete(path)
 	}
 	c.persistRangeCleaner = func(path string, firstIdx, lastIdx int) {
