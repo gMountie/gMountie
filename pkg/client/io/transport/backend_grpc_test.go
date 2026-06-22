@@ -1,4 +1,4 @@
-package io
+package transport
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	grpcmocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/grpc"
 	mockProto "go.gmountie.dev/gmountie/internal/mocks/pkg/proto"
 	grpcclient "go.gmountie.dev/gmountie/pkg/client/grpc"
+	pio "go.gmountie.dev/gmountie/pkg/client/io"
 	"go.gmountie.dev/gmountie/pkg/proto"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -291,7 +292,7 @@ func (s *BackendClientTestSuite) TestRelease_CancelledParentDoesNotAbortRPC() {
 func (s *BackendClientTestSuite) TestSetLkw_StaysCancellable() {
 	parent, cancel := context.WithCancel(context.Background())
 	cancel()
-	lk := &FileLock{Start: 0, End: 0, Typ: 1, Pid: 1}
+	lk := &pio.FileLock{Start: 0, End: 0, Typ: 1, Pid: 1}
 
 	s.fileClient.EXPECT().SetLkw(
 		mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() != nil }),
@@ -646,7 +647,7 @@ func (s *BackendClientTestSuite) TestSetAttr() {
 		},
 	}, nil).Once()
 
-	attr, st := s.backend.SetAttr(context.Background(), "/test", SetAttrIn{
+	attr, st := s.backend.SetAttr(context.Background(), "/test", pio.SetAttrIn{
 		Valid: fuse.FATTR_SIZE | fuse.FATTR_MODE | fuse.FATTR_MTIME,
 		Size:  1024,
 		Mode:  0o600,
@@ -660,7 +661,7 @@ func (s *BackendClientTestSuite) TestSetAttr() {
 }
 
 // TestSetAttr_MasksNonWireValidBits: only the six contract bits may reach
-// the wire. Kernel-only bits (e.g. FATTR_MTIME_NOW, FATTR_FH) passed in
+// the wire. Kernel-only bits (e.g. pio.FATTR_MTIME_NOW, FATTR_FH) passed in
 // Valid are stripped, never forwarded to a server that doesn't apply them.
 func (s *BackendClientTestSuite) TestSetAttr_MasksNonWireValidBits() {
 	mtime := time.Unix(100, 0)
@@ -668,7 +669,7 @@ func (s *BackendClientTestSuite) TestSetAttr_MasksNonWireValidBits() {
 		return req.Valid == uint32(fuse.FATTR_MTIME)
 	}), mock.Anything).Return(&proto.SetAttrReply{Status: proto.FsError_FS_OK}, nil).Once()
 
-	_, st := s.backend.SetAttr(context.Background(), "/test", SetAttrIn{
+	_, st := s.backend.SetAttr(context.Background(), "/test", pio.SetAttrIn{
 		Valid: fuse.FATTR_MTIME | fuse.FATTR_MTIME_NOW | fuse.FATTR_FH,
 		Mtime: &mtime,
 	})
@@ -691,12 +692,12 @@ func (s *BackendClientTestSuite) TestSetAttr_WireFattrContract() {
 	// De-fuse parity: the local io.FATTR_* constants the contract now uses MUST
 	// equal go-fuse's, since SetAttrIn.Valid still travels the wire untranslated.
 	// If a go-fuse bump or an edit to backend.go diverges them, this fails here.
-	s.Assert().Equal(fuse.FATTR_MODE, FATTR_MODE)
-	s.Assert().Equal(fuse.FATTR_UID, FATTR_UID)
-	s.Assert().Equal(fuse.FATTR_GID, FATTR_GID)
-	s.Assert().Equal(fuse.FATTR_SIZE, FATTR_SIZE)
-	s.Assert().Equal(fuse.FATTR_ATIME, FATTR_ATIME)
-	s.Assert().Equal(fuse.FATTR_MTIME, FATTR_MTIME)
+	s.Assert().Equal(fuse.FATTR_MODE, pio.FATTR_MODE)
+	s.Assert().Equal(fuse.FATTR_UID, pio.FATTR_UID)
+	s.Assert().Equal(fuse.FATTR_GID, pio.FATTR_GID)
+	s.Assert().Equal(fuse.FATTR_SIZE, pio.FATTR_SIZE)
+	s.Assert().Equal(fuse.FATTR_ATIME, pio.FATTR_ATIME)
+	s.Assert().Equal(fuse.FATTR_MTIME, pio.FATTR_MTIME)
 }
 
 // TestSetAttr_RetryReusesRequestID — same Phase 1d idempotency property the
@@ -724,7 +725,7 @@ func (s *BackendClientTestSuite) TestSetAttr_RetryReusesRequestID() {
 		Attributes: &proto.Attr{Ino: 1, Owner: &proto.Owner{}},
 	}, nil).Once()
 
-	attr, st := s.backend.SetAttr(context.Background(), "/f", SetAttrIn{Valid: fuse.FATTR_SIZE, Size: 0})
+	attr, st := s.backend.SetAttr(context.Background(), "/f", pio.SetAttrIn{Valid: fuse.FATTR_SIZE, Size: 0})
 	s.Assert().Equal(proto.FsError_FS_OK, st)
 	s.Assert().NotNil(attr)
 	s.Require().Len(ids, 2, "expected exactly two SetAttr attempts")
@@ -738,7 +739,7 @@ func (s *BackendClientTestSuite) TestSetAttr_InBandErrorReturnsStatus() {
 	s.fsClient.EXPECT().SetAttr(mock.Anything, mock.Anything, mock.Anything).
 		Return(&proto.SetAttrReply{Status: proto.FsError_FS_EACCES}, nil).Once()
 
-	attr, st := s.backend.SetAttr(context.Background(), "/f", SetAttrIn{Valid: fuse.FATTR_MODE, Mode: 0o600})
+	attr, st := s.backend.SetAttr(context.Background(), "/f", pio.SetAttrIn{Valid: fuse.FATTR_MODE, Mode: 0o600})
 	s.Assert().Equal(proto.FsError_FS_EACCES, st)
 	s.Assert().Nil(attr)
 }
@@ -1288,7 +1289,7 @@ func (s *BackendClientTestSuite) TestAllocate_BadHandleEBADF() {
 // TestGetLk verifies the lock state query translates the inbound
 // FileLock to the proto and folds the reply back into *out.
 func (s *BackendClientTestSuite) TestGetLk() {
-	lk := &FileLock{Start: 0, End: 16, Typ: 1, Pid: 99}
+	lk := &pio.FileLock{Start: 0, End: 16, Typ: 1, Pid: 99}
 	s.fileClient.EXPECT().GetLk(mock.Anything, mock.MatchedBy(func(req *proto.GetLkRequest) bool {
 		return req.Volume == "testVolume" && req.Fd == 1 && req.Owner == 42 && req.Flags == 0 &&
 			req.SessionId == "test-session" && req.Lk != nil &&
@@ -1299,7 +1300,7 @@ func (s *BackendClientTestSuite) TestGetLk() {
 	}, nil)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
-	var out FileLock
+	var out pio.FileLock
 	st := s.backend.GetLk(context.Background(), h, 42, lk, 0, &out)
 	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(uint64(0), out.Start)
@@ -1313,19 +1314,19 @@ func (s *BackendClientTestSuite) TestGetLk_Error() {
 		Return(nil, context.DeadlineExceeded)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
-	var out FileLock
-	st := s.backend.GetLk(context.Background(), h, 0, &FileLock{}, 0, &out)
+	var out pio.FileLock
+	st := s.backend.GetLk(context.Background(), h, 0, &pio.FileLock{}, 0, &out)
 	s.Assert().Equal(proto.FsError_FS_EIO, st)
 }
 
 func (s *BackendClientTestSuite) TestGetLk_BadHandleEBADF() {
-	var out FileLock
-	st := s.backend.GetLk(context.Background(), badHandle{}, 0, &FileLock{}, 0, &out)
+	var out pio.FileLock
+	st := s.backend.GetLk(context.Background(), badHandle{}, 0, &pio.FileLock{}, 0, &out)
 	s.Assert().Equal(proto.FsError_FS_EBADF, st)
 }
 
 func (s *BackendClientTestSuite) TestSetLk() {
-	lk := &FileLock{Start: 10, End: 20, Typ: 1, Pid: 5}
+	lk := &pio.FileLock{Start: 10, End: 20, Typ: 1, Pid: 5}
 	s.fileClient.EXPECT().SetLk(mock.Anything, mock.MatchedBy(func(req *proto.SetLkRequest) bool {
 		return req.Volume == "testVolume" && req.Fd == 1 && req.Owner == 7 && req.Flags == 0 &&
 			req.SessionId == "test-session" && req.Lk != nil &&
@@ -1342,17 +1343,17 @@ func (s *BackendClientTestSuite) TestSetLk_Error() {
 		Return(nil, context.DeadlineExceeded)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
-	st := s.backend.SetLk(context.Background(), h, 0, &FileLock{}, 0)
+	st := s.backend.SetLk(context.Background(), h, 0, &pio.FileLock{}, 0)
 	s.Assert().Equal(proto.FsError_FS_EIO, st)
 }
 
 func (s *BackendClientTestSuite) TestSetLk_BadHandleEBADF() {
-	st := s.backend.SetLk(context.Background(), badHandle{}, 0, &FileLock{}, 0)
+	st := s.backend.SetLk(context.Background(), badHandle{}, 0, &pio.FileLock{}, 0)
 	s.Assert().Equal(proto.FsError_FS_EBADF, st)
 }
 
 func (s *BackendClientTestSuite) TestSetLkw() {
-	lk := &FileLock{Start: 10, End: 20, Typ: 1, Pid: 5}
+	lk := &pio.FileLock{Start: 10, End: 20, Typ: 1, Pid: 5}
 	s.fileClient.EXPECT().SetLkw(mock.Anything, mock.MatchedBy(func(req *proto.SetLkwRequest) bool {
 		return req.Volume == "testVolume" && req.Fd == 1 && req.Owner == 7 && req.Flags == 0 &&
 			req.SessionId == "test-session" && req.Lk != nil &&
@@ -1369,12 +1370,12 @@ func (s *BackendClientTestSuite) TestSetLkw_Error() {
 		Return(nil, context.DeadlineExceeded)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
-	st := s.backend.SetLkw(context.Background(), h, 0, &FileLock{}, 0)
+	st := s.backend.SetLkw(context.Background(), h, 0, &pio.FileLock{}, 0)
 	s.Assert().Equal(proto.FsError_FS_EIO, st)
 }
 
 func (s *BackendClientTestSuite) TestSetLkw_BadHandleEBADF() {
-	st := s.backend.SetLkw(context.Background(), badHandle{}, 0, &FileLock{}, 0)
+	st := s.backend.SetLkw(context.Background(), badHandle{}, 0, &pio.FileLock{}, 0)
 	s.Assert().Equal(proto.FsError_FS_EBADF, st)
 }
 
@@ -1427,11 +1428,11 @@ func (s *BackendClientTestSuite) TestStat_BareCtxStampsZeroCaller() {
 // Path. Unwrap returns the inner handle so resolveHandle can find the
 // leaf.
 type fakeDecorator struct {
-	inner FileHandle
+	inner pio.FileHandle
 }
 
-func (d *fakeDecorator) Path() string       { return d.inner.Path() }
-func (d *fakeDecorator) Unwrap() FileHandle { return d.inner }
+func (d *fakeDecorator) Path() string           { return d.inner.Path() }
+func (d *fakeDecorator) Unwrap() pio.FileHandle { return d.inner }
 
 // TestResolveHandle_UnwrapsDecorator is the load-bearing test for
 // Sub-spec B compatibility: a fakeDecorator wrapping a leaf
@@ -1665,7 +1666,7 @@ func (s *BackendClientTestSuite) TestSetAttr_BothTimes() {
 			req.SessionId == "test-session" && req.RequestId != ""
 	}), mock.Anything).Return(&proto.SetAttrReply{Status: proto.FsError_FS_OK}, nil)
 
-	_, st := s.backend.SetAttr(context.Background(), "/test", SetAttrIn{
+	_, st := s.backend.SetAttr(context.Background(), "/test", pio.SetAttrIn{
 		Valid: fuse.FATTR_ATIME | fuse.FATTR_MTIME,
 		Atime: &atime,
 		Mtime: &mtime,
@@ -1677,7 +1678,7 @@ func (s *BackendClientTestSuite) TestSetAttr_BothTimes() {
 // through statusFromRPCError to an errno, not a panic on the nil reply.
 func (s *BackendClientTestSuite) TestSetAttr_RPCErrorMapsToErrno() {
 	s.fsClient.EXPECT().SetAttr(mock.Anything, mock.Anything, mock.Anything).Return(nil, context.DeadlineExceeded)
-	attr, st := s.backend.SetAttr(context.Background(), "/test", SetAttrIn{Valid: fuse.FATTR_MODE, Mode: 0o600})
+	attr, st := s.backend.SetAttr(context.Background(), "/test", pio.SetAttrIn{Valid: fuse.FATTR_MODE, Mode: 0o600})
 	s.Assert().Nil(attr)
 	s.Assert().Equal(proto.FsError_FS_EIO, st)
 }
@@ -1696,7 +1697,7 @@ func (s *BackendClientTestSuite) TestSetAttr_CancelledParentDoesNotAbortRPC() {
 		mock.Anything,
 	).Return(&proto.SetAttrReply{Status: proto.FsError_FS_OK}, nil)
 
-	_, st := s.backend.SetAttr(parent, "/test", SetAttrIn{Valid: fuse.FATTR_MODE, Mode: 0o600})
+	_, st := s.backend.SetAttr(parent, "/test", pio.SetAttrIn{Valid: fuse.FATTR_MODE, Mode: 0o600})
 	s.Require().Equal(proto.FsError_FS_OK, st)
 }
 
@@ -2104,8 +2105,8 @@ func (s *BackendClientTestSuite) TestRead_ReadaheadArmsAtDefaultThreshold() {
 // reach into.
 type badHandle struct{}
 
-func (b badHandle) Path() string       { return "/bad" }
-func (b badHandle) Unwrap() FileHandle { return b }
+func (b badHandle) Path() string           { return "/bad" }
+func (b badHandle) Unwrap() pio.FileHandle { return b }
 
 func TestBackendClientTestSuite(t *testing.T) {
 	suite.Run(t, new(BackendClientTestSuite))

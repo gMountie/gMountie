@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	gio "go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/io/transport"
 	proto "go.gmountie.dev/gmountie/pkg/proto"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -61,7 +62,7 @@ var noopCancel = func() {}
 // likewise passes no app-level deadline; the backend owns op timeouts.
 func (fs *MountieCgoFS) opCtx() (context.Context, context.CancelFunc) {
 	uid, gid, pid := cgofuse.Getcontext()
-	return gio.WithCaller(context.Background(), uid, gid, uint32(pid)), noopCancel
+	return transport.WithCaller(context.Background(), uid, gid, uint32(pid)), noopCancel
 }
 
 func (fs *MountieCgoFS) Getattr(path string, stat *cgofuse.Stat_t, fh uint64) int {

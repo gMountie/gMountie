@@ -3,7 +3,7 @@
 // file.go (per-fd ops + streaming Read/Write). Behaviour mirrors the
 // legacy implementation: same retry shape, same per-call Snappy on
 // Read/Write, same session/fd/request_id discipline from Phase 1.
-package io
+package transport
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"time"
 
 	grpcclient "go.gmountie.dev/gmountie/pkg/client/grpc"
+	io "go.gmountie.dev/gmountie/pkg/client/io"
 	fserr "go.gmountie.dev/gmountie/pkg/common/fserr"
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
@@ -146,11 +147,11 @@ func callerFromCtx(ctx context.Context) *proto.Caller {
 
 // attrFromProto maps a proto.Attr (server wire type) to the package-local
 // Attr struct returned by the FileSystemBackend interface.
-func attrFromProto(p *proto.Attr) *Attr {
+func attrFromProto(p *proto.Attr) *io.Attr {
 	if p == nil {
 		return nil
 	}
-	out := &Attr{
+	out := &io.Attr{
 		Ino:       p.Ino,
 		Size:      p.Size,
 		Blocks:    p.Blocks,
@@ -232,7 +233,7 @@ func fdOpStatus(err error) proto.FsError {
 }
 
 // Stat returns the attributes of path. Idempotent; no request_id stamping.
-func (b *BackendClient) Stat(ctx context.Context, path string) (*Attr, proto.FsError) {
+func (b *BackendClient) Stat(ctx context.Context, path string) (*io.Attr, proto.FsError) {
 	res, err := retryOp(b.client, ctx, "GetAttr", classIdempotentRead, b.client.MetaTimeout(),
 		func(ctx context.Context) (*proto.GetAttrReply, error) {
 			return b.client.Fs().GetAttr(ctx, &proto.GetAttrRequest{
@@ -254,7 +255,7 @@ func (b *BackendClient) Stat(ctx context.Context, path string) (*Attr, proto.FsE
 // GetAttrIfChanged issues the lightweight revalidation RPC. Returns
 // (nil, true, OK) on NotModified, (newAttr, false, OK) on version change,
 // (nil, false, ENOENT) if the path is gone, (nil, false, EIO) on error.
-func (b *BackendClient) GetAttrIfChanged(ctx context.Context, path string, knownVersion uint64) (*Attr, bool, proto.FsError) {
+func (b *BackendClient) GetAttrIfChanged(ctx context.Context, path string, knownVersion uint64) (*io.Attr, bool, proto.FsError) {
 	reply, err := retryOp(b.client, ctx, "GetAttrIfChanged", classIdempotentRead, b.client.MetaTimeout(),
 		func(ctx context.Context) (*proto.GetAttrIfChangedReply, error) {
 			return b.client.Fs().GetAttrIfChanged(ctx, &proto.GetAttrIfChangedRequest{
@@ -286,7 +287,7 @@ func (b *BackendClient) Close() error { return nil }
 // Lookup resolves a child by name under parent. The server exposes no
 // dedicated Lookup RPC; this is implemented as GetAttr on the joined
 // path. The inode is folded into Attr.Ino.
-func (b *BackendClient) Lookup(ctx context.Context, parent, name string) (*Attr, proto.FsError) {
+func (b *BackendClient) Lookup(ctx context.Context, parent, name string) (*io.Attr, proto.FsError) {
 	return b.Stat(ctx, joinPath(parent, name))
 }
 
@@ -295,7 +296,7 @@ func (b *BackendClient) Lookup(ctx context.Context, parent, name string) (*Attr,
 // together so retryOp can replace them wholesale on each attempt without
 // partial-state bleed-through (same shape as readResult for Read).
 type listDirResult struct {
-	entries []DirEntryPlus
+	entries []io.DirEntryPlus
 	status  proto.FsError
 }
 
@@ -305,7 +306,7 @@ type listDirResult struct {
 // stream like Read). The plus flag asks the server for per-entry attrs;
 // attrFromProto maps them (nil when the server's per-entry stat failed).
 // An empty directory is one empty OK batch → an empty non-nil slice.
-func (b *BackendClient) ListDir(ctx context.Context, path string) ([]DirEntryPlus, proto.FsError) {
+func (b *BackendClient) ListDir(ctx context.Context, path string) ([]io.DirEntryPlus, proto.FsError) {
 	res, err := retryOp(b.client, ctx, "ReadDir", classIdempotentRead, b.client.MetaTimeout(),
 		func(ctx context.Context) (listDirResult, error) {
 			stream, err := b.client.Fs().ReadDir(ctx, &proto.ReadDirRequest{
@@ -318,7 +319,7 @@ func (b *BackendClient) ListDir(ctx context.Context, path string) ([]DirEntryPlu
 			if err != nil {
 				return listDirResult{}, err
 			}
-			out := listDirResult{entries: []DirEntryPlus{}, status: proto.FsError_FS_OK}
+			out := listDirResult{entries: []io.DirEntryPlus{}, status: proto.FsError_FS_OK}
 			for {
 				batch, recvErr := stream.Recv()
 				if errors.Is(recvErr, stdio.EOF) {
@@ -337,8 +338,8 @@ func (b *BackendClient) ListDir(ctx context.Context, path string) ([]DirEntryPlu
 					if entry == nil {
 						continue // malformed wrapper; nothing to list
 					}
-					out.entries = append(out.entries, DirEntryPlus{
-						DirEntry: DirEntry{
+					out.entries = append(out.entries, io.DirEntryPlus{
+						DirEntry: io.DirEntry{
 							Ino:  entry.Ino,
 							Mode: entry.Mode,
 							Name: entry.Name,
@@ -432,7 +433,7 @@ func mutatePath[Rep any](
 // Mutating — request_id stamped outside retry for idempotency. The reply's
 // attrs are returned so callers skip the trailing Stat; nil with proto.FsError_FS_OK
 // means the server's post-create stat failed (callers fall back to Stat).
-func (b *BackendClient) Symlink(ctx context.Context, target, linkPath string) (*Attr, proto.FsError) {
+func (b *BackendClient) Symlink(ctx context.Context, target, linkPath string) (*io.Attr, proto.FsError) {
 	res, st := mutatePath(b, ctx, "Symlink",
 		func(ctx context.Context, requestID string) (*proto.SymlinkReply, error) {
 			return b.client.Fs().Symlink(ctx, &proto.SymlinkRequest{
@@ -454,7 +455,7 @@ func (b *BackendClient) Symlink(ctx context.Context, target, linkPath string) (*
 }
 
 // StatFs returns filesystem statistics for the volume containing path.
-func (b *BackendClient) StatFs(ctx context.Context, path string) (*StatFs, proto.FsError) {
+func (b *BackendClient) StatFs(ctx context.Context, path string) (*io.StatFs, proto.FsError) {
 	res, err := retryOp(b.client, ctx, "StatFs", classIdempotentRead, b.client.MetaTimeout(),
 		func(ctx context.Context) (*proto.StatFsReply, error) {
 			return b.client.Fs().StatFs(ctx, &proto.StatFsRequest{Volume: b.volume, Path: path},
@@ -464,7 +465,7 @@ func (b *BackendClient) StatFs(ctx context.Context, path string) (*StatFs, proto
 		log.Log.Error("error in call: StatFs", zap.String("path", path), zap.Error(err))
 		return nil, statusFromRPCError(err)
 	}
-	return &StatFs{
+	return &io.StatFs{
 		Blocks:  res.Blocks,
 		Bfree:   res.Bfree,
 		Bavail:  res.Bavail,
@@ -551,7 +552,7 @@ func (b *BackendClient) ListXAttr(ctx context.Context, path string) ([]string, p
 // The reply's attrs are returned so callers skip the trailing Stat; nil
 // with proto.FsError_FS_OK means the server's post-create stat failed (callers fall
 // back to Stat).
-func (b *BackendClient) Mkdir(ctx context.Context, path string, mode uint32) (*Attr, proto.FsError) {
+func (b *BackendClient) Mkdir(ctx context.Context, path string, mode uint32) (*io.Attr, proto.FsError) {
 	res, st := mutatePath(b, ctx, "Mkdir",
 		func(ctx context.Context, requestID string) (*proto.MkdirReply, error) {
 			return b.client.Fs().Mkdir(ctx, &proto.MkdirRequest{
@@ -641,8 +642,8 @@ func timeToFileTime(t *time.Time) *proto.FileTime {
 // proto pins the same numeric values go-fuse exports, so the bits pass
 // through untranslated — but kernel-only bits (FATTR_FH, FATTR_LOCKOWNER,
 // FATTR_*_NOW, ...) are masked out here so they can never leak onto the wire.
-const setAttrValidMask = FATTR_MODE | FATTR_UID | FATTR_GID |
-	FATTR_SIZE | FATTR_ATIME | FATTR_MTIME
+const setAttrValidMask = io.FATTR_MODE | io.FATTR_UID | io.FATTR_GID |
+	io.FATTR_SIZE | io.FATTR_ATIME | io.FATTR_MTIME
 
 // SetAttr applies the fields named by in.Valid in one RPC, replacing the
 // removed Truncate/Chmod/Chown/Utimens fan-out (up to 4 serial RPCs + a
@@ -652,7 +653,7 @@ const setAttrValidMask = FATTR_MODE | FATTR_UID | FATTR_GID |
 // On success the reply's final attrs are returned, so callers skip the
 // trailing Stat. A nil Attr with proto.FsError_FS_OK means the server omitted the
 // attrs (its post-apply stat failed); callers fall back to Stat.
-func (b *BackendClient) SetAttr(ctx context.Context, path string, in SetAttrIn) (*Attr, proto.FsError) {
+func (b *BackendClient) SetAttr(ctx context.Context, path string, in io.SetAttrIn) (*io.Attr, proto.FsError) {
 	res, st := mutatePath(b, ctx, "SetAttr",
 		func(ctx context.Context, requestID string) (*proto.SetAttrReply, error) {
 			return b.client.Fs().SetAttr(ctx, &proto.SetAttrRequest{
@@ -681,7 +682,7 @@ func (b *BackendClient) SetAttr(ctx context.Context, path string, in SetAttrIn) 
 
 // Open opens an existing file. The returned FileHandle is a
 // *grpcFileHandle holding fd + session + per-file knobs.
-func (b *BackendClient) Open(ctx context.Context, path string, flags uint32) (FileHandle, proto.FsError) {
+func (b *BackendClient) Open(ctx context.Context, path string, flags uint32) (io.FileHandle, proto.FsError) {
 	// classFdOp: Open establishes an fd. On a session-id change that fd would be
 	// dead/leaked on the (new) server session, so retryOp stops retrying. The
 	// request_id is allocated OUTSIDE retryOp so same-session retries dedup
@@ -717,7 +718,7 @@ func (b *BackendClient) Open(ctx context.Context, path string, flags uint32) (Fi
 // mapped *Attr is returned so the node can populate the kernel's EntryOut
 // without a follow-up Stat RPC. A nil Attr is returned when the server omits
 // Attributes (older servers); in that case the node adapter falls back to Stat.
-func (b *BackendClient) Create(ctx context.Context, parent, name string, flags, mode uint32) (FileHandle, *Attr, proto.FsError) {
+func (b *BackendClient) Create(ctx context.Context, parent, name string, flags, mode uint32) (io.FileHandle, *io.Attr, proto.FsError) {
 	path := joinPath(parent, name)
 	// classPathMutation: Create mutates the namespace, so a session-id change
 	// makes a replay unsafe (the new session's idempotency cache is empty —
@@ -764,7 +765,7 @@ func (b *BackendClient) Create(ctx context.Context, parent, name string, flags, 
 //     as EOF);
 //   - miss: the whole range is fetched live (readLive), exactly the
 //     pre-readahead path.
-func (b *BackendClient) Read(ctx context.Context, fh FileHandle, off int64, dest []byte) (int, proto.FsError) {
+func (b *BackendClient) Read(ctx context.Context, fh io.FileHandle, off int64, dest []byte) (int, proto.FsError) {
 	h := resolveHandle(fh)
 	if h == nil {
 		return 0, proto.FsError_FS_EBADF
@@ -1028,7 +1029,7 @@ func (b *BackendClient) streamingWrite(h *grpcFileHandle, data []byte, off int64
 //
 // The handle's dirty flag is set on every accepted write so that Flush
 // can skip the RPC on a truly clean handle.
-func (b *BackendClient) Write(ctx context.Context, fh FileHandle, off int64, data []byte) (uint32, proto.FsError) {
+func (b *BackendClient) Write(ctx context.Context, fh io.FileHandle, off int64, data []byte) (uint32, proto.FsError) {
 	h := resolveHandle(fh)
 	if h == nil {
 		return 0, proto.FsError_FS_EBADF
@@ -1098,7 +1099,7 @@ func (b *BackendClient) drainCoalescer(h *grpcFileHandle) proto.FsError {
 // active), then drains the coalescer best-effort, then issues the
 // server-side Release RPC. Always proceeds to the server-side Release even
 // if drain fails.
-func (b *BackendClient) Release(ctx context.Context, fh FileHandle) proto.FsError {
+func (b *BackendClient) Release(ctx context.Context, fh io.FileHandle) proto.FsError {
 	h := resolveHandle(fh)
 	if h == nil {
 		return proto.FsError_FS_EBADF
@@ -1161,7 +1162,7 @@ func (b *BackendClient) Release(ctx context.Context, fh FileHandle) proto.FsErro
 // reply.FinalAttr is returned by the server but unused at the client;
 // FUSE FLUSH carries no attributes back to the kernel. Available for
 // future cache integration.
-func (b *BackendClient) Flush(ctx context.Context, fh FileHandle) proto.FsError {
+func (b *BackendClient) Flush(ctx context.Context, fh io.FileHandle) proto.FsError {
 	h := resolveHandle(fh)
 	if h == nil {
 		return proto.FsError_FS_EBADF
@@ -1225,7 +1226,7 @@ func (b *BackendClient) Flush(ctx context.Context, fh FileHandle) proto.FsError 
 // Fsync drains coalesced writes then issues the server-side Fsync RPC.
 // Idempotent — routed through retryOp (classFdOp) for the same reason as Flush
 // (a second Fsync against an already-synced fd is a no-op).
-func (b *BackendClient) Fsync(ctx context.Context, fh FileHandle, flags int64) proto.FsError {
+func (b *BackendClient) Fsync(ctx context.Context, fh io.FileHandle, flags int64) proto.FsError {
 	h := resolveHandle(fh)
 	if h == nil {
 		return proto.FsError_FS_EBADF
@@ -1268,7 +1269,7 @@ func (b *BackendClient) Fsync(ctx context.Context, fh FileHandle, flags int64) p
 // replayed fallocate with identical (fd, off, size, mode) is a no-op, so a
 // transient error retries; on a session change the fd is dead and retryOp
 // stops. No request_id stamp — same-args replay is naturally idempotent.
-func (b *BackendClient) Allocate(ctx context.Context, fh FileHandle, off, size uint64, mode uint32) proto.FsError {
+func (b *BackendClient) Allocate(ctx context.Context, fh io.FileHandle, off, size uint64, mode uint32) proto.FsError {
 	h := resolveHandle(fh)
 	if h == nil {
 		return proto.FsError_FS_EBADF
@@ -1307,7 +1308,7 @@ func (b *BackendClient) Allocate(ctx context.Context, fh FileHandle, off, size u
 // request_id: a replay returns the cached count without re-executing the copy.
 // classFdOp stops retrying on a session change (fd is dead) — the correct class
 // for any op that holds a server-side fd.
-func (b *BackendClient) CopyFileRange(ctx context.Context, fhIn FileHandle, offIn uint64, fhOut FileHandle, offOut uint64, length, flags uint64) (uint64, proto.FsError) {
+func (b *BackendClient) CopyFileRange(ctx context.Context, fhIn io.FileHandle, offIn uint64, fhOut io.FileHandle, offOut uint64, length, flags uint64) (uint64, proto.FsError) {
 	src := resolveHandle(fhIn)
 	dst := resolveHandle(fhOut)
 	if src == nil || dst == nil {
@@ -1362,7 +1363,7 @@ func (b *BackendClient) CopyFileRange(ctx context.Context, fhIn FileHandle, offI
 
 // Lseek probes hole geometry on the server fd. Idempotent — retried.
 // The coalescer is drained first so pending writes shape the answer.
-func (b *BackendClient) Lseek(ctx context.Context, fh FileHandle, offset uint64, whence uint32) (uint64, proto.FsError) {
+func (b *BackendClient) Lseek(ctx context.Context, fh io.FileHandle, offset uint64, whence uint32) (uint64, proto.FsError) {
 	h := resolveHandle(fh)
 	if h == nil {
 		return 0, proto.FsError_FS_EBADF
@@ -1399,7 +1400,7 @@ func (b *BackendClient) Lseek(ctx context.Context, fh FileHandle, offset uint64,
 // query is a pure read, idempotent within the session, so a transient error
 // retries; on a session change the fd (and its locks) are gone and retryOp stops
 // — so a missed reply can't leave us reasoning about a phantom lock on a dead fd.
-func (b *BackendClient) GetLk(ctx context.Context, fh FileHandle, owner uint64, lk *FileLock, flags uint32, out *FileLock) proto.FsError {
+func (b *BackendClient) GetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32, out *io.FileLock) proto.FsError {
 	h := resolveHandle(fh)
 	if h == nil {
 		return proto.FsError_FS_EBADF
@@ -1424,7 +1425,7 @@ func (b *BackendClient) GetLk(ctx context.Context, fh FileHandle, owner uint64, 
 		return fdOpStatus(err)
 	}
 	if res.Lk != nil {
-		*out = FileLock{Start: res.Lk.Start, End: res.Lk.End, Typ: res.Lk.Typ, Pid: res.Lk.Pid}
+		*out = io.FileLock{Start: res.Lk.Start, End: res.Lk.End, Typ: res.Lk.Typ, Pid: res.Lk.Pid}
 	}
 	return res.Status
 }
@@ -1433,7 +1434,7 @@ func (b *BackendClient) GetLk(ctx context.Context, fh FileHandle, owner uint64, 
 // re-applying the same (owner, region, type) lock on the same fd within the
 // session is idempotent, so a transient error retries; a session change kills
 // the fd (and any locks it held) and retryOp stops — see GetLk.
-func (b *BackendClient) SetLk(ctx context.Context, fh FileHandle, owner uint64, lk *FileLock, flags uint32) proto.FsError {
+func (b *BackendClient) SetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32) proto.FsError {
 	h := resolveHandle(fh)
 	if h == nil {
 		return proto.FsError_FS_EBADF
@@ -1463,7 +1464,7 @@ func (b *BackendClient) SetLk(ctx context.Context, fh FileHandle, owner uint64, 
 // SetLkw attempts a blocking lock acquisition (fcntl(F_SETLKW)). Not routed
 // through retryOp: the blocking wait must stay cancellable (see the inline note
 // below) rather than be detached and retried.
-func (b *BackendClient) SetLkw(ctx context.Context, fh FileHandle, owner uint64, lk *FileLock, flags uint32) proto.FsError {
+func (b *BackendClient) SetLkw(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32) proto.FsError {
 	h := resolveHandle(fh)
 	if h == nil {
 		return proto.FsError_FS_EBADF
@@ -1592,13 +1593,13 @@ func (h *grpcFileHandle) takeWriteErr() proto.FsError {
 // Unwrap returns the receiver: *grpcFileHandle is the leaf in any
 // FileHandle decorator chain. resolveHandle relies on the self-unwrap
 // invariant to terminate its walk.
-func (h *grpcFileHandle) Unwrap() FileHandle { return h }
+func (h *grpcFileHandle) Unwrap() io.FileHandle { return h }
 
 // resolveHandle walks the FileHandle.Unwrap chain looking for the
 // *grpcFileHandle leaf. Returns nil if no such leaf exists in the chain
 // (the per-fd op then fails fast with EBADF). The walk terminates when
 // a handle returns itself from Unwrap (leaf marker).
-func resolveHandle(fh FileHandle) *grpcFileHandle {
+func resolveHandle(fh io.FileHandle) *grpcFileHandle {
 	cur := fh
 	for cur != nil {
 		if h, ok := cur.(*grpcFileHandle); ok {

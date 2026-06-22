@@ -10,6 +10,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/io/cache/persist"
 	"go.gmountie.dev/gmountie/pkg/client/io/identity"
 	"go.gmountie.dev/gmountie/pkg/client/io/observer"
+	"go.gmountie.dev/gmountie/pkg/client/io/transport"
 	"go.gmountie.dev/gmountie/pkg/client/metrics"
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
@@ -101,14 +102,14 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 
 	params, rewriter := negotiateMountParams(m.client, m.fuse, m.rawIDs, volume)
 
-	backendOpts := []io.BackendOption{
-		io.WithPlusListings(m.cache.Enabled),
-		io.WithXattrListings(m.cache.Enabled),
+	backendOpts := []transport.BackendOption{
+		transport.WithPlusListings(m.cache.Enabled),
+		transport.WithXattrListings(m.cache.Enabled),
 	}
 	if m.cache.Enabled {
-		backendOpts = append(backendOpts, io.WithoutReadahead())
+		backendOpts = append(backendOpts, transport.WithoutReadahead())
 	}
-	transport := io.NewBackendClient(m.client, volume, backendOpts...)
+	transportBackend := transport.NewBackendClient(m.client, volume, backendOpts...)
 
 	var layers []backendLayer
 	if m.cache.Enabled {
@@ -153,7 +154,7 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 		}})
 	}
 
-	backend := composeBackend(transport, layers)
+	backend := composeBackend(transportBackend, layers)
 	m.backends.Store(volume, backend)
 
 	handle, err := establishMount(mountPath, volume, m.client.GetEndpoint(), backend, m.fuse, params.MaxWriteBytes, m.client.MetaTimeout(), params.DefaultPermissions)

@@ -1,4 +1,4 @@
-package io
+package transport
 
 // retry_reconnect_test.go asserts the protective property that streaming
 // Read and Write pass grpc.WaitForReady(true) to their stream-open calls.
