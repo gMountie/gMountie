@@ -113,6 +113,37 @@ spec" trap. They stay in this design (so the writeBatcher slot and the WAL
 position are visible and the now-work doesn't paint them into a corner) and land
 **with the feature that needs them**, perf-gated (#3) against Bencher.
 
+**#3 is specifically NOT a cleanliness win today (it's a mild regression).**
+Verified against the code 2026-06-22:
+
+- The batching *algorithm* is already cleanly extracted — `WriteCoalescer`
+  (`pkg/client/io/coalesce.go`) is a self-contained, internally-locked unit with
+  a tight `Append`/`Drain` surface. The part that benefits from isolation is
+  already isolated; there is no tangled blob to clean up.
+- What's interleaved into `grpcFileHandle` is the *drive* logic, and it is fused
+  with transport concerns **on purpose**:
+  - **`WriteAndFlush` fusion** (`backend_grpc.go:1149`): `Flush` collapses
+    drain-coalescer + flush into a *single* RPC — one RTT instead of two — only
+    because coalescing and flushing are co-located on the transport handle.
+    Lifting the batcher into a layer above the transport splits these into two
+    ops across a boundary and **loses the fusion** unless it is re-plumbed across
+    the seam.
+  - **Optimistic-return + sticky write-back error** (`recordWriteErr`/
+    `takeWriteErr`, `backend_grpc.go:1058`/`:1119`): "ack the write to FUSE, then
+    if the deferred send fails, stick the error so a later Flush/Release surfaces
+    it." That contract lives exactly at the coalesce↔transport boundary.
+  - Plus the `dirty`-flag fast path, `request_id`/idempotency interplay, and
+    `reclaimIfStale`/retry — all transport-specific.
+- So extracting now adds a new inter-layer drain/durability/error contract
+  through the most delicate part of the write path, for **identical behavior**,
+  while risking the one-RTT fusion — more surface, not less. It becomes a genuine
+  cleanliness *and* correctness win only when a **second** write-path layer (the
+  WAL) shares the seam, at which point "two buffers welded in two places" → "one
+  composable write-path slot with a defined contract" pays for itself.
+- (If the motive were ever just to slim the overloaded `grpcFileHandle`,
+  read-path prefetch/readahead is a cleaner first extraction candidate than the
+  transport-fused coalescer.)
+
 **Honest scope of the NOW subset.** #1/#2/#5 + the passthrough base make the stack
 extensible for **observer layers** (metrics, tracing, audit) and fix the
 capability-ordering wart. They do **not** by themselves enable **semantic
