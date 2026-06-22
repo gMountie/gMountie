@@ -124,6 +124,8 @@ func (b *cachedBackend) Close() error {
 		b.data.Close()
 	}
 	if b.persist != nil {
+		// Double-close is intentional and benign: mount.releaseVolume may also close
+		// the same *persist.Persist on teardown; persist.Close is sync.Once-guarded.
 		if err := b.persist.Close(); err != nil {
 			errs = append(errs, err)
 		}

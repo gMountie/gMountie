@@ -2,3 +2,4 @@
 # Pattern ignores per-run dirs without swallowing legitimate source subdirs.
 */meta.db
 */LOCK
+*/chunks/

@@ -154,10 +154,10 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 		}})
 	}
 
-	backend := composeBackend(transportBackend, layers)
-	m.backends.Store(volume, backend)
+	composed := composeBackend(transportBackend, layers)
+	m.backends.Store(volume, composed)
 
-	handle, err := establishMount(mountPath, volume, m.client.GetEndpoint(), backend, m.fuse, params.MaxWriteBytes, m.client.MetaTimeout(), params.DefaultPermissions)
+	handle, err := establishMount(mountPath, volume, m.client.GetEndpoint(), composed, m.fuse, params.MaxWriteBytes, m.client.MetaTimeout(), params.DefaultPermissions)
 	if err != nil {
 		return err
 	}

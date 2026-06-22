@@ -689,7 +689,7 @@ func (s *BackendClientTestSuite) TestSetAttr_WireFattrContract() {
 	s.Assert().Equal(16, fuse.FATTR_ATIME)
 	s.Assert().Equal(32, fuse.FATTR_MTIME)
 
-	// De-fuse parity: the local io.FATTR_* constants the contract now uses MUST
+	// De-fuse parity: the local backend.FATTR_* constants the contract now uses MUST
 	// equal go-fuse's, since SetAttrIn.Valid still travels the wire untranslated.
 	// If a go-fuse bump or an edit to backend.go diverges them, this fails here.
 	s.Assert().Equal(fuse.FATTR_MODE, backend.FATTR_MODE)

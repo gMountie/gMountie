@@ -16,7 +16,7 @@ import (
 // mirror the kernel/go-fuse fuse.FATTR_* values EXACTLY and MUST stay in sync:
 // SetAttrIn.Valid travels over the wire (proto) to the server, which interprets
 // these bits, so changing a value would silently break SetAttr semantics. (Pin
-// guard: backend_grpc_test.go asserts io.FATTR_* == fuse.FATTR_*.) Only the
+// guard: backend_grpc_test.go asserts backend.FATTR_* == fuse.FATTR_*.) Only the
 // bits the codebase sets/masks are defined; kernel-only bits (FH, *_NOW,
 // LOCKOWNER, ...) are deliberately omitted — the adapter strips them.
 const (
