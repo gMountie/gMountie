@@ -188,7 +188,7 @@ jobs:
     # release.extra_files globs expect them (dist-darwin/), so they land in the
     # single signed checksums.txt and the release.
     - name: Download darwin archives
-      uses: actions/download-artifact@v5
+      uses: actions/download-artifact@v8
       with:
         name: darwin-archives
         path: dist-darwin
