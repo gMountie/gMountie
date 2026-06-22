@@ -466,6 +466,53 @@ func (s *SessionManagerTestSuite) TestOpenFilesGaugeDecrementsOnReap() {
 	}, time.Second, 10*time.Millisecond, "reap must decrement the per-volume open-files gauge")
 }
 
+// TestRegisterFileDuringReapNeverLeaks is the regression lock for the
+// RegisterFile-vs-reap race (CQ-H/CQ-M1). A RegisterFile that publishes its
+// entry just as a concurrent reap drains the fd table must not leave an orphaned
+// entry behind (a leaked nodefs.File plus a permanently elevated open-files
+// gauge). The publish-then-recheck in RegisterFile must net every registration:
+// each fd is either drained by ReleaseAll or self-removed on the recheck. We
+// hammer RegisterFile against a reap over many rounds and assert the per-volume
+// gauge nets to zero and no fd entry survives. Run under -race. Against the old
+// check-then-act guard a late Store could survive the drain and this fails.
+func (s *SessionManagerTestSuite) TestRegisterFileDuringReapNeverLeaks() {
+	const rounds, perRound = 200, 40
+	for round := 0; round < rounds; round++ {
+		fm := newFakeSessionMetrics()
+		mgr := NewSessionManager(SessionManagerOptions{Metrics: fm})
+		id, err := mgr.Create("u", "")
+		s.Require().NoError(err)
+		sess, err := mgr.Get(id)
+		s.Require().NoError(err)
+		impl := sess.(*sessionImpl)
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		// Registrar: spam RegisterFile straddling the reap.
+		go func() {
+			defer wg.Done()
+			for i := 0; i < perRound; i++ {
+				sess.RegisterFile("vol", "/p", nodefs.NewDefaultFile())
+			}
+		}()
+		// Reaper: win the claim and drain concurrently (same sequence the manager
+		// uses: set reaped BEFORE draining the fd table).
+		go func() {
+			defer wg.Done()
+			impl.reaped.Store(true)
+			impl.ReleaseAll()
+		}()
+		wg.Wait()
+
+		s.Require().Equalf(0, fm.openFor("vol"),
+			"round %d: open-files gauge must net to zero after the reap race", round)
+		live := 0
+		impl.files.Range(func(uint64, *FileEntry) bool { live++; return true })
+		s.Require().Equalf(0, live, "round %d: no fd entry may survive a reap", round)
+		_ = mgr.Stop(context.Background())
+	}
+}
+
 // TestSessionsReapedCounterByReason: a grace-expiry reap bumps the reaped
 // counter under the "grace_expired" reason so the reap rate is observable per
 // cause (OB-L1).

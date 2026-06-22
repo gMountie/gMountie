@@ -4,6 +4,7 @@ import (
 	"context"
 	"runtime"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -13,10 +14,12 @@ import (
 	"go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/server/io"
 	"go.gmountie.dev/gmountie/pkg/server/principal"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	"github.com/pkg/errors"
 	"github.com/puzpuzpuz/xsync/v3"
+	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -90,6 +93,81 @@ func WithMiddleware(middleware ...io.Middleware) VolumeServiceOptions {
 	}
 }
 
+// VolumeMetrics is the hook for the volume layer to report authorization and
+// identity-resolution denials. *metrics.Metrics satisfies it; the service keeps
+// its own narrow interface (like SessionMetrics) so it stays decoupled from the
+// metrics package and tests can inject a stub.
+type VolumeMetrics interface {
+	AuthzDenialInc(volume, reason string)
+	IdentityResolveFailureInc(volume, mode, reason string)
+	// ConfinementDenialInc is forwarded to the confined loopback FS this service
+	// builds per volume (path-escape rejections), so one sink covers the volume
+	// layer's auth/identity denials and the FS's confinement denials.
+	ConfinementDenialInc(volume, op string)
+}
+
+type noopVolumeMetrics struct{}
+
+func (noopVolumeMetrics) AuthzDenialInc(string, string)                    {}
+func (noopVolumeMetrics) IdentityResolveFailureInc(string, string, string) {}
+func (noopVolumeMetrics) ConfinementDenialInc(string, string)              {}
+
+// WithMetrics injects the per-volume denial metrics sink. A nil sink is
+// tolerated (falls back to noop) so callers needn't nil-guard.
+func WithMetrics(m VolumeMetrics) VolumeServiceOptions {
+	return func(s *VolumeServiceImpl) {
+		if m != nil {
+			s.metrics = m
+		}
+	}
+}
+
+// volumeWarnInterval bounds the per-reason denial Warn rate (mirrors the auth
+// interceptor's throttle): at most one log per reason per interval.
+const volumeWarnInterval = 10 * time.Second
+
+// shouldWarn reports whether a denial Warn for reason is due now, recording the
+// time if so. Lock-free on the recently-logged path; a CAS guards the window.
+func (s *VolumeServiceImpl) shouldWarn(reason string) bool {
+	now := time.Now().UnixNano()
+	v, _ := s.warnLast.LoadOrStore(reason, new(atomic.Int64))
+	last, _ := v.(*atomic.Int64)
+	prev := last.Load()
+	if now-prev < int64(volumeWarnInterval) && prev != 0 {
+		return false
+	}
+	return last.CompareAndSwap(prev, now)
+}
+
+// denyAuthz records a per-volume authorization denial: it ALWAYS bumps the
+// counter (per volume+reason) and emits a THROTTLED Warn so the denial is
+// observable without giving a probing client an unbounded log faucet.
+func (s *VolumeServiceImpl) denyAuthz(volume, reason, principalName string) {
+	s.metrics.AuthzDenialInc(volume, reason)
+	if !s.shouldWarn("authz:" + reason) {
+		return
+	}
+	log.Log.Warn("volume access denied",
+		zap.String("volume", volume),
+		zap.String("reason", reason),
+		zap.String("principal", principalName))
+}
+
+// recordIdentityResolveFailure records an identity-mapping resolution failure
+// (system/static modes): always bumps the counter (per volume+mode); the
+// throttled Warn carries the underlying error. The reason label is FIXED (never
+// the raw error text) to keep Prometheus cardinality bounded.
+func (s *VolumeServiceImpl) recordIdentityResolveFailure(volume, mode string, err error) {
+	s.metrics.IdentityResolveFailureInc(volume, mode, "resolve_failed")
+	if !s.shouldWarn("identity:" + volume + ":" + mode) {
+		return
+	}
+	log.Log.Warn("identity resolution failed for mapped volume",
+		zap.String("volume", volume),
+		zap.String("mode", mode),
+		zap.Error(err))
+}
+
 // volumeEntry consolidates all per-volume state, eliminating the partial-write
 // hazard from maintaining multiple parallel maps.
 type volumeEntry struct {
@@ -121,6 +199,17 @@ type VolumeServiceImpl struct {
 	// holds a reference to the TTL-cached resolver and resolves identity fresh on
 	// every op — staleness is bounded by the resolver's own TTL.
 	boundFSCache *xsync.MapOf[boundFSCacheKey, pathfs.FileSystem]
+
+	// metrics records per-volume authorization and identity-resolution denials.
+	// Never nil — defaults to a noop sink so tests and metrics-disabled servers
+	// are unaffected. These denials run AFTER the gRPC AuthInterceptor's auth
+	// gate, so without this they fold into the generic rpc_errors_total alongside
+	// filesystem EACCES and are invisible as a distinct authz/identity signal.
+	metrics VolumeMetrics
+	// warnLast throttles the per-reason denial Warn (reason -> *atomic.Int64
+	// last-log unix-nanos); the counter is never throttled. Mirrors the auth
+	// interceptor so an unauthorized/probing client can't drive a log faucet.
+	warnLast sync.Map
 }
 
 // NewVolumeService creates a new VolumeService.
@@ -130,13 +219,14 @@ func NewVolumeService(cfg *config.Config, options ...VolumeServiceOptions) (Volu
 		volumes:      make(map[string]*volumeEntry),
 		middleware:   make([]io.Middleware, 0),
 		boundFSCache: xsync.NewMapOf[boundFSCacheKey, pathfs.FileSystem](),
+		metrics:      noopVolumeMetrics{},
 	}
 	for _, option := range options {
 		option(svc)
 	}
 	svc.acl.Store(buildACLSnapshot(cfg))
 	for _, v := range cfg.Volumes {
-		localFS, err := io.NewLocalFilesystem(v.Path)
+		localFS, err := io.NewLocalFilesystem(v.Path, io.WithConfinementMetrics(v.Name, svc.metrics))
 		if err != nil {
 			return nil, errors.Wrapf(err, "open volume %q", v.Name)
 		}
@@ -191,6 +281,8 @@ func (s *VolumeServiceImpl) PrincipalCanAccess(ctx context.Context, volume strin
 	// revocation, and fresh short-lived certs take effect immediately.
 	if scopes, scoped := VerifiedCertVolumeScopes(ctx); scoped &&
 		!slices.Contains(scopes, volume) && !slices.Contains(scopes, "*") {
+		p, _ := principal.FromContext(ctx)
+		s.denyAuthz(volume, "cert_scope_denied", p)
 		return status.Errorf(codes.PermissionDenied,
 			"client certificate is not scoped to volume %q", volume)
 	}
@@ -201,17 +293,20 @@ func (s *VolumeServiceImpl) PrincipalCanAccess(ctx context.Context, volume strin
 	}
 	p, ok := principal.FromContext(ctx)
 	if !ok || p == "" {
+		s.denyAuthz(volume, "no_principal", "")
 		return status.Errorf(codes.PermissionDenied, "no authenticated principal for volume %q", volume)
 	}
 	if set, hasList := snap.byPrincipal[p]; hasList {
 		if _, allowed := set[volume]; allowed {
 			return nil
 		}
+		s.denyAuthz(volume, "acl_denied", p)
 		return status.Errorf(codes.PermissionDenied, "principal %q is not granted volume %q", p, volume)
 	}
 	if snap.defaultAllow {
 		return nil
 	}
+	s.denyAuthz(volume, "acl_denied", p)
 	return status.Errorf(codes.PermissionDenied, "principal %q has no volume grants (default_allow=false)", p)
 }
 
@@ -264,6 +359,11 @@ func (s *VolumeServiceImpl) BindIdentity(ctx context.Context, volume string, cal
 	}
 	id, err := s.resolveIdentity(ctx, volume, caller)
 	if err != nil {
+		// Enforceable (root) path: a resolve failure here actually denies the
+		// request, unlike the best-effort resolve in the non-enforceable branch
+		// above. Record it so a getent/id outage that silently denies every
+		// mapped user is visible.
+		s.recordIdentityResolveFailure(volume, string(entry.mapping.Mode), err)
 		return nil, Identity{}, err
 	}
 

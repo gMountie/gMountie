@@ -38,6 +38,23 @@ type Metrics struct {
 	SubscribeEventsEmitted *prometheus.CounterVec
 	SubscribeSubscribers   *prometheus.GaugeVec
 	SubscribeDroppedSlow   *prometheus.CounterVec
+
+	// ConfinementDenials counts openat2 RESOLVE_BENEATH boundary rejections
+	// (a wire path that tried to escape the volume root via .. or an out-of-tree
+	// symlink), per volume and op. These map to a plain EACCES on the wire, so
+	// without this counter a path-traversal probe is indistinguishable from an
+	// ordinary permission denial and leaves no trace (OB-H confinement).
+	ConfinementDenials *prometheus.CounterVec
+	// AuthzDenials counts per-volume authorization rejections that happen AFTER
+	// transport auth — ACL deny, cert-scope deny, missing principal — per volume
+	// and reason. The AuthFailures counter only covers the gRPC AuthInterceptor;
+	// these denials run later in VolumeService and would otherwise fold into the
+	// generic rpc_errors_total{code=PermissionDenied} alongside filesystem EACCES.
+	AuthzDenials *prometheus.CounterVec
+	// IdentityResolveFailures counts per-volume identity-mapping resolution
+	// failures (system/static modes) per volume, mode, and reason. A getent/id
+	// outage silently denies every mapped user without this signal.
+	IdentityResolveFailures *prometheus.CounterVec
 }
 
 // NewMetrics constructs the set of server collectors. They are NOT
@@ -97,6 +114,18 @@ func NewMetrics() *Metrics {
 			Name: "gmountie_subscribe_dropped_slow_total",
 			Help: "Subscribe events dropped due to slow consumers per volume.",
 		}, []string{"volume"}),
+		ConfinementDenials: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gmountie_server_confinement_denials_total",
+			Help: "Count of RESOLVE_BENEATH confinement-boundary rejections (path-escape attempts), per volume and op.",
+		}, []string{"volume", "op"}),
+		AuthzDenials: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gmountie_server_authz_denials_total",
+			Help: "Count of per-volume authorization denials after transport auth, per volume and reason (acl_denied, cert_scope_denied, no_principal).",
+		}, []string{"volume", "reason"}),
+		IdentityResolveFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gmountie_server_identity_resolve_failures_total",
+			Help: "Count of identity-mapping resolution failures, per volume, mode, and reason.",
+		}, []string{"volume", "mode", "reason"}),
 	}
 }
 
@@ -106,6 +135,7 @@ func (m *Metrics) MustRegister(r prometheus.Registerer) {
 		m.OpenFiles, m.Bytes, m.RpcErrors, m.RequestDuration, m.SessionsActive,
 		m.SessionsReaped, m.AuthFailures, m.TLSReloadFailures, m.TLSLastReloadUnixtime,
 		m.SubscribeEventsEmitted, m.SubscribeSubscribers, m.SubscribeDroppedSlow,
+		m.ConfinementDenials, m.AuthzDenials, m.IdentityResolveFailures,
 	)
 }
 
@@ -117,6 +147,7 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 		m.OpenFiles, m.Bytes, m.RpcErrors, m.RequestDuration, m.SessionsActive,
 		m.SessionsReaped, m.AuthFailures, m.TLSReloadFailures, m.TLSLastReloadUnixtime,
 		m.SubscribeEventsEmitted, m.SubscribeSubscribers, m.SubscribeDroppedSlow,
+		m.ConfinementDenials, m.AuthzDenials, m.IdentityResolveFailures,
 	}
 	for _, c := range all {
 		if err := r.Register(c); err != nil {
@@ -149,6 +180,12 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 					m.SessionsReaped = existing
 				case prometheus.Collector(m.AuthFailures):
 					m.AuthFailures = existing
+				case prometheus.Collector(m.ConfinementDenials):
+					m.ConfinementDenials = existing
+				case prometheus.Collector(m.AuthzDenials):
+					m.AuthzDenials = existing
+				case prometheus.Collector(m.IdentityResolveFailures):
+					m.IdentityResolveFailures = existing
 				}
 			case *prometheus.HistogramVec:
 				m.RequestDuration = existing
@@ -237,4 +274,22 @@ func (m *Metrics) SubscribeSubscribersDec(volume string) {
 // SubscribeDroppedSlowInc bumps the dropped-slow counter for volume.
 func (m *Metrics) SubscribeDroppedSlowInc(volume string) {
 	m.SubscribeDroppedSlow.WithLabelValues(volume).Inc()
+}
+
+// ConfinementDenialInc bumps the confinement-denial counter for the given
+// volume and op (a RESOLVE_BENEATH path-escape rejection).
+func (m *Metrics) ConfinementDenialInc(volume, op string) {
+	m.ConfinementDenials.WithLabelValues(volume, op).Inc()
+}
+
+// AuthzDenialInc bumps the per-volume authorization-denial counter for the given
+// volume and reason (acl_denied, cert_scope_denied, no_principal).
+func (m *Metrics) AuthzDenialInc(volume, reason string) {
+	m.AuthzDenials.WithLabelValues(volume, reason).Inc()
+}
+
+// IdentityResolveFailureInc bumps the identity-resolution-failure counter for
+// the given volume, mapping mode, and reason.
+func (m *Metrics) IdentityResolveFailureInc(volume, mode, reason string) {
+	m.IdentityResolveFailures.WithLabelValues(volume, mode, reason).Inc()
 }

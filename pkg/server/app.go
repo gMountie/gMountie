@@ -63,7 +63,7 @@ func NewServerAppContext(cfg *config.Config) (*AppContext, error) {
 	}
 
 	warnIfIdentityEnforcementUnprivileged()
-	volumeService, err := service.NewVolumeService(cfg)
+	volumeService, err := service.NewVolumeService(cfg, service.WithMetrics(m))
 	if err != nil {
 		return nil, errors.Wrap(err, "build volume service")
 	}
