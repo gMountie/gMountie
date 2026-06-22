@@ -176,22 +176,37 @@ func newDataCacheWithChunkPersist(acct *accountant, chunkSizeBytes int, p chunkP
 	// undoes a write whose generation has since advanced. This closes the
 	// async-persist stale-read race: a deferred persist can no longer land a
 	// chunk on disk after its invalidation already ran.
+	// gens maps path -> *atomic.Uint64 generation counter. globalGen is a
+	// process-wide monotonic source: a bump stamps the path's counter with the
+	// next global value rather than a per-path +1, so generations are strictly
+	// increasing across the whole cache. That is what makes PRUNING a path's
+	// entry sound (the cleaners delete it to bound the map, see persistCleaner):
+	// a counter re-created after a delete is seeded from the current high-water
+	// (globalGen.Load()), so it can never alias a generation an in-flight
+	// persistJob captured before the delete. onPersist compares generations by
+	// EQUALITY only, and a re-created counter can equal an old job.gen ONLY when
+	// no bump occurred between that job's enqueue and its persist — exactly when
+	// writing through is correct. Any intervening invalidation advanced globalGen
+	// strictly past the job's value, so the reseed mismatches and the stale write
+	// is dropped (served from memory — safe). A stale chunk can therefore never be
+	// resurrected on disk (the #141 invariant) even though the map is now pruned.
 	var (
-		genMu sync.Mutex
-		gens  = map[string]*atomic.Uint64{} // path -> generation counter
+		gens      sync.Map // path -> *atomic.Uint64, lock-free on the read hot path
+		globalGen atomic.Uint64
 	)
 	genCounter := func(path string) *atomic.Uint64 {
-		genMu.Lock()
-		defer genMu.Unlock()
-		c := gens[path]
-		if c == nil {
-			c = new(atomic.Uint64)
-			gens[path] = c
+		if v, ok := gens.Load(path); ok { // hot path: no allocation, no lock
+			return v.(*atomic.Uint64)
 		}
-		return c
+		// First touch (or first after a prune): seed from the high-water so a
+		// re-created entry cannot collide with a pre-delete in-flight job's gen.
+		seed := new(atomic.Uint64)
+		seed.Store(globalGen.Load())
+		actual, _ := gens.LoadOrStore(path, seed) // concurrent first-touchers converge
+		return actual.(*atomic.Uint64)
 	}
 	curGen := func(path string) uint64 { return genCounter(path).Load() }
-	bumpGen := func(path string) { genCounter(path).Add(1) }
+	bumpGen := func(path string) { genCounter(path).Store(globalGen.Add(1)) }
 	loader := func(key string) (any, int, bool) {
 		path, idx, ok := parseChunkKey(key)
 		if !ok {
@@ -294,6 +309,13 @@ func newDataCacheWithChunkPersist(acct *accountant, chunkSizeBytes int, p chunkP
 			return
 		}
 		poisoned.Delete(path)
+		// Prune the path's generation entry now that its whole disk tier is
+		// cleared: this bounds the gens map to live paths instead of leaking one
+		// entry per path ever written. Sound because the bumpGen above already
+		// advanced globalGen past any in-flight job's captured gen, so a later
+		// re-create seeds high and those jobs still drop. Success path only —
+		// a poisoned path keeps its counter (the error branch returned above).
+		gens.Delete(path)
 	}
 	c.persistRangeCleaner = func(path string, firstIdx, lastIdx int) {
 		// Advance the generation BEFORE clearing disk (see persistCleaner).
