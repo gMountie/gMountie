@@ -769,8 +769,11 @@ func (s *CachedBackendTestSuite) TestAccessInvalidatedOnSetAttr() {
 func (s *CachedBackendTestSuite) TestFlushDoesNotInvalidate() {
 	s.b.attr.putPositive("/f", &io.Attr{Ino: 1})
 	s.b.data.put("/f", 0, []byte("DATA"))
-	h, innerH := s.openCachedHandle("/f")
-	s.inner.EXPECT().Flush(mock.Anything, innerH).Return(proto.FsError_FS_OK).Once()
+	// Flush forwards via the embedded PassthroughBackend, which passes the
+	// WRAPPED *cachedHandle straight through (a real inner unwraps via
+	// resolveHandle; the mock does not), so expect h, not the unwrapped handle.
+	h, _ := s.openCachedHandle("/f")
+	s.inner.EXPECT().Flush(mock.Anything, h).Return(proto.FsError_FS_OK).Once()
 	st := s.b.Flush(context.Background(), h)
 	s.Require().Equal(proto.FsError_FS_OK, st)
 	_, hit, _ := s.b.attr.get("/f")
@@ -781,8 +784,10 @@ func (s *CachedBackendTestSuite) TestFlushDoesNotInvalidate() {
 func (s *CachedBackendTestSuite) TestFsyncDoesNotInvalidate() {
 	s.b.attr.putPositive("/f", &io.Attr{Ino: 1})
 	s.b.data.put("/f", 0, []byte("DATA"))
-	h, innerH := s.openCachedHandle("/f")
-	s.inner.EXPECT().Fsync(mock.Anything, innerH, int64(0)).Return(proto.FsError_FS_OK).Once()
+	// Fsync forwards via PassthroughBackend (wrapped handle straight through);
+	// see TestFlushDoesNotInvalidate.
+	h, _ := s.openCachedHandle("/f")
+	s.inner.EXPECT().Fsync(mock.Anything, h, int64(0)).Return(proto.FsError_FS_OK).Once()
 	st := s.b.Fsync(context.Background(), h, 0)
 	s.Require().Equal(proto.FsError_FS_OK, st)
 	_, hit, _ := s.b.attr.get("/f")
@@ -793,15 +798,17 @@ func (s *CachedBackendTestSuite) TestFsyncDoesNotInvalidate() {
 func (s *CachedBackendTestSuite) TestLockOpsPassthroughNoCacheMutations() {
 	s.b.attr.putPositive("/f", &io.Attr{Ino: 1})
 	s.b.data.put("/f", 0, []byte("DATA"))
-	h, innerH := s.openCachedHandle("/f")
+	h, _ := s.openCachedHandle("/f")
 	lk := &io.FileLock{}
 	out := &io.FileLock{}
-	// All three lock ops should pass through with the unwrapped handle.
-	s.inner.EXPECT().GetLk(mock.Anything, innerH, uint64(1), lk, uint32(0), out).
+	// All three lock ops forward via the embedded PassthroughBackend, which
+	// passes the WRAPPED *cachedHandle straight through (a real inner unwraps via
+	// resolveHandle; the mock does not), so expect h, not the unwrapped handle.
+	s.inner.EXPECT().GetLk(mock.Anything, h, uint64(1), lk, uint32(0), out).
 		Return(proto.FsError_FS_OK).Once()
-	s.inner.EXPECT().SetLk(mock.Anything, innerH, uint64(1), lk, uint32(0)).
+	s.inner.EXPECT().SetLk(mock.Anything, h, uint64(1), lk, uint32(0)).
 		Return(proto.FsError_FS_OK).Once()
-	s.inner.EXPECT().SetLkw(mock.Anything, innerH, uint64(1), lk, uint32(0)).
+	s.inner.EXPECT().SetLkw(mock.Anything, h, uint64(1), lk, uint32(0)).
 		Return(proto.FsError_FS_OK).Once()
 	s.Require().Equal(proto.FsError_FS_OK, s.b.GetLk(context.Background(), h, 1, lk, 0, out))
 	s.Require().Equal(proto.FsError_FS_OK, s.b.SetLk(context.Background(), h, 1, lk, 0))
@@ -951,9 +958,14 @@ func (s *CachedBackendTestSuite) TestCopyFileRangeInvalidatesDestination() {
 
 // Lseek and the xattr trio are pure pass-throughs — one delegation test
 // each keeps the interface honest without over-testing.
+//
+// Lseek now forwards via the embedded io.PassthroughBackend, which passes the
+// WRAPPED *cachedHandle straight through (it does not unwrap). A real inner
+// backend's resolveHandle walks FileHandle.Unwrap() to reach the leaf; the mock
+// inner does not, so the expectation matches the wrapped handle h, not innerH.
 func (s *CachedBackendTestSuite) TestLseekAndXattrPassThrough() {
-	h, innerH := s.openCachedHandle("/f")
-	s.inner.EXPECT().Lseek(mock.Anything, innerH, uint64(5), uint32(3)).Return(uint64(9), proto.FsError_FS_OK).Once()
+	h, _ := s.openCachedHandle("/f")
+	s.inner.EXPECT().Lseek(mock.Anything, h, uint64(5), uint32(3)).Return(uint64(9), proto.FsError_FS_OK).Once()
 	off, st := s.b.Lseek(context.Background(), h, 5, 3)
 	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Equal(uint64(9), off)

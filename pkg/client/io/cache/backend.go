@@ -20,8 +20,17 @@ import (
 // cachedBackend decorates an inner FileSystemBackend with three
 // sub-caches sharing one accountant. Construct via NewCachedBackend;
 // implements io.FileSystemBackend.
+//
+// It embeds io.PassthroughBackend (which holds the Inner backend and forwards
+// every op) and overrides the read-through, invalidating, handle-wrapping, and
+// lifecycle ops below. The pure unwrap-forward handle ops (Flush/Fsync/locks/
+// Lseek) and the non-cached forwards (GetAttrIfChanged/Readlink) ride the
+// embedded passthrough: both resolveHandle impls (memfs + gRPC) walk
+// FileHandle.Unwrap(), so forwarding a wrapped *cachedHandle reaches the same
+// leaf the old explicit unwrapHandle(fh) reached. A future interface method is
+// caught by io.TestFileSystemBackendMethodSet, which forces a per-layer review.
 type cachedBackend struct {
-	inner      io.FileSystemBackend
+	io.PassthroughBackend
 	cfg        Config
 	acct       *accountant
 	attr       *attrCache
@@ -67,19 +76,19 @@ func NewCachedBackend(inner io.FileSystemBackend, cfg Config, p *persist.Persist
 	}
 	acct := newAccountant(cfg.MemoryMaxBytes, deriveMaxEntries(cfg.MemoryMaxBytes))
 	b := &cachedBackend{
-		inner:    inner,
-		cfg:      cfg,
-		acct:     acct,
-		attr:     newAttrCacheWithPersist(acct, cfg.AttrTTL, cfg.NegativeTTL, nil, p, rec),
-		dir:      newDirCacheWithPersist(acct, cfg.DirTTL, nil, p, rec),
-		data:     newDataCacheWithPersist(acct, cfg.ChunkSizeBytes, p, rec),
-		xattr:    newXAttrCache(acct, cfg.XAttrTTL, nil, rec),
-		getxattr: newGetXAttrCache(cfg.XAttrTTL, nil),
-		statfs:   newStatfsCache(cfg.StatFsTTL, nil),
-		access:   newAccessCache(cfg.AttrTTL, nil),
-		validity: newValidityTracker(),
-		persist:  p,
-		rec:      rec,
+		PassthroughBackend: io.PassthroughBackend{Inner: inner},
+		cfg:                cfg,
+		acct:               acct,
+		attr:               newAttrCacheWithPersist(acct, cfg.AttrTTL, cfg.NegativeTTL, nil, p, rec),
+		dir:                newDirCacheWithPersist(acct, cfg.DirTTL, nil, p, rec),
+		data:               newDataCacheWithPersist(acct, cfg.ChunkSizeBytes, p, rec),
+		xattr:              newXAttrCache(acct, cfg.XAttrTTL, nil, rec),
+		getxattr:           newGetXAttrCache(cfg.XAttrTTL, nil),
+		statfs:             newStatfsCache(cfg.StatFsTTL, nil),
+		access:             newAccessCache(cfg.AttrTTL, nil),
+		validity:           newValidityTracker(),
+		persist:            p,
+		rec:                rec,
 	}
 	if !cfg.SubscribeEnabled {
 		// Subscribe disabled: freshness is TTL-driven only. Mark the
@@ -119,7 +128,7 @@ func (b *cachedBackend) Close() error {
 			errs = append(errs, err)
 		}
 	}
-	if err := b.inner.Close(); err != nil {
+	if err := b.Inner.Close(); err != nil {
 		errs = append(errs, err)
 	}
 	if len(errs) > 0 {
@@ -179,7 +188,7 @@ func (b *cachedBackend) revalidate(ctx context.Context, path string, cachedVersi
 	// non-authoritative — closing the CQ-M2 lost-update where a prior-epoch
 	// stamp leaked into the new epoch and served stale attrs.
 	epoch := b.validity.currentEpoch()
-	attrs, notMod, st := b.inner.GetAttrIfChanged(ctx, path, cachedVersion)
+	attrs, notMod, st := b.Inner.GetAttrIfChanged(ctx, path, cachedVersion)
 	if st != proto.FsError_FS_OK && st != proto.FsError_FS_ENOENT {
 		b.rec.CacheRevalidationInc("error")
 		return revalidateResult{fallback: true}
@@ -204,12 +213,10 @@ func (b *cachedBackend) revalidate(ctx context.Context, path string, cachedVersi
 
 // --- Read path ---
 
-// GetAttrIfChanged passes through to inner; cachedBackend does not
-// intercept this call — it is the mechanism by which higher-level Stat
-// gating works, not a cacheable operation itself.
-func (b *cachedBackend) GetAttrIfChanged(ctx context.Context, p string, knownVersion uint64) (*io.Attr, bool, proto.FsError) {
-	return b.inner.GetAttrIfChanged(ctx, p, knownVersion)
-}
+// GetAttrIfChanged is NOT overridden: it forwards to Inner via the embedded
+// PassthroughBackend. It is the mechanism the gating logic in Stat/Lookup/
+// ListDir/Read drives (via b.Inner.GetAttrIfChanged in revalidate), not a
+// cacheable operation itself, so a bare forward is correct.
 
 // cachedAttrLookup is the shared attr-cache read path behind Stat and Lookup.
 // Both are byte-identical apart from the cache key and the miss/fallback fetch,
@@ -265,7 +272,7 @@ func (b *cachedBackend) Stat(ctx context.Context, p string) (*io.Attr, proto.FsE
 // statFromInner fetches attrs from inner and populates the attr cache.
 func (b *cachedBackend) statFromInner(ctx context.Context, p string) (*io.Attr, proto.FsError) {
 	b.rec.CacheMissInc("attr")
-	a, st := b.inner.Stat(ctx, p)
+	a, st := b.Inner.Stat(ctx, p)
 	if st == proto.FsError_FS_OK && a != nil {
 		b.attr.putPositive(p, a)
 	} else if st == proto.FsError_FS_ENOENT {
@@ -284,7 +291,7 @@ func (b *cachedBackend) Lookup(ctx context.Context, parent, name string) (*io.At
 // lookupFromInner fetches from inner and populates the attr cache.
 func (b *cachedBackend) lookupFromInner(ctx context.Context, parent, name, full string) (*io.Attr, proto.FsError) {
 	b.rec.CacheMissInc("attr")
-	a, st := b.inner.Lookup(ctx, parent, name)
+	a, st := b.Inner.Lookup(ctx, parent, name)
 	if st == proto.FsError_FS_OK && a != nil {
 		b.attr.putPositive(full, a)
 	} else if st == proto.FsError_FS_ENOENT {
@@ -335,7 +342,7 @@ func (b *cachedBackend) ListDir(ctx context.Context, p string) ([]io.DirEntryPlu
 // entries, and populates the dir cache.
 func (b *cachedBackend) listDirFromInner(ctx context.Context, p string) ([]io.DirEntryPlus, proto.FsError) {
 	b.rec.CacheMissInc("dir")
-	entries, st := b.inner.ListDir(ctx, p)
+	entries, st := b.Inner.ListDir(ctx, p)
 	if st == proto.FsError_FS_OK {
 		// Prime the attr cache (standard positive TTL, same as Stat) from each
 		// entry that carries attrs — this is the READDIRPLUS win: the kernel's
@@ -392,7 +399,7 @@ const (
 func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, dest []byte) (int, proto.FsError) {
 	ch, ok := fh.(*cachedHandle)
 	if !ok {
-		return b.inner.Read(ctx, fh, off, dest)
+		return b.Inner.Read(ctx, fh, off, dest)
 	}
 	// Gate data reads on validity: if unverified, revalidate the file's attr
 	// first. A version change invalidates data chunks so the miss path below
@@ -479,7 +486,7 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 		// is dropped (or undone) rather than resurrecting stale bytes on disk.
 		spanGen := b.data.currentGen(ch.path)
 		buf := make([]byte, spanChunks*int(chunkSize))
-		n, st := b.inner.Read(ctx, ch.inner, chunkStart, buf)
+		n, st := b.Inner.Read(ctx, ch.inner, chunkStart, buf)
 		if st != proto.FsError_FS_OK {
 			if finishSpan != nil {
 				finishSpan()
@@ -539,7 +546,7 @@ func (b *cachedBackend) Access(ctx context.Context, p string, mode uint32) proto
 	if st, ok := b.access.get(p, mode); ok {
 		return st
 	}
-	st := b.inner.Access(ctx, p, mode)
+	st := b.Inner.Access(ctx, p, mode)
 	// Cache only stable access decisions; transient errors (EIO, timeouts, etc.)
 	// must re-evaluate. The cache is invalidated on any perm/existence change.
 	switch st {
@@ -549,12 +556,10 @@ func (b *cachedBackend) Access(ctx context.Context, p string, mode uint32) proto
 	return st
 }
 
-// Readlink is a pass-through. The link target is content of the link inode,
-// not the inode's attrs — it's small (PATH_MAX) and rarely re-read, so we
-// don't add a target cache yet.
-func (b *cachedBackend) Readlink(ctx context.Context, p string) (string, proto.FsError) {
-	return b.inner.Readlink(ctx, p)
-}
+// Readlink is NOT overridden: it forwards to Inner via the embedded
+// PassthroughBackend. The link target is content of the link inode, not the
+// inode's attrs — it's small (PATH_MAX) and rarely re-read, so we don't add a
+// target cache yet.
 
 // Symlink creates a new dirent (the link). Invalidates the parent dir +
 // attr caches like Mkdir, and drops any negative-cached entry for the new
@@ -562,7 +567,7 @@ func (b *cachedBackend) Readlink(ctx context.Context, p string) (string, proto.F
 // immediate Lookup on the new link is a cache hit; nil attrs (server stat
 // failed) leave the entry invalidated so the next Stat refetches.
 func (b *cachedBackend) Symlink(ctx context.Context, target, linkPath string) (*io.Attr, proto.FsError) {
-	a, st := b.inner.Symlink(ctx, target, linkPath)
+	a, st := b.Inner.Symlink(ctx, target, linkPath)
 	if st != proto.FsError_FS_OK {
 		return nil, st
 	}
@@ -581,7 +586,7 @@ func (b *cachedBackend) StatFs(ctx context.Context, p string) (*io.StatFs, proto
 	if v, ok := b.statfs.get(p); ok {
 		return v, proto.FsError_FS_OK
 	}
-	v, st := b.inner.StatFs(ctx, p)
+	v, st := b.Inner.StatFs(ctx, p)
 	if st == proto.FsError_FS_OK {
 		b.statfs.put(p, v)
 	}
@@ -599,7 +604,7 @@ func (b *cachedBackend) GetXAttr(ctx context.Context, p, attr string) ([]byte, p
 	if data, st, ok := b.getxattr.get(p, attr); ok {
 		return data, st
 	}
-	data, st := b.inner.GetXAttr(ctx, p, attr)
+	data, st := b.Inner.GetXAttr(ctx, p, attr)
 	switch st {
 	case proto.FsError_FS_OK, proto.FsError_FS_ENO_XATTR, proto.FsError_FS_ENOTSUP, proto.FsError_FS_ENOSYS:
 		b.getxattr.put(p, attr, data, st)
@@ -611,7 +616,7 @@ func (b *cachedBackend) GetXAttr(ctx context.Context, p, attr string) ([]byte, p
 // per-attr value cache, and the attr entry: an xattr write bumps the inode
 // ctime, so the cached attr version is now stale too.
 func (b *cachedBackend) SetXAttr(ctx context.Context, p, attr string, data []byte, flags uint32) proto.FsError {
-	st := b.inner.SetXAttr(ctx, p, attr, data, flags)
+	st := b.Inner.SetXAttr(ctx, p, attr, data, flags)
 	if st == proto.FsError_FS_OK {
 		b.xattr.invalidate(p)
 		b.getxattr.invalidate(p)
@@ -622,7 +627,7 @@ func (b *cachedBackend) SetXAttr(ctx context.Context, p, attr string, data []byt
 
 // RemoveXAttr deletes an extended attribute; same invalidation as SetXAttr.
 func (b *cachedBackend) RemoveXAttr(ctx context.Context, p, attr string) proto.FsError {
-	st := b.inner.RemoveXAttr(ctx, p, attr)
+	st := b.Inner.RemoveXAttr(ctx, p, attr)
 	if st == proto.FsError_FS_OK {
 		b.xattr.invalidate(p)
 		b.getxattr.invalidate(p)
@@ -638,21 +643,22 @@ func (b *cachedBackend) ListXAttr(ctx context.Context, p string) ([]string, prot
 	if names, hit := b.xattr.get(p); hit {
 		return names, proto.FsError_FS_OK
 	}
-	names, st := b.inner.ListXAttr(ctx, p)
+	names, st := b.Inner.ListXAttr(ctx, p)
 	if st == proto.FsError_FS_OK {
 		b.xattr.put(p, names)
 	}
 	return names, st
 }
 
-func (b *cachedBackend) GetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32, out *io.FileLock) proto.FsError {
-	return b.inner.GetLk(ctx, unwrapHandle(fh), owner, lk, flags, out)
-}
+// GetLk/SetLk/SetLkw are NOT overridden: they forward to Inner via the embedded
+// PassthroughBackend. The cache holds no lock state, and forwarding the wrapped
+// *cachedHandle reaches the leaf because Inner's resolveHandle walks
+// FileHandle.Unwrap() (same leaf the old explicit unwrapHandle reached).
 
 // --- Open / Create / file-handle ops ---
 
 func (b *cachedBackend) Open(ctx context.Context, p string, flags uint32) (io.FileHandle, proto.FsError) {
-	h, st := b.inner.Open(ctx, p, flags)
+	h, st := b.Inner.Open(ctx, p, flags)
 	if st != proto.FsError_FS_OK {
 		return nil, st
 	}
@@ -661,7 +667,7 @@ func (b *cachedBackend) Open(ctx context.Context, p string, flags uint32) (io.Fi
 
 func (b *cachedBackend) Create(ctx context.Context, parent, name string, flags, mode uint32) (io.FileHandle, *io.Attr, proto.FsError) {
 	full := joinPath(parent, name)
-	h, a, st := b.inner.Create(ctx, parent, name, flags, mode)
+	h, a, st := b.Inner.Create(ctx, parent, name, flags, mode)
 	if st != proto.FsError_FS_OK {
 		return nil, nil, st
 	}
@@ -686,7 +692,7 @@ func (b *cachedBackend) Create(ctx context.Context, parent, name string, flags, 
 }
 
 func (b *cachedBackend) Write(ctx context.Context, fh io.FileHandle, off int64, data []byte) (uint32, proto.FsError) {
-	n, st := b.inner.Write(ctx, unwrapHandle(fh), off, data)
+	n, st := b.Inner.Write(ctx, unwrapHandle(fh), off, data)
 	if st != proto.FsError_FS_OK {
 		return n, st
 	}
@@ -715,19 +721,16 @@ func (b *cachedBackend) Release(ctx context.Context, fh io.FileHandle) proto.FsE
 	// (full GetAttr, not revalidation) and served stale data chunks that the
 	// revalidation path would have invalidated (regression in e2e
 	// TestRestartRevalidatesAfterMutation).
-	return b.inner.Release(ctx, unwrapHandle(fh))
+	return b.Inner.Release(ctx, unwrapHandle(fh))
 }
 
-func (b *cachedBackend) Flush(ctx context.Context, fh io.FileHandle) proto.FsError {
-	return b.inner.Flush(ctx, unwrapHandle(fh))
-}
-
-func (b *cachedBackend) Fsync(ctx context.Context, fh io.FileHandle, flags int64) proto.FsError {
-	return b.inner.Fsync(ctx, unwrapHandle(fh), flags)
-}
+// Flush/Fsync are NOT overridden: they forward to Inner via the embedded
+// PassthroughBackend. The cache has no write buffer of its own to drain (the
+// transport owns durability), and forwarding the wrapped *cachedHandle reaches
+// the leaf via Inner's Unwrap-walking resolveHandle.
 
 func (b *cachedBackend) Allocate(ctx context.Context, fh io.FileHandle, off, size uint64, mode uint32) proto.FsError {
-	st := b.inner.Allocate(ctx, unwrapHandle(fh), off, size, mode)
+	st := b.Inner.Allocate(ctx, unwrapHandle(fh), off, size, mode)
 	if st != proto.FsError_FS_OK {
 		return st
 	}
@@ -743,19 +746,13 @@ func (b *cachedBackend) Allocate(ctx context.Context, fh io.FileHandle, off, siz
 	return proto.FsError_FS_OK
 }
 
-func (b *cachedBackend) SetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32) proto.FsError {
-	return b.inner.SetLk(ctx, unwrapHandle(fh), owner, lk, flags)
-}
-
-func (b *cachedBackend) SetLkw(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32) proto.FsError {
-	return b.inner.SetLkw(ctx, unwrapHandle(fh), owner, lk, flags)
-}
+// SetLk/SetLkw: see GetLk — not overridden, forwarded via PassthroughBackend.
 
 // CopyFileRange passes through, then invalidates the DESTINATION like a
 // Write of the copied range: the data cache for [offOut, offOut+n) and
 // the attr entry (size/mtime moved). Source is untouched (atime only).
 func (b *cachedBackend) CopyFileRange(ctx context.Context, fhIn io.FileHandle, offIn uint64, fhOut io.FileHandle, offOut uint64, length, flags uint64) (uint64, proto.FsError) {
-	n, st := b.inner.CopyFileRange(ctx, unwrapHandle(fhIn), offIn, unwrapHandle(fhOut), offOut, length, flags)
+	n, st := b.Inner.CopyFileRange(ctx, unwrapHandle(fhIn), offIn, unwrapHandle(fhOut), offOut, length, flags)
 	if st != proto.FsError_FS_OK {
 		return n, st
 	}
@@ -766,10 +763,9 @@ func (b *cachedBackend) CopyFileRange(ctx context.Context, fhIn io.FileHandle, o
 	return n, proto.FsError_FS_OK
 }
 
-// Lseek is a pure pass-through — hole geometry isn't cached.
-func (b *cachedBackend) Lseek(ctx context.Context, fh io.FileHandle, offset uint64, whence uint32) (uint64, proto.FsError) {
-	return b.inner.Lseek(ctx, unwrapHandle(fh), offset, whence)
-}
+// Lseek is NOT overridden — hole geometry isn't cached, so it forwards to Inner
+// via the embedded PassthroughBackend (wrapped handle reaches the leaf via the
+// Unwrap-walking resolveHandle).
 
 // --- Path-level mutating ops ---
 
@@ -777,7 +773,7 @@ func (b *cachedBackend) Lseek(ctx context.Context, fh io.FileHandle, offset uint
 // attr cache from the reply attrs (like Create); nil attrs (server stat
 // failed) just drop any negative-cached entry so the next Stat refetches.
 func (b *cachedBackend) Mkdir(ctx context.Context, p string, mode uint32) (*io.Attr, proto.FsError) {
-	a, st := b.inner.Mkdir(ctx, p, mode)
+	a, st := b.Inner.Mkdir(ctx, p, mode)
 	if st != proto.FsError_FS_OK {
 		return nil, st
 	}
@@ -793,7 +789,7 @@ func (b *cachedBackend) Mkdir(ctx context.Context, p string, mode uint32) (*io.A
 }
 
 func (b *cachedBackend) Rmdir(ctx context.Context, p string) proto.FsError {
-	st := b.inner.Rmdir(ctx, p)
+	st := b.Inner.Rmdir(ctx, p)
 	if st != proto.FsError_FS_OK {
 		return st
 	}
@@ -809,7 +805,7 @@ func (b *cachedBackend) Rmdir(ctx context.Context, p string) proto.FsError {
 }
 
 func (b *cachedBackend) Unlink(ctx context.Context, p string) proto.FsError {
-	st := b.inner.Unlink(ctx, p)
+	st := b.Inner.Unlink(ctx, p)
 	if st != proto.FsError_FS_OK {
 		return st
 	}
@@ -825,7 +821,7 @@ func (b *cachedBackend) Unlink(ctx context.Context, p string) proto.FsError {
 }
 
 func (b *cachedBackend) Rename(ctx context.Context, oldPath, newPath string) proto.FsError {
-	st := b.inner.Rename(ctx, oldPath, newPath)
+	st := b.Inner.Rename(ctx, oldPath, newPath)
 	if st != proto.FsError_FS_OK {
 		return st
 	}
@@ -856,7 +852,7 @@ func (b *cachedBackend) Rename(ctx context.Context, oldPath, newPath string) pro
 // times), so unlike the other mutation wrappers we still invalidate
 // conservatively rather than assuming nothing changed.
 func (b *cachedBackend) SetAttr(ctx context.Context, p string, in io.SetAttrIn) (*io.Attr, proto.FsError) {
-	a, st := b.inner.SetAttr(ctx, p, in)
+	a, st := b.Inner.SetAttr(ctx, p, in)
 	// chmod/chown change the access decision; invalidate even on partial failure
 	// (the server applies size→mode→owner→times in order before stopping).
 	b.access.invalidate(p)
