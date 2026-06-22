@@ -1,0 +1,4 @@
+# bbolt persist directories created by e2e tests (random-named, contain meta.db + LOCK).
+# Pattern ignores per-run dirs without swallowing legitimate source subdirs.
+*/meta.db
+*/LOCK

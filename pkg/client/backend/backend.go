@@ -1,4 +1,4 @@
-// Package io contains the client-side filesystem implementation. backend.go
+// Package backend contains the client-side filesystem implementation. backend.go
 // defines FileSystemBackend, the op-shaped interface that the go-fuse node
 // adapters in node.go delegate to. Sub-spec B's cache will decorate
 // FileSystemBackend; today there is one impl (BackendClient in
