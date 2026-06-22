@@ -49,24 +49,66 @@ func (s *PassthroughSuite) TestForwardsClose() {
 // Compile-time assertion: PassthroughBackend implements the full interface.
 var _ FileSystemBackend = (*PassthroughBackend)(nil)
 
-// semanticBackendTypes lists every SEMANTIC layer (changes behavior). Add new
-// ones here; the test fails if any embeds PassthroughBackend (silent-forward
-// hazard). Observer layers (metrics/trace/audit) are intentionally absent.
-func semanticBackendTypes() []reflect.Type {
-	return []reflect.Type{
-		reflect.TypeOf(BackendClient{}),
-	}
-}
-
-func (s *PassthroughSuite) TestSemanticLayersDoNotEmbedPassthrough() {
-	ptName := reflect.TypeOf(PassthroughBackend{}).Name()
-	for _, t := range semanticBackendTypes() {
-		for i := 0; i < t.NumField(); i++ {
-			f := t.Field(i)
-			s.Falsef(f.Anonymous && f.Type.Name() == ptName,
-				"%s embeds PassthroughBackend; semantic layers must implement the full interface explicitly", t.Name())
-		}
-	}
-}
-
 func TestPassthroughSuite(t *testing.T) { suite.Run(t, new(PassthroughSuite)) }
+
+// wantMethods is the pinned method set of FileSystemBackend, in the sorted
+// order reflect reports. It is the contract that every embedding layer (the
+// cache and identity decorators, which embed PassthroughBackend and override
+// only the ops they handle) is reviewed against.
+var wantMethods = []string{
+	"Access",
+	"Allocate",
+	"Close",
+	"CopyFileRange",
+	"Create",
+	"Flush",
+	"Fsync",
+	"GetAttrIfChanged",
+	"GetLk",
+	"GetXAttr",
+	"ListDir",
+	"ListXAttr",
+	"Lookup",
+	"Lseek",
+	"Mkdir",
+	"Open",
+	"Read",
+	"Readlink",
+	"Release",
+	"RemoveXAttr",
+	"Rename",
+	"Rmdir",
+	"SetAttr",
+	"SetLk",
+	"SetLkw",
+	"SetXAttr",
+	"Stat",
+	"StatFs",
+	"Symlink",
+	"Unlink",
+	"Write",
+}
+
+// TestFileSystemBackendMethodSet is the central guard that replaces the old
+// "semantic layers must not embed PassthroughBackend" rule. Layers (cache,
+// identity, future write-path/WAL) now embed PassthroughBackend and override
+// only the ops they handle, so a newly added interface method would forward
+// silently and bypass a layer that should have handled it. This test pins the
+// interface's method set: adding/removing/renaming a method fails here, forcing
+// a deliberate review of every embedding layer before the change lands.
+func TestFileSystemBackendMethodSet(t *testing.T) {
+	iface := reflect.TypeOf((*FileSystemBackend)(nil)).Elem()
+	got := make([]string, 0, iface.NumMethod())
+	for i := 0; i < iface.NumMethod(); i++ {
+		got = append(got, iface.Method(i).Name)
+	}
+	// reflect reports interface methods already sorted by name; wantMethods is
+	// kept in that same order so a direct compare is sound.
+	if !reflect.DeepEqual(got, wantMethods) {
+		t.Fatalf("FileSystemBackend changed (method added/removed/renamed).\n"+
+			"Review EVERY semantic layer that embeds PassthroughBackend — cache "+
+			"(does the new op need invalidation?), identity (does it carry uid/gid "+
+			"to rewrite?), and any future write-path/WAL layer — then update "+
+			"wantMethods here.\n  got:  %v\n  want: %v", got, wantMethods)
+	}
+}

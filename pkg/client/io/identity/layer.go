@@ -11,10 +11,14 @@
 // SetAttr request flowing DOWN — exactly the direction/fields/conditions the
 // adapters applied before this refactor.
 //
-// The layer is a FULL-SURFACE SEMANTIC decorator: it implements every
-// FileSystemBackend method explicitly (it does NOT embed io.PassthroughBackend)
-// so a future interface method forces an explicit Inbound/Outbound/forward
-// decision here rather than silently passing identity-bearing attrs through.
+// The layer EMBEDS io.PassthroughBackend and overrides only the ops that carry
+// identity-bearing payload: the inbound attr methods (Stat, GetAttrIfChanged,
+// Lookup, Create, Mkdir, Symlink, ListDir) and the outbound SetAttr. Every
+// other op forwards unchanged via the embedded passthrough. The safety net for
+// a future interface method is the central io.TestFileSystemBackendMethodSet
+// guard, which fails when the method set changes and forces a review of every
+// embedding layer (cache + identity) — replacing the old per-layer full-surface
+// implementation that this layer used to carry.
 package identity
 
 import (
@@ -32,10 +36,12 @@ import (
 // clear.
 const setAttrIDMask = io.FATTR_UID | io.FATTR_GID
 
-// layer is the identity-rewrite decorator over an inner FileSystemBackend.
+// layer is the identity-rewrite decorator over an inner FileSystemBackend. It
+// embeds io.PassthroughBackend (which holds the Inner backend and forwards every
+// op) and overrides only the identity-bearing ops below.
 type layer struct {
-	inner io.FileSystemBackend
-	rw    *io.IDRewriter
+	io.PassthroughBackend
+	rw *io.IDRewriter
 }
 
 // NewLayer wraps inner so attrs flowing up have their uid/gid rewritten
@@ -50,7 +56,7 @@ func NewLayer(inner io.FileSystemBackend, rw *io.IDRewriter) io.FileSystemBacken
 	if rw == nil {
 		return inner
 	}
-	return &layer{inner: inner, rw: rw}
+	return &layer{PassthroughBackend: io.PassthroughBackend{Inner: inner}, rw: rw}
 }
 
 // inbound returns a COPY of a with its uid/gid rewritten server→local. It must
@@ -73,23 +79,23 @@ func (l *layer) inbound(a *io.Attr) *io.Attr {
 // --- Inbound (rewrite attrs flowing up) ---
 
 func (l *layer) Stat(ctx context.Context, path string) (*io.Attr, proto.FsError) {
-	a, st := l.inner.Stat(ctx, path)
+	a, st := l.Inner.Stat(ctx, path)
 	return l.inbound(a), st
 }
 
 func (l *layer) GetAttrIfChanged(ctx context.Context, path string, knownVersion uint64) (*io.Attr, bool, proto.FsError) {
-	a, notModified, st := l.inner.GetAttrIfChanged(ctx, path, knownVersion)
+	a, notModified, st := l.Inner.GetAttrIfChanged(ctx, path, knownVersion)
 	// a is nil on the not-modified path and on errors; inbound returns nil.
 	return l.inbound(a), notModified, st
 }
 
 func (l *layer) Lookup(ctx context.Context, parent, name string) (*io.Attr, proto.FsError) {
-	a, st := l.inner.Lookup(ctx, parent, name)
+	a, st := l.Inner.Lookup(ctx, parent, name)
 	return l.inbound(a), st
 }
 
 func (l *layer) ListDir(ctx context.Context, path string) ([]io.DirEntryPlus, proto.FsError) {
-	entries, st := l.inner.ListDir(ctx, path)
+	entries, st := l.Inner.ListDir(ctx, path)
 	if st != proto.FsError_FS_OK {
 		return entries, st
 	}
@@ -108,17 +114,17 @@ func (l *layer) ListDir(ctx context.Context, path string) ([]io.DirEntryPlus, pr
 }
 
 func (l *layer) Create(ctx context.Context, parent, name string, flags, mode uint32) (io.FileHandle, *io.Attr, proto.FsError) {
-	fh, a, st := l.inner.Create(ctx, parent, name, flags, mode)
+	fh, a, st := l.Inner.Create(ctx, parent, name, flags, mode)
 	return fh, l.inbound(a), st
 }
 
 func (l *layer) Mkdir(ctx context.Context, path string, mode uint32) (*io.Attr, proto.FsError) {
-	a, st := l.inner.Mkdir(ctx, path, mode)
+	a, st := l.Inner.Mkdir(ctx, path, mode)
 	return l.inbound(a), st
 }
 
 func (l *layer) Symlink(ctx context.Context, target, linkPath string) (*io.Attr, proto.FsError) {
-	a, st := l.inner.Symlink(ctx, target, linkPath)
+	a, st := l.Inner.Symlink(ctx, target, linkPath)
 	return l.inbound(a), st
 }
 
@@ -131,7 +137,7 @@ func (l *layer) SetAttr(ctx context.Context, path string, in io.SetAttrIn) (*io.
 		// ignored downstream, so an unconditional rewrite of both is harmless.
 		in.Uid, in.Gid = l.rw.Outbound(in.Uid, in.Gid)
 	}
-	a, st := l.inner.SetAttr(ctx, path, in)
+	a, st := l.Inner.SetAttr(ctx, path, in)
 	// The reply carries the resulting attrs; surface a COPY rewritten back
 	// server→local so the caller sees local display ids (matches node.go
 	// applying Inbound to the SetAttr reply via setAttrFromBackend). Copy, not
@@ -139,99 +145,12 @@ func (l *layer) SetAttr(ctx context.Context, path string, in io.SetAttrIn) (*io.
 	return l.inbound(a), st
 }
 
-// --- Forwarded unchanged (no identity-bearing payload) ---
+// All other ops (Access, StatFs, xattr, Open/Read/Write/Release/Flush/Fsync/
+// Allocate, locks, CopyFileRange/Lseek, Rmdir/Unlink/Rename, Readlink, Close)
+// carry no identity-bearing payload and forward unchanged via the embedded
+// io.PassthroughBackend.
 
-func (l *layer) Access(ctx context.Context, path string, mode uint32) proto.FsError {
-	return l.inner.Access(ctx, path, mode)
-}
-
-func (l *layer) StatFs(ctx context.Context, path string) (*io.StatFs, proto.FsError) {
-	return l.inner.StatFs(ctx, path)
-}
-
-func (l *layer) GetXAttr(ctx context.Context, path, attr string) ([]byte, proto.FsError) {
-	return l.inner.GetXAttr(ctx, path, attr)
-}
-
-func (l *layer) SetXAttr(ctx context.Context, path, attr string, data []byte, flags uint32) proto.FsError {
-	return l.inner.SetXAttr(ctx, path, attr, data, flags)
-}
-
-func (l *layer) RemoveXAttr(ctx context.Context, path, attr string) proto.FsError {
-	return l.inner.RemoveXAttr(ctx, path, attr)
-}
-
-func (l *layer) ListXAttr(ctx context.Context, path string) ([]string, proto.FsError) {
-	return l.inner.ListXAttr(ctx, path)
-}
-
-func (l *layer) Open(ctx context.Context, path string, flags uint32) (io.FileHandle, proto.FsError) {
-	return l.inner.Open(ctx, path, flags)
-}
-
-func (l *layer) Read(ctx context.Context, fh io.FileHandle, off int64, dest []byte) (int, proto.FsError) {
-	return l.inner.Read(ctx, fh, off, dest)
-}
-
-func (l *layer) Write(ctx context.Context, fh io.FileHandle, off int64, data []byte) (uint32, proto.FsError) {
-	return l.inner.Write(ctx, fh, off, data)
-}
-
-func (l *layer) Release(ctx context.Context, fh io.FileHandle) proto.FsError {
-	return l.inner.Release(ctx, fh)
-}
-
-func (l *layer) Flush(ctx context.Context, fh io.FileHandle) proto.FsError {
-	return l.inner.Flush(ctx, fh)
-}
-
-func (l *layer) Fsync(ctx context.Context, fh io.FileHandle, flags int64) proto.FsError {
-	return l.inner.Fsync(ctx, fh, flags)
-}
-
-func (l *layer) Allocate(ctx context.Context, fh io.FileHandle, off, size uint64, mode uint32) proto.FsError {
-	return l.inner.Allocate(ctx, fh, off, size, mode)
-}
-
-func (l *layer) GetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32, out *io.FileLock) proto.FsError {
-	return l.inner.GetLk(ctx, fh, owner, lk, flags, out)
-}
-
-func (l *layer) SetLk(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32) proto.FsError {
-	return l.inner.SetLk(ctx, fh, owner, lk, flags)
-}
-
-func (l *layer) SetLkw(ctx context.Context, fh io.FileHandle, owner uint64, lk *io.FileLock, flags uint32) proto.FsError {
-	return l.inner.SetLkw(ctx, fh, owner, lk, flags)
-}
-
-func (l *layer) CopyFileRange(ctx context.Context, fhIn io.FileHandle, offIn uint64, fhOut io.FileHandle, offOut uint64, length, flags uint64) (uint64, proto.FsError) {
-	return l.inner.CopyFileRange(ctx, fhIn, offIn, fhOut, offOut, length, flags)
-}
-
-func (l *layer) Lseek(ctx context.Context, fh io.FileHandle, offset uint64, whence uint32) (uint64, proto.FsError) {
-	return l.inner.Lseek(ctx, fh, offset, whence)
-}
-
-func (l *layer) Rmdir(ctx context.Context, path string) proto.FsError {
-	return l.inner.Rmdir(ctx, path)
-}
-
-func (l *layer) Unlink(ctx context.Context, path string) proto.FsError {
-	return l.inner.Unlink(ctx, path)
-}
-
-func (l *layer) Rename(ctx context.Context, oldPath, newPath string) proto.FsError {
-	return l.inner.Rename(ctx, oldPath, newPath)
-}
-
-func (l *layer) Readlink(ctx context.Context, path string) (string, proto.FsError) {
-	return l.inner.Readlink(ctx, path)
-}
-
-// Close delegates to the inner backend.
-func (l *layer) Close() error { return l.inner.Close() }
-
-// Compile-time assertion: the layer must satisfy the full backend surface. If a
-// method is added to FileSystemBackend, this breaks here, forcing a decision.
+// Compile-time assertion: the layer must satisfy the full backend surface
+// (here via promotion from the embedded PassthroughBackend + the overrides
+// above). A new interface method is caught by io.TestFileSystemBackendMethodSet.
 var _ io.FileSystemBackend = (*layer)(nil)

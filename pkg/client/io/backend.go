@@ -147,9 +147,11 @@ type FileHandle interface {
 //     dispatches ops concurrently, including multiple ops on one handle.
 //   - Invalidation flows UP: the transport owns the Subscribe stream; events
 //     propagate outward (transport -> ... -> cache -> node).
-//   - Observer vs semantic: observer layers (metrics/trace/audit) may embed
-//     PassthroughBackend; semantic layers (cache, write-batcher, WAL) must
-//     implement every method explicitly.
+//   - Layering: layers may embed PassthroughBackend and override only the ops
+//     they handle (observers add side-effects; semantic layers like cache and
+//     identity transform specific ops). When this interface gains a method,
+//     TestFileSystemBackendMethodSet fails to force review of every layer —
+//     that is the safety net replacing per-layer full-surface implementation.
 type FileSystemBackend interface {
 	// Stat returns the attributes of path. Used by Getattr.
 	Stat(ctx context.Context, path string) (*Attr, proto.FsError)

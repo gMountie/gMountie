@@ -6,16 +6,19 @@ import (
 	"go.gmountie.dev/gmountie/pkg/proto"
 )
 
-// PassthroughBackend is an embeddable base for OBSERVER layers — layers that
-// add side effects (metrics, tracing, audit) without changing behavior. Embed
-// it, set Inner, and override only the ops you observe; all other ops forward
-// to Inner unchanged.
+// PassthroughBackend is an embeddable full-surface forwarder. Embed it, set
+// Inner, and override only the ops a layer handles; every other op forwards to
+// Inner unchanged. Both OBSERVER layers (metrics/trace/audit, which add
+// side-effects) and SEMANTIC layers (cache/identity, which transform specific
+// ops) embed it.
 //
-// DO NOT embed this in a SEMANTIC layer (cache, write-batcher, WAL). A new
-// interface method would forward silently and bypass the layer's behavior — a
-// stale-data bug. Semantic layers must implement FileSystemBackend explicitly
-// so the compiler forces a decision on every method. (Enforced by
-// TestSemanticLayersDoNotEmbedPassthrough.)
+// The hazard of embedding — a newly added interface method forwards silently
+// and bypasses a layer that should have handled it — is caught centrally by
+// TestFileSystemBackendMethodSet: it pins the interface's method set, so adding
+// or renaming a method fails that test and forces a review of every embedding
+// layer (does cache need to invalidate it? does identity carry ids to rewrite?)
+// before the method set can change. That single guard replaces the old rule
+// that semantic layers must implement FileSystemBackend explicitly.
 type PassthroughBackend struct {
 	Inner FileSystemBackend
 }
