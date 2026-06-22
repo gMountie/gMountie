@@ -183,9 +183,21 @@ func (s *sessionImpl) Serial() string    { return s.serial }
 
 func (s *sessionImpl) RegisterFile(volume, path string, file nodefs.File) uint64 {
 	// A handler can hold this *sessionImpl (via Get) while a concurrent reap
-	// wins the sessions claim, sets reaped, and drains the fd table. Without
-	// this guard a late RegisterFile would re-populate the drained table —
-	// leaking the nodefs.File and permanently inflating the open-files gauge.
+	// wins the sessions claim, sets reaped, and drains the fd table. Without a
+	// guard a late RegisterFile would re-populate the drained table — leaking
+	// the nodefs.File and permanently inflating the open-files gauge.
+	//
+	// The early Load below is only a fast-path: the reaped check and the Store
+	// further down are NOT atomic, so a reap can still win in between (read
+	// reaped==false here, then reap sets reaped + runs ReleaseAll to completion,
+	// then we Store into the drained table). So we PUBLISH-THEN-RECHECK: Store
+	// the entry, then re-Load reaped; if it is now set we remove ourselves.
+	// Removal races ReleaseAll's drain, but both use a per-key LoadAndDelete, so
+	// exactly one of us deletes the entry — and whoever deletes it does the one
+	// matching ReleaseRef + OpenFilesDec. The entry's fd has not been returned to
+	// any caller yet, so no in-flight op can hold a ref; the table ref is the
+	// only one, and dropping it closes the File.
+	//
 	// fd 0 is the sentinel for "rejected": real fds start at 1 (fdNum.Add(1)),
 	// and the controller maps fd 0 to EBADF on the next fd-op (CQ-M1).
 	if s.reaped.Load() {
@@ -198,7 +210,17 @@ func (s *sessionImpl) RegisterFile(volume, path string, file nodefs.File) uint64
 	entry := &FileEntry{File: file, Volume: volume, Path: path, Fd: fd}
 	entry.refs.Store(1) // the fd table's own ref
 	s.files.Store(fd, entry)
-	s.metrics.OpenFilesInc(volume)
+	s.metrics.OpenFilesInc(volume) // balanced below: the LoadAndDelete winner Decs
+	if s.reaped.Load() {
+		// A reap won between our fast-path Load and the Store. Undo. If we win the
+		// LoadAndDelete, drop the table ref and compensate the Inc above; if
+		// ReleaseAll won it, it already did the matching ReleaseRef + Dec.
+		if e, ok := s.files.LoadAndDelete(fd); ok {
+			e.ReleaseRef()
+			s.metrics.OpenFilesDec(volume)
+		}
+		return 0
+	}
 	return fd
 }
 
