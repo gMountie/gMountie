@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
 
 	"github.com/stretchr/testify/suite"
 )
@@ -19,7 +20,7 @@ type AttrCacheTestSuite struct {
 func (s *AttrCacheTestSuite) SetupTest() {
 	s.now = time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
 	s.clock = func() time.Time { return s.now }
-	s.c = newAttrCache(newAccountant(0, 0), 5*time.Second, 2*time.Second, s.clock)
+	s.c = newAttrCache(newAccountant(0, 0), 5*time.Second, 2*time.Second, s.clock, metrics.NopRecorder{})
 }
 
 func (s *AttrCacheTestSuite) advance(d time.Duration) { s.now = s.now.Add(d) }

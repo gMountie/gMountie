@@ -35,10 +35,14 @@ type dataCache struct {
 	// capture it BEFORE the sample and thread it into putGen so a deferred
 	// persist whose path was invalidated since the sample is dropped.
 	curGenFn func(path string) uint64
+	// rec is the injected metrics sink (never nil — NewCachedBackend defaults it
+	// to metrics.NopRecorder{}). Used to record the content-addressable dedupe hit
+	// in the persist write-through.
+	rec metrics.Recorder
 }
 
-func newDataCache(acct *accountant, chunkSizeBytes int) *dataCache {
-	return &dataCache{st: newStore(acct, "data"), chunkSizeBytes: chunkSizeBytes}
+func newDataCache(acct *accountant, chunkSizeBytes int, rec metrics.Recorder) *dataCache {
+	return &dataCache{st: newStore(acct, "data", rec), chunkSizeBytes: chunkSizeBytes, rec: rec}
 }
 
 // ChunkSize returns the configured chunk size in bytes.
@@ -139,11 +143,11 @@ func (c *dataCache) invalidateRange(path string, off, size int64) {
 // PutChunkRef/GetChunkRef for index. invalidatePath uses the bulk
 // persist.InvalidatePathChunks path rather than the per-key Remover
 // (one bbolt cursor walk vs one txn per chunk).
-func newDataCacheWithPersist(acct *accountant, chunkSizeBytes int, p *persist.Persist) *dataCache {
+func newDataCacheWithPersist(acct *accountant, chunkSizeBytes int, p *persist.Persist, rec metrics.Recorder) *dataCache {
 	if p == nil {
-		return newDataCache(acct, chunkSizeBytes)
+		return newDataCache(acct, chunkSizeBytes, rec)
 	}
-	return newDataCacheWithChunkPersist(acct, chunkSizeBytes, p)
+	return newDataCacheWithChunkPersist(acct, chunkSizeBytes, p, rec)
 }
 
 // chunkPersist is the persist surface the data cache fronts. *persist.Persist
@@ -160,8 +164,8 @@ type chunkPersist interface {
 
 // newDataCacheWithChunkPersist builds the persist-backed data cache over the
 // chunkPersist seam. p must be non-nil.
-func newDataCacheWithChunkPersist(acct *accountant, chunkSizeBytes int, p chunkPersist) *dataCache {
-	c := &dataCache{chunkSizeBytes: chunkSizeBytes}
+func newDataCacheWithChunkPersist(acct *accountant, chunkSizeBytes int, p chunkPersist, rec metrics.Recorder) *dataCache {
+	c := &dataCache{chunkSizeBytes: chunkSizeBytes, rec: rec}
 	// poisoned tracks paths whose persist invalidation failed: while a path is
 	// poisoned the disk tier is not authoritative for it, so the loader refuses
 	// to serve disk chunks (avoids serving a stale hit after a write whose
@@ -239,7 +243,7 @@ func newDataCacheWithChunkPersist(acct *accountant, chunkSizeBytes int, p chunkP
 			return
 		}
 		if dedup {
-			metrics.CacheDedupeHit()
+			c.rec.CacheDedupeHitInc()
 		}
 		if err := p.PutChunkRef(path, idx, persist.ChunkRef{Hash: hash, Size: uint32(len(data))}); err != nil {
 			log.Log.Warn("persist chunk-ref write-through failed; serving from memory only",
@@ -269,7 +273,7 @@ func newDataCacheWithChunkPersist(acct *accountant, chunkSizeBytes int, p chunkP
 	// The memory tier's per-key remove is still cheap (map delete). The putter
 	// is nil because data write-through goes through onPersist so it can honour
 	// the per-path generation.
-	c.st = newStoreWithPersist(acct, loader, nil, func(string) {}, "data")
+	c.st = newStoreWithPersist(acct, loader, nil, func(string) {}, "data", rec)
 	c.curGenFn = curGen
 	c.st.genOf = func(key string) uint64 {
 		path, _, ok := parseChunkKey(key)

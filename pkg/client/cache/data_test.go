@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
 )
 
 type DataCacheTestSuite struct {
@@ -15,7 +16,7 @@ type DataCacheTestSuite struct {
 }
 
 func (s *DataCacheTestSuite) SetupTest() {
-	s.c = newDataCache(newAccountant(0, 0), 1024) // 1 KiB chunks for arithmetic clarity
+	s.c = newDataCache(newAccountant(0, 0), 1024, metrics.NopRecorder{}) // 1 KiB chunks for arithmetic clarity
 }
 
 func (s *DataCacheTestSuite) TestMissAndPut() {
@@ -104,7 +105,7 @@ func (d *divergedPersist) InvalidateChunkRange(_ string, _, _ int) error        
 // refetches and self-heals.
 func (s *DataCacheTestSuite) TestLoaderMissesOnDivergedChunkFile() {
 	fake := &divergedPersist{readErr: errors.New("read chunk: no such file or directory")}
-	c := newDataCacheWithChunkPersist(newAccountant(1<<20, 0), 1024, fake)
+	c := newDataCacheWithChunkPersist(newAccountant(1<<20, 0), 1024, fake, metrics.NopRecorder{})
 	s.Assert().Nil(c.get("/P2", 0),
 		"index entry present but chunk file gone => loader miss, NOT wrong data served as a trusted hit")
 }
@@ -137,7 +138,7 @@ func (s *stalePersist) InvalidateChunkRange(_ string, _, _ int) error         { 
 // must miss rather than return the pre-write disk bytes.
 func (s *DataCacheTestSuite) TestInvalidatePathPoisonsOnPersistError() {
 	fake := &stalePersist{stale: []byte("stale-disk-bytes"), invalidateErr: errors.New("boom")}
-	c := newDataCacheWithChunkPersist(newAccountant(1<<20, 0), 1024, fake)
+	c := newDataCacheWithChunkPersist(newAccountant(1<<20, 0), 1024, fake, metrics.NopRecorder{})
 
 	// Prime: the disk tier holds the stale chunk; a get loads it into memory.
 	s.Require().Equal([]byte("stale-disk-bytes"), c.get("/f", 0), "loader serves disk chunk before invalidation")
@@ -154,7 +155,7 @@ func (s *DataCacheTestSuite) TestInvalidatePathPoisonsOnPersistError() {
 // cleaner.
 func (s *DataCacheTestSuite) TestInvalidateRangePoisonsOnPersistError() {
 	fake := &stalePersist{stale: []byte("stale-disk-bytes"), invalidateErr: errors.New("boom")}
-	c := newDataCacheWithChunkPersist(newAccountant(1<<20, 0), 1024, fake)
+	c := newDataCacheWithChunkPersist(newAccountant(1<<20, 0), 1024, fake, metrics.NopRecorder{})
 
 	s.Require().Equal([]byte("stale-disk-bytes"), c.get("/f", 0))
 	c.invalidateRange("/f", 0, 1) // touches chunk 0

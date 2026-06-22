@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
 	"go.gmountie.dev/gmountie/pkg/proto"
 
 	"github.com/stretchr/testify/suite"
@@ -58,7 +59,7 @@ type SubscribeConsumerSuite struct{ suite.Suite }
 
 func (s *SubscribeConsumerSuite) TestHandleMutatedInvalidatesAll() {
 	be := &fakeBackendForSubscriber{}
-	c := &subscribeConsumer{cache: be, validity: newValidityTracker()}
+	c := &subscribeConsumer{cache: be, validity: newValidityTracker(), rec: metrics.NopRecorder{}}
 	c.handle(&proto.SubscribeEvent{Kind: proto.SubscribeEvent_MUTATED, Path: "a/b/c.txt", NewVersion: 7})
 	// Attr is invalidated for both the mutated path and its parent (parent mtime changes on create/unlink).
 	s.Assert().ElementsMatch([]string{"a/b/c.txt", "a/b"}, be.attrInvals)
@@ -69,7 +70,7 @@ func (s *SubscribeConsumerSuite) TestHandleMutatedInvalidatesAll() {
 
 func (s *SubscribeConsumerSuite) TestHandleDeletedAddsNegative() {
 	be := &fakeBackendForSubscriber{}
-	c := &subscribeConsumer{cache: be, validity: newValidityTracker()}
+	c := &subscribeConsumer{cache: be, validity: newValidityTracker(), rec: metrics.NopRecorder{}}
 	c.handle(&proto.SubscribeEvent{Kind: proto.SubscribeEvent_DELETED, Path: "dir/x"})
 	// Attr is invalidated for both the deleted path and its parent (unlink changes parent mtime).
 	s.Assert().ElementsMatch([]string{"dir/x", "dir"}, be.attrInvals)
@@ -78,7 +79,7 @@ func (s *SubscribeConsumerSuite) TestHandleDeletedAddsNegative() {
 
 func (s *SubscribeConsumerSuite) TestHandleRenamedTouchesBothPaths() {
 	be := &fakeBackendForSubscriber{}
-	c := &subscribeConsumer{cache: be, validity: newValidityTracker()}
+	c := &subscribeConsumer{cache: be, validity: newValidityTracker(), rec: metrics.NopRecorder{}}
 	c.handle(&proto.SubscribeEvent{Kind: proto.SubscribeEvent_RENAMED, Path: "src/old", NewPath: "dst/new"})
 	// Attr is invalidated for both renamed paths and both parents (rename changes mtime of both parent dirs).
 	s.Assert().ElementsMatch([]string{"src/old", "src", "dst/new", "dst"}, be.attrInvals)
@@ -89,7 +90,7 @@ func (s *SubscribeConsumerSuite) TestHandleRenamedTouchesBothPaths() {
 func (s *SubscribeConsumerSuite) TestHandleHeartbeatIsNoop() {
 	v := newValidityTracker()
 	be := &fakeBackendForSubscriber{}
-	c := &subscribeConsumer{cache: be, validity: v}
+	c := &subscribeConsumer{cache: be, validity: v, rec: metrics.NopRecorder{}}
 	s.Require().Equal(stateUnverified, v.globalState())
 	c.handle(&proto.SubscribeEvent{Kind: proto.SubscribeEvent_HEARTBEAT})
 	s.Assert().Empty(be.attrInvals)
@@ -101,21 +102,21 @@ func (s *SubscribeConsumerSuite) TestHandleHeartbeatIsNoop() {
 
 func (s *SubscribeConsumerSuite) TestMutatedInvalidatesParentAttr() {
 	be := &fakeBackendForSubscriber{}
-	c := &subscribeConsumer{cache: be, validity: newValidityTracker()}
+	c := &subscribeConsumer{cache: be, validity: newValidityTracker(), rec: metrics.NopRecorder{}}
 	c.handle(&proto.SubscribeEvent{Kind: proto.SubscribeEvent_MUTATED, Path: "dir/child"})
 	s.Assert().Contains(be.attrInvals, "dir", "parent attr must be invalidated on MUTATED")
 }
 
 func (s *SubscribeConsumerSuite) TestDeletedInvalidatesParentAttr() {
 	be := &fakeBackendForSubscriber{}
-	c := &subscribeConsumer{cache: be, validity: newValidityTracker()}
+	c := &subscribeConsumer{cache: be, validity: newValidityTracker(), rec: metrics.NopRecorder{}}
 	c.handle(&proto.SubscribeEvent{Kind: proto.SubscribeEvent_DELETED, Path: "dir/child"})
 	s.Assert().Contains(be.attrInvals, "dir", "parent attr must be invalidated on DELETED")
 }
 
 func (s *SubscribeConsumerSuite) TestRenamedInvalidatesBothParentAttrs() {
 	be := &fakeBackendForSubscriber{}
-	c := &subscribeConsumer{cache: be, validity: newValidityTracker()}
+	c := &subscribeConsumer{cache: be, validity: newValidityTracker(), rec: metrics.NopRecorder{}}
 	c.handle(&proto.SubscribeEvent{Kind: proto.SubscribeEvent_RENAMED, Path: "src/child", NewPath: "dst/child"})
 	s.Assert().Contains(be.attrInvals, "src", "old parent attr must be invalidated on RENAMED")
 	s.Assert().Contains(be.attrInvals, "dst", "new parent attr must be invalidated on RENAMED")
@@ -127,7 +128,7 @@ func (s *SubscribeConsumerSuite) TestRenamedInvalidatesBothParentAttrs() {
 // cached attr and listing are dropped.
 func (s *SubscribeConsumerSuite) TestMutatedRootLevelPathInvalidatesRootParent() {
 	be := &fakeBackendForSubscriber{}
-	c := &subscribeConsumer{cache: be, validity: newValidityTracker()}
+	c := &subscribeConsumer{cache: be, validity: newValidityTracker(), rec: metrics.NopRecorder{}}
 	c.handle(&proto.SubscribeEvent{Kind: proto.SubscribeEvent_MUTATED, Path: "top.txt"})
 	s.Assert().Contains(be.attrInvals, "", "root attr must be invalidated for root-level path")
 	s.Assert().Contains(be.dirInvals, "", "root dir must be invalidated for root-level path")
@@ -135,7 +136,7 @@ func (s *SubscribeConsumerSuite) TestMutatedRootLevelPathInvalidatesRootParent()
 
 func (s *SubscribeConsumerSuite) TestMutatedInvalidatesXAttr() {
 	be := &fakeBackendForSubscriber{}
-	c := &subscribeConsumer{cache: be, validity: newValidityTracker()}
+	c := &subscribeConsumer{cache: be, validity: newValidityTracker(), rec: metrics.NopRecorder{}}
 	c.handle(&proto.SubscribeEvent{Kind: proto.SubscribeEvent_MUTATED, Path: "a/b"})
 	s.Assert().Contains(be.xattrInvals, "a/b")
 }
@@ -197,6 +198,7 @@ func (s *SubscribeConsumerSuite) TestRunMarksVerifiedThenUnverifiedAcrossReconne
 	c := &subscribeConsumer{
 		cache:    be,
 		validity: v,
+		rec:      metrics.NopRecorder{},
 		open: func(_ context.Context) (subscribeStream, error) {
 			opened++
 			if opened == 1 {

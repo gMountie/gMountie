@@ -22,3 +22,24 @@ type Recorder interface {
 }
 
 var _ Recorder = (*Metrics)(nil)
+
+// NopRecorder is a no-op Recorder. The cache constructor substitutes it when no
+// recorder is injected (e.g. tests, or a client built without metrics) so the
+// emission call sites never have to nil-check. It is hand-written production
+// code, not a generated mock.
+type NopRecorder struct{}
+
+func (NopRecorder) RetryInc(string, string)           {}
+func (NopRecorder) CacheHitInc(string, string)        {}
+func (NopRecorder) CacheMissInc(string)               {}
+func (NopRecorder) CacheDedupeHitInc()                {}
+func (NopRecorder) CachePersistDroppedInc()           {}
+func (NopRecorder) CacheRevalidationInc(string)       {}
+func (NopRecorder) SubscribeEventReceivedInc(string)  {}
+func (NopRecorder) SubscribeStreamStateSet(bool)      {}
+func (NopRecorder) CacheUnverifiedAdd(float64)        {}
+func (NopRecorder) InFlightInc(string)                {}
+func (NopRecorder) InFlightDec(string)                {}
+func (NopRecorder) ObserveOp(string, float64, string) {}
+
+var _ Recorder = NopRecorder{}

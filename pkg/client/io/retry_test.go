@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
+
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -43,11 +45,12 @@ func TestRetryTestSuite(t *testing.T) {
 // fakeRetryClient drives the surface retryOp touches — SessionID() and a
 // controllable lifetime/window — so the property tests need no real gRPC.
 type fakeRetryClient struct {
-	mu     sync.Mutex
-	id     string
-	life   context.Context
-	window time.Duration
-	meta   time.Duration
+	mu      sync.Mutex
+	id      string
+	life    context.Context
+	window  time.Duration
+	meta    time.Duration
+	metrics *metrics.Metrics // nil unless a test wants to observe RetryInc
 }
 
 func (f *fakeRetryClient) SessionID() string          { f.mu.Lock(); defer f.mu.Unlock(); return f.id }
@@ -55,6 +58,7 @@ func (f *fakeRetryClient) setID(s string)             { f.mu.Lock(); f.id = s; f
 func (f *fakeRetryClient) RetryWindow() time.Duration { return f.window }
 func (f *fakeRetryClient) Lifetime() context.Context  { return f.life }
 func (f *fakeRetryClient) MetaTimeout() time.Duration { return f.meta }
+func (f *fakeRetryClient) Metrics() *metrics.Metrics  { return f.metrics }
 
 type RetryOpSuite struct {
 	suite.Suite

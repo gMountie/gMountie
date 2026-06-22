@@ -35,6 +35,10 @@ type cachedBackend struct {
 	validity   *validityTracker
 	subscriber *subscribeConsumer
 	subCancel  context.CancelFunc
+	// rec is the injected metrics sink. NewCachedBackend defaults a nil rec to
+	// metrics.NopRecorder{}, so it is never nil and the emission sites (and the
+	// sub-components it's threaded into) never have to nil-check.
+	rec metrics.Recorder
 	// persist is the on-disk backing store. Non-nil only when NewCachedBackend
 	// was called with a non-nil *persist.Persist. Owned by this cachedBackend:
 	// Close() shuts it down after stopping the subscriber.
@@ -55,22 +59,28 @@ type invalidationSource interface {
 // eviction in the memory tier (entries live until invalidated or the process
 // dies; the disk tier still respects DiskMaxBytes independently). p may be
 // nil for memory-only operation. client and volume are used to start the
-// Subscribe-based invalidation goroutine; pass nil client to disable it.
-func NewCachedBackend(inner io.FileSystemBackend, cfg Config, p *persist.Persist, client invalidationSource, volume string) io.FileSystemBackend {
+// Subscribe-based invalidation goroutine; pass nil client to disable it. rec is
+// the metrics sink; a nil rec is replaced with metrics.NopRecorder{} so the
+// cache and its sub-components never nil-check the recorder.
+func NewCachedBackend(inner io.FileSystemBackend, cfg Config, p *persist.Persist, client invalidationSource, volume string, rec metrics.Recorder) io.FileSystemBackend {
+	if rec == nil {
+		rec = metrics.NopRecorder{}
+	}
 	acct := newAccountant(cfg.MemoryMaxBytes, deriveMaxEntries(cfg.MemoryMaxBytes))
 	b := &cachedBackend{
 		inner:    inner,
 		cfg:      cfg,
 		acct:     acct,
-		attr:     newAttrCacheWithPersist(acct, cfg.AttrTTL, cfg.NegativeTTL, nil, p),
-		dir:      newDirCacheWithPersist(acct, cfg.DirTTL, nil, p),
-		data:     newDataCacheWithPersist(acct, cfg.ChunkSizeBytes, p),
-		xattr:    newXAttrCache(acct, cfg.XAttrTTL, nil),
+		attr:     newAttrCacheWithPersist(acct, cfg.AttrTTL, cfg.NegativeTTL, nil, p, rec),
+		dir:      newDirCacheWithPersist(acct, cfg.DirTTL, nil, p, rec),
+		data:     newDataCacheWithPersist(acct, cfg.ChunkSizeBytes, p, rec),
+		xattr:    newXAttrCache(acct, cfg.XAttrTTL, nil, rec),
 		getxattr: newGetXAttrCache(cfg.XAttrTTL, nil),
 		statfs:   newStatfsCache(cfg.StatFsTTL, nil),
 		access:   newAccessCache(cfg.AttrTTL, nil),
 		validity: newValidityTracker(),
 		persist:  p,
+		rec:      rec,
 	}
 	if !cfg.SubscribeEnabled {
 		// Subscribe disabled: freshness is TTL-driven only. Mark the
@@ -84,7 +94,7 @@ func NewCachedBackend(inner io.FileSystemBackend, cfg Config, p *persist.Persist
 		// unverified until the first HEARTBEAT arrives.
 		ctx, cancel := context.WithCancel(context.Background())
 		b.subCancel = cancel
-		b.subscriber = newSubscribeConsumer(client, volume, &subscribeBackendAdapter{b}, b.validity)
+		b.subscriber = newSubscribeConsumer(client, volume, &subscribeBackendAdapter{b}, b.validity, rec)
 		go b.subscriber.run(ctx)
 	}
 	// else: SubscribeEnabled=true but no client (test scenarios or future
@@ -172,12 +182,12 @@ func (b *cachedBackend) revalidate(ctx context.Context, path string, cachedVersi
 	epoch := b.validity.currentEpoch()
 	attrs, notMod, st := b.inner.GetAttrIfChanged(ctx, path, cachedVersion)
 	if st != proto.FsError_FS_OK && st != proto.FsError_FS_ENOENT {
-		metrics.CacheRevalidation("error")
+		b.rec.CacheRevalidationInc("error")
 		return revalidateResult{fallback: true}
 	}
 	if notMod {
 		b.validity.markPathVerified(path, epoch)
-		metrics.CacheRevalidation("not_modified")
+		b.rec.CacheRevalidationInc("not_modified")
 		return revalidateResult{notModified: true}
 	}
 	// Version changed or path gone: flush all three caches for this path.
@@ -186,10 +196,10 @@ func (b *cachedBackend) revalidate(ctx context.Context, path string, cachedVersi
 	b.dir.invalidate(pathParent(path))
 	if st == proto.FsError_FS_ENOENT {
 		b.attr.putNegative(path)
-		metrics.CacheRevalidation("enoent")
+		b.rec.CacheRevalidationInc("enoent")
 		return revalidateResult{enoent: true}
 	}
-	metrics.CacheRevalidation("changed")
+	b.rec.CacheRevalidationInc("changed")
 	return revalidateResult{freshAttrs: attrs}
 }
 
@@ -255,7 +265,7 @@ func (b *cachedBackend) Stat(ctx context.Context, p string) (*io.Attr, proto.FsE
 
 // statFromInner fetches attrs from inner and populates the attr cache.
 func (b *cachedBackend) statFromInner(ctx context.Context, p string) (*io.Attr, proto.FsError) {
-	metrics.CacheMiss("attr")
+	b.rec.CacheMissInc("attr")
 	a, st := b.inner.Stat(ctx, p)
 	if st == proto.FsError_FS_OK && a != nil {
 		b.attr.putPositive(p, a)
@@ -274,7 +284,7 @@ func (b *cachedBackend) Lookup(ctx context.Context, parent, name string) (*io.At
 
 // lookupFromInner fetches from inner and populates the attr cache.
 func (b *cachedBackend) lookupFromInner(ctx context.Context, parent, name, full string) (*io.Attr, proto.FsError) {
-	metrics.CacheMiss("attr")
+	b.rec.CacheMissInc("attr")
 	a, st := b.inner.Lookup(ctx, parent, name)
 	if st == proto.FsError_FS_OK && a != nil {
 		b.attr.putPositive(full, a)
@@ -325,7 +335,7 @@ func (b *cachedBackend) ListDir(ctx context.Context, p string) ([]io.DirEntryPlu
 // listDirFromInner fetches from inner, primes the attr cache from plus
 // entries, and populates the dir cache.
 func (b *cachedBackend) listDirFromInner(ctx context.Context, p string) ([]io.DirEntryPlus, proto.FsError) {
-	metrics.CacheMiss("dir")
+	b.rec.CacheMissInc("dir")
 	entries, st := b.inner.ListDir(ctx, p)
 	if st == proto.FsError_FS_OK {
 		// Prime the attr cache (standard positive TTL, same as Stat) from each
@@ -453,7 +463,7 @@ func (b *cachedBackend) Read(ctx context.Context, fh io.FileHandle, off int64, d
 			<-doneCh
 			continue
 		}
-		metrics.CacheMiss("data")
+		b.rec.CacheMissInc("data")
 		spanChunks := 1
 		if prefetch {
 			spanChunks = prefetchSpanChunks

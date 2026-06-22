@@ -34,7 +34,7 @@ func (s *PersistedCacheSuite) TestRestartReusesCachedAttr() {
 		DirTTL:           time.Hour,
 		NegativeTTL:      time.Minute,
 	}
-	b1 := cache.NewCachedBackend(inner, cfg, p1, nil, "")
+	b1 := cache.NewCachedBackend(inner, cfg, p1, nil, "", nil)
 
 	inner.EXPECT().Stat(mock.Anything, "f").Return(&clientio.Attr{Ino: 42, Size: 7}, proto.FsError_FS_OK).Once()
 	inner.EXPECT().Close().Return(nil).Once()
@@ -52,7 +52,7 @@ func (s *PersistedCacheSuite) TestRestartReusesCachedAttr() {
 	inner2 := iomocks.NewMockFileSystemBackend(s.T())
 	inner2.EXPECT().GetAttrIfChanged(mock.Anything, "f", uint64(0)).Return(nil, true, proto.FsError_FS_OK).Once()
 	inner2.EXPECT().Close().Return(nil).Once()
-	b2 := cache.NewCachedBackend(inner2, cfg, p2, nil, "")
+	b2 := cache.NewCachedBackend(inner2, cfg, p2, nil, "", nil)
 	defer func() { _ = b2.Close() }()
 	a, st := b2.Stat(context.Background(), "f")
 	s.Require().Equal(proto.FsError_FS_OK, st)

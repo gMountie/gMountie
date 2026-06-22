@@ -45,10 +45,11 @@ type subscribeConsumer struct {
 	validity        *validityTracker
 	open            func(ctx context.Context) (subscribeStream, error)
 	unverifiedSince time.Time // zero when currently verified
+	rec             metrics.Recorder
 }
 
-func newSubscribeConsumer(client invalidationSource, volume string, cache subscribeBackendOps, validity *validityTracker) *subscribeConsumer {
-	c := &subscribeConsumer{client: client, volume: volume, cache: cache, validity: validity}
+func newSubscribeConsumer(client invalidationSource, volume string, cache subscribeBackendOps, validity *validityTracker, rec metrics.Recorder) *subscribeConsumer {
+	c := &subscribeConsumer{client: client, volume: volume, cache: cache, validity: validity, rec: rec}
 	// Capture the mounter's local identity once: Subscribe is a long-lived
 	// background loop with no per-op FUSE ctx (matches the WhoAmI pattern in
 	// pkg/client/grpc/client.go). The server uses this Caller to bind a
@@ -66,7 +67,7 @@ func newSubscribeConsumer(client invalidationSource, volume string, cache subscr
 func (c *subscribeConsumer) run(ctx context.Context) {
 	// Consumer starts unverified; signal metrics.
 	c.unverifiedSince = time.Now()
-	metrics.SubscribeStreamStateChanged(false)
+	c.rec.SubscribeStreamStateSet(false)
 
 	backoff := time.Second
 	for ctx.Err() == nil {
@@ -79,7 +80,7 @@ func (c *subscribeConsumer) run(ctx context.Context) {
 		}
 		// Stream is down: mark unverified and record the transition time.
 		c.validity.markGlobalUnverified()
-		metrics.SubscribeStreamStateChanged(false)
+		c.rec.SubscribeStreamStateSet(false)
 		if c.unverifiedSince.IsZero() {
 			c.unverifiedSince = time.Now()
 		}
@@ -117,10 +118,10 @@ func (c *subscribeConsumer) runOnce(ctx context.Context) error {
 			sawHeartbeat = true
 			// Record time spent unverified before this first heartbeat.
 			if !c.unverifiedSince.IsZero() {
-				metrics.CacheUnverifiedElapsed(time.Since(c.unverifiedSince).Seconds())
+				c.rec.CacheUnverifiedAdd(time.Since(c.unverifiedSince).Seconds())
 				c.unverifiedSince = time.Time{}
 			}
-			metrics.SubscribeStreamStateChanged(true)
+			c.rec.SubscribeStreamStateSet(true)
 		}
 	}
 }
@@ -153,10 +154,10 @@ func (c *subscribeConsumer) invalidatePathAndParent(p string) {
 func (c *subscribeConsumer) handle(ev *proto.SubscribeEvent) {
 	switch ev.Kind {
 	case proto.SubscribeEvent_MUTATED:
-		metrics.SubscribeEventReceived("mutated")
+		c.rec.SubscribeEventReceivedInc("mutated")
 		c.invalidatePathAndParent(ev.Path)
 	case proto.SubscribeEvent_DELETED:
-		metrics.SubscribeEventReceived("deleted")
+		c.rec.SubscribeEventReceivedInc("deleted")
 		c.invalidatePathAndParent(ev.Path)
 		// The deleted path may be a directory whose descendants are cached (a
 		// server-side recursive delete). Drop the whole subtree so a stale
@@ -164,14 +165,14 @@ func (c *subscribeConsumer) handle(ev *proto.SubscribeEvent) {
 		c.cache.invalidateSubtree(ev.Path)
 		c.cache.putNegative(ev.Path)
 	case proto.SubscribeEvent_RENAMED:
-		metrics.SubscribeEventReceived("renamed")
+		c.rec.SubscribeEventReceivedInc("renamed")
 		for _, p := range []string{ev.Path, ev.NewPath} {
 			c.invalidatePathAndParent(p)
 			c.cache.invalidateSubtree(p) // a renamed directory moves its whole subtree (issue #159)
 		}
 		c.cache.putNegative(ev.Path)
 	case proto.SubscribeEvent_HEARTBEAT:
-		metrics.SubscribeEventReceived("heartbeat")
+		c.rec.SubscribeEventReceivedInc("heartbeat")
 		// verified-state flip is handled by runOnce after the first heartbeat
 	}
 }

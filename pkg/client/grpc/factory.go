@@ -223,14 +223,13 @@ func buildUnconnectedClient(cfg *config.Config, endpoint string, parts renewPart
 	// Build and register client metrics for this factory call. Register
 	// tolerates AlreadyRegisteredError so tests building multiple clients
 	// against the default registerer do not panic — it adopts the existing
-	// series. RegisterInstance adds m to the per-instance dispatcher so the
-	// io/cache layers (which call metrics.OnRetry, CacheHit, etc.) fan-out
-	// to every live client without overwriting a shared global hook.
+	// series. The collector set is injected into the client (WithMetrics);
+	// the cache/io layers emit through this same per-client Recorder, so there
+	// is no package-global dispatcher to register against anymore.
 	m := metrics.NewMetrics()
 	if err := m.Register(prometheus.DefaultRegisterer); err != nil {
 		return nil, errors.Wrap(err, "register client metrics")
 	}
-	metrics.RegisterInstance(m)
 	opts = append(opts, WithMetrics(m))
 
 	// Attach per-RPC basic-auth only for type:basic. For type:mtls the

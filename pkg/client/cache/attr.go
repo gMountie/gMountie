@@ -7,6 +7,7 @@ import (
 
 	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
 	"go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
 )
 
 // attrEntry is the value stored in attrCache. negative=true means a
@@ -33,12 +34,12 @@ type attrCache struct {
 	prefixRemover func(prefix string)
 }
 
-func newAttrCache(acct *accountant, attrTTL, negativeTTL time.Duration, now func() time.Time) *attrCache {
+func newAttrCache(acct *accountant, attrTTL, negativeTTL time.Duration, now func() time.Time, rec metrics.Recorder) *attrCache {
 	if now == nil {
 		now = time.Now
 	}
 	return &attrCache{
-		st:          newStore(acct, "attr"),
+		st:          newStore(acct, "attr", rec),
 		now:         now,
 		attrTTL:     attrTTL,
 		negativeTTL: negativeTTL,
@@ -197,12 +198,12 @@ type persistedAttr struct {
 // persist tier when p is non-nil. Loader gob-decodes attr bytes from
 // the attr bucket; Putter gob-encodes and writes through; Remover
 // deletes. nil p falls back to newAttrCache (memory-only).
-func newAttrCacheWithPersist(acct *accountant, attrTTL, negativeTTL time.Duration, now func() time.Time, p *persist.Persist) *attrCache {
+func newAttrCacheWithPersist(acct *accountant, attrTTL, negativeTTL time.Duration, now func() time.Time, p *persist.Persist, rec metrics.Recorder) *attrCache {
 	if now == nil {
 		now = time.Now
 	}
 	if p == nil {
-		return newAttrCache(acct, attrTTL, negativeTTL, now)
+		return newAttrCache(acct, attrTTL, negativeTTL, now, rec)
 	}
 	c := &attrCache{
 		now:         now,
@@ -236,7 +237,7 @@ func newAttrCacheWithPersist(acct *accountant, attrTTL, negativeTTL time.Duratio
 		_ = p.PutAttrBytes(key, buf.Bytes())
 	}
 	remover := func(key string) { _ = p.DeleteAttrBytes(key) }
-	c.st = newStoreWithPersist(acct, loader, putter, remover, "attr")
+	c.st = newStoreWithPersist(acct, loader, putter, remover, "attr", rec)
 	c.prefixRemover = func(prefix string) { _ = p.DeleteAttrPrefix(prefix) }
 	return c
 }

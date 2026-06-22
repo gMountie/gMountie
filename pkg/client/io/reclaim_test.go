@@ -87,6 +87,7 @@ func (s *ReclaimStaleSuite) newStaleHandle(
 // context.Background() that carries no FUSE caller at all).
 func (s *ReclaimStaleSuite) TestReopensWhenStale() {
 	client := grpcmocks.NewMockClient(s.T())
+	client.EXPECT().Metrics().Return(nil).Maybe()
 	fileClient := mockProto.NewMockRpcFileClient(s.T())
 
 	client.EXPECT().SessionID().Return("B").Maybe()
@@ -131,6 +132,7 @@ func (s *ReclaimStaleSuite) TestReopensWhenStale() {
 // client session, reclaimIfStale must return OK without calling Open.
 func (s *ReclaimStaleSuite) TestNoopWhenFresh() {
 	client := grpcmocks.NewMockClient(s.T())
+	client.EXPECT().Metrics().Return(nil).Maybe()
 	fileClient := mockProto.NewMockRpcFileClient(s.T())
 
 	client.EXPECT().SessionID().Return("A").Maybe()
@@ -156,6 +158,7 @@ func (s *ReclaimStaleSuite) TestNoopWhenFresh() {
 // serializes re-checkers so only the first caller actually reopens).
 func (s *ReclaimStaleSuite) TestConcurrentReopenOnce() {
 	client := grpcmocks.NewMockClient(s.T())
+	client.EXPECT().Metrics().Return(nil).Maybe()
 	fileClient := mockProto.NewMockRpcFileClient(s.T())
 
 	client.EXPECT().SessionID().Return("B").Maybe()
@@ -196,6 +199,7 @@ func (s *ReclaimStaleSuite) TestConcurrentReopenOnce() {
 // invariant the epoch gate protects ("fail cleanly past grace", issue #117).
 func (s *ReclaimStaleSuite) TestNoReclaimOnReap() {
 	client := grpcmocks.NewMockClient(s.T())
+	client.EXPECT().Metrics().Return(nil).Maybe()
 	fileClient := mockProto.NewMockRpcFileClient(s.T())
 
 	// Session changed (Resume failed → Create), but epoch is UNCHANGED → reap.
@@ -224,6 +228,7 @@ func (s *ReclaimStaleSuite) TestNoReclaimOnReap() {
 // exactly once, update the stored fd, sessionID, and epoch to the new values.
 func (s *ReclaimStaleSuite) TestReclaimOnRestart() {
 	client := grpcmocks.NewMockClient(s.T())
+	client.EXPECT().Metrics().Return(nil).Maybe()
 	fileClient := mockProto.NewMockRpcFileClient(s.T())
 
 	const wantFd = uint64(55)

@@ -7,6 +7,7 @@ import (
 
 	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
 	"go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
 )
 
 type dirEntry struct {
@@ -23,11 +24,11 @@ type dirCache struct {
 	prefixRemover func(prefix string)
 }
 
-func newDirCache(acct *accountant, dirTTL time.Duration, now func() time.Time) *dirCache {
+func newDirCache(acct *accountant, dirTTL time.Duration, now func() time.Time, rec metrics.Recorder) *dirCache {
 	if now == nil {
 		now = time.Now
 	}
-	return &dirCache{st: newStore(acct, "dir"), now: now, dirTTL: dirTTL}
+	return &dirCache{st: newStore(acct, "dir", rec), now: now, dirTTL: dirTTL}
 }
 
 // get returns (entries, true) on a fresh hit, (nil, false) on miss or
@@ -93,12 +94,12 @@ type persistedDir struct {
 
 // newDirCacheWithPersist constructs a dirCache that fronts the persist
 // tier when p is non-nil. nil p falls back to newDirCache.
-func newDirCacheWithPersist(acct *accountant, dirTTL time.Duration, now func() time.Time, p *persist.Persist) *dirCache {
+func newDirCacheWithPersist(acct *accountant, dirTTL time.Duration, now func() time.Time, p *persist.Persist, rec metrics.Recorder) *dirCache {
 	if now == nil {
 		now = time.Now
 	}
 	if p == nil {
-		return newDirCache(acct, dirTTL, now)
+		return newDirCache(acct, dirTTL, now, rec)
 	}
 	c := &dirCache{now: now, dirTTL: dirTTL}
 	loader := func(key string) (any, int, bool) {
@@ -123,7 +124,7 @@ func newDirCacheWithPersist(acct *accountant, dirTTL time.Duration, now func() t
 		_ = p.PutDirBytes(key, buf.Bytes())
 	}
 	remover := func(key string) { _ = p.DeleteDirBytes(key) }
-	c.st = newStoreWithPersist(acct, loader, putter, remover, "dir")
+	c.st = newStoreWithPersist(acct, loader, putter, remover, "dir", rec)
 	c.prefixRemover = func(prefix string) { _ = p.DeleteDirPrefix(prefix) }
 	return c
 }

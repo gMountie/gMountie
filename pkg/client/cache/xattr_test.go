@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
+
 	"github.com/stretchr/testify/suite"
 )
 
@@ -12,7 +14,7 @@ type XAttrCacheSuite struct{ suite.Suite }
 func TestXAttrCacheSuite(t *testing.T) { suite.Run(t, new(XAttrCacheSuite)) }
 
 func (s *XAttrCacheSuite) newCache(ttl time.Duration, now func() time.Time) *xattrCache {
-	return newXAttrCache(newAccountant(0, 0), ttl, now)
+	return newXAttrCache(newAccountant(0, 0), ttl, now, metrics.NopRecorder{})
 }
 
 func (s *XAttrCacheSuite) TestPutGetHit() {

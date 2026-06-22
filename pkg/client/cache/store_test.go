@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
+
 	"github.com/stretchr/testify/suite"
 )
 
@@ -16,7 +18,7 @@ type StoreTestSuite struct {
 
 func (s *StoreTestSuite) SetupTest() {
 	s.acct = newAccountant(0, 0) // unlimited for the basic suite
-	s.s = newStore(s.acct, "attr")
+	s.s = newStore(s.acct, "attr", metrics.NopRecorder{})
 }
 
 func (s *StoreTestSuite) TestPutGet() {
@@ -97,7 +99,7 @@ func (s *PersistedStoreSuite) TestMemoryMissFallsThroughToLoader() {
 		return nil, 0, false
 	}
 	acct := newAccountant(0, 0)
-	st := newStoreWithPersist(acct, loader, func(string, any, int) {}, nil, "attr")
+	st := newStoreWithPersist(acct, loader, func(string, any, int) {}, nil, "attr", metrics.NopRecorder{})
 
 	e := st.get("k1")
 	s.Require().NotNil(e)
@@ -123,7 +125,7 @@ func (s *PersistedStoreSuite) TestPromoteDoesNotWriteThrough() {
 		return nil, 0, false
 	}
 	putter := func(string, any, int) { putCalls++ }
-	st := newStoreWithPersist(newAccountant(0, 0), loader, putter, nil, "attr")
+	st := newStoreWithPersist(newAccountant(0, 0), loader, putter, nil, "attr", metrics.NopRecorder{})
 
 	e := st.get("k1") // memory miss -> loader hit -> promote
 	s.Require().NotNil(e)
@@ -139,7 +141,7 @@ func (s *PersistedStoreSuite) TestPutAlsoWritesThrough() {
 	var putCalls int
 	loader := func(string) (any, int, bool) { return nil, 0, false }
 	putter := func(_ string, _ any, _ int) { putCalls++ }
-	st := newStoreWithPersist(newAccountant(0, 0), loader, putter, nil, "attr")
+	st := newStoreWithPersist(newAccountant(0, 0), loader, putter, nil, "attr", metrics.NopRecorder{})
 	st.put("k", "v", 1)
 	s.Assert().Equal(1, putCalls, "write-through must call putter")
 }
@@ -149,7 +151,7 @@ func (s *PersistedStoreSuite) TestRemoveForwardsToRemover() {
 	loader := func(string) (any, int, bool) { return nil, 0, false }
 	putter := func(string, any, int) {}
 	remover := func(string) { removerCalls++ }
-	st := newStoreWithPersist(newAccountant(0, 0), loader, putter, remover, "attr")
+	st := newStoreWithPersist(newAccountant(0, 0), loader, putter, remover, "attr", metrics.NopRecorder{})
 	st.put("k", "v", 1)
 	st.remove("k")
 	s.Assert().Equal(1, removerCalls)
@@ -166,7 +168,7 @@ type AsyncPersistStoreSuite struct {
 }
 
 func newAsyncStore(putter Putter, depth int) *store {
-	st := newStoreWithPersist(newAccountant(0, 0), func(string) (any, int, bool) { return nil, 0, false }, putter, nil, "data")
+	st := newStoreWithPersist(newAccountant(0, 0), func(string) (any, int, bool) { return nil, 0, false }, putter, nil, "data", metrics.NopRecorder{})
 	st.startAsyncPersist(depth)
 	return st
 }
@@ -251,7 +253,7 @@ func (s *AsyncPersistStoreSuite) TestGenCapturedAtEnqueue() {
 	release := make(chan struct{})
 	gotGen := make(chan uint64, 1)
 	st := newStoreWithPersist(newAccountant(0, 0),
-		func(string) (any, int, bool) { return nil, 0, false }, nil, nil, "data")
+		func(string) (any, int, bool) { return nil, 0, false }, nil, nil, "data", metrics.NopRecorder{})
 	st.genOf = func(string) uint64 { return gen.Load() }
 	st.onPersist = func(job persistJob) {
 		<-release
@@ -280,7 +282,7 @@ func (s *AsyncPersistStoreSuite) TestOnPersistReplacesPutter() {
 	var putterCalls, onPersistCalls int32
 	st := newStoreWithPersist(newAccountant(0, 0),
 		func(string) (any, int, bool) { return nil, 0, false },
-		func(string, any, int) { atomic.AddInt32(&putterCalls, 1) }, nil, "data")
+		func(string, any, int) { atomic.AddInt32(&putterCalls, 1) }, nil, "data", metrics.NopRecorder{})
 	st.onPersist = func(persistJob) { atomic.AddInt32(&onPersistCalls, 1) }
 	st.startAsyncPersist(8)
 	st.put("k", "v", 1)

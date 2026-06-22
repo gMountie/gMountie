@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"go.gmountie.dev/gmountie/pkg/client/io"
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
 )
 
 type AccountantTestSuite struct {
@@ -17,7 +18,7 @@ type AccountantTestSuite struct {
 // entry is evicted when the cap is exceeded.
 func (s *AccountantTestSuite) TestSingleStoreEvictsLRU() {
 	acct := newAccountant(30, 0)
-	st := newStore(acct, "attr")
+	st := newStore(acct, "attr", metrics.NopRecorder{})
 	st.put("a", "va", 10) // inserts: [a]
 	st.put("b", "vb", 10) // [b, a]
 	st.put("c", "vc", 10) // [c, b, a]; used=30, at cap
@@ -33,7 +34,7 @@ func (s *AccountantTestSuite) TestSingleStoreEvictsLRU() {
 // entry to MRU and saves it from imminent eviction.
 func (s *AccountantTestSuite) TestTouchProtectsFromEviction() {
 	acct := newAccountant(30, 0)
-	st := newStore(acct, "attr")
+	st := newStore(acct, "attr", metrics.NopRecorder{})
 	st.put("a", "va", 10)
 	st.put("b", "vb", 10)
 	st.put("c", "vc", 10)
@@ -49,8 +50,8 @@ func (s *AccountantTestSuite) TestTouchProtectsFromEviction() {
 // across all registered stores, not just the inserting one.
 func (s *AccountantTestSuite) TestCrossStoreEvictsGloballyLRU() {
 	acct := newAccountant(30, 0)
-	stA := newStore(acct, "attr")
-	stB := newStore(acct, "dir")
+	stA := newStore(acct, "attr", metrics.NopRecorder{})
+	stB := newStore(acct, "dir", metrics.NopRecorder{})
 	stA.put("a1", "v", 10) // global LRU
 	stB.put("b1", "v", 10)
 	stB.put("b2", "v", 10) // used=30; a1 is global LRU
@@ -64,7 +65,7 @@ func (s *AccountantTestSuite) TestCrossStoreEvictsGloballyLRU() {
 // TestZeroBudgetDisablesEviction verifies that budget<=0 means "no cap".
 func (s *AccountantTestSuite) TestZeroBudgetDisablesEviction() {
 	acct := newAccountant(0, 0)
-	st := newStore(acct, "attr")
+	st := newStore(acct, "attr", metrics.NopRecorder{})
 	for i := 0; i < 1000; i++ {
 		st.put(string(rune(i)), "v", 100)
 	}
@@ -81,7 +82,7 @@ func (s *AccountantTestSuite) TestZeroBudgetDisablesEviction() {
 func (s *AccountantTestSuite) TestEntryCountCapBoundsMaps() {
 	const maxEntries = 100
 	acct := newAccountant(256<<20, maxEntries) // huge byte budget, small count cap
-	st := newStore(acct, "attr")
+	st := newStore(acct, "attr", metrics.NopRecorder{})
 	for i := 0; i < 10_000; i++ {
 		st.put(fmt.Sprintf("path-%d", i), "v", 1) // size=1 → the byte cap never fires
 	}
@@ -95,7 +96,7 @@ func (s *AccountantTestSuite) TestEntryCountCapBoundsMaps() {
 // zero count cap, eviction is purely byte-driven.
 func (s *AccountantTestSuite) TestCountCapZeroDisablesCountEviction() {
 	acct := newAccountant(0, 0) // both disabled
-	st := newStore(acct, "attr")
+	st := newStore(acct, "attr", metrics.NopRecorder{})
 	for i := 0; i < 500; i++ {
 		st.put(fmt.Sprintf("k-%d", i), "v", 10)
 	}

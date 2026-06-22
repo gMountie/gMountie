@@ -122,8 +122,16 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 		m.persists.Store(volume, p)
 		client := m.client // capture for the closure
 		cacheCfg := cache.ConfigFromClient(m.cache)
+		// *metrics.Metrics satisfies metrics.Recorder. client.Metrics() may return
+		// a nil *Metrics (no metrics wired); pass a true-nil Recorder in that case
+		// so NewCachedBackend substitutes a NopRecorder rather than receiving a
+		// non-nil interface wrapping a nil pointer (which would panic on emit).
+		var rec metrics.Recorder
+		if cm := client.Metrics(); cm != nil {
+			rec = cm
+		}
 		layers = append(layers, backendLayer{pos: posCache, build: func(inner io.FileSystemBackend) io.FileSystemBackend {
-			return cache.NewCachedBackend(inner, cacheCfg, p, client.Fs(), volume)
+			return cache.NewCachedBackend(inner, cacheCfg, p, client.Fs(), volume, rec)
 		}})
 	}
 

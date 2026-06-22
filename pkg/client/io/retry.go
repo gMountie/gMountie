@@ -51,6 +51,10 @@ type retryClient interface {
 	SessionID() string
 	RetryWindow() time.Duration
 	Lifetime() context.Context
+	// Metrics returns this client's collector set (or nil when built without
+	// metrics). retryOp emits the retry counter through it instead of a
+	// package-global dispatcher.
+	Metrics() *metrics.Metrics
 }
 
 // The real client satisfies retryClient (Tasks 5-7 pass it to retryOp directly).
@@ -120,6 +124,8 @@ func retryOp[T any](c retryClient, fuseCtx context.Context, op string, class opC
 				backoff = retryMaxDelay
 			}
 		}
-		metrics.OnRetry(op, status.Code(err).String())
+		if m := c.Metrics(); m != nil {
+			m.RetryInc(op, status.Code(err).String())
+		}
 	}
 }

@@ -132,6 +132,9 @@ func (s *BackendClientTestSuite) SetupTest() {
 	s.client.EXPECT().BootEpoch().Return("epoch-1").Maybe()
 	s.client.EXPECT().RetryWindow().Return(2 * time.Second).Maybe()
 	s.client.EXPECT().Lifetime().Return(context.Background()).Maybe()
+	// retryOp emits the retry counter through the client's Recorder on a retry;
+	// nil is fine (the call site nil-checks) and these tests don't assert metrics.
+	s.client.EXPECT().Metrics().Return(nil).Maybe()
 	s.client.EXPECT().PerFileConfig().Return(grpcclient.PerFileConfig{}).Maybe()
 	s.backend = NewBackendClient(s.client, "testVolume")
 }
@@ -2127,6 +2130,9 @@ func (s *FdOpReclaimSuite) SetupTest() {
 	s.client.EXPECT().BootEpoch().Return("epoch-2").Maybe()
 	s.client.EXPECT().RetryWindow().Return(0 * time.Second).Maybe() // fail-fast: no retries
 	s.client.EXPECT().Lifetime().Return(context.Background()).Maybe()
+	// retryOp emits the retry counter through the client's Recorder on a retry;
+	// nil is fine (the call site nil-checks) and these tests don't assert metrics.
+	s.client.EXPECT().Metrics().Return(nil).Maybe()
 	s.client.EXPECT().PerFileConfig().Return(grpcclient.PerFileConfig{}).Maybe()
 	s.backend = NewBackendClient(s.client, "testVolume")
 }

@@ -36,6 +36,7 @@ type store struct {
 	putter    Putter
 	remover   Remover
 	cacheType string
+	rec       metrics.Recorder
 
 	// Async write-back persist (enabled per-store via startAsyncPersist;
 	// used by the data store, whose putter does per-chunk fsync). When
@@ -84,12 +85,12 @@ type Putter func(key string, value any, size int)
 // must leave the on-disk entry intact.
 type Remover func(key string)
 
-func newStore(acct *accountant, cacheType string) *store {
-	return &store{entries: make(map[string]*entry), acct: acct, cacheType: cacheType}
+func newStore(acct *accountant, cacheType string, rec metrics.Recorder) *store {
+	return &store{entries: make(map[string]*entry), acct: acct, cacheType: cacheType, rec: rec}
 }
 
-func newStoreWithPersist(acct *accountant, loader Loader, putter Putter, remover Remover, cacheType string) *store {
-	return &store{entries: make(map[string]*entry), acct: acct, loader: loader, putter: putter, remover: remover, cacheType: cacheType}
+func newStoreWithPersist(acct *accountant, loader Loader, putter Putter, remover Remover, cacheType string, rec metrics.Recorder) *store {
+	return &store{entries: make(map[string]*entry), acct: acct, loader: loader, putter: putter, remover: remover, cacheType: cacheType, rec: rec}
 }
 
 // get returns the entry for key (or nil if absent). Promotes to MRU
@@ -99,16 +100,16 @@ func newStoreWithPersist(acct *accountant, loader Loader, putter Putter, remover
 // fine; promotion is structurally identical to insertion from the
 // loader's point of view).
 //
-// Fires metrics.CacheHit("memory", ...) on a memory tier hit,
-// metrics.CacheHit("disk", ...) on a loader (disk) hit, and
-// metrics.CacheMiss(...) when both tiers missed.
+// Fires rec.CacheHitInc("memory", ...) on a memory tier hit,
+// rec.CacheHitInc("disk", ...) on a loader (disk) hit; the miss is recorded by
+// the backend caller (so expiry-invalidated entries also count correctly).
 func (s *store) get(key string) *entry {
 	s.mu.RLock()
 	e, ok := s.entries[key]
 	s.mu.RUnlock()
 	if ok {
 		s.acct.touch(e)
-		metrics.CacheHit("memory", s.cacheType)
+		s.rec.CacheHitInc("memory", s.cacheType)
 		return e
 	}
 	if s.loader == nil {
@@ -137,7 +138,7 @@ func (s *store) get(key string) *entry {
 		// Invalidated mid-read; do not promote possibly-stale bytes.
 		return nil
 	}
-	metrics.CacheHit("disk", s.cacheType)
+	s.rec.CacheHitInc("disk", s.cacheType)
 	// Promote into the MEMORY tier only: the value came FROM the lower (disk)
 	// tier, so it is already persisted there. Re-persisting it would, under a
 	// racing invalidation, resurrect a chunk the cleaner just removed (the
@@ -176,7 +177,7 @@ func (s *store) putGen(key string, value any, size int, gen uint64) {
 		select {
 		case s.asyncCh <- persistJob{key: key, value: value, size: size, gen: gen}:
 		default:
-			metrics.CachePersistDropped()
+			s.rec.CachePersistDroppedInc()
 		}
 	case s.putter != nil:
 		s.putter(key, value, size)

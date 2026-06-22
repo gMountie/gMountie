@@ -2,6 +2,8 @@ package cache
 
 import (
 	"time"
+
+	"go.gmountie.dev/gmountie/pkg/client/metrics"
 )
 
 // xattrEntry is the value stored in xattrCache. An empty (non-nil) names
@@ -21,11 +23,11 @@ type xattrCache struct {
 	ttl time.Duration
 }
 
-func newXAttrCache(acct *accountant, ttl time.Duration, now func() time.Time) *xattrCache {
+func newXAttrCache(acct *accountant, ttl time.Duration, now func() time.Time, rec metrics.Recorder) *xattrCache {
 	if now == nil {
 		now = time.Now
 	}
-	return &xattrCache{st: newStore(acct, "xattr"), now: now, ttl: ttl}
+	return &xattrCache{st: newStore(acct, "xattr", rec), now: now, ttl: ttl}
 }
 
 // get returns (names, true) on a fresh hit, (nil, false) on miss or expiry.

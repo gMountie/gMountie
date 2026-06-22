@@ -6,6 +6,7 @@ import (
 	"time"
 
 	iomocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/io"
+	metricsmocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/metrics"
 	"go.gmountie.dev/gmountie/pkg/client/cache/persist"
 	"go.gmountie.dev/gmountie/pkg/client/io"
 	"go.gmountie.dev/gmountie/pkg/proto"
@@ -32,7 +33,7 @@ func (s *CachedBackendTestSuite) SetupTest() {
 		AttrTTL:        5 * time.Second,
 		DirTTL:         5 * time.Second,
 		NegativeTTL:    2 * time.Second,
-	}, nil, nil, "").(*cachedBackend)
+	}, nil, nil, "", nil).(*cachedBackend)
 	// Mark the tracker as globally verified so the existing invalidation-table
 	// tests exercise pure cache hit/miss semantics without triggering the
 	// validity-gating path. Tests that specifically target gating
@@ -845,7 +846,7 @@ func newUnverifiedBackend(t *testing.T, inner *iomocks.MockFileSystemBackend) *c
 		AttrTTL:          time.Hour,
 		DirTTL:           time.Hour,
 		NegativeTTL:      time.Minute,
-	}, nil, nil, "").(*cachedBackend)
+	}, nil, nil, "", nil).(*cachedBackend)
 	return cb
 }
 
@@ -1050,7 +1051,7 @@ func newXAttrBackend(t *testing.T, inner *iomocks.MockFileSystemBackend) *cached
 		ChunkSizeBytes: 1024,
 		AttrTTL:        time.Hour,
 		XAttrTTL:       time.Hour,
-	}, nil, nil, "").(*cachedBackend)
+	}, nil, nil, "", nil).(*cachedBackend)
 	cb.validity.markGlobalVerified()
 	return cb
 }
@@ -1106,7 +1107,7 @@ func (s *CachedBackendTestSuite) TestRenameInvalidatesDescendantsAcrossDiskTier(
 	s.Require().NoError(err)
 	inner := iomocks.NewMockFileSystemBackend(s.T())
 	inner.EXPECT().Close().Return(nil).Maybe()
-	be := NewCachedBackend(inner, Config{AttrTTL: time.Hour, DirTTL: time.Hour, ChunkSizeBytes: 1024}, p, nil, "").(*cachedBackend)
+	be := NewCachedBackend(inner, Config{AttrTTL: time.Hour, DirTTL: time.Hour, ChunkSizeBytes: 1024}, p, nil, "", nil).(*cachedBackend)
 	defer be.Close()
 	be.validity.markGlobalVerified()
 
@@ -1166,6 +1167,34 @@ func (s *CachedBackendTestSuite) TestCreateThenStatParentHitsCache() {
 	s.Require().Equal(proto.FsError_FS_OK, st2)
 	s.Assert().Equal(uint64(1), a.Ino)
 	s.Assert().Greater(a.Mtime, uint64(1000))
+}
+
+// TestAttrMissRecordsViaInjectedRecorder proves the cache emits through the
+// injected metrics.Recorder rather than a package-global dispatcher: an
+// uncached Stat must call rec.CacheMissInc("attr") exactly once. Subscribe is
+// disabled so no subscribe-stream metrics fire and trip the strict mock.
+func (s *CachedBackendTestSuite) TestAttrMissRecordsViaInjectedRecorder() {
+	rec := metricsmocks.NewMockRecorder(s.T())
+	rec.EXPECT().CacheMissInc("attr").Once()
+	// A miss may also touch the hit counter on subsequent reads; tolerate it.
+	rec.EXPECT().CacheHitInc(mock.Anything, mock.Anything).Maybe()
+
+	inner := iomocks.NewMockFileSystemBackend(s.T())
+	inner.EXPECT().Stat(mock.Anything, "/x").Return(&io.Attr{Ino: 7, Size: 3}, proto.FsError_FS_OK).Once()
+
+	cb := NewCachedBackend(inner, Config{
+		// SubscribeEnabled defaults to false: validity is marked globally
+		// verified at construction and no subscriber goroutine starts, so the
+		// only metric this drives is the attr miss.
+		MemoryMaxBytes: 0,
+		ChunkSizeBytes: 1024,
+		AttrTTL:        5 * time.Second,
+		NegativeTTL:    2 * time.Second,
+	}, nil, nil, "", rec)
+
+	a, st := cb.Stat(context.Background(), "/x")
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	s.Assert().Equal(uint64(7), a.Ino)
 }
 
 func TestCachedBackendTestSuite(t *testing.T) {
