@@ -214,10 +214,10 @@ func (s *RpcServerTestSuite) TestGetAttrBindsRequestIdentity() {
 	caller := CreateCaller(1001, 2000, 4242)
 
 	var gotVolume string
-	var gotCaller *proto.Caller
+	var gotCaller *service.Caller
 	s.fsService.EXPECT().
-		BindIdentity(mock.Anything, "testVolume", caller).
-		Run(func(_ context.Context, volume string, c *proto.Caller) {
+		BindIdentity(mock.Anything, "testVolume", mock.Anything).
+		Run(func(_ context.Context, volume string, c *service.Caller) {
 			gotVolume = volume
 			gotCaller = c
 		}).
@@ -230,7 +230,11 @@ func (s *RpcServerTestSuite) TestGetAttrBindsRequestIdentity() {
 	s.Require().NoError(err)
 	s.Assert().Equal("testVolume", gotVolume)
 	s.Require().NotNil(gotCaller)
-	s.Assert().Equal(caller, gotCaller)
+	// The handler must forward the request caller's exact POSIX identity,
+	// translated to the domain type at the boundary.
+	s.Assert().Equal(uint32(1001), gotCaller.Uid)
+	s.Assert().Equal(uint32(2000), gotCaller.Gid)
+	s.Assert().Equal(uint32(4242), gotCaller.Pid)
 }
 
 func (s *RpcServerTestSuite) TestGetXAttr() {
@@ -428,7 +432,8 @@ func (s *RpcServerTestSuite) TestGetAttrIfChanged_ENOENT() {
 func (s *RpcServerTestSuite) TestGetAttrIfChanged_PassesWireCaller() {
 	mockFs := new(pathfs2.MockFileSystem)
 	wireCaller := CreateCaller(1234, 5678, 0)
-	s.fsService.On("BindIdentity", mock.Anything, "testVolume", wireCaller).Return(mockFs, service.Identity{}, nil).Once()
+	// BindIdentity receives the wire caller translated to the domain type.
+	s.fsService.On("BindIdentity", mock.Anything, "testVolume", CallerFromProto(wireCaller)).Return(mockFs, service.Identity{}, nil).Once()
 
 	attr := &fuse.Attr{Ino: 1, Size: 1, Mode: 0o644, Nlink: 1}
 	mockFs.EXPECT().GetAttr("/x.bin", mock.Anything).Return(attr, fuse.OK)

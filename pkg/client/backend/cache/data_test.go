@@ -161,3 +161,57 @@ func (s *DataCacheTestSuite) TestInvalidateRangePoisonsOnPersistError() {
 	c.invalidateRange("/f", 0, 1) // touches chunk 0
 	s.Assert().Nil(c.get("/f", 0), "poisoned path must not serve stale disk chunk after failed range invalidation")
 }
+
+// recordingPersist records WriteChunk/PutChunkRef so a test can prove an
+// invalidated-then-pruned persist job is dropped rather than written through.
+type recordingPersist struct {
+	wroteChunk bool
+	putRef     bool
+}
+
+func (r *recordingPersist) GetChunkRef(string, int) (persist.ChunkRef, bool, error) {
+	return persist.ChunkRef{}, false, nil
+}
+func (r *recordingPersist) ReadChunk([16]byte) ([]byte, error) { return nil, nil }
+func (r *recordingPersist) WriteChunk([]byte) ([16]byte, bool, error) {
+	r.wroteChunk = true
+	return [16]byte{}, false, nil
+}
+func (r *recordingPersist) PutChunkRef(string, int, persist.ChunkRef) error {
+	r.putRef = true
+	return nil
+}
+func (r *recordingPersist) InvalidatePathChunks(string) error           { return nil }
+func (r *recordingPersist) InvalidateChunkRange(string, int, int) error { return nil }
+
+// TestPruneAfterInvalidateDoesNotResurrect is the regression lock for the
+// gens-map prune. The cleaner now DELETES a path's generation entry to bound the
+// map, and seeds any later re-creation from a process-wide monotonic high-water.
+// This proves the prune is sound: a persist job captured BEFORE an invalidation
+// must still be dropped by onPersist after the entry was pruned — never written
+// through to disk (which would resurrect a stale chunk, the #141 race). A naive
+// delete-to-zero re-creates the counter at 0, aliases the stale job's generation
+// via onPersist's equality check, and writes it through — failing this test.
+func (s *DataCacheTestSuite) TestPruneAfterInvalidateDoesNotResurrect() {
+	rec := &recordingPersist{}
+	c := newDataCacheWithChunkPersist(newAccountant(1<<20, 0), 1024, rec, metrics.NopRecorder{})
+	defer c.Close()
+
+	// A persist job for /f was enqueued at the path's initial generation.
+	g0 := c.currentGen("/f")
+	staleJob := persistJob{key: chunkKey("/f", 0), value: []byte("stale"), size: 5, gen: g0}
+
+	// A write invalidates /f: this bumps the generation AND prunes the gens entry.
+	c.invalidatePath("/f")
+
+	// The re-created generation must NOT reset to the stale job's value — it seeds
+	// from the high-water, so it is strictly newer.
+	s.Require().NotEqual(g0, c.currentGen("/f"),
+		"pruned generation must re-create from the high-water, not reset to the stale job's value")
+
+	// Running the stale job's write-through now must DROP it (curGen != job.gen),
+	// not write the stale chunk to disk.
+	c.st.onPersist(staleJob)
+	s.Assert().False(rec.wroteChunk, "stale persist job must be dropped after invalidate+prune, never resurrected on disk")
+	s.Assert().False(rec.putRef, "stale persist job must not write a chunk ref after invalidate+prune")
+}

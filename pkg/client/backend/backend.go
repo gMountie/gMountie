@@ -40,8 +40,12 @@ type FileLock struct {
 	Pid   uint32
 }
 
-// Attr is the per-inode attribute snapshot returned by Stat/Lookup. Keeps
-// FileSystemBackend decoupled from pkg/proto's wire types.
+// Attr is the per-inode attribute snapshot returned by Stat/Lookup. It mirrors
+// the wire DATA types in plain structs (Attr/DirEntry/StatFs) so the adapter and
+// cache stack don't pass *proto messages around. Note this is only a partial
+// decoupling: the interface still uses proto.FsError as its errno/error type
+// throughout — the generated wire error enum doubles as the client-side domain
+// errno (a full errno-type split is out of scope).
 type Attr struct {
 	Ino       uint64
 	Size      uint64

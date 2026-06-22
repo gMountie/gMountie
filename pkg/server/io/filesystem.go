@@ -8,9 +8,11 @@ type LocalFilesystem struct {
 }
 
 // NewLocalFilesystem opens path as a confined volume root. Returns an error if
-// the path does not exist, is not a directory, or cannot be opened.
-func NewLocalFilesystem(path string) (*LocalFilesystem, error) {
-	fs, err := NewConfinedLoopbackFileSystem(path)
+// the path does not exist, is not a directory, or cannot be opened. Optional
+// ConfinedOptions (e.g. WithConfinementMetrics) configure the underlying
+// confined FS.
+func NewLocalFilesystem(path string, opts ...ConfinedOption) (*LocalFilesystem, error) {
+	fs, err := NewConfinedLoopbackFileSystem(path, opts...)
 	if err != nil {
 		return nil, err
 	}

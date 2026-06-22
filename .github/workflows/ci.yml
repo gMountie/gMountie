@@ -34,7 +34,7 @@ jobs:
           go-version-file: 'go.mod'
           cache-dependency-path: 'go.sum'
       - name: Install Task
-        uses: go-task/setup-task@v1
+        uses: go-task/setup-task@01a4adf9db2d14c1de7a560f09170b6e0df736aa # v2.1.0
         with:
           version: 3.51.1
           # Authenticate the release fetch so we don't hit the unauthenticated
@@ -99,7 +99,7 @@ jobs:
           go-version-file: 'go.mod'
           cache-dependency-path: 'go.sum'
       - name: Install Task
-        uses: go-task/setup-task@v1
+        uses: go-task/setup-task@01a4adf9db2d14c1de7a560f09170b6e0df736aa # v2.1.0
         with:
           version: 3.51.1
           # Authenticate the release fetch so we don't hit the unauthenticated
@@ -135,7 +135,7 @@ jobs:
           go-version-file: 'go.mod'
           cache-dependency-path: 'go.sum'
       - name: Install Task
-        uses: go-task/setup-task@v1
+        uses: go-task/setup-task@01a4adf9db2d14c1de7a560f09170b6e0df736aa # v2.1.0
         with:
           version: 3.51.1
           # Authenticate the release fetch so we don't hit the unauthenticated
@@ -162,7 +162,7 @@ jobs:
           go-version-file: 'go.mod'
           cache-dependency-path: 'go.sum'
       - name: Install Task
-        uses: go-task/setup-task@v1
+        uses: go-task/setup-task@01a4adf9db2d14c1de7a560f09170b6e0df736aa # v2.1.0
         with:
           version: 3.51.1
           repo-token: ${{ secrets.GITHUB_TOKEN }}

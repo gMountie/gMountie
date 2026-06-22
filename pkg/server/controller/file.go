@@ -135,7 +135,7 @@ func (r *RpcFileServerImpl) Open(ctx context.Context, request *proto.OpenRequest
 	if err != nil {
 		return nil, err
 	}
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +154,7 @@ func (r *RpcFileServerImpl) Create(ctx context.Context, request *proto.CreateReq
 	if err != nil {
 		return nil, err
 	}
-	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, request.Caller)
+	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}

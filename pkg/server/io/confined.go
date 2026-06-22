@@ -9,13 +9,17 @@ import (
 	"os"
 	"path"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
 
+	"go.gmountie.dev/gmountie/pkg/utils/log"
+
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hanwen/go-fuse/v2/fuse/nodefs"
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
+	"go.uber.org/zap"
 	"golang.org/x/sys/unix"
 )
 
@@ -82,24 +86,102 @@ func dupCloexec(rootFd int) (int, error) {
 // ConfinedLoopbackFileSystem is a pathfs.FileSystem that translates every op
 // to fd-relative *at syscalls anchored at a single openat2-resolved volume
 // root dirfd. It composes safely under identityBoundFS.
+// ConfinementMetrics is the io layer's hook for reporting RESOLVE_BENEATH
+// confinement-boundary rejections (path-escape attempts). *metrics.Metrics
+// satisfies it; the io package keeps its own narrow interface so it stays
+// decoupled from the metrics package.
+type ConfinementMetrics interface {
+	ConfinementDenialInc(volume, op string)
+}
+
+type noopConfinementMetrics struct{}
+
+func (noopConfinementMetrics) ConfinementDenialInc(string, string) {}
+
 type ConfinedLoopbackFileSystem struct {
 	pathfs.FileSystem // no-op String/SetDebug/OnMount/OnUnmount etc.
 	rootFd            int
 	rootPath          string // kept for log + StatFs
+	// volume + metrics let a confinement-boundary denial be observed (which
+	// volume is seeing escape attempts). metrics is never nil (noop default).
+	volume  string
+	metrics ConfinementMetrics
+	// warnLast throttles the escape-attempt Warn (unix-nanos of last log) so a
+	// client spraying ../ paths can't drive an unbounded log faucet.
+	warnLast atomic.Int64
+}
+
+// ConfinedOption configures a ConfinedLoopbackFileSystem at construction.
+type ConfinedOption func(*ConfinedLoopbackFileSystem)
+
+// WithConfinementMetrics binds the volume name and a denial metrics sink so
+// confinement-boundary rejections are counted and (throttled-)logged. A nil
+// sink is tolerated.
+func WithConfinementMetrics(volume string, m ConfinementMetrics) ConfinedOption {
+	return func(c *ConfinedLoopbackFileSystem) {
+		c.volume = volume
+		if m != nil {
+			c.metrics = m
+		}
+	}
 }
 
 // NewConfinedLoopbackFileSystem opens path as the volume root. It must be a
 // directory; ENOTDIR/ENOENT bubble up to the caller.
-func NewConfinedLoopbackFileSystem(rootPath string) (*ConfinedLoopbackFileSystem, error) {
+func NewConfinedLoopbackFileSystem(rootPath string, opts ...ConfinedOption) (*ConfinedLoopbackFileSystem, error) {
 	fd, err := unix.Open(rootPath, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open volume root %q: %w", rootPath, err)
 	}
-	return &ConfinedLoopbackFileSystem{
+	c := &ConfinedLoopbackFileSystem{
 		FileSystem: pathfs.NewDefaultFileSystem(),
 		rootFd:     fd,
 		rootPath:   rootPath,
-	}, nil
+		metrics:    noopConfinementMetrics{},
+	}
+	for _, o := range opts {
+		o(c)
+	}
+	return c, nil
+}
+
+// confinementWarnInterval bounds the escape-attempt Warn rate.
+const confinementWarnInterval = 10 * time.Second
+
+// confinedResolve wraps resolveBeneath and records a confinement denial when the
+// RESOLVE_BENEATH boundary rejects a wire path (EXDEV/ELOOP) — a path-escape
+// attempt that would otherwise collapse to a silent EACCES. It MUST be the only
+// resolveBeneath entry point used by the FS methods so every escape is observed;
+// the raw errno-to-status mapping (errnoToStatus) is deliberately NOT a
+// recording point because EXDEV/ELOOP from an actual syscall (e.g. a real
+// cross-device rename) is not a confinement escape.
+func (c *ConfinedLoopbackFileSystem) confinedResolve(name string) (int, string, error) {
+	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	if err != nil {
+		var errno syscall.Errno
+		if errors.As(err, &errno) && (errno == unix.EXDEV || errno == unix.ELOOP) {
+			c.recordConfinementDenial(name)
+		}
+	}
+	return parentFd, leaf, err
+}
+
+// recordConfinementDenial always bumps the per-volume confinement-denial counter
+// and emits a THROTTLED Warn carrying the offending path. The path is logged,
+// never used as a metric label (unbounded cardinality).
+func (c *ConfinedLoopbackFileSystem) recordConfinementDenial(name string) {
+	c.metrics.ConfinementDenialInc(c.volume, "path_resolve")
+	now := time.Now().UnixNano()
+	prev := c.warnLast.Load()
+	if now-prev < int64(confinementWarnInterval) && prev != 0 {
+		return
+	}
+	if !c.warnLast.CompareAndSwap(prev, now) {
+		return
+	}
+	log.Log.Warn("confinement boundary denial: wire path tried to escape the volume root",
+		zap.String("volume", c.volume),
+		zap.String("path", name))
 }
 
 // errnoToStatus maps a unix errno to a fuse.Status. EXDEV/ELOOP from
@@ -121,7 +203,7 @@ func errnoToStatus(err error) fuse.Status {
 }
 
 func (c *ConfinedLoopbackFileSystem) GetAttr(name string, _ *fuse.Context) (*fuse.Attr, fuse.Status) {
-	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	parentFd, leaf, err := c.confinedResolve(name)
 	if err != nil {
 		return nil, errnoToStatus(err)
 	}
@@ -136,7 +218,7 @@ func (c *ConfinedLoopbackFileSystem) GetAttr(name string, _ *fuse.Context) (*fus
 }
 
 func (c *ConfinedLoopbackFileSystem) StatFs(name string) *fuse.StatfsOut {
-	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	parentFd, leaf, err := c.confinedResolve(name)
 	if err != nil {
 		return nil
 	}
@@ -159,7 +241,7 @@ func (c *ConfinedLoopbackFileSystem) StatFs(name string) *fuse.StatfsOut {
 }
 
 func (c *ConfinedLoopbackFileSystem) Readlink(name string, _ *fuse.Context) (string, fuse.Status) {
-	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	parentFd, leaf, err := c.confinedResolve(name)
 	if err != nil {
 		return "", errnoToStatus(err)
 	}
@@ -173,7 +255,7 @@ func (c *ConfinedLoopbackFileSystem) Readlink(name string, _ *fuse.Context) (str
 }
 
 func (c *ConfinedLoopbackFileSystem) Access(name string, mode uint32, _ *fuse.Context) fuse.Status {
-	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	parentFd, leaf, err := c.confinedResolve(name)
 	if err != nil {
 		return errnoToStatus(err)
 	}
@@ -205,7 +287,7 @@ func procFdPath(fd int) string {
 }
 
 func (c *ConfinedLoopbackFileSystem) Chmod(name string, mode uint32, _ *fuse.Context) fuse.Status {
-	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	parentFd, leaf, err := c.confinedResolve(name)
 	if err != nil {
 		return errnoToStatus(err)
 	}
@@ -228,7 +310,7 @@ func (c *ConfinedLoopbackFileSystem) Chmod(name string, mode uint32, _ *fuse.Con
 }
 
 func (c *ConfinedLoopbackFileSystem) Chown(name string, uid, gid uint32, _ *fuse.Context) fuse.Status {
-	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	parentFd, leaf, err := c.confinedResolve(name)
 	if err != nil {
 		return errnoToStatus(err)
 	}
@@ -249,7 +331,7 @@ func toTimespec(t *time.Time) unix.Timespec {
 }
 
 func (c *ConfinedLoopbackFileSystem) Utimens(name string, atime, mtime *time.Time, _ *fuse.Context) fuse.Status {
-	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	parentFd, leaf, err := c.confinedResolve(name)
 	if err != nil {
 		return errnoToStatus(err)
 	}
@@ -262,7 +344,7 @@ func (c *ConfinedLoopbackFileSystem) Utimens(name string, atime, mtime *time.Tim
 }
 
 func (c *ConfinedLoopbackFileSystem) Truncate(name string, size uint64, _ *fuse.Context) fuse.Status {
-	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	parentFd, leaf, err := c.confinedResolve(name)
 	if err != nil {
 		return errnoToStatus(err)
 	}
@@ -282,7 +364,7 @@ func (c *ConfinedLoopbackFileSystem) Truncate(name string, size uint64, _ *fuse.
 }
 
 func (c *ConfinedLoopbackFileSystem) Mkdir(name string, mode uint32, _ *fuse.Context) fuse.Status {
-	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	parentFd, leaf, err := c.confinedResolve(name)
 	if err != nil {
 		return errnoToStatus(err)
 	}
@@ -294,7 +376,7 @@ func (c *ConfinedLoopbackFileSystem) Mkdir(name string, mode uint32, _ *fuse.Con
 }
 
 func (c *ConfinedLoopbackFileSystem) Mknod(name string, mode, dev uint32, _ *fuse.Context) fuse.Status {
-	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	parentFd, leaf, err := c.confinedResolve(name)
 	if err != nil {
 		return errnoToStatus(err)
 	}
@@ -306,7 +388,7 @@ func (c *ConfinedLoopbackFileSystem) Mknod(name string, mode, dev uint32, _ *fus
 }
 
 func (c *ConfinedLoopbackFileSystem) Rmdir(name string, _ *fuse.Context) fuse.Status {
-	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	parentFd, leaf, err := c.confinedResolve(name)
 	if err != nil {
 		return errnoToStatus(err)
 	}
@@ -318,7 +400,7 @@ func (c *ConfinedLoopbackFileSystem) Rmdir(name string, _ *fuse.Context) fuse.St
 }
 
 func (c *ConfinedLoopbackFileSystem) Unlink(name string, _ *fuse.Context) fuse.Status {
-	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	parentFd, leaf, err := c.confinedResolve(name)
 	if err != nil {
 		return errnoToStatus(err)
 	}
@@ -330,12 +412,12 @@ func (c *ConfinedLoopbackFileSystem) Unlink(name string, _ *fuse.Context) fuse.S
 }
 
 func (c *ConfinedLoopbackFileSystem) Rename(oldName, newName string, _ *fuse.Context) fuse.Status {
-	oldParent, oldLeaf, err := resolveBeneath(c.rootFd, oldName)
+	oldParent, oldLeaf, err := c.confinedResolve(oldName)
 	if err != nil {
 		return errnoToStatus(err)
 	}
 	defer func() { _ = unix.Close(oldParent) }()
-	newParent, newLeaf, err := resolveBeneath(c.rootFd, newName)
+	newParent, newLeaf, err := c.confinedResolve(newName)
 	if err != nil {
 		return errnoToStatus(err)
 	}
@@ -353,7 +435,7 @@ func (c *ConfinedLoopbackFileSystem) Rename(oldName, newName string, _ *fuse.Con
 // here; an absolute or escaping value is just an inert string until something
 // tries to follow it.
 func (c *ConfinedLoopbackFileSystem) Symlink(value, linkName string, _ *fuse.Context) fuse.Status {
-	parentFd, leaf, err := resolveBeneath(c.rootFd, linkName)
+	parentFd, leaf, err := c.confinedResolve(linkName)
 	if err != nil {
 		return errnoToStatus(err)
 	}
@@ -365,12 +447,12 @@ func (c *ConfinedLoopbackFileSystem) Symlink(value, linkName string, _ *fuse.Con
 }
 
 func (c *ConfinedLoopbackFileSystem) Link(oldName, newName string, _ *fuse.Context) fuse.Status {
-	oldParent, oldLeaf, err := resolveBeneath(c.rootFd, oldName)
+	oldParent, oldLeaf, err := c.confinedResolve(oldName)
 	if err != nil {
 		return errnoToStatus(err)
 	}
 	defer func() { _ = unix.Close(oldParent) }()
-	newParent, newLeaf, err := resolveBeneath(c.rootFd, newName)
+	newParent, newLeaf, err := c.confinedResolve(newName)
 	if err != nil {
 		return errnoToStatus(err)
 	}
@@ -388,7 +470,7 @@ func (c *ConfinedLoopbackFileSystem) Link(oldName, newName string, _ *fuse.Conte
 func (c *ConfinedLoopbackFileSystem) Open(name string, flags uint32, _ *fuse.Context) (nodefs.File, fuse.Status) {
 	// Mirror loopback: strip O_APPEND (kernel handles offset translation).
 	flags = flags &^ uint32(syscall.O_APPEND)
-	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	parentFd, leaf, err := c.confinedResolve(name)
 	if err != nil {
 		return nil, errnoToStatus(err)
 	}
@@ -409,7 +491,7 @@ func (c *ConfinedLoopbackFileSystem) Open(name string, flags uint32, _ *fuse.Con
 // O_APPEND is stripped for the same reason as Open.
 func (c *ConfinedLoopbackFileSystem) Create(name string, flags, mode uint32, _ *fuse.Context) (nodefs.File, fuse.Status) {
 	flags = flags &^ uint32(syscall.O_APPEND)
-	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	parentFd, leaf, err := c.confinedResolve(name)
 	if err != nil {
 		return nil, errnoToStatus(err)
 	}
@@ -436,7 +518,7 @@ func (c *ConfinedLoopbackFileSystem) Create(name string, flags, mode uint32, _ *
 // the file immediately after the call returns. Status is fuse.OK on success;
 // the file and entries are nil on any error.
 func (c *ConfinedLoopbackFileSystem) openConfinedDir(name string) (*os.File, []os.DirEntry, fuse.Status) {
-	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	parentFd, leaf, err := c.confinedResolve(name)
 	if err != nil {
 		return nil, nil, errnoToStatus(err)
 	}
@@ -492,7 +574,7 @@ func (c *ConfinedLoopbackFileSystem) OpenDir(name string, _ *fuse.Context) ([]fu
 // volume root. Linux xattr syscalls have no *at variants, so we operate
 // on the fd via /proc/self/fd/N.
 func (c *ConfinedLoopbackFileSystem) openLeafForXattr(name string) (int, error) {
-	parentFd, leaf, err := resolveBeneath(c.rootFd, name)
+	parentFd, leaf, err := c.confinedResolve(name)
 	if err != nil {
 		return -1, err
 	}

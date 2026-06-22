@@ -58,6 +58,21 @@ func versionAfter(ctx context.Context, fs pathfs.FileSystem, path string, caller
 	return serverio.VersionFromAttr(attr)
 }
 
+// CallerFromProto translates a wire *proto.Caller into the domain
+// *service.Caller at the gRPC boundary, keeping the VolumeService interface
+// decoupled from the generated wire type. A nil wire caller (or nil Owner)
+// yields a zero identity.
+func CallerFromProto(c *proto.Caller) *service.Caller {
+	if c == nil {
+		return nil
+	}
+	out := &service.Caller{Pid: c.GetPid()}
+	if o := c.GetOwner(); o != nil {
+		out.Uid, out.Gid = o.GetUid(), o.GetGid()
+	}
+	return out
+}
+
 // createContext creates a new fuse.Context from the given context.Context.
 // A nil caller (or nil caller.Owner) is treated as uid/gid/pid = 0 — the
 // downstream filesystem layer is responsible for rejecting requests that
