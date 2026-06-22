@@ -8,6 +8,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/config"
 	"go.gmountie.dev/gmountie/pkg/client/grpc"
 	"go.gmountie.dev/gmountie/pkg/client/io"
+	observer "go.gmountie.dev/gmountie/pkg/client/io/observer"
 	"go.gmountie.dev/gmountie/pkg/client/metrics"
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
@@ -137,7 +138,7 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 
 	if rec := m.client.Metrics(); rec != nil {
 		layers = append(layers, backendLayer{pos: posObserver, build: func(inner io.FileSystemBackend) io.FileSystemBackend {
-			return io.NewMetricsLayer(inner, rec)
+			return observer.NewMetricsLayer(inner, rec)
 		}})
 	}
 
