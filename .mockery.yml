@@ -18,6 +18,9 @@ packages:
     interfaces:
       FileSystemBackend: {}
       FileHandle: {}
+  go.gmountie.dev/gmountie/pkg/client/metrics:
+    interfaces:
+      Recorder: {}
   go.gmountie.dev/gmountie/pkg/proto:
     config:
       all: true

@@ -127,6 +127,12 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 		}})
 	}
 
+	if rec := m.client.Metrics(); rec != nil {
+		layers = append(layers, backendLayer{pos: posObserver, build: func(inner io.FileSystemBackend) io.FileSystemBackend {
+			return io.NewMetricsLayer(inner, rec)
+		}})
+	}
+
 	backend := composeBackend(transport, layers)
 	m.backends.Store(volume, backend)
 
