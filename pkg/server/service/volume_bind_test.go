@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/server/io"
 	"go.gmountie.dev/gmountie/pkg/server/principal"
@@ -29,7 +28,7 @@ func (s *BindIdentitySuite) serviceForVolume(m config.MappingConfig) *VolumeServ
 func (s *BindIdentitySuite) TestSquashIgnoresPrincipalAndCaller() {
 	svc := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModeSquash, Uid: 1000, Gid: 1000})
 	ctx := principal.WithPrincipal(context.Background(), "alice")
-	id, err := svc.resolveIdentity(ctx, "v", &proto.Caller{Owner: &proto.Owner{Uid: 4242}})
+	id, err := svc.resolveIdentity(ctx, "v", &Caller{Uid: 4242})
 	s.Require().NoError(err)
 	s.Equal(uint32(1000), id.Uid)
 }
@@ -52,7 +51,7 @@ func (s *BindIdentitySuite) TestStaticNoPrincipalFailsClosed() {
 
 func (s *BindIdentitySuite) TestPassthroughRootSquashDefaultOn() {
 	svc := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModePassthrough, AnonUid: 65534})
-	id, err := svc.resolveIdentity(context.Background(), "v", &proto.Caller{Owner: &proto.Owner{Uid: 0, Gid: 0}})
+	id, err := svc.resolveIdentity(context.Background(), "v", &Caller{Uid: 0, Gid: 0})
 	s.Require().NoError(err)
 	s.Equal(uint32(65534), id.Uid)
 }
@@ -61,7 +60,7 @@ func (s *BindIdentitySuite) TestPassthroughRootSquashUnsetAnonUsesNobody() {
 	// root_squash default-on, anon_uid unset (0): root MUST squash to nobody,
 	// never to 0 (which would make root_squash a silent no-op).
 	svc := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModePassthrough})
-	id, err := svc.resolveIdentity(context.Background(), "v", &proto.Caller{Owner: &proto.Owner{Uid: 0, Gid: 0}})
+	id, err := svc.resolveIdentity(context.Background(), "v", &Caller{Uid: 0, Gid: 0})
 	s.Require().NoError(err)
 	s.Equal(uint32(65534), id.Uid)
 	s.Equal(uint32(65534), id.Gid)
@@ -70,7 +69,7 @@ func (s *BindIdentitySuite) TestPassthroughRootSquashUnsetAnonUsesNobody() {
 func (s *BindIdentitySuite) TestPassthroughNoRootSquashKeepsRoot() {
 	no := false
 	svc := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModePassthrough, RootSquash: &no})
-	id, err := svc.resolveIdentity(context.Background(), "v", &proto.Caller{Owner: &proto.Owner{Uid: 0, Gid: 0}})
+	id, err := svc.resolveIdentity(context.Background(), "v", &Caller{Uid: 0, Gid: 0})
 	s.Require().NoError(err)
 	s.Equal(uint32(0), id.Uid)
 }
@@ -147,8 +146,8 @@ func (s *BindIdentitySuite) TestBoundFSNotCachedForPassthrough() {
 	identityEnforceable = func() bool { return true }
 
 	svc := s.serviceForVolume(config.MappingConfig{Mode: config.MappingModePassthrough})
-	caller1 := &proto.Caller{Owner: &proto.Owner{Uid: 1001, Gid: 1001}}
-	caller2 := &proto.Caller{Owner: &proto.Owner{Uid: 1002, Gid: 1002}}
+	caller1 := &Caller{Uid: 1001, Gid: 1001}
+	caller2 := &Caller{Uid: 1002, Gid: 1002}
 	ctx := context.Background()
 
 	fs1, _, err := svc.BindIdentity(ctx, "v", caller1)

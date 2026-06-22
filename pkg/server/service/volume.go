@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"go.gmountie.dev/gmountie/pkg/common"
-	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/server/io"
 	"go.gmountie.dev/gmountie/pkg/server/principal"
@@ -59,6 +58,16 @@ func buildACLSnapshot(cfg *config.Config) *aclSnapshot {
 	return snap
 }
 
+// Caller is the domain view of the wire caller's POSIX identity. The
+// VolumeService interface takes this instead of the generated *proto.Caller so
+// the service layer does not depend on the wire shape; the gRPC controller
+// translates proto.Caller -> Caller at the boundary (controller.CallerFromProto).
+type Caller struct {
+	Uid uint32
+	Gid uint32
+	Pid uint32
+}
+
 // VolumeService is a service that manages volumes.
 type VolumeService interface {
 	// List lists all volumes accessible to the principal in ctx.
@@ -68,10 +77,10 @@ type VolumeService interface {
 	// BindIdentity resolves the request's identity for a volume and returns a
 	// per-request identity-bound filesystem wrapping the volume's loopback,
 	// together with the resolved Identity so callers need not re-resolve it.
-	BindIdentity(ctx context.Context, volume string, caller *proto.Caller) (pathfs.FileSystem, Identity, error)
+	BindIdentity(ctx context.Context, volume string, caller *Caller) (pathfs.FileSystem, Identity, error)
 	// ResolveIdentity resolves the request's server-side identity for a volume
 	// (principal from ctx for mapped modes; wire caller for passthrough).
-	ResolveIdentity(ctx context.Context, volume string, caller *proto.Caller) (Identity, error)
+	ResolveIdentity(ctx context.Context, volume string, caller *Caller) (Identity, error)
 	// PrincipalCanAccess returns nil if the principal in ctx is allowed to
 	// access the named volume, or a PermissionDenied status error otherwise.
 	PrincipalCanAccess(ctx context.Context, volume string) error
@@ -342,7 +351,7 @@ func (s *VolumeServiceImpl) Resolve(ctx context.Context, volume string) (string,
 // When identityEnforceable returns false (non-root, dev/CI) the bare loopback
 // is returned alongside a best-effort identity (zero on resolve error) so
 // attr-returning handlers can still populate Owner names without changing creds.
-func (s *VolumeServiceImpl) BindIdentity(ctx context.Context, volume string, caller *proto.Caller) (pathfs.FileSystem, Identity, error) {
+func (s *VolumeServiceImpl) BindIdentity(ctx context.Context, volume string, caller *Caller) (pathfs.FileSystem, Identity, error) {
 	if err := s.PrincipalCanAccess(ctx, volume); err != nil {
 		return nil, Identity{}, err
 	}
@@ -430,7 +439,7 @@ func (s *VolumeServiceImpl) executorWorkers() int {
 
 // ResolveIdentity resolves the request's server-side identity for a volume.
 // It is the exported counterpart of resolveIdentity, for use by the WhoAmI handler.
-func (s *VolumeServiceImpl) ResolveIdentity(ctx context.Context, volume string, caller *proto.Caller) (Identity, error) {
+func (s *VolumeServiceImpl) ResolveIdentity(ctx context.Context, volume string, caller *Caller) (Identity, error) {
 	return s.resolveIdentity(ctx, volume, caller)
 }
 
@@ -445,7 +454,7 @@ var identityEnforceable = func() bool {
 // resolveIdentity determines the effective identity for a request against a
 // volume. Mapped modes resolve the authenticated principal (from ctx) through
 // the volume's resolver; passthrough derives the identity from the wire caller.
-func (s *VolumeServiceImpl) resolveIdentity(ctx context.Context, volume string, caller *proto.Caller) (Identity, error) {
+func (s *VolumeServiceImpl) resolveIdentity(ctx context.Context, volume string, caller *Caller) (Identity, error) {
 	entry, ok := s.volumes[volume]
 	if !ok {
 		return Identity{}, errors.Errorf("volume %s not found", volume)
@@ -479,10 +488,10 @@ func (s *VolumeServiceImpl) resolveIdentity(ctx context.Context, volume string, 
 // passthroughIdentity derives the identity directly from the wire caller,
 // applying root_squash (default on) so an incoming uid 0 maps to AnonUid unless
 // no_root_squash is configured.
-func passthroughIdentity(m config.MappingConfig, caller *proto.Caller) Identity {
+func passthroughIdentity(m config.MappingConfig, caller *Caller) Identity {
 	var uid, gid uint32
-	if caller != nil && caller.Owner != nil {
-		uid, gid = caller.Owner.Uid, caller.Owner.Gid
+	if caller != nil {
+		uid, gid = caller.Uid, caller.Gid
 	}
 	squashRoot := m.RootSquash == nil || *m.RootSquash // default true
 	if squashRoot && uid == 0 {

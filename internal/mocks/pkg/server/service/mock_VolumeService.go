@@ -10,7 +10,6 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	mock "github.com/stretchr/testify/mock"
 	"go.gmountie.dev/gmountie/pkg/common"
-	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/server/service"
 )
@@ -43,7 +42,7 @@ func (_m *MockVolumeService) EXPECT() *MockVolumeService_Expecter {
 }
 
 // BindIdentity provides a mock function for the type MockVolumeService
-func (_mock *MockVolumeService) BindIdentity(ctx context.Context, volume string, caller *proto.Caller) (pathfs.FileSystem, service.Identity, error) {
+func (_mock *MockVolumeService) BindIdentity(ctx context.Context, volume string, caller *service.Caller) (pathfs.FileSystem, service.Identity, error) {
 	ret := _mock.Called(ctx, volume, caller)
 
 	if len(ret) == 0 {
@@ -53,22 +52,22 @@ func (_mock *MockVolumeService) BindIdentity(ctx context.Context, volume string,
 	var r0 pathfs.FileSystem
 	var r1 service.Identity
 	var r2 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, *proto.Caller) (pathfs.FileSystem, service.Identity, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, *service.Caller) (pathfs.FileSystem, service.Identity, error)); ok {
 		return returnFunc(ctx, volume, caller)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, *proto.Caller) pathfs.FileSystem); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, *service.Caller) pathfs.FileSystem); ok {
 		r0 = returnFunc(ctx, volume, caller)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(pathfs.FileSystem)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, *proto.Caller) service.Identity); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, *service.Caller) service.Identity); ok {
 		r1 = returnFunc(ctx, volume, caller)
 	} else {
 		r1 = ret.Get(1).(service.Identity)
 	}
-	if returnFunc, ok := ret.Get(2).(func(context.Context, string, *proto.Caller) error); ok {
+	if returnFunc, ok := ret.Get(2).(func(context.Context, string, *service.Caller) error); ok {
 		r2 = returnFunc(ctx, volume, caller)
 	} else {
 		r2 = ret.Error(2)
@@ -84,12 +83,12 @@ type MockVolumeService_BindIdentity_Call struct {
 // BindIdentity is a helper method to define mock.On call
 //   - ctx context.Context
 //   - volume string
-//   - caller *proto.Caller
+//   - caller *service.Caller
 func (_e *MockVolumeService_Expecter) BindIdentity(ctx interface{}, volume interface{}, caller interface{}) *MockVolumeService_BindIdentity_Call {
 	return &MockVolumeService_BindIdentity_Call{Call: _e.mock.On("BindIdentity", ctx, volume, caller)}
 }
 
-func (_c *MockVolumeService_BindIdentity_Call) Run(run func(ctx context.Context, volume string, caller *proto.Caller)) *MockVolumeService_BindIdentity_Call {
+func (_c *MockVolumeService_BindIdentity_Call) Run(run func(ctx context.Context, volume string, caller *service.Caller)) *MockVolumeService_BindIdentity_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -99,9 +98,9 @@ func (_c *MockVolumeService_BindIdentity_Call) Run(run func(ctx context.Context,
 		if args[1] != nil {
 			arg1 = args[1].(string)
 		}
-		var arg2 *proto.Caller
+		var arg2 *service.Caller
 		if args[2] != nil {
-			arg2 = args[2].(*proto.Caller)
+			arg2 = args[2].(*service.Caller)
 		}
 		run(
 			arg0,
@@ -117,7 +116,7 @@ func (_c *MockVolumeService_BindIdentity_Call) Return(fileSystem pathfs.FileSyst
 	return _c
 }
 
-func (_c *MockVolumeService_BindIdentity_Call) RunAndReturn(run func(ctx context.Context, volume string, caller *proto.Caller) (pathfs.FileSystem, service.Identity, error)) *MockVolumeService_BindIdentity_Call {
+func (_c *MockVolumeService_BindIdentity_Call) RunAndReturn(run func(ctx context.Context, volume string, caller *service.Caller) (pathfs.FileSystem, service.Identity, error)) *MockVolumeService_BindIdentity_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -410,7 +409,7 @@ func (_c *MockVolumeService_Resolve_Call) RunAndReturn(run func(ctx context.Cont
 }
 
 // ResolveIdentity provides a mock function for the type MockVolumeService
-func (_mock *MockVolumeService) ResolveIdentity(ctx context.Context, volume string, caller *proto.Caller) (service.Identity, error) {
+func (_mock *MockVolumeService) ResolveIdentity(ctx context.Context, volume string, caller *service.Caller) (service.Identity, error) {
 	ret := _mock.Called(ctx, volume, caller)
 
 	if len(ret) == 0 {
@@ -419,15 +418,15 @@ func (_mock *MockVolumeService) ResolveIdentity(ctx context.Context, volume stri
 
 	var r0 service.Identity
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, *proto.Caller) (service.Identity, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, *service.Caller) (service.Identity, error)); ok {
 		return returnFunc(ctx, volume, caller)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, *proto.Caller) service.Identity); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, *service.Caller) service.Identity); ok {
 		r0 = returnFunc(ctx, volume, caller)
 	} else {
 		r0 = ret.Get(0).(service.Identity)
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, *proto.Caller) error); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, *service.Caller) error); ok {
 		r1 = returnFunc(ctx, volume, caller)
 	} else {
 		r1 = ret.Error(1)
@@ -443,12 +442,12 @@ type MockVolumeService_ResolveIdentity_Call struct {
 // ResolveIdentity is a helper method to define mock.On call
 //   - ctx context.Context
 //   - volume string
-//   - caller *proto.Caller
+//   - caller *service.Caller
 func (_e *MockVolumeService_Expecter) ResolveIdentity(ctx interface{}, volume interface{}, caller interface{}) *MockVolumeService_ResolveIdentity_Call {
 	return &MockVolumeService_ResolveIdentity_Call{Call: _e.mock.On("ResolveIdentity", ctx, volume, caller)}
 }
 
-func (_c *MockVolumeService_ResolveIdentity_Call) Run(run func(ctx context.Context, volume string, caller *proto.Caller)) *MockVolumeService_ResolveIdentity_Call {
+func (_c *MockVolumeService_ResolveIdentity_Call) Run(run func(ctx context.Context, volume string, caller *service.Caller)) *MockVolumeService_ResolveIdentity_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -458,9 +457,9 @@ func (_c *MockVolumeService_ResolveIdentity_Call) Run(run func(ctx context.Conte
 		if args[1] != nil {
 			arg1 = args[1].(string)
 		}
-		var arg2 *proto.Caller
+		var arg2 *service.Caller
 		if args[2] != nil {
-			arg2 = args[2].(*proto.Caller)
+			arg2 = args[2].(*service.Caller)
 		}
 		run(
 			arg0,
@@ -476,7 +475,7 @@ func (_c *MockVolumeService_ResolveIdentity_Call) Return(identity service.Identi
 	return _c
 }
 
-func (_c *MockVolumeService_ResolveIdentity_Call) RunAndReturn(run func(ctx context.Context, volume string, caller *proto.Caller) (service.Identity, error)) *MockVolumeService_ResolveIdentity_Call {
+func (_c *MockVolumeService_ResolveIdentity_Call) RunAndReturn(run func(ctx context.Context, volume string, caller *service.Caller) (service.Identity, error)) *MockVolumeService_ResolveIdentity_Call {
 	_c.Call.Return(run)
 	return _c
 }
