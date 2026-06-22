@@ -23,7 +23,7 @@ require (
 	github.com/typomedia/diskspeed v0.1.0
 	github.com/winfsp/cgofuse v1.6.0
 	github.com/zeebo/xxh3 v1.1.0
-	go.etcd.io/bbolt v1.4.3
+	go.etcd.io/bbolt v1.5.0
 	go.uber.org/goleak v1.3.0
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.53.0
