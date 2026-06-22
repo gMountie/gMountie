@@ -37,6 +37,9 @@ type Metrics struct {
 	// chunk stays in the memory tier, so a drop is a future cache miss, never
 	// data loss — but a high rate means the disk cache isn't keeping up.
 	CachePersistDropped prometheus.Counter
+
+	// Op-level boundary metrics, emitted by the metrics observer layer.
+	OpSeconds *prometheus.HistogramVec
 }
 
 // NewMetrics constructs the set of client collectors. They are NOT
@@ -111,6 +114,11 @@ func NewMetrics() *Metrics {
 			Name: "gmountie_cache_disk_bytes_used",
 			Help: "Currently-accounted bytes in the persist chunks/ tree.",
 		}),
+		OpSeconds: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "gmountie_client_op_seconds",
+			Help:    "FileSystemBackend op latency in seconds, by op and FsError code.",
+			Buckets: prometheus.DefBuckets,
+		}, []string{"op", "code"}),
 	}
 }
 
@@ -123,6 +131,7 @@ func (m *Metrics) MustRegister(r prometheus.Registerer) {
 		m.CacheUnverifiedDurationSecs,
 		m.ChunksUnlinked, m.GhostEntriesDeleted, m.RefcountUnderflows,
 		m.OrphansReclaimed, m.TmpReclaimed, m.BudgetEvictions, m.DiskBytesUsed,
+		m.OpSeconds,
 	)
 }
 
@@ -138,6 +147,7 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 		m.CacheUnverifiedDurationSecs,
 		m.ChunksUnlinked, m.GhostEntriesDeleted, m.RefcountUnderflows,
 		m.OrphansReclaimed, m.TmpReclaimed, m.BudgetEvictions, m.DiskBytesUsed,
+		m.OpSeconds,
 	}
 	for _, c := range collectors {
 		if err := r.Register(c); err != nil {
@@ -148,6 +158,10 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 			// Adopt the previously-registered collector so future
 			// calls through m hit the same instance.
 			switch existing := ar.ExistingCollector.(type) {
+			case *prometheus.HistogramVec:
+				if c == prometheus.Collector(m.OpSeconds) {
+					m.OpSeconds = existing
+				}
 			case *prometheus.CounterVec:
 				switch c {
 				case prometheus.Collector(m.RetryTotal):
@@ -247,6 +261,11 @@ func (m *Metrics) SubscribeStreamStateSet(up bool) {
 // unverified-duration counter.
 func (m *Metrics) CacheUnverifiedAdd(seconds float64) {
 	m.CacheUnverifiedDurationSecs.Add(seconds)
+}
+
+// ObserveOp records one op's latency, labelled by op name and FsError code.
+func (m *Metrics) ObserveOp(op string, seconds float64, code string) {
+	m.OpSeconds.WithLabelValues(op, code).Observe(seconds)
 }
 
 // --- Persist GC / disk-accounting setters (blind spot #4) ---
