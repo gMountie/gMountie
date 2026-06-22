@@ -1720,12 +1720,12 @@ Distill: the model (delegation + recall, subtree granularity), the one-principle
 
 - [ ] **Step 2: Add to `website/sidebars.js`** under the design docs section.
 
-- [ ] **Step 3: `git rm` the superpowers spec + plan; commit the fold.**
+- [ ] **Step 3: `git rm` the superpowers SPEC; commit the fold.** (The plan file is pruned in Task 13's final step, after the benchmark has been run from it.)
 
 ```bash
-git rm docs/superpowers/specs/2026-06-23-delegation-recall-wal-design.md docs/superpowers/plans/2026-06-23-delegation-recall-phase1.md
+git rm docs/superpowers/specs/2026-06-23-delegation-recall-wal-design.md
 git add docs/design/delegation-recall.md website/sidebars.js
-git commit -m "docs(delegation): fold Phase 1 design into docs/design, prune superpowers spec+plan"
+git commit -m "docs(delegation): fold Phase 1 design into docs/design, prune superpowers spec"
 ```
 
 - [ ] **Step 4: Full local gate over the touched packages.**
@@ -1745,9 +1745,34 @@ go test -race ./pkg/server/delegation/... ./pkg/server/controller/... ./pkg/serv
 
 Expected: all PASS. Run `task gen:mocks` if any mock-backed interface changed signature, then re-run. The e2e FUSE suite (`test/e2e/...`) runs in CI (which has /dev/fuse) and on the VM.
 
-- [ ] **Step 5: Open the PR.**
+- [ ] **Step 5: (PR is opened in Task 13 Step 5, after the perf gate.)**
 
-Single PR (design + implementation together, per `feedback_consolidate_related_prs`). Conventional-commit title, descriptive body, NO AI attribution. Title: `feat(delegation): Phase 1 — write-delegation + recall coherence layer`.
+---
+
+## Task 13: Performance regression benchmark (before/after on the perf VM)
+
+**Goal:** Prove Phase 1 added no throughput/latency regression. Phase 1 adds an arbiter `OnMutation` call + optional grant on each mutating handler, a per-mount recall bidi stream, and one extra predicate (`oracle.IsDelegated(path)`) in the cache revalidation fast-path. None should move steady-state numbers; this measures it.
+
+**Controller-run, not delegated** — uses the Multipass perf VM, which wedges under concurrent/backgrounded `multipass exec` (`feedback_multipass_exec_wedges`): run ONE `timeout 60 multipass exec` at a time, `multipass transfer` for files, never `pkill -f "multipass exec"`. Use the dedicated **`gmountie-perf`** VM, NEVER `gmountie-qa` (`feedback_dedicated_perf_vm`).
+
+**Method (A/B):**
+- **BASE (before):** `git -C <worktree> worktree add` (or a clone) at `08e81ff` (branch base / master).
+- **HEAD (after):** the delegation branch tip.
+- For each, run `scripts/perf/run.sh` on `gmountie-perf` with the SAME env (LAN + WAN netem profiles, COUNT=5, cache on AND off), capturing the bench output.
+- Compare seq read/write throughput, readdir, random read/write, and metadata RTT. Phase 1 is **coherence-only**; expectation = within noise (±~20% VM jitter — trust deterministic deltas over single-run swings, per `project_fio_flaky_rootcause`).
+
+- [ ] **Step 1:** Ensure `gmountie-perf` is up; build the `gmountie` binary at BASE and at HEAD (two binaries), `multipass transfer` both to the VM.
+- [ ] **Step 2:** Run the perf harness for BASE (LAN+WAN × cache on/off, COUNT=5); save `perf-before.txt`.
+- [ ] **Step 3:** Run the perf harness for HEAD with identical env; save `perf-after.txt`.
+- [ ] **Step 4:** Diff the two; record a short before/after table in the PR body. If any metric regresses beyond VM noise, investigate (likely the mutating-path arbiter call or the recall-stream goroutine) before merge.
+- [ ] **Step 5: Prune the plan + open the PR.**
+
+```bash
+git -C <worktree> rm docs/superpowers/plans/2026-06-23-delegation-recall-phase1.md
+git -C <worktree> commit -m "docs(delegation): prune Phase 1 implementation plan post-merge-prep"
+```
+
+Single PR (design + implementation together, per `feedback_consolidate_related_prs`). Conventional-commit title, descriptive body **including the before/after perf table**, NO AI attribution. Title: `feat(delegation): Phase 1 — write-delegation + recall coherence layer`.
 
 ---
 
