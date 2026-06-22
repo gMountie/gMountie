@@ -124,17 +124,94 @@ clients cache + batch aggressively **without locking the share**: optimistic
 
 ---
 
+## Recall rule (SETTLED): one principle
+
+**A write-delegation is recalled the moment continuing to hold it would let
+another client observe incoherent state.** One test, applied per case — no
+separate read/write rules:
+
+- **Remote WRITE → always recalls** (both phases). A second writer invalidates
+  the holder's "I'm provably alone here" assumption regardless of deferral.
+- **Remote READ → recalls only if the holder might have unflushed data.**
+  - *Phase 2 (WAL):* YES. The holder may have deferred creates/writes in its WAL;
+    the reader would miss them. Recall forces a durable flush, then the read
+    proceeds. **"Read" includes `readdir`/`lookup`, not just file reads** — the
+    coherence-critical contender op for the target workloads is a *directory*
+    read (client B `readdir /dir` while A streams `npm install` creates into its
+    WAL); that readdir must recall or B sees a half-populated dir.
+  - *Phase 1 (no deferral):* NO. `close()` already flushed, so the reader gets
+    normal close-to-open consistency — no server-invisible dirty state to miss.
+    The holder keeps its delegation; it loses skip-revalidation only on a remote
+    *write*.
+
+Consequence for Phase 1's value prop: with no deferral a "write delegation" is
+functionally a **read/coherence delegation** — its only user-visible payoff is
+**skip-revalidation** (recalled on remote write). The write-side batching speedup
+is **entirely Phase 2**. (Resolves open-Q #2: Phase 1's observable win is
+read-side.)
+
+## Contention handoff (SETTLED): server-mediated, never a unilateral client choice
+
+"Fall back to the slow path" is **never** the contender's decision for a
+delegated region. The server's delegation table is authoritative:
+
+1. Contender B's read/write hits the **server**.
+2. Server sees the path under A's delegation → **recalls A**, *blocks B's op*
+   until A's flush is **durably complete + acked** (landmine #2).
+3. Server serves B. The contended region is now delegation-free → A and B both
+   run **synchronously** there → coherent.
+
+B's stall = **recall RTT + the holder's flush duration** (a large WAL isn't free;
+don't round to "one RTT"). In the common 1-client/volume case it never fires.
+
+## Re-acquisition + thrash prevention (SETTLED): server-side hysteresis
+
+Lost delegations are **not** restored automatically — the client **re-pulls**
+them with the same demand-based request, **piggybacked** on an op it's already
+sending (no extra RTT). The "B writes once then idles" case: B left no delegation
+behind (during contention both run delegation-free), so A's next write carries a
+re-request flag, the server's containment check passes, and A is back on the fast
+path — B going *idle* isn't the trigger, B *holding nothing* is.
+
+Thrash prevention is **server-side, not client backoff** — correctness must not
+depend on a client choosing to behave (a buggy/hostile client that re-requests
+every op must not be able to make the server thrash):
+
+- **Cooldown table.** On recall, the server marks the contended root/sub-path
+  *recently-contended* with an `until` timestamp. Re-grant requests overlapping a
+  cooling path within the window are **denied** (client stays synchronous).
+  TTL'd, bounded, separate from the delegation table.
+- **Exponential + capped.** Repeated recalls on the same root extend its
+  cooldown → a true ping-pong region gets stickier-synchronous and the server
+  stops paying recalls; a one-off collision has near-zero cooldown so A re-grants
+  on its very next request.
+- **Grant may be narrower than requested.** Client asks for `/dir`; server grants
+  `/dir` *minus* cooling sub-paths and returns the actual granted root + excluded
+  paths. **All carving policy is server-side**; the client honors what it's told.
+  This is carve-around-the-hotspot, server-decided. (Resolves most of open-Q #1.)
+- **Client spam is harmless.** Re-request is a piggybacked bool; the server
+  answers "denied, retry-after N" in the response it was already sending.
+  Correctness never depends on the client honoring `retry-after`; rate-limit the
+  containment check only if it ever matters.
+
+Arbitration loop: **client pulls (piggybacked) → server checks containment +
+cooldown → grants the largest non-cooling sub-root, or denies → recall on
+contention restarts the cooldown.** Delegation table + cooldown table together
+are the single source of truth; the client is purely advisory.
+
+---
+
 ## Open questions (RESUME THE BRAINSTORM HERE)
 
-1. **Multi-batcher containment + carving mechanics.** How disjoint subtree
-   delegations are tracked + arbitrated server-side; recall whole subtree
-   (Phase 1, simpler) vs split/carve to release just the contended sub-path
-   (later). Overlap admission algorithm.
-2. **What Phase 1 delivers observably** given no deferral. Candidate: delegation-
-   backed read coherence — while holding a delegation the client may **skip
-   open-time revalidation** (it's guaranteed a recall on remote change), saving
-   RTTs. Or is Phase 1 purely infrastructural (machinery + tests, no user-visible
-   perf change)? Decide the Phase 1 value prop + how to test it.
+1. **Multi-batcher containment + carving — data structures.** The *policy* is
+   settled (server-side cooldown, narrower-than-requested grants, carve around
+   cooling paths). Open = the concrete server-side representation: how the
+   delegation table + cooldown table are indexed for the overlap/containment
+   check on every (piggybacked) request without it becoming a hot-path cost.
+   Path-prefix tree? Interval/trie? Decide at plan time.
+2. ~~What Phase 1 delivers observably~~ — **RESOLVED**: read-side
+   skip-revalidation (recalled on remote write); write-batching is Phase 2. Test
+   via RTT-count assertions (revalidation suppressed while delegated).
 3. **Mount-time negotiation surface.** Where does "I want delegations" live — a
    mount flag, a field on WhoAmI / an existing RPC, or a new lease/delegation
    RPC? Likely a proto change; touches SingleVolumeMounter.
