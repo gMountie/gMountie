@@ -171,6 +171,11 @@ func (l *Layer) GetXAttr(ctx context.Context, path, attr string) ([]byte, proto.
 // a synthetic handle + the overlay's attr. Inner is NOT called for delegated
 // creates (the create is deferred until delegation is recalled and the WAL is
 // replayed to the server).
+//
+// NOTE: the returned syntheticHandle is NOT read/write-capable through inner
+// (inner cannot resolve it). Read/Write on a freshly-created delegated file
+// requires Task 14's handle-seam wiring (transport-backed handle for the
+// overlay-created path). Until then, Stat visibility works; data I/O does not.
 func (l *Layer) Create(ctx context.Context, parent, name string, flags, mode uint32) (backend.FileHandle, *backend.Attr, proto.FsError) {
 	path := joinPath(parent, name)
 	if l.mgr.IsDelegated(path) {
