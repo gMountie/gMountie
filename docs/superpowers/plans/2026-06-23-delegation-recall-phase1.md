@@ -1089,10 +1089,9 @@ Add `arbiter *delegation.Arbiter` to `RpcFileServerImpl` + `NewRpcFileServer` li
 In `pkg/server/app.go` `NewServerAppContext`: construct the registry + arbiter and wire the reap hook **before** building the SessionManager so the option can reference the arbiter:
 
 ```go
-recalls := delegation.NewRecallRegistry(cfg.Server.Session.GracePeriod) // ≤ grace
+recalls := delegation.NewRecallRegistry(cfg.Server.Session.GracePeriod) // ≤ grace; the registry owns the recall timeout
 arbiter := delegation.NewArbiter(recalls, delegation.Config{
-	RecallTimeout: cfg.Server.Session.GracePeriod,
-	Cooldown:      delegation.CooldownConfigDefault(), // Base 1s, Max 60s, Cap 4096
+	Cooldown: delegation.CooldownConfigDefault(), // Base 1s, Max 60s, Cap 4096
 }, time.Now)
 sessionMgr := service.NewSessionManager(service.SessionManagerOptions{
 	Metrics:              m,
