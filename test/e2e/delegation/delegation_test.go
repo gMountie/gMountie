@@ -284,9 +284,10 @@ func (s *DelegationCoherenceSuite) TestRecallRoundTrip() {
 }
 
 // ─── Scenario 3: CROSS-SUBTREE RENAME ───────────────────────────────────────
-// A holds "sub-a". B issues rename sub-a/x → sub-b/x (cross-subtree).
-// Server arbitrates oldPath (recall A) and newPath (free).
-// Assert: no panic, rename returns OK or ENOENT (src may vanish), A loses sub-a.
+// A holds "sub-a", C holds "sub-b" (two disjoint delegations on separate clients
+// to prevent write-set LCA collapse). B renames sub-a/x → sub-b/x, crossing both
+// subtrees. The server calls arbitrateContention for BOTH OldName and NewName
+// (fs.go:138–142). Assert: BOTH grants recalled, rename succeeds, sub-b/x exists.
 
 func (s *DelegationCoherenceSuite) TestCrossSubtreeRename() {
 	r := s.Require()
@@ -300,28 +301,47 @@ func (s *DelegationCoherenceSuite) TestCrossSubtreeRename() {
 	defer csA.Close()
 	csB := newStack(s.T(), s.tc, "user", "pass", s.volName)
 	defer csB.Close()
+	// csC holds the destination subtree sub-b so its arbitration is observable.
+	csC := newStack(s.T(), s.tc, "user", "pass", s.volName)
+	defer csC.Close()
 
-	// A acquires delegation over "sub-a". sub-a/x already exists; seed fresh names.
+	// A acquires delegation over "sub-a".
 	csA.mgr.Record("sub-a/x")
 	csA.mgr.Record("sub-a/y")
-	// Create sub-a/y on disk so Mkdir can succeed (needed to get grant).
 	r.Eventually(func() bool {
 		st, _ := csA.MkdirFresh(bg(), "sub-a")
 		return st == proto.FsError_FS_OK && csA.mgr.IsDelegated("sub-a")
 	}, 5*time.Second, 20*time.Millisecond, "A must hold grant for sub-a")
 
+	// C acquires delegation over "sub-b" (separate client → separate write-set →
+	// LCA stays "sub-b", not collapsed to "").
+	csC.mgr.Record("sub-b/p")
+	csC.mgr.Record("sub-b/q")
+	r.Eventually(func() bool {
+		st, _ := csC.MkdirFresh(bg(), "sub-b")
+		return st == proto.FsError_FS_OK && csC.mgr.IsDelegated("sub-b")
+	}, 5*time.Second, 20*time.Millisecond, "C must hold grant for sub-b")
+
 	// B renames cross-subtree: sub-a/x → sub-b/x.
-	// Server recalls A for sub-a (foreign delegation), sub-b is free.
-	// No panic + terminal status (OK or ENOENT) is the contract.
+	// Server must arbitrate OldName (recalls A) AND NewName (recalls C).
 	r.Eventually(func() bool {
 		st := csB.Rename(bg(), "sub-a/x", "sub-b/x")
-		return st == proto.FsError_FS_OK || st == proto.FsError_FS_ENOENT
-	}, 5*time.Second, 50*time.Millisecond, "B cross-subtree rename must complete without panic")
+		return st == proto.FsError_FS_OK
+	}, 5*time.Second, 50*time.Millisecond, "B cross-subtree rename must succeed")
 
-	// A must have lost sub-a grant (recalled during rename arbitration).
+	// Both delegations must be dropped.
 	r.Eventually(func() bool {
 		return !csA.mgr.IsDelegated("sub-a")
 	}, 5*time.Second, 50*time.Millisecond, "A must lose sub-a grant after cross-subtree rename")
+	r.Eventually(func() bool {
+		return !csC.mgr.IsDelegated("sub-b")
+	}, 5*time.Second, 50*time.Millisecond, "C must lose sub-b grant after cross-subtree rename")
+
+	// Confirm correct outcome: sub-b/x exists, sub-a/x is gone.
+	_, errDst := os.Stat(s.srcDir + "/sub-b/x")
+	r.NoError(errDst, "sub-b/x must exist after rename")
+	_, errSrc := os.Stat(s.srcDir + "/sub-a/x")
+	r.ErrorIs(errSrc, os.ErrNotExist, "sub-a/x must be gone after rename")
 }
 
 // ─── Scenario 4: THRASH → COOLDOWN ──────────────────────────────────────────
