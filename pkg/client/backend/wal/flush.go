@@ -36,6 +36,7 @@ import (
 
 	"github.com/pkg/errors"
 	"go.gmountie.dev/gmountie/pkg/client/backend"
+	"go.gmountie.dev/gmountie/pkg/common/fsconv"
 	"go.gmountie.dev/gmountie/pkg/proto"
 )
 
@@ -378,7 +379,7 @@ func opToWalOp(op Op, volume string, caller *proto.Caller) *proto.WalOp {
 			Path:      op.Path,
 			Attribute: op.XattrName,
 			Data:      op.XattrValue,
-			Flags:     op.XattrFlags,
+			Flags:     fsconv.XAttrModeToProto(int(op.XattrFlags)),
 		}}
 
 	case OpRemoveXAttr:

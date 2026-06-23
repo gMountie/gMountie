@@ -54,3 +54,37 @@ enum FsError {
   FS_EDEADLK = 32;  // lock op would deadlock (fcntl F_SETLKW)
   FS_ENOLCK = 33;   // no locks available
 }
+
+// SeekWhence is the OS-neutral whence for Lseek. The wire never carries a raw
+// SEEK_* constant because their values differ across OSes — notably SEEK_DATA
+// and SEEK_HOLE are SWAPPED between Linux (3/4) and macOS (4/3). Each side maps
+// to/from its host value via pkg/common/fsconv.
+enum SeekWhence {
+  SEEK_WHENCE_UNSPECIFIED = 0;
+  SEEK_WHENCE_SET = 1;   // from start
+  SEEK_WHENCE_CUR = 2;   // from current
+  SEEK_WHENCE_END = 3;   // from end
+  SEEK_WHENCE_DATA = 4;  // next data >= offset
+  SEEK_WHENCE_HOLE = 5;  // next hole >= offset
+}
+
+// LockType is the OS-neutral fcntl byte-range lock type. Raw F_RDLCK/F_WRLCK/
+// F_UNLCK values differ across OSes (Linux 0/1/2, macOS 1/3/2), so the wire
+// carries this and each side maps via pkg/common/fsconv.
+enum LockType {
+  LOCK_TYPE_UNSPECIFIED = 0;
+  LOCK_TYPE_READ = 1;    // F_RDLCK
+  LOCK_TYPE_WRITE = 2;   // F_WRLCK
+  LOCK_TYPE_UNLOCK = 3;  // F_UNLCK
+}
+
+// XAttrCreateMode is the OS-neutral create/replace semantics of a SetXAttr.
+// Raw XATTR_CREATE/XATTR_REPLACE flag values differ (Linux 0x1/0x2, macOS
+// 0x2/0x4) and macOS adds bits Linux rejects with EINVAL (NODEFAULT 0x10 etc.);
+// the two are mutually exclusive, so this enum captures the only portable
+// semantics. Each side maps via pkg/common/fsconv.
+enum XAttrCreateMode {
+  XATTR_CREATE_MODE_NONE = 0;     // plain set (create or replace)
+  XATTR_CREATE_MODE_CREATE = 1;   // XATTR_CREATE: fail if it exists
+  XATTR_CREATE_MODE_REPLACE = 2;  // XATTR_REPLACE: fail if it does not exist
+}

@@ -14,6 +14,7 @@ import (
 
 	"go.gmountie.dev/gmountie/pkg/client/backend"
 	grpcclient "go.gmountie.dev/gmountie/pkg/client/grpc"
+	"go.gmountie.dev/gmountie/pkg/common/fsconv"
 	fserr "go.gmountie.dev/gmountie/pkg/common/fserr"
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
@@ -529,7 +530,7 @@ func (b *BackendClient) SetXAttr(ctx context.Context, path, attr string, data []
 				Path:       path,
 				Attribute:  attr,
 				Data:       data,
-				Flags:      flags,
+				Flags:      fsconv.XAttrModeToProto(int(flags)),
 				SessionId:  b.client.SessionID(),
 				RequestId:  requestID,
 				Delegation: b.delegationReq(),
@@ -1391,7 +1392,7 @@ func (b *BackendClient) Lseek(ctx context.Context, fh backend.FileHandle, offset
 				Fd:        snap.fd,
 				Path:      h.path,
 				Offset:    offset,
-				Whence:    whence,
+				Whence:    fsconv.WhenceToProto(int32(whence)),
 				SessionId: snap.sessionID,
 			}, grpc.WaitForReady(true))
 		})
@@ -1422,7 +1423,7 @@ func (b *BackendClient) GetLk(ctx context.Context, fh backend.FileHandle, owner 
 				Fd:        snap.fd,
 				Owner:     owner,
 				Flags:     flags,
-				Lk:        &proto.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid},
+				Lk:        &proto.FileLock{Start: lk.Start, End: lk.End, Typ: fsconv.LockTypeToProto(lk.Typ), Pid: lk.Pid},
 				SessionId: snap.sessionID,
 			}, grpc.WaitForReady(true))
 		})
@@ -1431,7 +1432,7 @@ func (b *BackendClient) GetLk(ctx context.Context, fh backend.FileHandle, owner 
 		return fdOpStatus(err)
 	}
 	if res.Lk != nil {
-		*out = backend.FileLock{Start: res.Lk.Start, End: res.Lk.End, Typ: res.Lk.Typ, Pid: res.Lk.Pid}
+		*out = backend.FileLock{Start: res.Lk.Start, End: res.Lk.End, Typ: fsconv.LockTypeFromProto(res.Lk.Typ), Pid: res.Lk.Pid}
 	}
 	return res.Status
 }
@@ -1456,7 +1457,7 @@ func (b *BackendClient) SetLk(ctx context.Context, fh backend.FileHandle, owner 
 				Fd:        snap.fd,
 				Owner:     owner,
 				Flags:     flags,
-				Lk:        &proto.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid},
+				Lk:        &proto.FileLock{Start: lk.Start, End: lk.End, Typ: fsconv.LockTypeToProto(lk.Typ), Pid: lk.Pid},
 				SessionId: snap.sessionID,
 			}, grpc.WaitForReady(true))
 		})
@@ -1489,7 +1490,7 @@ func (b *BackendClient) SetLkw(ctx context.Context, fh backend.FileHandle, owner
 		Fd:        snap.fd,
 		Owner:     owner,
 		Flags:     flags,
-		Lk:        &proto.FileLock{Start: lk.Start, End: lk.End, Typ: lk.Typ, Pid: lk.Pid},
+		Lk:        &proto.FileLock{Start: lk.Start, End: lk.End, Typ: fsconv.LockTypeToProto(lk.Typ), Pid: lk.Pid},
 		SessionId: snap.sessionID,
 	})
 	if err != nil {

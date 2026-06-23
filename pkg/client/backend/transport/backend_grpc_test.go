@@ -17,6 +17,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -301,7 +302,7 @@ func (s *BackendClientTestSuite) TestRelease_CancelledParentDoesNotAbortRPC() {
 func (s *BackendClientTestSuite) TestSetLkw_StaysCancellable() {
 	parent, cancel := context.WithCancel(context.Background())
 	cancel()
-	lk := &backend.FileLock{Start: 0, End: 0, Typ: 1, Pid: 1}
+	lk := &backend.FileLock{Start: 0, End: 0, Typ: uint32(unix.F_WRLCK), Pid: 1}
 
 	s.fileClient.EXPECT().SetLkw(
 		mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() != nil }),
@@ -1298,14 +1299,14 @@ func (s *BackendClientTestSuite) TestAllocate_BadHandleEBADF() {
 // TestGetLk verifies the lock state query translates the inbound
 // FileLock to the proto and folds the reply back into *out.
 func (s *BackendClientTestSuite) TestGetLk() {
-	lk := &backend.FileLock{Start: 0, End: 16, Typ: 1, Pid: 99}
+	lk := &backend.FileLock{Start: 0, End: 16, Typ: uint32(unix.F_WRLCK), Pid: 99}
 	s.fileClient.EXPECT().GetLk(mock.Anything, mock.MatchedBy(func(req *proto.GetLkRequest) bool {
 		return req.Volume == "testVolume" && req.Fd == 1 && req.Owner == 42 && req.Flags == 0 &&
 			req.SessionId == "test-session" && req.Lk != nil &&
-			req.Lk.Start == 0 && req.Lk.End == 16 && req.Lk.Typ == 1 && req.Lk.Pid == 99
+			req.Lk.Start == 0 && req.Lk.End == 16 && req.Lk.Typ == proto.LockType_LOCK_TYPE_WRITE && req.Lk.Pid == 99
 	}), mock.Anything).Return(&proto.GetLkReply{
 		Status: proto.FsError_FS_OK,
-		Lk:     &proto.FileLock{Start: 0, End: 16, Typ: 2, Pid: 1234},
+		Lk:     &proto.FileLock{Start: 0, End: 16, Typ: proto.LockType_LOCK_TYPE_WRITE, Pid: 1234},
 	}, nil)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
@@ -1314,7 +1315,7 @@ func (s *BackendClientTestSuite) TestGetLk() {
 	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(uint64(0), out.Start)
 	s.Assert().Equal(uint64(16), out.End)
-	s.Assert().Equal(uint32(2), out.Typ)
+	s.Assert().Equal(uint32(unix.F_WRLCK), out.Typ)
 	s.Assert().Equal(uint32(1234), out.Pid)
 }
 
@@ -1335,11 +1336,11 @@ func (s *BackendClientTestSuite) TestGetLk_BadHandleEBADF() {
 }
 
 func (s *BackendClientTestSuite) TestSetLk() {
-	lk := &backend.FileLock{Start: 10, End: 20, Typ: 1, Pid: 5}
+	lk := &backend.FileLock{Start: 10, End: 20, Typ: uint32(unix.F_WRLCK), Pid: 5}
 	s.fileClient.EXPECT().SetLk(mock.Anything, mock.MatchedBy(func(req *proto.SetLkRequest) bool {
 		return req.Volume == "testVolume" && req.Fd == 1 && req.Owner == 7 && req.Flags == 0 &&
 			req.SessionId == "test-session" && req.Lk != nil &&
-			req.Lk.Start == 10 && req.Lk.End == 20 && req.Lk.Typ == 1 && req.Lk.Pid == 5
+			req.Lk.Start == 10 && req.Lk.End == 20 && req.Lk.Typ == proto.LockType_LOCK_TYPE_WRITE && req.Lk.Pid == 5
 	}), mock.Anything).Return(&proto.SetLkReply{Status: proto.FsError_FS_OK}, nil)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
@@ -1362,11 +1363,11 @@ func (s *BackendClientTestSuite) TestSetLk_BadHandleEBADF() {
 }
 
 func (s *BackendClientTestSuite) TestSetLkw() {
-	lk := &backend.FileLock{Start: 10, End: 20, Typ: 1, Pid: 5}
+	lk := &backend.FileLock{Start: 10, End: 20, Typ: uint32(unix.F_WRLCK), Pid: 5}
 	s.fileClient.EXPECT().SetLkw(mock.Anything, mock.MatchedBy(func(req *proto.SetLkwRequest) bool {
 		return req.Volume == "testVolume" && req.Fd == 1 && req.Owner == 7 && req.Flags == 0 &&
 			req.SessionId == "test-session" && req.Lk != nil &&
-			req.Lk.Start == 10 && req.Lk.End == 20 && req.Lk.Typ == 1 && req.Lk.Pid == 5
+			req.Lk.Start == 10 && req.Lk.End == 20 && req.Lk.Typ == proto.LockType_LOCK_TYPE_WRITE && req.Lk.Pid == 5
 	})).Return(&proto.SetLkwReply{Status: proto.FsError_FS_OK}, nil)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
@@ -1878,11 +1879,11 @@ func (s *BackendClientTestSuite) TestCopyFileRange_NonZeroCopied_DirtyFlagSet() 
 func (s *BackendClientTestSuite) TestLseek_HappyPath() {
 	s.fileClient.EXPECT().Lseek(mock.Anything, mock.MatchedBy(func(req *proto.LseekRequest) bool {
 		return req.Volume == "testVolume" && req.Fd == 1 && req.Path == "/test/path" &&
-			req.Offset == 4096 && req.Whence == 4 && req.SessionId == "test-session"
+			req.Offset == 4096 && req.Whence == proto.SeekWhence_SEEK_WHENCE_HOLE && req.SessionId == "test-session"
 	}), mock.Anything).Return(&proto.LseekReply{Offset: 8192, Status: 0}, nil)
 
 	h := s.newHandle(grpcclient.PerFileConfig{})
-	off, st := s.backend.Lseek(context.Background(), h, 4096, 4)
+	off, st := s.backend.Lseek(context.Background(), h, 4096, uint32(unix.SEEK_HOLE))
 	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Assert().Equal(uint64(8192), off)
 }
