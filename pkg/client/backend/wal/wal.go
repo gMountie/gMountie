@@ -53,7 +53,7 @@ type Coordinator struct {
 	cfg flushConfig
 
 	// onLoss is the hook called on an ordered halt (FailedSeq > 0) or gen-fence.
-	// Default is nil (no-op). Set via WithOnLoss; also stored in cfg for consistency.
+	// Default is nil (no-op). Set via WithOnLoss.
 	onLoss func(lostOps []Op, fe proto.FsError)
 
 	// watermark is the highest seq durably acked by the server. Written only
@@ -65,8 +65,11 @@ type Coordinator struct {
 	flushMu flushMuType
 
 	// capMu and capCond guard the size-cap backpressure path.
-	capMu   sync.Mutex
-	capCond *sync.Cond
+	capMu    sync.Mutex
+	capCond  *sync.Cond
+	// flushing is set to true while a background drain flush is in flight,
+	// ensuring at most one such goroutine runs at a time (see waitForCap).
+	flushing atomic.Bool
 
 	// flushStop and flushStopOnce control the interval goroutine lifecycle.
 	flushStop     chan struct{}

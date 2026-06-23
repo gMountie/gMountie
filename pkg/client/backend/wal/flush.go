@@ -34,6 +34,7 @@ import (
 	"sync"
 
 	"github.com/pkg/errors"
+	"go.gmountie.dev/gmountie/pkg/client/backend"
 	"go.gmountie.dev/gmountie/pkg/proto"
 )
 
@@ -50,12 +51,6 @@ type flushConfig struct {
 
 	// applyFactory returns a fresh Apply stream. Called once per flush.
 	applyFactory func(ctx context.Context) (proto.RpcFs_ApplyClient, error)
-
-	// onLoss is invoked when an Apply ack signals a permanent failure or a
-	// gen-fence: the slice contains ops at/after FailedSeq, and fserr is the
-	// proto-level error reported by the server. Task 13 wires this to loud
-	// logging; the default is a no-op.
-	onLoss func(lostOps []Op, fe proto.FsError)
 
 	// capOps is the maximum number of pending WAL entries before backpressure
 	// kicks in. 0 means no cap.
@@ -84,7 +79,6 @@ func WithApplyFactory(f func(ctx context.Context) (proto.RpcFs_ApplyClient, erro
 // halt. Task 13 wires this to loud logging.
 func WithOnLoss(fn func(lostOps []Op, fe proto.FsError)) Option {
 	return func(c *Coordinator) {
-		c.cfg.onLoss = fn
 		c.onLoss = fn
 	}
 }
@@ -333,13 +327,23 @@ func opToWalOp(op Op, volume string, caller *proto.Caller) *proto.WalOp {
 			Caller: caller,
 			Path:   op.Path,
 			Valid:  op.Valid,
-			Mode:   op.Mode,
-			Uid:    op.UID,
-			Gid:    op.GID,
-			Size:   op.Size,
 		}
-		if op.Valid != 0 {
+		if op.Valid&backend.FATTR_MODE != 0 {
+			sa.Mode = op.Mode
+		}
+		if op.Valid&backend.FATTR_UID != 0 {
+			sa.Uid = op.UID
+		}
+		if op.Valid&backend.FATTR_GID != 0 {
+			sa.Gid = op.GID
+		}
+		if op.Valid&backend.FATTR_SIZE != 0 {
+			sa.Size = op.Size
+		}
+		if op.Valid&backend.FATTR_ATIME != 0 {
 			sa.Atime = &proto.FileTime{Sec: uint64(op.AtimeSec), Nsec: op.AtimeNsec}
+		}
+		if op.Valid&backend.FATTR_MTIME != 0 {
 			sa.Mtime = &proto.FileTime{Sec: uint64(op.MtimeSec), Nsec: op.MtimeNsec}
 		}
 		w.Op = &proto.WalOp_SetAttr{SetAttr: sa}
@@ -432,6 +436,11 @@ func (c *Coordinator) pendingCount() int {
 // waitForCap blocks until the pending WAL count drops below cfg.capOps.
 // Must be called WITHOUT flushMu held (it needs to release capMu for the
 // flusher to signal capCond). capMu is the mutex on capCond.
+//
+// At most ONE drain flush runs at a time: the flushing flag is set before
+// the goroutine is spawned and cleared (under capMu) with a Broadcast after
+// Flush returns. This prevents unbounded goroutine accumulation under
+// sustained over-cap pressure.
 func (c *Coordinator) waitForCap() {
 	if c.cfg.capOps == 0 {
 		return
@@ -439,16 +448,21 @@ func (c *Coordinator) waitForCap() {
 	c.capMu.Lock()
 	defer c.capMu.Unlock()
 	for c.pendingCount() >= c.cfg.capOps {
-		// Trigger a background flush then wait.
-		go func() {
-			ops, err := c.log.Replay(c.watermark.Load())
-			if err != nil || len(ops) == 0 {
+		// Spawn a drain flush only when no flush is already in flight.
+		if c.flushing.CompareAndSwap(false, true) {
+			go func() {
+				ops, err := c.log.Replay(c.watermark.Load())
+				if err == nil && len(ops) > 0 {
+					maxSeq := ops[len(ops)-1].Seq
+					_ = c.Flush(context.Background(), maxSeq)
+				}
+				// Signal under capMu so no wakeup can be missed.
+				c.capMu.Lock()
+				c.flushing.Store(false)
 				c.capCond.Broadcast()
-				return
-			}
-			maxSeq := ops[len(ops)-1].Seq
-			_ = c.Flush(context.Background(), maxSeq)
-		}()
+				c.capMu.Unlock()
+			}()
+		}
 		c.capCond.Wait()
 	}
 }

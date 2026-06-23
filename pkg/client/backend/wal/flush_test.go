@@ -17,12 +17,13 @@ import (
 	"context"
 	"errors"
 	"io"
-	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/suite"
+	"go.gmountie.dev/gmountie/pkg/client/backend"
 	"go.gmountie.dev/gmountie/pkg/client/backend/delegation"
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"google.golang.org/grpc"
@@ -377,15 +378,19 @@ func (s *FlushSuite) TestOpToWalOp_AllKinds() {
 			},
 		},
 		{
-			name: "OpSetAttr",
+			// MODE|UID only: timestamps are populated in the op but must NOT appear
+			// in the WalOp because their FATTR bits are absent — this is the
+			// regression guard for the silent timestamp clobber bug.
+			name: "OpSetAttr_ModeUID",
 			op: Op{
 				Seq:       8,
 				Kind:      OpSetAttr,
 				Path:      "g.txt",
-				Valid:      0x3,
+				Valid:     backend.FATTR_MODE | backend.FATTR_UID,
 				Mode:      0o644,
 				UID:       1000,
-				GID:       1000,
+				// AtimeSec/MtimeSec intentionally non-zero to prove suppression is
+				// bit-driven, not "zero data → nil".
 				AtimeSec:  123,
 				AtimeNsec: 456,
 				MtimeSec:  789,
@@ -395,20 +400,49 @@ func (s *FlushSuite) TestOpToWalOp_AllKinds() {
 				v, ok := w.Op.(*proto.WalOp_SetAttr)
 				s.Require().True(ok)
 				s.Equal("g.txt", v.SetAttr.Path)
-				s.Equal(uint32(0x3), v.SetAttr.Valid)
+				s.Equal(uint32(backend.FATTR_MODE|backend.FATTR_UID), v.SetAttr.Valid)
 				s.Equal(uint32(0o644), v.SetAttr.Mode)
+				s.Equal(uint32(1000), v.SetAttr.Uid)
+				s.Equal(volume, v.SetAttr.Volume)
+				// Timestamps must be nil — their FATTR bits were not set.
+				s.Nil(v.SetAttr.Atime, "Atime must be nil when FATTR_ATIME is not in Valid")
+				s.Nil(v.SetAttr.Mtime, "Mtime must be nil when FATTR_MTIME is not in Valid")
+			},
+		},
+		{
+			// ATIME|MTIME only: timestamps must be present; mode/uid/gid/size absent.
+			name: "OpSetAttr_AtimeMtime",
+			op: Op{
+				Seq:       9,
+				Kind:      OpSetAttr,
+				Path:      "h.txt",
+				Valid:     backend.FATTR_ATIME | backend.FATTR_MTIME,
+				AtimeSec:  1000,
+				AtimeNsec: 2000,
+				MtimeSec:  3000,
+				MtimeNsec: 4000,
+			},
+			check: func(w *proto.WalOp) {
+				v, ok := w.Op.(*proto.WalOp_SetAttr)
+				s.Require().True(ok)
+				s.Equal("h.txt", v.SetAttr.Path)
+				s.Equal(uint32(backend.FATTR_ATIME|backend.FATTR_MTIME), v.SetAttr.Valid)
 				s.Equal(volume, v.SetAttr.Volume)
 				s.Require().NotNil(v.SetAttr.Atime)
-				s.Equal(uint64(123), v.SetAttr.Atime.Sec)
-				s.Equal(uint32(456), v.SetAttr.Atime.Nsec)
+				s.Equal(uint64(1000), v.SetAttr.Atime.Sec)
+				s.Equal(uint32(2000), v.SetAttr.Atime.Nsec)
 				s.Require().NotNil(v.SetAttr.Mtime)
-				s.Equal(uint64(789), v.SetAttr.Mtime.Sec)
-				s.Equal(uint32(101), v.SetAttr.Mtime.Nsec)
+				s.Equal(uint64(3000), v.SetAttr.Mtime.Sec)
+				s.Equal(uint32(4000), v.SetAttr.Mtime.Nsec)
+				// Scalar fields not in Valid must be zero.
+				s.Zero(v.SetAttr.Mode)
+				s.Zero(v.SetAttr.Uid)
+				s.Zero(v.SetAttr.Gid)
 			},
 		},
 		{
 			name: "OpSetXAttr",
-			op:   Op{Seq: 9, Kind: OpSetXAttr, Path: "h.txt", XattrName: "user.k", XattrValue: []byte("v"), XattrFlags: 1},
+			op:   Op{Seq: 10, Kind: OpSetXAttr, Path: "h.txt", XattrName: "user.k", XattrValue: []byte("v"), XattrFlags: 1},
 			check: func(w *proto.WalOp) {
 				v, ok := w.Op.(*proto.WalOp_SetXattr)
 				s.Require().True(ok)
@@ -421,7 +455,7 @@ func (s *FlushSuite) TestOpToWalOp_AllKinds() {
 		},
 		{
 			name: "OpRemoveXAttr",
-			op:   Op{Seq: 10, Kind: OpRemoveXAttr, Path: "i.txt", XattrName: "user.k"},
+			op:   Op{Seq: 11, Kind: OpRemoveXAttr, Path: "i.txt", XattrName: "user.k"},
 			check: func(w *proto.WalOp) {
 				v, ok := w.Op.(*proto.WalOp_RemoveXattr)
 				s.Require().True(ok)
@@ -443,16 +477,80 @@ func (s *FlushSuite) TestOpToWalOp_AllKinds() {
 	}
 }
 
-// ── helper to create a Coordinator with a temp log ──────────────────────────
+// ── Test 8: backpressure spawns at most one drain goroutine ──────────────────
 
-func openFlushTestLog(t *testing.T) *BboltLog {
-	t.Helper()
-	l, err := Open(filepath.Join(t.TempDir(), "flush_wal.db"))
-	if err != nil {
-		t.Fatalf("open wal: %v", err)
+// TestSizeCap_AtMostOneDrainGoroutine verifies that sustained over-cap pressure
+// does NOT spawn multiple concurrent background flushes. It holds the Apply
+// stream open (via a gate channel) while repeatedly broadcasting capCond
+// (simulating the spurious wakeups the pre-fix loop fed on), then asserts that
+// exactly one factory invocation occurred.
+func (s *FlushSuite) TestSizeCap_AtMostOneDrainGoroutine() {
+	var flushCount atomic.Int32
+
+	// gate blocks CloseAndRecv until the test releases it.
+	gate := make(chan struct{})
+	blocked := &blockingApplyStream{gate: gate}
+
+	coord := NewCoordinator(s.mgr, openTestLog(s.T()), NewOverlay(),
+		WithApplyFactory(func(ctx context.Context) (proto.RpcFs_ApplyClient, error) {
+			flushCount.Add(1)
+			return blocked, nil
+		}),
+		WithVolume("vol-once"),
+		WithCapOps(1),
+	)
+
+	// Grant delegation so ops route to the WAL.
+	s.mgr.Apply(&proto.DelegationGrant{GrantedRoot: "dir"})
+
+	// Fill the cap with one op.
+	op1 := Op{Kind: OpMkdir, Path: "dir/a"}
+	_, err := coord.log.Append(op1)
+	s.Require().NoError(err)
+	coord.overlay.Apply(op1)
+
+	// Start a RecordOp that will block until the cap clears.
+	done := make(chan error, 1)
+	go func() {
+		done <- coord.RecordOp(Op{Kind: OpCreate, Path: "dir/b.txt"})
+	}()
+
+	// Give waitForCap time to spawn the drain goroutine and block on capCond.Wait().
+	time.Sleep(50 * time.Millisecond)
+
+	// Fire many spurious Broadcasts while the flush is still in flight.
+	// Before the fix, each would spawn a new goroutine; after the fix, the
+	// flushing guard suppresses them.
+	for i := 0; i < 5; i++ {
+		coord.capMu.Lock()
+		coord.capCond.Broadcast()
+		coord.capMu.Unlock()
+		time.Sleep(5 * time.Millisecond)
 	}
-	t.Cleanup(func() { _ = l.Close() })
-	return l
+
+	// Exactly one flush should have been started.
+	s.Equal(int32(1), flushCount.Load(), "at most one drain goroutine must be in flight")
+
+	// Release the in-flight flush so the test can finish cleanly.
+	close(gate)
+
+	select {
+	case err := <-done:
+		s.Require().NoError(err, "RecordOp must eventually succeed after cap drains")
+	case <-time.After(3 * time.Second):
+		s.Fail("RecordOp blocked indefinitely after gate released")
+	}
+}
+
+// blockingApplyStream is a fake Apply stream that blocks CloseAndRecv until gate is closed.
+type blockingApplyStream struct {
+	fakeApplyStream
+	gate <-chan struct{}
+}
+
+func (b *blockingApplyStream) CloseAndRecv() (*proto.ApplyAck, error) {
+	<-b.gate
+	return &proto.ApplyAck{Watermark: 1}, nil
 }
 
 func TestFlushSuite(t *testing.T) {
