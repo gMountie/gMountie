@@ -347,6 +347,47 @@ func (s *CoordinatorSuite) TestClose_IsIdempotent() {
 	}
 }
 
+// TestStartIntervalFlusher_CloseRace verifies that Close() correctly waits for
+// the interval flusher goroutine to exit before closing the log. This test is
+// specifically designed to expose a use-after-close race under -race: it writes
+// ops to the log so the goroutine actually calls log.Replay on every tick,
+// then calls Close concurrently. If flusherWg does not cover the Replay-calling
+// goroutine, the race detector will flag concurrent bbolt access.
+func (s *CoordinatorSuite) TestStartIntervalFlusher_CloseRace() {
+	// Use the suite-level mgr/log/overlay so openTestLog's Cleanup handles log.Close
+	// only if we don't Close the coord first — coord.Close() is the only closer here.
+	mgr := delegation.NewManager(noopInvalidator{})
+	l := openTestLog(s.T())
+	coord := NewCoordinator(mgr, l, NewOverlay())
+
+	// Write a real op so Replay finds len(ops) > 0 on every tick. The op won't
+	// actually be flushed (no applyFactory wired) but Replay WILL access the log.
+	op := Op{Kind: OpWrite, Path: "race/test.bin", Data: []byte("test")}
+	_, err := l.Append(op)
+	s.Require().NoError(err)
+
+	// Start the flusher with a very short interval so the goroutine is likely
+	// executing Replay concurrently with Close.
+	coord.StartIntervalFlusher(1 * time.Millisecond)
+
+	// Give the goroutine a few ticks.
+	time.Sleep(20 * time.Millisecond)
+
+	// Close must wait for the goroutine — no use-after-close, no deadlock.
+	done := make(chan struct{})
+	go func() {
+		_ = coord.Close()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// flusherWg correctly fenced the log-touching goroutine.
+	case <-time.After(3 * time.Second):
+		s.Fail("Close() did not return within 3s — interval flusher goroutine leaked or deadlocked")
+	}
+}
+
 func TestCoordinatorSuite(t *testing.T) {
 	suite.Run(t, new(CoordinatorSuite))
 }

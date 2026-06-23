@@ -2,6 +2,7 @@ package mount
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -165,6 +166,12 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 		// The WAL log lives under the same per-volume root as the cache so
 		// it is co-located with the cache's meta.db and chunks/.
 		walRoot := filepath.Join(m.cache.Path, volume)
+		// persist.Open (below) calls os.MkdirAll on this root, but the WAL
+		// bolt.Open runs first — create the directory proactively so it
+		// doesn't fail with ENOENT on the first mount of a new volume.
+		if err := os.MkdirAll(walRoot, 0o700); err != nil {
+			return errors.Wrap(err, "create wal root")
+		}
 		walLog, werr := wal.Open(filepath.Join(walRoot, "wal.db"))
 		if werr != nil {
 			return errors.Wrap(werr, "open wal log")
