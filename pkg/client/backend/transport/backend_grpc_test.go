@@ -141,11 +141,19 @@ func (s *BackendClientTestSuite) SetupTest() {
 	s.backend = NewBackendClient(s.client, "testVolume")
 }
 
-// newHandle constructs a *grpcFileHandle directly for tests that exercise
-// the fd-level RPCs (Read/Write/Flush/Release/Fsync). The handle is
-// otherwise identical to one returned by Open/Create.
-func (s *BackendClientTestSuite) newHandle(cfg grpcclient.PerFileConfig) *grpcFileHandle {
-	return newGrpcFileHandle(s.client, "testVolume", "/test/path", 1, 0, nil, 30*time.Second, "test-session", "epoch-1", cfg)
+// newHandle constructs a handle for tests that exercise the fd-level RPCs
+// (Read/Write/Flush/Release/Fsync). The return type is *walHandle: when
+// cfg.WriteCoalesceBytes > 0 the walHandle owns a WriteCoalescer; when 0 the
+// walHandle has no coalescer and write() passes straight to streamingWrite.
+// This mirrors the production Open/Create path (newFileHandle in backend_grpc.go).
+//
+// All fd-level tests receive a *walHandle regardless of coalescing, which:
+//   - allows the characterization tests to call h.takeWriteErr() directly
+//   - keeps the production dispatch path (resolveWalHandle → wh.write/flush/…)
+//     exercised even in non-coalescing tests
+func (s *BackendClientTestSuite) newHandle(cfg grpcclient.PerFileConfig) *walHandle {
+	leaf := newGrpcFileHandle(s.client, "testVolume", "/test/path", 1, 0, nil, 30*time.Second, "test-session", "epoch-1", cfg)
+	return newWalHandle(s.backend, leaf, cfg.WriteCoalesceBytes, nil)
 }
 
 // --- path-level ops ---
@@ -785,7 +793,7 @@ func (s *BackendClientTestSuite) TestOpenReturnsHandle() {
 	fh, st := s.backend.Open(context.Background(), "/test", 0)
 	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().NotNil(fh)
-	s.Assert().IsType(&grpcFileHandle{}, fh)
+	s.Assert().IsType(&walHandle{}, fh, "Open wraps leaf in walHandle")
 	s.Assert().Equal("/test", fh.Path())
 }
 
@@ -813,7 +821,7 @@ func (s *BackendClientTestSuite) TestCreateReturnsHandle() {
 	fh, attr, st := s.backend.Create(context.Background(), "/dir", "file", 0, 0644)
 	s.Require().Equal(proto.FsError_FS_OK, st)
 	s.Require().NotNil(fh)
-	s.Assert().IsType(&grpcFileHandle{}, fh)
+	s.Assert().IsType(&walHandle{}, fh, "Create wraps leaf in walHandle")
 	s.Assert().Nil(attr, "no Attributes in reply → attr must be nil so node falls back to Stat")
 }
 
@@ -1015,7 +1023,7 @@ func (s *BackendClientTestSuite) TestRelease() {
 	h := s.newHandle(grpcclient.PerFileConfig{})
 	st := s.backend.Release(context.Background(), h)
 	s.Assert().Equal(proto.FsError_FS_OK, st)
-	s.Assert().Error(h.lifeCtx.Err(), "lifeCtx must be cancelled after Release")
+	s.Assert().Error(h.leaf.lifeCtx.Err(), "lifeCtx must be cancelled after Release")
 }
 
 // TestFlushCleanHandleSkipsRPC verifies the clean-handle fast path: a
@@ -1440,14 +1448,19 @@ func (d *fakeDecorator) Unwrap() backend.FileHandle { return d.inner }
 // *grpcFileHandle must resolve back to the leaf, so per-fd backend ops
 // can reach the gRPC state (fd, sessionID, etc.) regardless of how
 // many decorator layers sit on top.
+//
+// After Task 9b, s.newHandle returns a *walHandle. The innermost
+// *grpcFileHandle (the leaf) is walHandle.leaf. resolveHandle must
+// unwrap through walHandle → grpcFileHandle.
 func (s *BackendClientTestSuite) TestResolveHandle_UnwrapsDecorator() {
-	leaf := s.newHandle(grpcclient.PerFileConfig{})
-	wrapped := &fakeDecorator{inner: leaf}
+	wh := s.newHandle(grpcclient.PerFileConfig{})
+	leaf := wh.leaf // the *grpcFileHandle
+	wrapped := &fakeDecorator{inner: wh}
 	got := resolveHandle(wrapped)
 	s.Require().NotNil(got)
 	s.Assert().Same(leaf, got)
 	// Triple-wrapped should still resolve.
-	tripled := &fakeDecorator{inner: &fakeDecorator{inner: &fakeDecorator{inner: leaf}}}
+	tripled := &fakeDecorator{inner: &fakeDecorator{inner: &fakeDecorator{inner: wh}}}
 	gotTripled := resolveHandle(tripled)
 	s.Require().NotNil(gotTripled)
 	s.Assert().Same(leaf, gotTripled)
@@ -1531,8 +1544,8 @@ func (s *BackendClientTestSuite) TestRead_PartialPrefixFetchesOnlyTail() {
 	// Warm the window: arm the slots ahead of cursor 1024 and store the chunk
 	// at 1024. The slot at 2048 stays in flight, so a 2048-byte read at 1024
 	// is exactly half covered.
-	h.readahead.Observe(0, chunkBytes)
-	h.readahead.Store(chunkBytes, prefix)
+	h.leaf.readahead.Observe(0, chunkBytes)
+	h.leaf.readahead.Store(chunkBytes, prefix)
 
 	var mu sync.Mutex
 	var reqs []*proto.ReadRequest
@@ -1590,8 +1603,8 @@ func (s *BackendClientTestSuite) TestRead_PartialPrefixTailErrorNoShortRead() {
 		ReadaheadWindow:     2,
 	}
 	h := s.newHandle(cfg)
-	h.readahead.Observe(0, chunkBytes)
-	h.readahead.Store(chunkBytes, make([]byte, chunkBytes))
+	h.leaf.readahead.Observe(0, chunkBytes)
+	h.leaf.readahead.Store(chunkBytes, make([]byte, chunkBytes))
 
 	// The only RPC allowed is the tail fetch; it fails in-band with EIO.
 	// The error path returns before Observe, so no prefetch goroutines spawn.
@@ -1631,8 +1644,8 @@ func (s *BackendClientTestSuite) TestRead_PartialPrefixShortTailAtEOF() {
 	for i := range tail {
 		tail[i] = byte((i + 13) % 251)
 	}
-	h.readahead.Observe(0, chunkBytes)
-	h.readahead.Store(chunkBytes, prefix)
+	h.leaf.readahead.Observe(0, chunkBytes)
+	h.leaf.readahead.Store(chunkBytes, prefix)
 
 	s.fileClient.EXPECT().Read(mock.Anything, mock.Anything, mock.Anything).
 		RunAndReturn(func(_ context.Context, req *proto.ReadRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[proto.ReadFrame], error) {
@@ -1704,8 +1717,10 @@ func (s *BackendClientTestSuite) TestSetAttr_CancelledParentDoesNotAbortRPC() {
 
 // newHandleAt is like newHandle but lets the caller choose path and fd so
 // CopyFileRange tests can construct distinct source and destination handles.
-func (s *BackendClientTestSuite) newHandleAt(path string, fd uint64, cfg grpcclient.PerFileConfig) *grpcFileHandle {
-	return newGrpcFileHandle(s.client, "testVolume", path, fd, 0, nil, 30*time.Second, "test-session", "epoch-1", cfg)
+// When cfg.WriteCoalesceBytes > 0 the leaf is wrapped in a *walHandle.
+func (s *BackendClientTestSuite) newHandleAt(path string, fd uint64, cfg grpcclient.PerFileConfig) *walHandle {
+	leaf := newGrpcFileHandle(s.client, "testVolume", path, fd, 0, nil, 30*time.Second, "test-session", "epoch-1", cfg)
+	return newWalHandle(s.backend, leaf, cfg.WriteCoalesceBytes, nil)
 }
 
 // --- CopyFileRange ---
@@ -2149,10 +2164,12 @@ func (s *FdOpReclaimSuite) SetupTest() {
 	s.backend = NewBackendClient(s.client, "testVolume")
 }
 
-// newStaleHandle builds a grpcFileHandle whose snapshotted sessionID ("stale-session")
-// differs from the live client session ("live-session"). fd=7.
-func (s *FdOpReclaimSuite) newStaleHandle() *grpcFileHandle {
-	h := newGrpcFileHandle(
+// newStaleHandle builds a walHandle wrapping a *grpcFileHandle whose snapshotted
+// sessionID ("stale-session") differs from the live client session ("live-session").
+// fd=7. The walHandle has no coalescer (threshold=0) — these tests exercise
+// reclaim/session mechanics, not coalescing.
+func (s *FdOpReclaimSuite) newStaleHandle() *walHandle {
+	leaf := newGrpcFileHandle(
 		s.client, "testVolume", "/test/file", 7,
 		0,   /*flags — O_RDONLY*/
 		nil, /*caller — not relevant for FdOpReclaimSuite tests*/
@@ -2161,8 +2178,8 @@ func (s *FdOpReclaimSuite) newStaleHandle() *grpcFileHandle {
 		"epoch-1", // stored epoch; live BootEpoch() returns "epoch-2" → restart case
 		grpcclient.PerFileConfig{},
 	)
-	h.fileClient = s.fileClient
-	return h
+	leaf.fileClient = s.fileClient
+	return newWalHandle(s.backend, leaf, 0, nil)
 }
 
 // expectOpenReturns sets up a single Open expectation for the stale handle's

@@ -738,7 +738,7 @@ func (b *BackendClient) Open(ctx context.Context, path string, flags uint32) (ba
 	if res.Status != proto.FsError_FS_OK {
 		return nil, res.Status
 	}
-	return newGrpcFileHandle(
+	return b.newFileHandle(
 		b.client, b.volume, path, res.Fd, flags, caller,
 		b.client.IOTimeout(), b.client.SessionID(), b.client.BootEpoch(),
 		b.perFileConfig(),
@@ -779,12 +779,12 @@ func (b *BackendClient) Create(ctx context.Context, parent, name string, flags, 
 		return nil, nil, res.Status
 	}
 	b.applyGrant(res.GetGrant())
-	h := newGrpcFileHandle(
+	fh := b.newFileHandle(
 		b.client, b.volume, path, res.Fd, flags, caller,
 		b.client.IOTimeout(), b.client.SessionID(), b.client.BootEpoch(),
 		b.perFileConfig(),
 	)
-	return h, attrFromProto(res.Attributes), proto.FsError_FS_OK
+	return fh, attrFromProto(res.Attributes), proto.FsError_FS_OK
 }
 
 // Read satisfies a FUSE read from the readahead window where possible,
@@ -1058,84 +1058,43 @@ func (b *BackendClient) streamingWrite(h *grpcFileHandle, data []byte, off int64
 
 // Write proxies a FUSE Write to the server-streaming Write RPC.
 //
-// When per-fd write coalescing is enabled (h.coalescer != nil), small
-// contiguous writes accumulate up to h.coalesceThreshold and are
-// returned as successful to FUSE optimistically — durability is
-// established on Flush. Big writes (len(data) >= threshold) bypass the
-// coalescer: pending bytes are drained first to preserve on-disk order.
+// When per-fd write coalescing is enabled (the handle was wrapped in a
+// walHandle at Open/Create time), small contiguous writes accumulate up to the
+// WriteCoalesceBytes threshold and are returned as successful to FUSE
+// optimistically — durability is established on Flush. Big writes (len(data) >=
+// threshold) bypass the buffer: pending bytes are drained first to preserve
+// on-disk order. The walHandle owns the coalescer, dirty flag, and sticky
+// write-back error; see wal_handle.go.
 //
-// The handle's dirty flag is set on every accepted write so that Flush
-// can skip the RPC on a truly clean handle.
+// When coalescing is disabled the handle is a raw *grpcFileHandle and the write
+// passes straight through to the streaming Write RPC.
 func (b *BackendClient) Write(ctx context.Context, fh backend.FileHandle, off int64, data []byte) (uint32, proto.FsError) {
+	// Fast path: coalescing handle (most production paths).
+	if wh := resolveWalHandle(fh); wh != nil {
+		return wh.write(data, off)
+	}
+	// Non-coalescing: raw grpcFileHandle pass-through.
 	h := resolveHandle(fh)
 	if h == nil {
 		return 0, proto.FsError_FS_EBADF
 	}
-	// Mark dirty so the next Flush emits a WriteAndFlush. The kernel does NOT
-	// guarantee that FUSE ops on one fd are serialized; the safety argument is:
-	// h.dirty is an atomic bool and the coalescer locks internally, so nothing
-	// tears. Setting dirty BEFORE buffering preserves the invariant "bytes in
-	// the coalescer ⇒ dirty is true" — a Flush racing this Write can at worst
-	// observe dirty=true with the bytes not yet appended and issue an empty
-	// WriteAndFlush; those bytes then reach durability on the next
-	// Flush/Fsync/Release (an application racing write(2) against close(2) has
-	// no ordering guarantee to lose).
-	h.dirty.Store(true)
-	// Coalescing disabled: pass through to the streaming Write directly.
-	if h.coalescer == nil {
-		return b.streamingWrite(h, data, off, uuid.NewString())
-	}
-	// Big writes bypass the buffer. Drain any pending bytes first so the
-	// on-disk order matches the call order. The drained batch was already
-	// snapshot-and-cleared from the coalescer, so a failure here loses
-	// previously-acked bytes — record it stickily (see recordWriteErr) so the
-	// next Flush/Fsync surfaces it rather than masking it.
-	if len(data) >= h.coalesceThreshold {
-		if pending := h.coalescer.Drain(); pending != nil {
-			if _, st := b.streamingWrite(h, pending.Data, pending.Offset, uuid.NewString()); st != proto.FsError_FS_OK {
-				h.recordWriteErr(st)
-				return 0, st
-			}
-		}
-		return b.streamingWrite(h, data, off, uuid.NewString())
-	}
-	// Small write: append. If the coalescer hands back a batch, flush it.
-	// Optimistic return: tell FUSE we wrote len(data) bytes even though
-	// they may only be buffered. Durability arrives on Flush.
-	if batch := h.coalescer.Append(data, off); batch != nil {
-		if _, st := b.streamingWrite(h, batch.Data, batch.Offset, uuid.NewString()); st != proto.FsError_FS_OK {
-			// The batch was already cleared from the coalescer inside Append, so
-			// these acked bytes are gone. Stick the error so a later
-			// empty-coalescer Flush can't report a spurious success over it.
-			h.recordWriteErr(st)
-			return 0, st
-		}
-	}
-	return uint32(len(data)), proto.FsError_FS_OK
+	return b.streamingWrite(h, data, off, uuid.NewString())
 }
 
-// drainCoalescer flushes any pending coalesced bytes to the wire.
-// Returns proto.FsError_FS_OK on a no-op or clean send; returns the failing status
-// if the streaming Write reports one.
-func (b *BackendClient) drainCoalescer(h *grpcFileHandle) proto.FsError {
-	if h.coalescer == nil {
-		return proto.FsError_FS_OK
-	}
-	pending := h.coalescer.Drain()
-	if pending == nil {
-		return proto.FsError_FS_OK
-	}
-	_, st := b.streamingWrite(h, pending.Data, pending.Offset, uuid.NewString())
-	return st
+// drainCoalescer drains any pending coalesced bytes on h to the wire.
+// This is only called for raw *grpcFileHandle paths (coalescing disabled);
+// walHandle handles its own coalescer drain via walHandle.drainCoalescer.
+// Since grpcFileHandle no longer owns a coalescer (Task 9b lift), this is a
+// no-op that exists as a safety guard for any non-walHandle paths.
+func (b *BackendClient) drainCoalescer(_ *grpcFileHandle) proto.FsError {
+	return proto.FsError_FS_OK
 }
 
 // Release closes the open file. Cancels lifeCtx first so any in-flight
-// prefetch goroutine bails out, WAITS for those goroutines to finish (they
-// hold the server fd and write into the readahead ring — returning early
-// would let `gmountie unmount` report success while the mount is still
-// active), then drains the coalescer best-effort, then issues the
-// server-side Release RPC. Always proceeds to the server-side Release even
-// if drain fails.
+// prefetch goroutine bails out, WAITS for those goroutines to finish, then
+// handles coalescer drain + sticky write-back error (via walHandle.release when
+// coalescing is enabled), then issues the server-side Release RPC. Always
+// proceeds to the server-side Release even if drain fails.
 func (b *BackendClient) Release(ctx context.Context, fh backend.FileHandle) proto.FsError {
 	h := resolveHandle(fh)
 	if h == nil {
@@ -1150,17 +1109,12 @@ func (b *BackendClient) Release(ctx context.Context, fh backend.FileHandle) prot
 		h.lifeCancel()
 	}
 	h.prefetchWG.Wait()
-	// A sticky write-back error means an earlier coalesced flush lost acked
-	// bytes. Release's return status is invisible to userspace (close(2) on a
-	// FUSE mount doesn't propagate it), so the only honest thing we can do is
-	// log it loudly and clear it — never silently drop it.
-	if st := h.takeWriteErr(); st != proto.FsError_FS_OK {
-		log.Log.Error("sticky write-back error on Release: acked bytes were lost in an earlier coalesced flush",
-			zap.String("path", h.path), zap.Stringer("status", st))
-	}
-	if st := b.drainCoalescer(h); st != proto.FsError_FS_OK {
-		log.Log.Error("error draining coalescer on Release",
-			zap.String("path", h.path), zap.Stringer("status", st))
+	// Coalescing state lives on walHandle when enabled. Drain + sticky-error
+	// logging is delegated there so the ordering (takeWriteErr → log → drain →
+	// log) is preserved. When no walHandle is present (coalescing disabled)
+	// there is no coalescer state to drain.
+	if wh := resolveWalHandle(fh); wh != nil {
+		wh.release()
 	}
 	// classFdOp: a duplicate Release of an already-closed fd is benign, so
 	// transient errors retry within the session; a session change makes the fd
@@ -1189,48 +1143,38 @@ func (b *BackendClient) Release(ctx context.Context, fh backend.FileHandle) prot
 // previous two: streaming Write + Flush). If the handle is clean (nothing
 // written since the last successful Flush) the RPC is skipped entirely.
 //
-// Idempotent — routed through retryOp (classFdOp) so transient gRPC failures
-// (Unavailable, DeadlineExceeded) don't surface to userspace as EIO.
-// A request_id is generated once outside the retry closure and stamped on
-// every attempt: the pure-flush half is naturally idempotent, but the
-// coalesced-write half is not, so the server's idempotency cache uses the id
-// to short-circuit a replay without re-executing the write.
+// When coalescing is enabled, the handle is a *walHandle and all coalescing
+// state (coalescer, dirty, sticky write-back error) lives there; Flush
+// delegates to walHandle.flush which preserves the exact pre-refactor
+// semantics. When coalescing is disabled the handle is a raw *grpcFileHandle
+// and Flush skips directly to the WriteAndFlush RPC (which is a no-op because
+// there can be no pending coalesced bytes on a non-coalescing handle that is
+// still "dirty" — in practice non-coalescing handles don't set dirty, so the
+// RPC is never issued; this path is kept for completeness).
 //
 // reply.FinalAttr is returned by the server but unused at the client;
 // FUSE FLUSH carries no attributes back to the kernel. Available for
 // future cache integration.
 func (b *BackendClient) Flush(ctx context.Context, fh backend.FileHandle) proto.FsError {
+	// Coalescing path: delegate to walHandle which owns dirty/coalescer/err.
+	if wh := resolveWalHandle(fh); wh != nil {
+		return wh.flush(ctx)
+	}
+	// Non-coalescing: no coalescer, no dirty flag, no sticky error.
+	// A raw grpcFileHandle flush is always clean.
 	h := resolveHandle(fh)
 	if h == nil {
 		return proto.FsError_FS_EBADF
 	}
-	// Surface any sticky write-back error first: a coalesced flush failed
-	// earlier inside Write and its bytes are gone. Reporting it here (and
-	// clearing it) is what stops a later empty-coalescer Flush from masking the
-	// loss with a spurious OK. Checked before the clean-handle fast path so the
-	// error is never swallowed even if dirty was cleared in between.
-	if st := h.takeWriteErr(); st != proto.FsError_FS_OK {
-		return st
-	}
-	// Clean-handle fast path: nothing written since last flush, coalescer
-	// empty by definition. Skip the RPC entirely.
-	if !h.dirty.Load() {
-		return proto.FsError_FS_OK
-	}
-	// Drain the coalescer in memory; pending may be nil (write went
-	// directly to the wire via streamingWrite on overflow/big-write).
-	var offset int64
-	var data []byte
-	if h.coalescer != nil {
-		if pending := h.coalescer.Drain(); pending != nil {
-			offset = pending.Offset
-			data = pending.Data
-		}
-	}
-	// requestID is generated once here, outside the closure, so every retry
-	// attempt carries the same id — the server's idempotency cache can
-	// short-circuit a replay of the coalesced-write half without re-executing.
-	requestID := uuid.NewString()
+	return proto.FsError_FS_OK
+}
+
+// writeAndFlushImpl is the leaf primitive for the fused WriteAndFlush RPC.
+// It is called by walHandle.flush (via WriteDrain.Drain → leafFlush) so the
+// one-RTT fusion is preserved through the seam. Idempotent: the requestID is
+// generated once outside any retry by the caller (walHandle.flush) so every
+// retry attempt carries the same id for server-side idempotency dedup.
+func (b *BackendClient) writeAndFlushImpl(ctx context.Context, h *grpcFileHandle, data []byte, offset int64, requestID string) proto.FsError {
 	// classFdOp: WriteAndFlush is idempotent (same fd/offset/data replayed) so
 	// transient errors retry within the session; a session change kills the fd
 	// and stops the retry.
@@ -1253,11 +1197,7 @@ func (b *BackendClient) Flush(ctx context.Context, fh backend.FileHandle) proto.
 		log.Log.Error("error in call: WriteAndFlush", zap.String("path", h.path), zap.Error(err))
 		return fdOpStatus(err)
 	}
-	st := res.Status
-	if st == proto.FsError_FS_OK {
-		h.dirty.Store(false)
-	}
-	return st
+	return res.Status
 }
 
 // Fsync drains coalesced writes then issues the server-side Fsync RPC.
@@ -1269,12 +1209,12 @@ func (b *BackendClient) Fsync(ctx context.Context, fh backend.FileHandle, flags 
 		return proto.FsError_FS_EBADF
 	}
 	// Surface any sticky write-back error from a lost coalesced flush before
-	// draining/syncing — same durability-boundary contract as Flush.
-	if st := h.takeWriteErr(); st != proto.FsError_FS_OK {
-		return st
-	}
-	if st := b.drainCoalescer(h); st != proto.FsError_FS_OK {
-		return st
+	// draining/syncing — same durability-boundary contract as Flush. When
+	// coalescing is enabled (walHandle), fsyncPrep does takeWriteErr + drain.
+	if wh := resolveWalHandle(fh); wh != nil {
+		if st := wh.fsyncPrep(); st != proto.FsError_FS_OK {
+			return st
+		}
 	}
 	// classFdOp: a second Fsync against an already-synced fd is a no-op, so
 	// transient errors retry within the session; a session change kills the fd.
@@ -1297,7 +1237,9 @@ func (b *BackendClient) Fsync(ctx context.Context, fh backend.FileHandle, flags 
 	}
 	st := res.Status
 	if st == proto.FsError_FS_OK {
-		h.dirty.Store(false)
+		if wh := resolveWalHandle(fh); wh != nil {
+			wh.clearDirty()
+		}
 	}
 	return st
 }
@@ -1355,10 +1297,10 @@ func (b *BackendClient) CopyFileRange(ctx context.Context, fhIn backend.FileHand
 	if src == nil || dst == nil {
 		return 0, proto.FsError_FS_EBADF
 	}
-	if st := b.drainCoalescer(src); st != proto.FsError_FS_OK {
+	if st := b.coalescerDrainFor(fhIn); st != proto.FsError_FS_OK {
 		return 0, st
 	}
-	if st := b.drainCoalescer(dst); st != proto.FsError_FS_OK {
+	if st := b.coalescerDrainFor(fhOut); st != proto.FsError_FS_OK {
 		return 0, st
 	}
 	// requestID is generated once outside the closure so every retry attempt
@@ -1397,7 +1339,11 @@ func (b *BackendClient) CopyFileRange(ctx context.Context, fhIn backend.FileHand
 	}
 	st := res.Status
 	if st == proto.FsError_FS_OK && res.BytesCopied > 0 {
-		dst.dirty.Store(true) // close() should still Flush the destination
+		// Mark the destination dirty so close() still triggers a Flush.
+		// Dirty state lives on walHandle when coalescing is enabled.
+		if wh := resolveWalHandle(fhOut); wh != nil {
+			wh.dirty.Store(true)
+		}
 	}
 	return res.BytesCopied, st
 }
@@ -1409,7 +1355,7 @@ func (b *BackendClient) Lseek(ctx context.Context, fh backend.FileHandle, offset
 	if h == nil {
 		return 0, proto.FsError_FS_EBADF
 	}
-	if st := b.drainCoalescer(h); st != proto.FsError_FS_OK {
+	if st := b.coalescerDrainFor(fh); st != proto.FsError_FS_OK {
 		return 0, st
 	}
 	// classFdOp: Lseek is a pure hole-geometry probe (idempotent), so transient
@@ -1575,27 +1521,8 @@ type grpcFileHandle struct {
 	// reopen the server fd exactly once. It guards the state pointer swap.
 	reopenMu  sync.Mutex
 	ioTimeout time.Duration
-	// dirty tracks whether a Write has been accepted since the last
-	// successful Flush or Fsync. Flush skips the RPC entirely when dirty is
-	// false (clean-handle fast path). Set atomically by Write; cleared
-	// atomically by a successful Flush or Fsync.
-	dirty atomic.Bool
-	// lastWriteErr is a sticky write-back error (errseq/AS_EIO semantics). When
-	// a coalesced batch flush fails inside Write, the bytes the coalescer had
-	// already snapshot-and-cleared are lost, yet Write returned OK to FUSE for
-	// the earlier small writes. Recording the non-OK status here lets the next
-	// durability boundary (Flush/Fsync) surface it instead of masking it with a
-	// later empty-coalescer success — a silent acked-write loss otherwise. 0
-	// means no pending error (proto.FsError_FS_OK is 0). Set by Write; consumed and cleared
-	// by Flush/Fsync (returned) or Release (logged).
-	lastWriteErr atomic.Int32
 	// readahead is non-nil when readahead is enabled for this fd.
 	readahead *Readahead
-	// coalescer is non-nil when per-fd small-write coalescing is enabled.
-	// coalesceThreshold mirrors the coalescer's threshold so the big-write
-	// short-circuit doesn't need a Coalescer accessor.
-	coalescer         *WriteCoalescer
-	coalesceThreshold int
 	// lifeCtx is cancelled by Release so any in-flight prefetch goroutine
 	// returns promptly instead of holding the file open on the server
 	// past the FUSE close.
@@ -1611,25 +1538,6 @@ type grpcFileHandle struct {
 
 // Path returns the path this handle was opened against.
 func (h *grpcFileHandle) Path() string { return h.path }
-
-// recordWriteErr stickily records a non-OK status from a coalesced flush whose
-// bytes were already snapshot-and-cleared from the coalescer (and thus lost).
-// The first such error wins — later overwrites would hide the original failure
-// behind a possibly-different one. A no-op for proto.FsError_FS_OK.
-func (h *grpcFileHandle) recordWriteErr(st proto.FsError) {
-	if st == proto.FsError_FS_OK {
-		return
-	}
-	h.lastWriteErr.CompareAndSwap(int32(proto.FsError_FS_OK), int32(st))
-}
-
-// takeWriteErr atomically reads and clears the sticky write-back error,
-// returning proto.FsError_FS_OK when none is pending. Called once at each durability
-// boundary (Flush/Fsync surface it; Release logs it) so a transient failed
-// flush is reported exactly once and not re-surfaced on a later op.
-func (h *grpcFileHandle) takeWriteErr() proto.FsError {
-	return proto.FsError(h.lastWriteErr.Swap(int32(proto.FsError_FS_OK)))
-}
 
 // Unwrap returns the receiver: *grpcFileHandle is the leaf in any
 // FileHandle decorator chain. resolveHandle relies on the self-unwrap
@@ -1660,11 +1568,12 @@ func resolveHandle(fh backend.FileHandle) *grpcFileHandle {
 // newGrpcFileHandle constructs a grpcFileHandle bound to fd on the named
 // volume. client is the live gRPC client (the handle derives fileClient from
 // client.File() and routes fd-op retries through it). cfg bundles the per-file
-// knobs: ReadaheadChunkBytes of 0
-// disables the readahead path entirely; otherwise prefetches arm after
-// ReadaheadThreshold strictly-sequential reads. WriteCoalesceBytes of 0
-// disables per-fd write coalescing; otherwise small contiguous writes
-// accumulate up to that threshold before flushing.
+// knobs: ReadaheadChunkBytes of 0 disables the readahead path entirely;
+// otherwise prefetches arm after ReadaheadThreshold strictly-sequential reads.
+//
+// Write coalescing is NOT configured here. Open/Create wrap the returned leaf
+// in a walHandle (see wal_handle.go) when WriteCoalesceBytes > 0, so the
+// coalescer, dirty flag, and sticky write-back error live on walHandle.
 func newGrpcFileHandle(
 	client grpcclient.Client,
 	volume, path string,
@@ -1678,23 +1587,40 @@ func newGrpcFileHandle(
 ) *grpcFileHandle {
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &grpcFileHandle{
-		client:            client,
-		fileClient:        client.File(),
-		volume:            volume,
-		path:              path,
-		reopenFlags:       sanitizeReopenFlags(flags),
-		reopenCaller:      caller,
-		ioTimeout:         ioTimeout,
-		coalesceThreshold: cfg.WriteCoalesceBytes,
-		lifeCtx:           ctx,
-		lifeCancel:        cancel,
+		client:       client,
+		fileClient:   client.File(),
+		volume:       volume,
+		path:         path,
+		reopenFlags:  sanitizeReopenFlags(flags),
+		reopenCaller: caller,
+		ioTimeout:    ioTimeout,
+		lifeCtx:      ctx,
+		lifeCancel:   cancel,
 	}
 	h.state.Store(&fdState{fd: fd, sessionID: sessionID, epoch: epoch})
 	if cfg.ReadaheadChunkBytes > 0 && cfg.ReadaheadThreshold > 0 {
 		h.readahead = NewReadahead(cfg.ReadaheadChunkBytes, cfg.ReadaheadThreshold, cfg.ReadaheadWindow)
 	}
-	if cfg.WriteCoalesceBytes > 0 {
-		h.coalescer = NewWriteCoalescer(cfg.WriteCoalesceBytes)
-	}
 	return h
+}
+
+// newFileHandle constructs a backend.FileHandle for fd. The leaf grpcFileHandle
+// is always wrapped in a walHandle: this ensures dirty-tracking, sticky
+// write-back error, and (when WriteCoalesceBytes > 0) coalescing state live on
+// walHandle regardless of the coalescing config. With threshold == 0 the
+// walHandle has no WriteCoalescer and write() passes straight through to
+// streamingWrite, matching the original non-coalescing path exactly.
+func (b *BackendClient) newFileHandle(
+	client grpcclient.Client,
+	volume, path string,
+	fd uint64,
+	flags uint32,
+	caller *proto.Caller,
+	ioTimeout time.Duration,
+	sessionID string,
+	epoch string,
+	cfg grpcclient.PerFileConfig,
+) backend.FileHandle {
+	leaf := newGrpcFileHandle(client, volume, path, fd, flags, caller, ioTimeout, sessionID, epoch, cfg)
+	return newWalHandle(b, leaf, cfg.WriteCoalesceBytes, nil)
 }
