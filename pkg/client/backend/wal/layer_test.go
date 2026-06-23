@@ -363,6 +363,127 @@ func (s *LayerSuite) TestGetXAttr_OverlayState() {
 	s.Equal(proto.FsError_FS_ENO_XATTR, ferr, "pending removal must return ENO_XATTR without hitting inner")
 }
 
+// ── Test 11: HEADLINE — Create → Write → Read, no flush, memfs untouched ─────
+//
+// THE HEADLINE TEST (Task 14b): a delegated Create returns a syntheticHandle
+// that is immediately writable and readable through the overlay, before any
+// WAL flush. inner (memfs) must never see the file.
+
+func (s *LayerSuite) TestSyntheticHandle_CreateWriteRead_PreFlush() {
+	s.grant("d")
+
+	// Pre-create parent in memfs so delegation oracle knows the subtree.
+	_, err := s.fs.Mkdir(s.ctx, "d", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	// Create a new file under the delegation — returns a syntheticHandle.
+	fh, _, ferr := s.layer.Create(s.ctx, "d", "f.txt", 0, 0o100644)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	s.Require().NotNil(fh)
+
+	// Write "hello" via the syntheticHandle.
+	n, ferr := s.layer.Write(s.ctx, fh, 0, []byte("hello"))
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	s.Equal(uint32(5), n)
+
+	// Read back "hello" via the same handle (overlay only, no inner).
+	dest := make([]byte, 5)
+	rn, ferr := s.layer.Read(s.ctx, fh, 0, dest)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	s.Equal(5, rn)
+	s.Equal([]byte("hello"), dest, "Read must return the bytes written via syntheticHandle")
+
+	// Stat: size must reflect the write.
+	attr, ferr := s.layer.Stat(s.ctx, "d/f.txt")
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	s.Equal(uint64(5), attr.Size, "Stat must report the written size")
+
+	// Release the handle.
+	s.Require().Equal(proto.FsError_FS_OK, s.layer.Release(s.ctx, fh))
+
+	// memfs (inner) must NOT have seen the file at all.
+	_, innerErr := s.fs.Stat(s.ctx, "d/f.txt")
+	s.Equal(proto.FsError_FS_ENOENT, innerErr, "memfs must not have the file before WAL flush")
+}
+
+// ── Test 12: Close + reopen → still readable via new syntheticHandle ──────────
+//
+// After Release + Open on the same overlay-created path, Open must return a
+// fresh syntheticHandle (not call inner), and Read must still return the
+// previously written bytes.
+
+func (s *LayerSuite) TestSyntheticHandle_Reopen_StillReadable() {
+	s.grant("d")
+	_, err := s.fs.Mkdir(s.ctx, "d", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	fh, _, ferr := s.layer.Create(s.ctx, "d", "g.txt", 0, 0o100644)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+
+	_, ferr = s.layer.Write(s.ctx, fh, 0, []byte("world"))
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	s.Require().Equal(proto.FsError_FS_OK, s.layer.Release(s.ctx, fh))
+
+	// Reopen — must return a syntheticHandle (not ENOENT from inner).
+	fh2, ferr := s.layer.Open(s.ctx, "d/g.txt", 0)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	s.Require().NotNil(fh2)
+	defer func() { _ = s.layer.Release(s.ctx, fh2) }()
+
+	// Read must serve the previously written bytes.
+	dest := make([]byte, 5)
+	rn, ferr := s.layer.Read(s.ctx, fh2, 0, dest)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	s.Equal(5, rn)
+	s.Equal([]byte("world"), dest, "re-opened syntheticHandle must serve previously written bytes")
+}
+
+// ── Test 13: Write recorded exactly once (no double-record) ──────────────────
+//
+// Write to a syntheticHandle must produce exactly one WAL entry (one RecordOp).
+// Non-delegated Create → inner passthrough; Write on that inner handle should
+// not produce any WAL entry.
+
+func (s *LayerSuite) TestSyntheticHandle_WriteRecordedExactlyOnce() {
+	s.grant("wal")
+	_, err := s.fs.Mkdir(s.ctx, "wal", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	fh, _, ferr := s.layer.Create(s.ctx, "wal", "only.txt", 0, 0o100644)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+
+	_, ferr = s.layer.Write(s.ctx, fh, 0, []byte("once"))
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	s.Require().Equal(proto.FsError_FS_OK, s.layer.Release(s.ctx, fh))
+
+	// The WAL log must contain exactly 2 entries: OpCreate + OpWrite.
+	ops, logerr := s.log.Replay(0)
+	s.Require().NoError(logerr)
+	s.Require().Len(ops, 2, "WAL must have exactly OpCreate + OpWrite, no duplicates")
+	s.Equal(wal.OpCreate, ops[0].Kind)
+	s.Equal(wal.OpWrite, ops[1].Kind)
+	s.Equal([]byte("once"), ops[1].Data)
+}
+
+// ── Test 14: non-delegated Create → passthrough; inner sees it; no WAL ────────
+
+func (s *LayerSuite) TestNonDelegated_Create_PassthroughToInner() {
+	// No grant → not delegated.
+	fh, _, ferr := s.layer.Create(s.ctx, "", "direct.txt", 0, 0o100644)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	s.Require().NotNil(fh)
+	defer func() { _ = s.layer.Release(s.ctx, fh) }()
+
+	// memfs must have the file.
+	_, innerErr := s.fs.Stat(s.ctx, "direct.txt")
+	s.Equal(proto.FsError_FS_OK, innerErr, "non-delegated Create must reach inner")
+
+	// WAL log must be empty.
+	ops, logerr := s.log.Replay(0)
+	s.Require().NoError(logerr)
+	s.Empty(ops, "non-delegated Create must not produce a WAL entry")
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func dirNames(entries []backend.DirEntryPlus) []string {
