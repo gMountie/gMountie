@@ -82,6 +82,9 @@ func (r *RpcServerImpl) Mkdir(ctx context.Context, request *proto.MkdirRequest) 
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.MkdirReply, error) {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
+			return &proto.MkdirReply{Status: st}, nil
+		}
 		fctx := createContext(ctx, request.Caller)
 		if s := fs.Mkdir(request.Path, request.Mode, fctx); s != fuse.OK {
 			return &proto.MkdirReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
@@ -91,6 +94,7 @@ func (r *RpcServerImpl) Mkdir(ctx context.Context, request *proto.MkdirRequest) 
 		reply := &proto.MkdirReply{
 			Status:     proto.FsError_FS_OK,
 			Attributes: r.statAttrsAndEmit(ctx, fs, request.Volume, request.Path, &id, fctx),
+			Grant:      grantFor(r.arbiter, request.SessionId, request.Delegation),
 		}
 		return reply, nil
 	})
@@ -106,10 +110,17 @@ func (r *RpcServerImpl) Rmdir(ctx context.Context, request *proto.RmdirRequest) 
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.RmdirReply, error) {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
+			return &proto.RmdirReply{Status: st}, nil
+		}
 		s := r.deleteEmit(ctx, request.Volume, request.Path, func() fuse.Status {
 			return fs.Rmdir(request.Path, createContext(ctx, request.Caller))
 		})
-		return &proto.RmdirReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
+		reply := &proto.RmdirReply{Status: fserr.FromErrno(syscall.Errno(s))}
+		if s == fuse.OK {
+			reply.Grant = grantFor(r.arbiter, request.SessionId, request.Delegation)
+		}
+		return reply, nil
 	})
 }
 
@@ -123,10 +134,21 @@ func (r *RpcServerImpl) Rename(ctx context.Context, request *proto.RenameRequest
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.RenameReply, error) {
+		// Cross-subtree rename may contend two delegations — arbitrate both.
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.OldName); st != proto.FsError_FS_OK {
+			return &proto.RenameReply{Status: st}, nil
+		}
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.NewName); st != proto.FsError_FS_OK {
+			return &proto.RenameReply{Status: st}, nil
+		}
 		s := r.renameEmit(ctx, fs, request.Volume, request.OldName, request.NewName, request.Caller, func() fuse.Status {
 			return fs.Rename(request.OldName, request.NewName, createContext(ctx, request.Caller))
 		})
-		return &proto.RenameReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
+		reply := &proto.RenameReply{Status: fserr.FromErrno(syscall.Errno(s))}
+		if s == fuse.OK {
+			reply.Grant = grantFor(r.arbiter, request.SessionId, request.Delegation)
+		}
+		return reply, nil
 	})
 }
 
@@ -155,6 +177,9 @@ func (r *RpcServerImpl) Symlink(ctx context.Context, request *proto.SymlinkReque
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.SymlinkReply, error) {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.LinkPath); st != proto.FsError_FS_OK {
+			return &proto.SymlinkReply{Status: st}, nil
+		}
 		fctx := createContext(ctx, request.Caller)
 		if s := fs.Symlink(request.Target, request.LinkPath, fctx); s != fuse.OK {
 			return &proto.SymlinkReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
@@ -164,6 +189,7 @@ func (r *RpcServerImpl) Symlink(ctx context.Context, request *proto.SymlinkReque
 		reply := &proto.SymlinkReply{
 			Status:     proto.FsError_FS_OK,
 			Attributes: r.statAttrsAndEmit(ctx, fs, request.Volume, request.LinkPath, &id, fctx),
+			Grant:      grantFor(r.arbiter, request.SessionId, request.Delegation),
 		}
 		return reply, nil
 	})
@@ -266,10 +292,17 @@ func (r *RpcServerImpl) Unlink(ctx context.Context, request *proto.UnlinkRequest
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.UnlinkReply, error) {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
+			return &proto.UnlinkReply{Status: st}, nil
+		}
 		s := r.deleteEmit(ctx, request.Volume, request.Path, func() fuse.Status {
 			return fs.Unlink(request.Path, createContext(ctx, request.Caller))
 		})
-		return &proto.UnlinkReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
+		reply := &proto.UnlinkReply{Status: fserr.FromErrno(syscall.Errno(s))}
+		if s == fuse.OK {
+			reply.Grant = grantFor(r.arbiter, request.SessionId, request.Delegation)
+		}
+		return reply, nil
 	})
 }
 
@@ -312,6 +345,9 @@ func (r *RpcServerImpl) SetAttr(ctx context.Context, request *proto.SetAttrReque
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.SetAttrReply, error) {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
+			return &proto.SetAttrReply{Status: st}, nil
+		}
 		fctx := createContext(ctx, request.Caller)
 		s, mutated := applySetAttr(fs, request, fctx)
 		if s != fuse.OK {
@@ -323,7 +359,10 @@ func (r *RpcServerImpl) SetAttr(ctx context.Context, request *proto.SetAttrReque
 			}
 			return &proto.SetAttrReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
 		}
-		reply := &proto.SetAttrReply{Status: proto.FsError_FS_OK}
+		reply := &proto.SetAttrReply{
+			Status: proto.FsError_FS_OK,
+			Grant:  grantFor(r.arbiter, request.SessionId, request.Delegation),
+		}
 		// ONE trailing stat serves both the reply attrs and the event seed —
 		// emitMutatedAttr deliberately replaces versionAfter, which re-stats.
 		// mutated is false only for a degenerate request with no settable
@@ -436,10 +475,17 @@ func (r *RpcServerImpl) SetXAttr(ctx context.Context, request *proto.SetXAttrReq
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.SetXAttrReply, error) {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
+			return &proto.SetXAttrReply{Status: st}, nil
+		}
 		s := r.mutateEmit(ctx, fs, request.Volume, request.Path, request.Caller, func() fuse.Status {
 			return fs.SetXAttr(request.Path, request.Attribute, request.Data, int(request.Flags), createContext(ctx, request.Caller))
 		})
-		return &proto.SetXAttrReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
+		reply := &proto.SetXAttrReply{Status: fserr.FromErrno(syscall.Errno(s))}
+		if s == fuse.OK {
+			reply.Grant = grantFor(r.arbiter, request.SessionId, request.Delegation)
+		}
+		return reply, nil
 	})
 }
 
@@ -456,10 +502,17 @@ func (r *RpcServerImpl) RemoveXAttr(ctx context.Context, request *proto.RemoveXA
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.RemoveXAttrReply, error) {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
+			return &proto.RemoveXAttrReply{Status: st}, nil
+		}
 		s := r.mutateEmit(ctx, fs, request.Volume, request.Path, request.Caller, func() fuse.Status {
 			return fs.RemoveXAttr(request.Path, request.Attribute, createContext(ctx, request.Caller))
 		})
-		return &proto.RemoveXAttrReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
+		reply := &proto.RemoveXAttrReply{Status: fserr.FromErrno(syscall.Errno(s))}
+		if s == fuse.OK {
+			reply.Grant = grantFor(r.arbiter, request.SessionId, request.Delegation)
+		}
+		return reply, nil
 	})
 }
 

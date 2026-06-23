@@ -163,10 +163,14 @@ func (r *RpcFileServerImpl) Create(ctx context.Context, request *proto.CreateReq
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.CreateReply, error) {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
+			return &proto.CreateReply{Status: st}, nil
+		}
 		file, s := fs.Create(request.Path, request.Flags, request.Mode, createContext(ctx, request.Caller))
 		reply := &proto.CreateReply{Status: fserr.FromErrno(syscall.Errno(s))}
 		if s == fuse.OK {
 			reply.Fd = sess.RegisterFile(request.Volume, request.Path, file)
+			reply.Grant = grantFor(r.arbiter, request.SessionId, request.Delegation)
 			if attr, gst := fs.GetAttr(request.Path, createContext(ctx, request.Caller)); gst.Ok() {
 				reply.Attributes = toProtoAttr(attr, &id)
 				r.emitMutatedAttr(ctx, request.Volume, request.Path, attr)
@@ -269,6 +273,17 @@ func (r *RpcFileServerImpl) Write(stream proto.RpcFile_WriteServer) error {
 		// Held for the whole apply loop — released when the closure returns.
 		defer entry.ReleaseRef()
 		entryPath = entry.Path
+
+		// Arbitrate before writing: a foreign delegation on this path requires a
+		// recall; if it fails the contender gets FS_EAGAIN and must retry with a
+		// fresh request_id. Drain the stream first so gRPC sees a clean half-close.
+		if st := arbitrateContention(r.arbiter, first.SessionId, entryPath); st != proto.FsError_FS_OK {
+			if drainErr := drainWriteStream(stream); drainErr != nil {
+				return nil, drainErr
+			}
+			return &proto.WriteReply{Status: st}, nil
+		}
+
 		return r.applyWriteStream(stream, first, entry.File)
 	})
 	if err != nil {
@@ -288,6 +303,7 @@ func (r *RpcFileServerImpl) Write(stream proto.RpcFile_WriteServer) error {
 
 	if applied && reply.Status == proto.FsError_FS_OK && entryPath != "" {
 		r.emitMutatedFd(stream.Context(), first.Volume, entryPath, nil)
+		reply.Grant = grantFor(r.arbiter, first.SessionId, first.Delegation)
 	}
 
 	return stream.SendAndClose(reply)
@@ -541,15 +557,20 @@ func (r *RpcFileServerImpl) Allocate(ctx context.Context, request *proto.Allocat
 		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 	}
 	defer entry.ReleaseRef()
-	s := entry.File.Allocate(request.Off, request.Size, request.Mode)
-	if s == fuse.OK {
-		path := entry.Path
-		if path == "" {
-			path = request.Path
-		}
-		r.emitMutatedFd(ctx, request.Volume, path, request.Caller)
+	path := entry.Path
+	if path == "" {
+		path = request.Path
 	}
-	return &proto.AllocateReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
+	if st := arbitrateContention(r.arbiter, request.SessionId, path); st != proto.FsError_FS_OK {
+		return &proto.AllocateReply{Status: st}, nil
+	}
+	s := entry.File.Allocate(request.Off, request.Size, request.Mode)
+	reply := &proto.AllocateReply{Status: fserr.FromErrno(syscall.Errno(s))}
+	if s == fuse.OK {
+		r.emitMutatedFd(ctx, request.Volume, path, request.Caller)
+		reply.Grant = grantFor(r.arbiter, request.SessionId, request.Delegation)
+	}
+	return reply, nil
 }
 
 // CopyFileRange copies length bytes between two open handles entirely on
