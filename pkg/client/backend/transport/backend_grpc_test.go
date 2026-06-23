@@ -97,12 +97,13 @@ func newBackendWriteStreamStub(t *testing.T, reply *proto.WriteReply, err error)
 
 func (w *backendWriteStreamStub) send(f *proto.WriteFrame) error {
 	dup := &proto.WriteFrame{
-		Volume:    f.Volume,
-		Fd:        f.Fd,
-		SessionId: f.SessionId,
-		RequestId: f.RequestId,
-		Offset:    f.Offset,
-		Data:      append([]byte(nil), f.Data...),
+		Volume:     f.Volume,
+		Fd:         f.Fd,
+		SessionId:  f.SessionId,
+		RequestId:  f.RequestId,
+		Offset:     f.Offset,
+		Data:       append([]byte(nil), f.Data...),
+		Delegation: f.Delegation, // preserve delegation for test assertions
 	}
 	w.frames = append(w.frames, dup)
 	return nil

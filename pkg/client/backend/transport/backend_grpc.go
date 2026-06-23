@@ -58,6 +58,11 @@ type BackendClient struct {
 	// sequential prefetch — two prefetchers on one connection halve WAN
 	// throughput.
 	noReadahead bool
+	// delegation is the optional hook that piggybacks delegation
+	// requests/grants on mutating RPCs. nil (the default) means today's
+	// behaviour — no Delegation field is stamped and no Apply is called.
+	// Set via WithDelegationHook.
+	delegation DelegationHook
 }
 
 // BackendOption customizes a BackendClient at construction.
@@ -437,12 +442,13 @@ func (b *BackendClient) Symlink(ctx context.Context, target, linkPath string) (*
 	res, st := mutatePath(b, ctx, "Symlink",
 		func(ctx context.Context, requestID string) (*proto.SymlinkReply, error) {
 			return b.client.Fs().Symlink(ctx, &proto.SymlinkRequest{
-				Volume:    b.volume,
-				Caller:    callerFromCtx(ctx),
-				Target:    target,
-				LinkPath:  linkPath,
-				SessionId: b.client.SessionID(),
-				RequestId: requestID,
+				Volume:     b.volume,
+				Caller:     callerFromCtx(ctx),
+				Target:     target,
+				LinkPath:   linkPath,
+				SessionId:  b.client.SessionID(),
+				RequestId:  requestID,
+				Delegation: b.delegationReq(),
 			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.SymlinkReply) proto.FsError { return r.Status },
@@ -451,6 +457,7 @@ func (b *BackendClient) Symlink(ctx context.Context, target, linkPath string) (*
 	if st != proto.FsError_FS_OK {
 		return nil, st
 	}
+	b.applyGrant(res.GetGrant())
 	return attrFromProto(res.GetAttributes()), proto.FsError_FS_OK
 }
 
@@ -495,41 +502,49 @@ func (b *BackendClient) GetXAttr(ctx context.Context, path, attr string) ([]byte
 // SetXAttr stores an extended attribute. Mutating — request_id stamped
 // outside retry for idempotency, like Rename.
 func (b *BackendClient) SetXAttr(ctx context.Context, path, attr string, data []byte, flags uint32) proto.FsError {
-	_, st := mutatePath(b, ctx, "SetXAttr",
+	res, st := mutatePath(b, ctx, "SetXAttr",
 		func(ctx context.Context, requestID string) (*proto.SetXAttrReply, error) {
 			return b.client.Fs().SetXAttr(ctx, &proto.SetXAttrRequest{
-				Volume:    b.volume,
-				Caller:    callerFromCtx(ctx),
-				Path:      path,
-				Attribute: attr,
-				Data:      data,
-				Flags:     flags,
-				SessionId: b.client.SessionID(),
-				RequestId: requestID,
+				Volume:     b.volume,
+				Caller:     callerFromCtx(ctx),
+				Path:       path,
+				Attribute:  attr,
+				Data:       data,
+				Flags:      flags,
+				SessionId:  b.client.SessionID(),
+				RequestId:  requestID,
+				Delegation: b.delegationReq(),
 			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.SetXAttrReply) proto.FsError { return r.Status },
 		zap.String("path", path),
 	)
+	if st == proto.FsError_FS_OK {
+		b.applyGrant(res.GetGrant())
+	}
 	return st
 }
 
 // RemoveXAttr deletes an extended attribute. Mutating — see SetXAttr.
 func (b *BackendClient) RemoveXAttr(ctx context.Context, path, attr string) proto.FsError {
-	_, st := mutatePath(b, ctx, "RemoveXAttr",
+	res, st := mutatePath(b, ctx, "RemoveXAttr",
 		func(ctx context.Context, requestID string) (*proto.RemoveXAttrReply, error) {
 			return b.client.Fs().RemoveXAttr(ctx, &proto.RemoveXAttrRequest{
-				Volume:    b.volume,
-				Caller:    callerFromCtx(ctx),
-				Path:      path,
-				Attribute: attr,
-				SessionId: b.client.SessionID(),
-				RequestId: requestID,
+				Volume:     b.volume,
+				Caller:     callerFromCtx(ctx),
+				Path:       path,
+				Attribute:  attr,
+				SessionId:  b.client.SessionID(),
+				RequestId:  requestID,
+				Delegation: b.delegationReq(),
 			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.RemoveXAttrReply) proto.FsError { return r.Status },
 		zap.String("path", path),
 	)
+	if st == proto.FsError_FS_OK {
+		b.applyGrant(res.GetGrant())
+	}
 	return st
 }
 
@@ -556,12 +571,13 @@ func (b *BackendClient) Mkdir(ctx context.Context, path string, mode uint32) (*b
 	res, st := mutatePath(b, ctx, "Mkdir",
 		func(ctx context.Context, requestID string) (*proto.MkdirReply, error) {
 			return b.client.Fs().Mkdir(ctx, &proto.MkdirRequest{
-				Volume:    b.volume,
-				Caller:    callerFromCtx(ctx),
-				Path:      path,
-				Mode:      mode,
-				SessionId: b.client.SessionID(),
-				RequestId: requestID,
+				Volume:     b.volume,
+				Caller:     callerFromCtx(ctx),
+				Path:       path,
+				Mode:       mode,
+				SessionId:  b.client.SessionID(),
+				RequestId:  requestID,
+				Delegation: b.delegationReq(),
 			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.MkdirReply) proto.FsError { return r.Status },
@@ -570,61 +586,74 @@ func (b *BackendClient) Mkdir(ctx context.Context, path string, mode uint32) (*b
 	if st != proto.FsError_FS_OK {
 		return nil, st
 	}
+	b.applyGrant(res.GetGrant())
 	return attrFromProto(res.GetAttributes()), proto.FsError_FS_OK
 }
 
 // Rmdir removes an empty directory.
 func (b *BackendClient) Rmdir(ctx context.Context, path string) proto.FsError {
-	_, st := mutatePath(b, ctx, "Rmdir",
+	res, st := mutatePath(b, ctx, "Rmdir",
 		func(ctx context.Context, requestID string) (*proto.RmdirReply, error) {
 			return b.client.Fs().Rmdir(ctx, &proto.RmdirRequest{
-				Volume:    b.volume,
-				Caller:    callerFromCtx(ctx),
-				Path:      path,
-				SessionId: b.client.SessionID(),
-				RequestId: requestID,
+				Volume:     b.volume,
+				Caller:     callerFromCtx(ctx),
+				Path:       path,
+				SessionId:  b.client.SessionID(),
+				RequestId:  requestID,
+				Delegation: b.delegationReq(),
 			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.RmdirReply) proto.FsError { return r.Status },
 		zap.String("path", path),
 	)
+	if st == proto.FsError_FS_OK {
+		b.applyGrant(res.GetGrant())
+	}
 	return st
 }
 
 // Unlink removes a non-directory.
 func (b *BackendClient) Unlink(ctx context.Context, path string) proto.FsError {
-	_, st := mutatePath(b, ctx, "Unlink",
+	res, st := mutatePath(b, ctx, "Unlink",
 		func(ctx context.Context, requestID string) (*proto.UnlinkReply, error) {
 			return b.client.Fs().Unlink(ctx, &proto.UnlinkRequest{
-				Volume:    b.volume,
-				Caller:    callerFromCtx(ctx),
-				Path:      path,
-				SessionId: b.client.SessionID(),
-				RequestId: requestID,
+				Volume:     b.volume,
+				Caller:     callerFromCtx(ctx),
+				Path:       path,
+				SessionId:  b.client.SessionID(),
+				RequestId:  requestID,
+				Delegation: b.delegationReq(),
 			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.UnlinkReply) proto.FsError { return r.Status },
 		zap.String("path", path),
 	)
+	if st == proto.FsError_FS_OK {
+		b.applyGrant(res.GetGrant())
+	}
 	return st
 }
 
 // Rename moves a file/directory.
 func (b *BackendClient) Rename(ctx context.Context, oldPath, newPath string) proto.FsError {
-	_, st := mutatePath(b, ctx, "Rename",
+	res, st := mutatePath(b, ctx, "Rename",
 		func(ctx context.Context, requestID string) (*proto.RenameReply, error) {
 			return b.client.Fs().Rename(ctx, &proto.RenameRequest{
-				Volume:    b.volume,
-				Caller:    callerFromCtx(ctx),
-				OldName:   oldPath,
-				NewName:   newPath,
-				SessionId: b.client.SessionID(),
-				RequestId: requestID,
+				Volume:     b.volume,
+				Caller:     callerFromCtx(ctx),
+				OldName:    oldPath,
+				NewName:    newPath,
+				SessionId:  b.client.SessionID(),
+				RequestId:  requestID,
+				Delegation: b.delegationReq(),
 			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.RenameReply) proto.FsError { return r.Status },
 		zap.String("old_path", oldPath), zap.String("new_path", newPath),
 	)
+	if st == proto.FsError_FS_OK {
+		b.applyGrant(res.GetGrant())
+	}
 	return st
 }
 
@@ -657,18 +686,19 @@ func (b *BackendClient) SetAttr(ctx context.Context, path string, in backend.Set
 	res, st := mutatePath(b, ctx, "SetAttr",
 		func(ctx context.Context, requestID string) (*proto.SetAttrReply, error) {
 			return b.client.Fs().SetAttr(ctx, &proto.SetAttrRequest{
-				Volume:    b.volume,
-				Caller:    callerFromCtx(ctx),
-				Path:      path,
-				Valid:     in.Valid & setAttrValidMask, // mask kernel-only FATTR_* bits off the wire
-				Mode:      in.Mode,
-				Uid:       in.Uid,
-				Gid:       in.Gid,
-				Size:      in.Size,
-				Atime:     timeToFileTime(in.Atime), // nil ⇒ omitted (UTIME_OMIT)
-				Mtime:     timeToFileTime(in.Mtime),
-				SessionId: b.client.SessionID(),
-				RequestId: requestID,
+				Volume:     b.volume,
+				Caller:     callerFromCtx(ctx),
+				Path:       path,
+				Valid:      in.Valid & setAttrValidMask, // mask kernel-only FATTR_* bits off the wire
+				Mode:       in.Mode,
+				Uid:        in.Uid,
+				Gid:        in.Gid,
+				Size:       in.Size,
+				Atime:      timeToFileTime(in.Atime), // nil ⇒ omitted (UTIME_OMIT)
+				Mtime:      timeToFileTime(in.Mtime),
+				SessionId:  b.client.SessionID(),
+				RequestId:  requestID,
+				Delegation: b.delegationReq(),
 			}, grpc.WaitForReady(true))
 		},
 		func(r *proto.SetAttrReply) proto.FsError { return r.Status },
@@ -677,6 +707,7 @@ func (b *BackendClient) SetAttr(ctx context.Context, path string, in backend.Set
 	if st != proto.FsError_FS_OK {
 		return nil, st
 	}
+	b.applyGrant(res.GetGrant())
 	return attrFromProto(res.GetAttributes()), proto.FsError_FS_OK
 }
 
@@ -730,13 +761,14 @@ func (b *BackendClient) Create(ctx context.Context, parent, name string, flags, 
 	res, err := retryOp(b.client, ctx, "Create", classPathMutation, b.client.MetaTimeout(),
 		func(ctx context.Context) (*proto.CreateReply, error) {
 			return b.client.File().Create(ctx, &proto.CreateRequest{
-				Volume:    b.volume,
-				Caller:    caller,
-				Path:      path,
-				Flags:     flags,
-				Mode:      mode,
-				SessionId: b.client.SessionID(),
-				RequestId: requestID,
+				Volume:     b.volume,
+				Caller:     caller,
+				Path:       path,
+				Flags:      flags,
+				Mode:       mode,
+				SessionId:  b.client.SessionID(),
+				RequestId:  requestID,
+				Delegation: b.delegationReq(),
 			}, grpc.WaitForReady(true))
 		})
 	if err != nil || res == nil {
@@ -746,6 +778,7 @@ func (b *BackendClient) Create(ctx context.Context, parent, name string, flags, 
 	if res.Status != proto.FsError_FS_OK {
 		return nil, nil, res.Status
 	}
+	b.applyGrant(res.GetGrant())
 	h := newGrpcFileHandle(
 		b.client, b.volume, path, res.Fd, flags, caller,
 		b.client.IOTimeout(), b.client.SessionID(), b.client.BootEpoch(),
@@ -989,13 +1022,16 @@ func (b *BackendClient) streamingWrite(h *grpcFileHandle, data []byte, off int64
 			if first > len(data) {
 				first = len(data)
 			}
+			// Delegation is stamped on the header (first) frame only; data-only
+			// frames carry no header fields. See DelegationHook for context.
 			header := &proto.WriteFrame{
-				Volume:    h.volume,
-				Fd:        snap.fd,
-				SessionId: snap.sessionID,
-				RequestId: requestID,
-				Offset:    off,
-				Data:      data[:first],
+				Volume:     h.volume,
+				Fd:         snap.fd,
+				SessionId:  snap.sessionID,
+				RequestId:  requestID,
+				Offset:     off,
+				Data:       data[:first],
+				Delegation: b.delegationReq(),
 			}
 			if sendErr := stream.Send(header); sendErr != nil {
 				return nil, sendErr
@@ -1016,6 +1052,7 @@ func (b *BackendClient) streamingWrite(h *grpcFileHandle, data []byte, off int64
 		log.Log.Error("error in call: Write", zap.String("path", h.path), zap.Error(err))
 		return 0, fdOpStatus(err)
 	}
+	b.applyGrant(res.GetGrant())
 	return res.Written, res.Status
 }
 
@@ -1281,19 +1318,23 @@ func (b *BackendClient) Allocate(ctx context.Context, fh backend.FileHandle, off
 			}
 			snap := h.state.Load()
 			return h.fileClient.Allocate(ctx, &proto.AllocateRequest{
-				Volume:    h.volume,
-				Caller:    callerFromCtx(ctx),
-				Fd:        snap.fd,
-				Path:      h.path,
-				Off:       off,
-				Size:      size,
-				Mode:      mode,
-				SessionId: snap.sessionID,
+				Volume:     h.volume,
+				Caller:     callerFromCtx(ctx),
+				Fd:         snap.fd,
+				Path:       h.path,
+				Off:        off,
+				Size:       size,
+				Mode:       mode,
+				SessionId:  snap.sessionID,
+				Delegation: b.delegationReq(),
 			}, grpc.WaitForReady(true))
 		})
 	if err != nil {
 		log.Log.Error("error in call: Allocate", zap.String("path", h.path), zap.Error(err))
 		return fdOpStatus(err)
+	}
+	if res.Status == proto.FsError_FS_OK {
+		b.applyGrant(res.GetGrant())
 	}
 	return res.Status
 }
