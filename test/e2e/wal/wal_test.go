@@ -963,16 +963,6 @@ func (s *WalE2ESuite) TestStartupRecovery_EmptyWAL_NoOp() {
 	r.NoError(err)
 	defer cl.Close()
 
-	// Count Apply streams: an empty WAL Replay must open zero streams.
-	var applyCount atomic.Int64
-	interceptor := func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		if info.FullMethod == applyFullMethod {
-			applyCount.Add(1)
-		}
-		return handler(srv, ss)
-	}
-	_ = interceptor // registered in a separate scenario; here we assert freshCoord separately
-
 	walPath := filepath.Join(s.T().TempDir(), "empty.db")
 	freshLog, err := wal.Open(walPath)
 	r.NoError(err)

@@ -329,27 +329,11 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 			// (RebuildOverlay), so RYOW is correct immediately; this goroutine
 			// sends the ops to the server so the data is durably committed.
 			//
-			// coord.Replay is safe to call while flushMu is not held; it acquires
-			// flushMu internally and returns after the Apply stream closes.
-			// Transport errors do NOT fire onLoss (per processAck contract) —
-			// the ops remain in wal.db for the next mount attempt.  Ordered-halt
-			// failures DO fire onLoss (loud ERROR + WalDataLost metric).
-			//
-			// The goroutine captures the mount context so it exits when the volume
-			// is unmounted.  A background context is used for the Apply stream so
-			// the replay can outlive the caller's context without being cancelled.
-			coord_ := coord
-			go func() {
-				// Use a background context so the replay stream is not cancelled
-				// when (for example) a short-lived caller context expires.  The
-				// coord itself is closed on unmount, which terminates any in-flight
-				// stream naturally.
-				if replayErr := coord_.Replay(context.Background(), 0); replayErr != nil {
-					log.Log.Error("startup WAL replay failed; un-acked ops remain in wal.db for next mount",
-						zap.String("volume", volume),
-						zap.Error(replayErr))
-				}
-			}()
+			// StartupReplay tracks the goroutine in flusherWg so coord.Close()
+			// waits for it to exit before log.Close() — preventing a data race
+			// between the log.Replay call and log.Close().  It also stores a cancel
+			// func that stopFlusher invokes so a fast unmount does not hang.
+			coord.StartupReplay(context.Background())
 		}
 		m.startRecallGoroutine(delMgr, volume)
 	}

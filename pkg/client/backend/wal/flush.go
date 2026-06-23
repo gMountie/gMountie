@@ -443,11 +443,16 @@ func (c *Coordinator) startIntervalFlusher(interval interface{ C() <-chan struct
 	}()
 }
 
-// stopFlusher is called by Close to stop the interval goroutine.
+// stopFlusher is called by Close to stop the interval goroutine and, if
+// StartupReplay was called, to cancel the startup replay context so a
+// network-stuck Apply stream does not block flusherWg.Wait indefinitely.
 func (c *Coordinator) stopFlusher() {
 	c.flushStopOnce.Do(func() {
 		if c.flushStop != nil {
 			close(c.flushStop)
+		}
+		if c.startupReplayCancel != nil {
+			c.startupReplayCancel()
 		}
 	})
 }
