@@ -97,10 +97,10 @@ func (s *TableSuite) TestVolumeRootContainsEverything() {
 	// Grant sessA the volume root (empty string)
 	g, _, ok := tbl.grant("sessA", "")
 	s.True(ok)
-	s.Equal("", g)
+	s.Empty(g)
 	// ownerOf should find it for any path
 	owner, root, ok := tbl.ownerOf("anything/deep/x")
 	s.True(ok)
 	s.Equal("sessA", owner)
-	s.Equal("", root)
+	s.Empty(root)
 }

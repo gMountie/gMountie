@@ -500,7 +500,7 @@ type delegationMetricsAdapter struct{ m *metrics.Metrics }
 func (a *delegationMetricsAdapter) GrantsActiveSet(n int) {
 	a.m.DelegationGrantsActive.Set(float64(n))
 }
-func (a *delegationMetricsAdapter) RecallInc()      { a.m.DelegationRecallInc() }
+func (a *delegationMetricsAdapter) RecallInc()       { a.m.DelegationRecallInc() }
 func (a *delegationMetricsAdapter) CooldownTripInc() { a.m.DelegationCooldownTripInc() }
 
 // warnIfIdentityEnforcementUnprivileged emits a loud startup warning when the

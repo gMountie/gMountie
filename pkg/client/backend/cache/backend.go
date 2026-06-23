@@ -440,7 +440,7 @@ func (b *cachedBackend) Read(ctx context.Context, fh backend.FileHandle, off int
 	// miss path below will refetch from inner.
 	if b.validity.globalState() != stateVerified &&
 		!b.validity.isPathVerified(ch.path) &&
-		!(b.oracle != nil && b.oracle.IsDelegated(ch.path)) {
+		(b.oracle == nil || !b.oracle.IsDelegated(ch.path)) {
 		cached, _, _ := b.attr.get(ch.path)
 		knownVersion := uint64(0)
 		if cached != nil {

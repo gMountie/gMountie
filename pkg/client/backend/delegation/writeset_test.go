@@ -28,5 +28,5 @@ func (s *WriteSetSuite) TestFullScatterIsMountRoot() {
 	w := newWriteSet(16)
 	w.record("a/x")
 	w.record("b/y")
-	s.Equal("", w.root())
+	s.Empty(w.root())
 }

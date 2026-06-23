@@ -26,7 +26,7 @@ func (s *RecallSuite) TestRecallSucceedsOnAck() {
 	s.Eventually(func() bool { return got.Load() != nil }, time.Second, time.Millisecond)
 	msg := got.Load()
 	reg.Ack("sessA", msg.RecallId)
-	s.NoError(<-done)
+	s.Require().NoError(<-done)
 	s.Equal("proj/src", msg.Root)
 }
 
@@ -47,7 +47,9 @@ func (s *RecallSuite) TestConcurrentRecallsDistinctIDs() {
 	var mu sync.Mutex
 	ids := map[uint64]bool{}
 	release := reg.Register("sessA", func(m *proto.RecallMsg) error {
-		mu.Lock(); ids[m.RecallId] = true; mu.Unlock()
+		mu.Lock()
+		ids[m.RecallId] = true
+		mu.Unlock()
 		go reg.Ack("sessA", m.RecallId)
 		return nil
 	})

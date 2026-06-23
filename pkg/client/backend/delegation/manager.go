@@ -30,7 +30,7 @@ type Manager struct {
 	ws     *writeSet
 	mu     sync.RWMutex
 	grants map[string]grantState // keyed by grantedRoot
-	cancel context.CancelFunc   // cancels the recall goroutine; set via SetCancel
+	cancel context.CancelFunc    // cancels the recall goroutine; set via SetCancel
 	once   sync.Once
 }
 
