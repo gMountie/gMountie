@@ -23,18 +23,32 @@ import (
 type OpKind uint8
 
 const (
-	OpWrite   OpKind = 1
-	OpCreate  OpKind = 2
-	OpSetAttr OpKind = 3
-	OpMkdir   OpKind = 4
-	OpRename  OpKind = 5
-	OpUnlink  OpKind = 6
-	OpRmdir   OpKind = 7
-	OpSymlink OpKind = 8
+	OpWrite        OpKind = 1
+	OpCreate       OpKind = 2
+	OpSetAttr      OpKind = 3
+	OpMkdir        OpKind = 4
+	OpRename       OpKind = 5
+	OpUnlink       OpKind = 6
+	OpRmdir        OpKind = 7
+	OpSymlink      OpKind = 8
+	OpSetXAttr    OpKind = 9
+	OpRemoveXAttr OpKind = 10
 )
 
 // Op is a single WAL entry. Seq is assigned by Append and must not be set by
 // callers — Append overwrites it with the assigned monotone sequence number.
+//
+// SetAttr fields: Valid carries the FATTR_* bitmask (backend.FATTR_MODE,
+// FATTR_UID, FATTR_GID, FATTR_SIZE, FATTR_ATIME, FATTR_MTIME). Only fields
+// whose FATTR_* bit is set in Valid are meaningful; the rest carry zero.
+// Flags is reserved for open-flags on OpCreate (kept separate from the
+// FATTR_* valid mask to avoid conflation).
+//
+// XAttr fields: XattrName/XattrValue/XattrFlags are used by OpSetXAttr and
+// OpRemoveXAttr. For OpRemoveXAttr, XattrValue is nil; XattrFlags is unused.
+//
+// These fields are JSON-encoded in bbolt (local only). No wire change, no proto
+// regen — they round-trip through the existing Op encoding purely as local state.
 type Op struct {
 	Seq     uint64
 	Gen     uint64
@@ -44,7 +58,22 @@ type Op struct {
 	Offset  int64
 	Data    []byte
 	Mode    uint32
-	Flags   uint32
+	Flags   uint32 // open-flags for OpCreate; NOT the FATTR_* mask
+
+	// SetAttr valid-bitmask and per-field values (FATTR_* bits from backend).
+	Valid     uint32
+	UID       uint32
+	GID       uint32
+	Size      uint64
+	AtimeSec  int64
+	AtimeNsec uint32
+	MtimeSec  int64
+	MtimeNsec uint32
+
+	// XAttr fields for OpSetXAttr / OpRemoveXAttr.
+	XattrName  string
+	XattrValue []byte
+	XattrFlags uint32
 }
 
 var (
