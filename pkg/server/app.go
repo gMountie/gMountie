@@ -186,7 +186,7 @@ func (c *AppContext) GetGrpcServices() []grpc.ServiceRegistrar {
 		controller.NewGrpcServer(c.VolumeService, c.SessionManager, c.Bus, c.Metrics, c.Delegation, c.Recalls, c.Watermark),
 		controller.NewRpcFileServer(c.VolumeService, c.SessionManager, c.Metrics, c.Config.Server.FrameSizeBytes, c.Bus, c.Delegation),
 		controller.NewVolumeService(c.VolumeService),
-		controller.NewSessionController(c.SessionManager, c.VolumeService, c.BootEpoch),
+		controller.NewSessionController(c.SessionManager, c.VolumeService, c.BootEpoch, c.Watermark),
 		controller.NewVersionController(c.Config.Server.FrameSizeBytes),
 	}
 }

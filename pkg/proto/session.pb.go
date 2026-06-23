@@ -122,10 +122,15 @@ func (x *SessionCreateReply) GetBootEpoch() string {
 // tracking. The server returns OK only if the session exists and has not yet
 // been reaped past its grace period. On OK, any pending grace-period timer for
 // that session is cancelled and the client's previously-opened fds remain
-// valid.
+// valid. When volume is set the server returns the (principal, volume)
+// seq-watermark so the client knows where to replay its WAL from.
 type SessionResumeRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// volume is the volume the reconnecting client is replaying ops for.
+	// When set, SessionResumeReply.watermark carries the durable seq-watermark
+	// for (session-principal, volume). Empty (older callers) → watermark 0.
+	Volume        string `protobuf:"bytes,2,opt,name=volume,proto3" json:"volume,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -163,6 +168,13 @@ func (*SessionResumeRequest) Descriptor() ([]byte, []int) {
 func (x *SessionResumeRequest) GetSessionId() string {
 	if x != nil {
 		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SessionResumeRequest) GetVolume() string {
+	if x != nil {
+		return x.Volume
 	}
 	return ""
 }
@@ -464,10 +476,11 @@ const file_api_proto_session_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1d\n" +
 	"\n" +
-	"boot_epoch\x18\x02 \x01(\tR\tbootEpoch\"5\n" +
+	"boot_epoch\x18\x02 \x01(\tR\tbootEpoch\"M\n" +
 	"\x14SessionResumeRequest\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId\"L\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x16\n" +
+	"\x06volume\x18\x02 \x01(\tR\x06volume\"L\n" +
 	"\x12SessionResumeReply\x12\x18\n" +
 	"\aresumed\x18\x01 \x01(\bR\aresumed\x12\x1c\n" +
 	"\twatermark\x18\x02 \x01(\x04R\twatermark\"1\n" +

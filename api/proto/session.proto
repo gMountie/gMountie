@@ -25,9 +25,14 @@ message SessionCreateReply {
 // tracking. The server returns OK only if the session exists and has not yet
 // been reaped past its grace period. On OK, any pending grace-period timer for
 // that session is cancelled and the client's previously-opened fds remain
-// valid.
+// valid. When volume is set the server returns the (principal, volume)
+// seq-watermark so the client knows where to replay its WAL from.
 message SessionResumeRequest {
   string session_id = 1;
+  // volume is the volume the reconnecting client is replaying ops for.
+  // When set, SessionResumeReply.watermark carries the durable seq-watermark
+  // for (session-principal, volume). Empty (older callers) → watermark 0.
+  string volume      = 2;
 }
 
 message SessionResumeReply {
