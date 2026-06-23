@@ -1,16 +1,20 @@
 package mount
 
 import (
+	"context"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"go.gmountie.dev/gmountie/pkg/client/backend"
 	"go.gmountie.dev/gmountie/pkg/client/backend/cache"
 	"go.gmountie.dev/gmountie/pkg/client/backend/cache/persist"
+	"go.gmountie.dev/gmountie/pkg/client/backend/delegation"
 	"go.gmountie.dev/gmountie/pkg/client/backend/identity"
 	"go.gmountie.dev/gmountie/pkg/client/backend/observer"
 	"go.gmountie.dev/gmountie/pkg/client/backend/transport"
 	"go.gmountie.dev/gmountie/pkg/client/config"
-	"go.gmountie.dev/gmountie/pkg/client/grpc"
+	grpcclient "go.gmountie.dev/gmountie/pkg/client/grpc"
 	"go.gmountie.dev/gmountie/pkg/client/metrics"
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
@@ -18,6 +22,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/puzpuzpuz/xsync/v3"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 // mappingModeSquash is the WhoAmI mapping_mode value (matching the server's
@@ -38,7 +43,7 @@ type SingleVolumeMounter interface {
 
 // SingleVolumeMounterImpl is a service that mounts volumes
 type SingleVolumeMounterImpl struct {
-	client grpc.Client
+	client grpcclient.Client
 	fuse   *config.FUSEConfig
 	cache  config.CacheConfig
 	// rawIDs disables WhoAmI-based UID/GID rewriting when true.
@@ -58,7 +63,7 @@ type SingleVolumeMounterImpl struct {
 // and only applied when cacheCfg.Enabled is true. rawIDs disables
 // WhoAmI-based UID/GID rewriting (pass true for backup/admin use-cases
 // that need to preserve server-side ownership as-is).
-func NewSingleVolumeMounter(client grpc.Client, fuseCfg *config.FUSEConfig, cacheCfg config.CacheConfig, rawIDs bool) SingleVolumeMounter {
+func NewSingleVolumeMounter(client grpcclient.Client, fuseCfg *config.FUSEConfig, cacheCfg config.CacheConfig, rawIDs bool) SingleVolumeMounter {
 	return &SingleVolumeMounterImpl{
 		client:     client,
 		fuse:       fuseCfg,
@@ -79,6 +84,32 @@ func identityFromProto(p *proto.Identity) *identity.Identity {
 		return nil
 	}
 	return &identity.Identity{Uid: p.Uid, Gid: p.PrimaryGid, Gids: p.Gids}
+}
+
+// lazyInvalidator is a forward-reference adapter that breaks the
+// Manager↔cache construction cycle. The Manager is constructed first
+// (with a lazyInvalidator as its CacheInvalidator), the cache is built
+// next (using the Manager as the oracle), and then the lazyInvalidator's
+// target is set to the concrete *cachedBackend. After set() is called,
+// all OnRecall-driven InvalidateSubtree calls reach the real cache.
+type lazyInvalidator struct {
+	mu     sync.RWMutex
+	target delegation.CacheInvalidator
+}
+
+func (l *lazyInvalidator) InvalidateSubtree(p string) {
+	l.mu.RLock()
+	t := l.target
+	l.mu.RUnlock()
+	if t != nil {
+		t.InvalidateSubtree(p)
+	}
+}
+
+func (l *lazyInvalidator) set(t delegation.CacheInvalidator) {
+	l.mu.Lock()
+	l.target = t
+	l.mu.Unlock()
 }
 
 // Mount mounts a volume
@@ -109,10 +140,29 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 	if m.cache.Enabled {
 		backendOpts = append(backendOpts, transport.WithoutReadahead())
 	}
-	transportBackend := transport.NewBackendClient(m.client, volume, backendOpts...)
 
 	var layers []backendLayer
+
+	// --- Delegation wiring (only when cache is enabled) ---
+	// Delegation rides on the cache: the Manager's IsDelegated oracle is
+	// threaded into the cache so delegated paths skip revalidation, and
+	// the transport hook piggybacks requests/grants on mutating RPCs.
+	// With cache disabled the nil-oracle / no-hook / no-goroutine path is
+	// byte-for-byte unchanged.
+	var delMgr *delegation.Manager
 	if m.cache.Enabled {
+		inv := &lazyInvalidator{}
+		delMgr = delegation.NewManager(inv)
+
+		// Wire the transport hook BEFORE constructing the transport backend.
+		backendOpts = append(backendOpts, transport.WithDelegationHook(delMgr))
+
+		// Build the cache layer. NewCachedBackend returns backend.FileSystemBackend
+		// but the concrete type is *cachedBackend which satisfies
+		// delegation.CacheInvalidator via the InvalidateSubtree method added in
+		// this PR. We type-assert inside the closure (the only place the concrete
+		// value exists) and wire it into the forward-ref adapter immediately, so
+		// OnRecall can always reach the real invalidator.
 		root := filepath.Join(m.cache.Path, volume)
 		var gcMetrics persist.GCMetrics
 		if cm := m.client.Metrics(); cm != nil {
@@ -133,8 +183,20 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 		if cm := client.Metrics(); cm != nil {
 			rec = cm
 		}
+		// Capture inv for use in the closure below (can't close over local err).
+		inv_ := inv
+		delMgr_ := delMgr
 		layers = append(layers, backendLayer{pos: posCache, build: func(inner backend.FileSystemBackend) backend.FileSystemBackend {
-			return cache.NewCachedBackend(inner, cacheCfg, p, client.Fs(), volume, rec, nil)
+			cb := cache.NewCachedBackend(inner, cacheCfg, p, client.Fs(), volume, rec, delMgr_)
+			// Wire the forward-ref adapter: after this point OnRecall can reach the real cache.
+			inv_.set(cb.(delegation.CacheInvalidator))
+			return cb
+		}})
+
+		// posWritePath: records every mutating op path into the Manager's write-set
+		// so the Manager can compute an LCA delegation root to piggyback on RPCs.
+		layers = append(layers, backendLayer{pos: posWritePath, build: func(inner backend.FileSystemBackend) backend.FileSystemBackend {
+			return delegation.NewLayer(inner, delMgr_)
 		}})
 	}
 
@@ -154,6 +216,7 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 		}})
 	}
 
+	transportBackend := transport.NewBackendClient(m.client, volume, backendOpts...)
 	composed := composeBackend(transportBackend, layers)
 	m.backends.Store(volume, composed)
 
@@ -163,7 +226,70 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 	}
 	m.mounts.Store(volume, handle)
 	m.mountPaths.Store(volume, mountPath)
+
+	// Start the recall goroutine only AFTER the FUSE mount succeeds. The
+	// goroutine requires no FUSE state of its own, but delaying until here
+	// ensures we never leak a running goroutine on mount failure (the
+	// failure-rollback defer calls releaseVolume → be.Close() → mgr.Close(),
+	// but if the goroutine was never started there is nothing to cancel). The
+	// composeBackend closures have all run by now, so inv.set has been called
+	// and OnRecall can always reach the real cache invalidator.
+	if m.cache.Enabled && delMgr != nil {
+		m.startRecallGoroutine(delMgr, volume)
+	}
+
 	return nil
+}
+
+// startRecallGoroutine starts the background goroutine that drains the
+// server-pushed Recall stream. It creates a context whose cancellation is
+// wired into delMgr.Close() via SetCancel, so the goroutine exits cleanly
+// on unmount. The goroutine models the reconnect loop of the Subscribe
+// consumer in pkg/client/backend/cache/subscriber.go.
+func (m *SingleVolumeMounterImpl) startRecallGoroutine(mgr *delegation.Manager, volume string) {
+	ctx, cancel := context.WithCancel(context.Background())
+	mgr.SetCancel(cancel)
+	go m.runRecallLoop(ctx, mgr, volume)
+}
+
+// runRecallLoop is the blocking body of the recall goroutine. It is separated
+// from startRecallGoroutine so tests can drive it directly (same package,
+// no FUSE required). It reconnects with exponential backoff (1s → 30s) and
+// exits when ctx is cancelled.
+func (m *SingleVolumeMounterImpl) runRecallLoop(ctx context.Context, mgr *delegation.Manager, volume string) {
+	backoff := time.Second
+	for ctx.Err() == nil {
+		stream, err := m.client.Fs().Recall(ctx, waitForReady())
+		if err == nil {
+			for {
+				msg, rerr := stream.Recv()
+				if rerr != nil {
+					break
+				}
+				mgr.OnRecall(msg.GetRoot())
+				_ = stream.Send(&proto.RecallAck{RecallId: msg.GetRecallId(), Done: true})
+			}
+		}
+		select {
+		case <-ctx.Done():
+			log.Log.Debug("recall goroutine exited", zap.String("volume", volume))
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < 30*time.Second {
+			backoff *= 2
+			if backoff > 30*time.Second {
+				backoff = 30 * time.Second
+			}
+		}
+	}
+	log.Log.Debug("recall goroutine exited", zap.String("volume", volume))
+}
+
+// waitForReady returns the grpc.WaitForReady(true) call option. Factored
+// out so the recall goroutine opener matches the Subscribe consumer pattern.
+func waitForReady() grpc.CallOption {
+	return grpc.WaitForReady(true)
 }
 
 // IsVolumeMounted checks if a volume is mounted

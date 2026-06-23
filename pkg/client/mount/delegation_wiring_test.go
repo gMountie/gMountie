@@ -1,0 +1,189 @@
+package mount
+
+import (
+	"context"
+	"io"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
+	"google.golang.org/grpc"
+
+	grpcmocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/grpc"
+	mockProto "go.gmountie.dev/gmountie/internal/mocks/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/client/backend/delegation"
+	"go.gmountie.dev/gmountie/pkg/proto"
+)
+
+// DelegationWiringSuite tests the delegation-Manager wiring in single.go
+// without touching FUSE (no real mount). It exercises:
+//  1. lazyInvalidator behaves as a forward-reference: before set() it is a
+//     no-op; after set() it forwards to the real target.
+//  2. runRecallLoop exits cleanly when delMgr.Close() cancels the context —
+//     no goroutine leak, no -race hit.
+//  3. The recall loop delivers OnRecall to the Manager and sends RecallAck.
+type DelegationWiringSuite struct {
+	suite.Suite
+	client *grpcmocks.MockClient
+}
+
+func (s *DelegationWiringSuite) SetupTest() {
+	s.client = grpcmocks.NewMockClient(s.T())
+}
+
+// TestLazyInvalidator_BeforeSet confirms that InvalidateSubtree before set()
+// is a safe no-op (does not panic and does not forward).
+func (s *DelegationWiringSuite) TestLazyInvalidator_BeforeSet() {
+	inv := &lazyInvalidator{}
+	// Must not panic even though target is nil.
+	s.NotPanics(func() { inv.InvalidateSubtree("any/path") })
+}
+
+// TestLazyInvalidator_AfterSet confirms that after set() the call is forwarded.
+func (s *DelegationWiringSuite) TestLazyInvalidator_AfterSet() {
+	inv := &lazyInvalidator{}
+	called := make(chan string, 1)
+	inv.set(fakeInvalidator(func(p string) { called <- p }))
+	inv.InvalidateSubtree("proj/foo")
+	select {
+	case got := <-called:
+		s.Equal("proj/foo", got)
+	case <-time.After(time.Second):
+		s.Fail("InvalidateSubtree was not forwarded after set()")
+	}
+}
+
+// TestRecallGoroutineExitsOnClose verifies that runRecallLoop exits cleanly
+// when the Manager's context is cancelled (via Close → SetCancel).
+// A WaitGroup detects the exit; a 3-second timeout fails the test if it leaks.
+func (s *DelegationWiringSuite) TestRecallGoroutineExitsOnClose() {
+	fsClient := mockProto.NewMockRpcFsClient(s.T())
+
+	// Block until the goroutine has opened the stream at least once.
+	streamOpened := make(chan struct{}, 1)
+	recallStream := mockProto.NewMockRpcFs_RecallClient(s.T())
+	// Recv returns EOF so the inner loop exits and the goroutine backs off.
+	recallStream.EXPECT().Recv().Return(nil, io.EOF).Maybe()
+
+	fsClient.EXPECT().
+		Recall(mock.Anything, mock.Anything).
+		RunAndReturn(func(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[proto.RecallAck, proto.RecallMsg], error) {
+			select {
+			case streamOpened <- struct{}{}:
+			default:
+			}
+			return recallStream, nil
+		}).Maybe()
+	s.client.EXPECT().Fs().Return(fsClient).Maybe()
+
+	inv := &lazyInvalidator{}
+	mgr := delegation.NewManager(inv)
+	mounter := &SingleVolumeMounterImpl{client: s.client}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	mgr.SetCancel(cancel)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		mounter.runRecallLoop(ctx, mgr, "test-vol")
+	}()
+
+	// Wait until the goroutine is alive (stream opened).
+	select {
+	case <-streamOpened:
+	case <-time.After(2 * time.Second):
+		s.Fail("recall goroutine did not start within 2s")
+	}
+
+	// Close the Manager — cancels the context via SetCancel.
+	mgr.Close()
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+		// Clean exit — no goroutine leak.
+	case <-time.After(3 * time.Second):
+		s.Fail("recall goroutine did not exit within 3s after Close()")
+	}
+}
+
+// TestRecallGoroutineDeliversOnRecall verifies that a RecallMsg received on the
+// stream triggers mgr.OnRecall (which calls InvalidateSubtree) and sends a
+// RecallAck with the matching RecallId and Done=true.
+func (s *DelegationWiringSuite) TestRecallGoroutineDeliversOnRecall() {
+	fsClient := mockProto.NewMockRpcFsClient(s.T())
+
+	ackSent := make(chan *proto.RecallAck, 1)
+	recallStream := mockProto.NewMockRpcFs_RecallClient(s.T())
+	// First Recv returns a recall; second returns EOF to end the inner loop.
+	recallStream.EXPECT().Recv().
+		Return(&proto.RecallMsg{Root: "proj/", RecallId: 42}, nil).
+		Once()
+	recallStream.EXPECT().Recv().
+		Return(nil, io.EOF).
+		Maybe()
+	recallStream.EXPECT().Send(mock.MatchedBy(func(ack *proto.RecallAck) bool {
+		select {
+		case ackSent <- ack:
+		default:
+		}
+		return true
+	})).Return(nil).Maybe()
+
+	fsClient.EXPECT().
+		Recall(mock.Anything, mock.Anything).
+		RunAndReturn(func(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[proto.RecallAck, proto.RecallMsg], error) {
+			return recallStream, nil
+		}).Maybe()
+	s.client.EXPECT().Fs().Return(fsClient).Maybe()
+
+	// Use a tracking invalidator to confirm OnRecall propagates.
+	invalidated := make(chan string, 1)
+	inv := &lazyInvalidator{}
+	inv.set(fakeInvalidator(func(p string) {
+		select {
+		case invalidated <- p:
+		default:
+		}
+	}))
+
+	mgr := delegation.NewManager(inv)
+	mounter := &SingleVolumeMounterImpl{client: s.client}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	mgr.SetCancel(cancel)
+	defer mgr.Close()
+
+	go mounter.runRecallLoop(ctx, mgr, "test-vol")
+
+	// Wait for the RecallAck.
+	select {
+	case ack := <-ackSent:
+		s.Equal(uint64(42), ack.RecallId, "RecallAck must echo the RecallId")
+		s.True(ack.Done, "RecallAck must set Done=true")
+	case <-time.After(2 * time.Second):
+		s.Fail("RecallAck was not sent within 2s")
+	}
+
+	// Wait for the invalidation.
+	select {
+	case root := <-invalidated:
+		s.Equal("proj/", root, "OnRecall must call InvalidateSubtree with the recalled root")
+	case <-time.After(2 * time.Second):
+		s.Fail("InvalidateSubtree was not called within 2s")
+	}
+}
+
+// fakeInvalidator is a delegation.CacheInvalidator test double backed by a func.
+type fakeInvalidator func(string)
+
+func (f fakeInvalidator) InvalidateSubtree(p string) { f(p) }
+
+func TestDelegationWiringSuite(t *testing.T) {
+	suite.Run(t, new(DelegationWiringSuite))
+}

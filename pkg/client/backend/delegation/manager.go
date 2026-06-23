@@ -1,6 +1,7 @@
 package delegation
 
 import (
+	"context"
 	"strings"
 	"sync"
 
@@ -29,6 +30,7 @@ type Manager struct {
 	ws     *writeSet
 	mu     sync.RWMutex
 	grants map[string]grantState // keyed by grantedRoot
+	cancel context.CancelFunc   // cancels the recall goroutine; set via SetCancel
 	stop   chan struct{}
 	once   sync.Once
 }
@@ -122,8 +124,27 @@ func (m *Manager) OnRecall(root string) {
 	m.inv.InvalidateSubtree(root)
 }
 
-// Close stops the recall goroutine (Task 10 wires the stream; here we just
-// signal the stop channel). Safe to call multiple times.
+// SetCancel registers the context cancel function for the recall goroutine
+// started in single.go. It is called once, right after the goroutine is
+// launched. Close invokes it (under the once guard) so the goroutine exits
+// cleanly on unmount. The cancel func is guarded by m.mu to give -race a
+// well-defined happens-before edge.
+func (m *Manager) SetCancel(cancel context.CancelFunc) {
+	m.mu.Lock()
+	m.cancel = cancel
+	m.mu.Unlock()
+}
+
+// Close stops the recall goroutine by cancelling its context and closing the
+// stop channel. Safe to call multiple times.
 func (m *Manager) Close() {
-	m.once.Do(func() { close(m.stop) })
+	m.once.Do(func() {
+		m.mu.RLock()
+		cancel := m.cancel
+		m.mu.RUnlock()
+		if cancel != nil {
+			cancel()
+		}
+		close(m.stop)
+	})
 }
