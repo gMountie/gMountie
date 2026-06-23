@@ -21,6 +21,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/server/config"
 	grpcServer "go.gmountie.dev/gmountie/pkg/server/grpc"
 	"go.gmountie.dev/gmountie/pkg/server/service"
+	"go.gmountie.dev/gmountie/pkg/server/watermark"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/google/uuid"
@@ -99,6 +100,12 @@ type AppTestingContext struct {
 	// server.NewServerAppContext. Used by WAL e2e tests to inject an
 	// in-memory watermark store instead of the default bbolt file.
 	serverAppCtxOpts []server.AppContextOption
+	// ownedWMStore is a per-context isolated bbolt watermark store created by
+	// NewAppTestingContext as the default. It is prepended to serverAppCtxOpts
+	// so any caller-supplied WithWatermarkStore option (appended later) wins.
+	// Close tears it down and removes ownedWMTmpDir.
+	ownedWMStore  watermark.Store
+	ownedWMTmpDir string
 
 	// closed and closeErr make Close idempotent: the first call performs
 	// the teardown and records its result; later calls return that result.
@@ -520,6 +527,27 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 	appCtx.clientTLSConfig = clienttls.Config{
 		Mode: clienttls.ModeInsecure,
 	}
+	// Create an isolated per-context bbolt watermark store at a unique temp path.
+	// This is prepended to serverAppCtxOpts so it acts as the default; any
+	// caller-supplied WithServerAppContextOption(WithWatermarkStore(...)) is
+	// appended after the options loop and therefore overrides it in
+	// NewServerAppContext (last write wins). The isolated store prevents the
+	// global bbolt flock collision that occurs when multiple test/benchmark
+	// contexts open the shared $XDG_STATE_HOME watermark.db simultaneously.
+	wmTmpDir, err := os.MkdirTemp("", "gmountie-test-wm-*")
+	if err != nil {
+		return nil, errors.Wrap(err, "create watermark temp dir")
+	}
+	wmStore, err := watermark.OpenBBolt(filepath.Join(wmTmpDir, "watermark.db"))
+	if err != nil {
+		_ = os.RemoveAll(wmTmpDir)
+		return nil, errors.Wrap(err, "open isolated watermark store")
+	}
+	appCtx.ownedWMStore = wmStore
+	appCtx.ownedWMTmpDir = wmTmpDir
+	// Prepend so caller opts appended below can override.
+	appCtx.serverAppCtxOpts = []server.AppContextOption{server.WithWatermarkStore(wmStore)}
+
 	// Apply the options; WithClientTLS may replace clientTLSConfig.
 	for _, opt := range options {
 		opt(appCtx)
@@ -1060,6 +1088,20 @@ func (c *AppTestingContext) Close() error {
 	if c.proxy != nil {
 		if err := c.proxy.Close(); err != nil {
 			errs = append(errs, errors.Wrap(err, "close proxy"))
+		}
+	}
+	// Close the harness-owned isolated watermark store and remove its temp dir.
+	// This is always safe to do here: the gRPC server (which holds a reference
+	// to the watermark store via the AppContext) has already been stopped above.
+	if c.ownedWMStore != nil {
+		if err := c.ownedWMStore.Close(); err != nil {
+			errs = append(errs, errors.Wrap(err, "close isolated watermark store"))
+		}
+		if c.ownedWMTmpDir != "" {
+			if err := os.RemoveAll(c.ownedWMTmpDir); err != nil {
+				log.Log.Warn("watermark temp dir cleanup failed",
+					zap.String("dir", c.ownedWMTmpDir), zap.Error(err))
+			}
 		}
 	}
 	// Remove the volume tempdirs, but only after a clean client+server
