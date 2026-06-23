@@ -18,8 +18,11 @@ func contains(a, b string) bool {
 }
 
 type entry struct {
-	owner string
-	root  string
+	owner     string // session ID (for self-access/absorption/ReleaseSession)
+	root      string
+	principal string // identity principal (for fence key = {principal,volume})
+	volume    string // volume name (for fence key = {principal,volume})
+	gen       uint64 // delegation generation (monotone per Arbiter; 0 = untagged)
 }
 
 // delegationTable is the containment index. Not safe for concurrent use; the
@@ -52,7 +55,10 @@ func (t *delegationTable) ownerOf(path string) (owner, root string, ok bool) {
 //   - if root contains foreign roots -> granted, with those foreign roots
 //     returned as excluded (carve around them).
 //   - roots owned by the SAME owner under root are absorbed (re-rooted upward).
-func (t *delegationTable) grant(owner, root string) (granted string, excluded []string, ok bool) {
+//
+// principal and volume are stored in the entry for fence-key construction on
+// handoff (Task 6); they are NOT used for table containment logic.
+func (t *delegationTable) grant(owner, root, principal, volume string, gen uint64) (granted string, excluded []string, ok bool) {
 	var kept []entry
 	for _, e := range t.entries {
 		switch {
@@ -70,10 +76,21 @@ func (t *delegationTable) grant(owner, root string) (granted string, excluded []
 			kept = append(kept, e)
 		}
 	}
-	kept = append(kept, entry{owner: owner, root: root})
+	kept = append(kept, entry{owner: owner, root: root, principal: principal, volume: volume, gen: gen})
 	t.entries = kept
 	sort.Strings(excluded)
 	return root, excluded, true
+}
+
+// entryForRoot returns the entry with exactly this root, if any.
+// Used by the Arbiter to capture {principal, volume, gen} before handoff.
+func (t *delegationTable) entryForRoot(root string) (entry, bool) {
+	for _, e := range t.entries {
+		if e.root == root {
+			return e, true
+		}
+	}
+	return entry{}, false
 }
 
 // release drops the entry with exactly this root (any owner).
@@ -87,13 +104,23 @@ func (t *delegationTable) release(root string) {
 	t.entries = kept
 }
 
-// releaseOwner drops every entry owned by owner (session reap).
-func (t *delegationTable) releaseOwner(owner string) {
+// drainOwner drops every entry owned by owner and returns the dropped entries
+// so callers can inspect gen/principal/volume for fence-key revocation.
+func (t *delegationTable) drainOwner(owner string) []entry {
+	var drained []entry
 	kept := t.entries[:0]
 	for _, e := range t.entries {
-		if e.owner != owner {
+		if e.owner == owner {
+			drained = append(drained, e)
+		} else {
 			kept = append(kept, e)
 		}
 	}
 	t.entries = kept
+	return drained
+}
+
+// releaseOwner drops every entry owned by owner (session reap).
+func (t *delegationTable) releaseOwner(owner string) {
+	t.drainOwner(owner)
 }

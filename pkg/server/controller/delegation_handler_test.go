@@ -88,7 +88,7 @@ func (s *DelegationHandlerSuite) SetupTest() {
 	s.recaller = &fakeRecallRecorder{}
 	s.arbiter = delegation.NewArbiter(s.recaller, delegation.Config{
 		Cooldown: delegation.CooldownConfigDefault(),
-	}, time.Now)
+	}, time.Now, newFakeWatermarkStore())
 
 	bus := serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
 	s.srv = NewGrpcServer(s.fsService, s.sessionMgr, bus, nil, s.arbiter, nil, nil)
@@ -110,7 +110,7 @@ func (s *DelegationHandlerSuite) ctxFor(sid string) context.Context {
 // Mkdir under "d" must trigger a recall of sessA's delegation.
 func (s *DelegationHandlerSuite) TestForeignMkdirRecallsHolder() {
 	// sessA holds a delegation on "d" (granted via piggybacked request).
-	s.arbiter.Request(s.sidA, "d")
+	s.arbiter.Request(s.sidA, "d", "userA", s.vol)
 
 	// Wire the filesystem mock.
 	mockFs := new(pathfsmock.MockFileSystem)

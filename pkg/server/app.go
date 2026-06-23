@@ -107,13 +107,29 @@ func NewServerAppContext(cfg *config.Config, opts ...AppContextOption) (*AppCont
 	}
 	authService := service.NewAuthServiceFromConfig(cfg.Auth)
 
+	// Resolve the watermark store first: the arbiter needs it at construction
+	// time (to call RevokeGen on handoff). Use the injected impl if provided,
+	// otherwise open the default embedded bbolt at $XDG_STATE_HOME/gmountie/watermark.db.
+	wmStore := o.watermarkStore
+	if wmStore == nil {
+		wmPath := resolveWatermarkPath()
+		if err := os.MkdirAll(filepath.Dir(wmPath), 0o755); err != nil {
+			return nil, errors.Wrap(err, "ensure watermark dir")
+		}
+		wmStore, err = watermark.OpenBBolt(wmPath)
+		if err != nil {
+			return nil, errors.Wrap(err, "open watermark store")
+		}
+	}
+
 	// Construct the delegation registry + arbiter before the SessionManager so
-	// the arbiter.ReleaseSession hook can be wired as OnReap.
+	// the arbiter.ReleaseSession hook can be wired as OnReap. The arbiter
+	// receives the watermark store so it can durably revoke gens on handoff.
 	recalls := delegation.NewRecallRegistry(cfg.Server.Session.GracePeriod)
 	arbiter := delegation.NewArbiter(recalls, delegation.Config{
 		Cooldown: delegation.CooldownConfigDefault(),
 		Metrics:  &delegationMetricsAdapter{m: m},
-	}, time.Now)
+	}, time.Now, wmStore)
 	sessionMgr := service.NewSessionManager(service.SessionManagerOptions{
 		Metrics:              m,
 		GracePeriod:          cfg.Server.Session.GracePeriod,
@@ -128,20 +144,6 @@ func NewServerAppContext(cfg *config.Config, opts ...AppContextOption) (*AppCont
 	revocation := service.NewRevocationStore()
 	revocation.Set(revokedSerialsFromConfig(cfg))
 	bootEpoch := uuid.NewString()
-
-	// Resolve the watermark store: use the injected impl if provided, otherwise
-	// open the default embedded bbolt at $XDG_STATE_HOME/gmountie/watermark.db.
-	wmStore := o.watermarkStore
-	if wmStore == nil {
-		wmPath := resolveWatermarkPath()
-		if err := os.MkdirAll(filepath.Dir(wmPath), 0o755); err != nil {
-			return nil, errors.Wrap(err, "ensure watermark dir")
-		}
-		wmStore, err = watermark.OpenBBolt(wmPath)
-		if err != nil {
-			return nil, errors.Wrap(err, "open watermark store")
-		}
-	}
 
 	return &AppContext{
 		Config:         cfg,

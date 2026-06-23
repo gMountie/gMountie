@@ -89,7 +89,7 @@ func (s *RecallStreamSuite) newRecallServer() (*RpcServerImpl, *delegation.Recal
 	sessionMgr := service.NewSessionManager(service.SessionManagerOptions{})
 	arbiter := delegation.NewArbiter(reg, delegation.Config{
 		Cooldown: delegation.CooldownConfigDefault(),
-	}, time.Now)
+	}, time.Now, newFakeWatermarkStore())
 	srv := NewGrpcServer(nil, sessionMgr, bus, nil, arbiter, reg, nil)
 	return srv, reg, sessionMgr
 }

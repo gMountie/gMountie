@@ -78,6 +78,7 @@ func (r *RpcServerImpl) Apply(stream proto.RpcFs_ApplyServer) error {
 		committed   uint64
 		wmKey       watermark.Key
 		keyResolved bool
+		revokedGens []uint64 // gen-fencing: loaded once from store per stream
 		fs          pathfs.FileSystem
 		id          service.Identity
 	)
@@ -128,13 +129,14 @@ func (r *RpcServerImpl) Apply(stream proto.RpcFs_ApplyServer) error {
 			// Load the durable watermark once. committed starts at the
 			// persisted value so Advance at EOF is always monotone (a
 			// full-replay batch that was already applied acks the last seq
-			// again and Advance is a no-op). Task 6 will also read
-			// RevokedGens from this record to fence superseded replays.
+			// again and Advance is a no-op). RevokedGens fences superseded
+			// replays: any op tagged with a revoked gen is halted below.
 			rec, getErr := r.watermark.Get(wmKey)
 			if getErr != nil {
 				return errors.Wrap(getErr, "apply: get watermark")
 			}
 			committed = rec.Watermark
+			revokedGens = rec.RevokedGens
 			keyResolved = true
 		}
 
@@ -150,6 +152,21 @@ func (r *RpcServerImpl) Apply(stream proto.RpcFs_ApplyServer) error {
 		// updating committed on each success below.
 		if seq <= committed {
 			continue
+		}
+
+		// Gen-fencing (Task 6): if this op's delegation gen is in the durable
+		// revoked-gens set, the client was superseded (machine-death + handoff)
+		// and is replaying a stale WAL segment. Halt the batch at this point:
+		// ack the committed prefix and signal the fence with FS_ESTALE so the
+		// client discards its WAL from this op onward.
+		//
+		// Fence is checked AFTER dedup: ops already acked (seq ≤ watermark)
+		// are skipped first — a recalling session's acked ops carry the
+		// now-revoked gen but must not be fenced (they're already committed).
+		//
+		// gen == 0 is untagged (pre-fencing client) and is never fenced.
+		if opGen := op.Gen; opGen > 0 && isRevokedGen(opGen, revokedGens) {
+			return sendAck(seq, proto.FsError_FS_ESTALE)
 		}
 
 		// Dispatch the op.
@@ -384,3 +401,14 @@ func walOpVolumeCaller(op *proto.WalOp) (string, *proto.Caller) {
 	}
 }
 
+// isRevokedGen reports whether gen appears in the revoked set.
+// The set is expected to be small (one entry per handoff), so a linear
+// scan is correct and avoids allocation for the common case (empty set).
+func isRevokedGen(gen uint64, revoked []uint64) bool {
+	for _, r := range revoked {
+		if r == gen {
+			return true
+		}
+	}
+	return false
+}
