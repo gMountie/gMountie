@@ -406,7 +406,7 @@ func (s *DelegationCoherenceSuite) TestThrashCooldown() {
 	// The arbiter's cooldown denies re-grant for "thrash": empty root + retry hint.
 	sessionA := csA.cl.SessionID()
 	r.Eventually(func() bool {
-		g := arb.Request(sessionA, "thrash")
+		g := arb.Request(sessionA, "thrash", "user", s.volName)
 		return g.GetGrantedRoot() == "" && g.GetRetryAfterMs() > 0
 	}, 2*time.Second, 10*time.Millisecond,
 		"arbiter must deny re-grant for 'thrash' while in cooldown (empty GrantedRoot, RetryAfterMs>0)")

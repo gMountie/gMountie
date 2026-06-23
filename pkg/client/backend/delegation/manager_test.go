@@ -62,7 +62,7 @@ func (s *ManagerSuite) TestOnRecallDropsAndInvalidates() {
 	defer m.Close()
 	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj"})
 	err := m.OnRecall(context.Background(), "proj")
-	s.NoError(err)
+	s.Require().NoError(err)
 	s.False(m.IsDelegated("proj/src/a.go"))
 	s.Equal([]string{"proj"}, inv.subtrees)
 }
@@ -111,7 +111,7 @@ func (s *ManagerSuite) TestOnRecall_FlushSuccess_ThenInvalidateAndDrop() {
 	m.Apply(&proto.DelegationGrant{GrantedRoot: "a/b"})
 
 	err := m.OnRecall(context.Background(), "a/b")
-	s.NoError(err)
+	s.Require().NoError(err)
 	s.Equal([]string{"flush:a/b", "inv:a/b"}, events)
 	s.False(m.IsDelegated("a/b/c"))
 }
@@ -135,7 +135,7 @@ func (s *ManagerSuite) TestOnRecall_FlushFailure_AbortHandoff() {
 
 	err := m.OnRecall(context.Background(), "proj")
 	s.Require().Error(err, "OnRecall must surface the flush error")
-	s.ErrorIs(err, flushErr)
+	s.Require().ErrorIs(err, flushErr)
 
 	// Only flush should appear in the event log — no invalidation.
 	s.Equal([]string{"flush:proj"}, events, "InvalidateSubtree must not be called on flush failure")
@@ -154,7 +154,7 @@ func (s *ManagerSuite) TestOnRecall_NilFlusher_Phase1Behavior() {
 	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj"})
 
 	err := m.OnRecall(context.Background(), "proj")
-	s.NoError(err)
+	s.Require().NoError(err)
 	s.False(m.IsDelegated("proj/x"), "grant must be dropped")
 	s.Equal([]string{"proj"}, inv.subtrees, "cache must be invalidated")
 }

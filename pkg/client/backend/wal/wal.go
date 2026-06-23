@@ -70,8 +70,8 @@ type Coordinator struct {
 	flushMu flushMuType
 
 	// capMu and capCond guard the size-cap backpressure path.
-	capMu    sync.Mutex
-	capCond  *sync.Cond
+	capMu   sync.Mutex
+	capCond *sync.Cond
 	// flushing is set to true while a background drain flush is in flight,
 	// ensuring at most one such goroutine runs at a time (see waitForCap).
 	flushing atomic.Bool

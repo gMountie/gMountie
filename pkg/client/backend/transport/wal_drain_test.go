@@ -27,12 +27,11 @@ import (
 // captureWriteDrain is a test double for WriteDrain that records the Drain call
 // arguments and delegates to the wireFlush callback (pass-through by default).
 type captureWriteDrain struct {
-	called     bool
-	captPath   string
-	captData   []byte
-	captOff    int64
-	captReqID  string
-	replyStatus proto.FsError // status to return; defaults to FS_OK
+	called    bool
+	captPath  string
+	captData  []byte
+	captOff   int64
+	captReqID string
 }
 
 func (d *captureWriteDrain) Drain(

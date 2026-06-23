@@ -53,8 +53,8 @@ import (
 	clientdelegation "go.gmountie.dev/gmountie/pkg/client/backend/delegation"
 	"go.gmountie.dev/gmountie/pkg/client/backend/transport"
 	"go.gmountie.dev/gmountie/pkg/client/backend/wal"
-	clientmetrics "go.gmountie.dev/gmountie/pkg/client/metrics"
 	grpcclient "go.gmountie.dev/gmountie/pkg/client/grpc"
+	clientmetrics "go.gmountie.dev/gmountie/pkg/client/metrics"
 	"go.gmountie.dev/gmountie/pkg/proto"
 	serverapp "go.gmountie.dev/gmountie/pkg/server"
 	"go.gmountie.dev/gmountie/pkg/server/watermark"
@@ -515,7 +515,7 @@ func (s *WalE2ESuite) TestReplayDedup() {
 	// so the watermark key uses an empty Identity string.
 	wmKey := watermark.Key{Identity: "", Volume: volName}
 	wmAfterFirst := wm.watermarkFor(wmKey)
-	r.Greater(wmAfterFirst, uint64(0), "server watermark must advance after first flush")
+	r.Positive(wmAfterFirst, "server watermark must advance after first flush")
 
 	// Build a SECOND WAL log at a different path and append the same operations
 	// (fresh seqs, but the server's watermark is already past them when we pass
@@ -654,9 +654,9 @@ func (s *WalE2ESuite) TestLossLogging() {
 	// logDataLost calls walMetrics.WalDataLostEventInc("apply-failure") (+1 event)
 	// and walMetrics.WalDataLostFilesAdd("apply-failure", distinctPaths) (+2 files).
 	eventsVal := testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "events"))
-	r.Equal(1.0, eventsVal, "WalDataLost events must be 1 (default hook increments once per halt)")
+	r.InDelta(1.0, eventsVal, 0.0001, "WalDataLost events must be 1 (default hook increments once per halt)")
 	filesVal := testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "files"))
-	r.Equal(2.0, filesVal, "WalDataLost files must equal distinct lost-path count (2)")
+	r.InDelta(2.0, filesVal, 0.0001, "WalDataLost files must equal distinct lost-path count (2)")
 
 	// ── Assert ERROR log emitted by logDataLost enumerates both ghost paths ─────
 	// Filter by message so other server ERROR logs don't interfere.
@@ -839,9 +839,9 @@ func (s *WalE2ESuite) TestCloseFlushFailure_LoudLossLog() {
 
 	// WalDataLost must be incremented by logDataLost (default hook).
 	eventsVal := testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "events"))
-	r.Equal(1.0, eventsVal, "WalDataLost events must be exactly 1 (not 0=silent, not 2=double-flush)")
+	r.InDelta(1.0, eventsVal, 0.0001, "WalDataLost events must be exactly 1 (not 0=silent, not 2=double-flush)")
 	filesVal := testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "files"))
-	r.Equal(2.0, filesVal, "WalDataLost files must equal distinct lost-path count (2)")
+	r.InDelta(2.0, filesVal, 0.0001, "WalDataLost files must equal distinct lost-path count (2)")
 
 	// ERROR log must enumerate both ghost paths.
 	lossEntries := observed.FilterMessage("WAL data loss: un-flushed ops discarded without reaching the server")

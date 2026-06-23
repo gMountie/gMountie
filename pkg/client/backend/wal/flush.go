@@ -244,7 +244,10 @@ func (c *Coordinator) Fsync(ctx context.Context) proto.FsError {
 // the returned error prevents the recall from completing the clean handoff.
 func (c *Coordinator) FlushForRecall(ctx context.Context, root string) error {
 	ops, err := c.log.Replay(0)
-	if err != nil || len(ops) == 0 {
+	if err != nil {
+		return errors.Wrap(err, "wal: FlushForRecall read log")
+	}
+	if len(ops) == 0 {
 		return nil
 	}
 	maxSeq := ops[len(ops)-1].Seq
@@ -432,17 +435,6 @@ func (c *Coordinator) StartIntervalFlusher(d time.Duration) {
 	}()
 }
 
-// startIntervalFlusher starts a background goroutine that flushes the WAL
-// every interval. It exits when stop is closed. Used by tests that supply a
-// custom tick source; production code uses StartIntervalFlusher(d) instead.
-func (c *Coordinator) startIntervalFlusher(interval interface{ C() <-chan struct{} }, stop <-chan struct{}) {
-	c.flusherWg.Add(1)
-	go func() {
-		defer c.flusherWg.Done()
-		c.runIntervalFlush(stop, interval.C())
-	}()
-}
-
 // stopFlusher is called by Close to stop the interval goroutine and, if
 // StartupReplay was called, to cancel the startup replay context so a
 // network-stuck Apply stream does not block flusherWg.Wait indefinitely.
@@ -455,28 +447,6 @@ func (c *Coordinator) stopFlusher() {
 			c.startupReplayCancel()
 		}
 	})
-}
-
-// runIntervalFlush is the body of the interval goroutine. It flushes on every
-// tick until the stop channel is closed.
-func (c *Coordinator) runIntervalFlush(stop <-chan struct{}, tickC <-chan struct{}) {
-	for {
-		select {
-		case <-stop:
-			return
-		case _, ok := <-tickC:
-			if !ok {
-				return
-			}
-			ops, err := c.log.Replay(0)
-			if err != nil || len(ops) == 0 {
-				continue
-			}
-			maxSeq := ops[len(ops)-1].Seq
-			// Use a background context — the interval flush is best-effort.
-			_ = c.Flush(context.Background(), maxSeq)
-		}
-	}
 }
 
 // ── size-cap helpers ──────────────────────────────────────────────────────────

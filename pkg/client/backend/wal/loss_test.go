@@ -134,9 +134,9 @@ func (s *LossLoggingSuite) TestLogDataLost_EmitsOneErrorWithEveryLostPath() {
 	}
 
 	// Metric: events +1, files = distinct paths (3: dir/a.txt, dir/b.txt, dir/sub).
-	s.Assert().Equal(1.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "events")),
+	s.Assert().InDelta(1.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "events")), 0.0001,
 		"WalDataLost events must be incremented by 1")
-	s.Assert().Equal(3.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "files")),
+	s.Assert().InDelta(3.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "files")), 0.0001,
 		"WalDataLost files must be incremented by the number of DISTINCT lost paths")
 }
 
@@ -149,7 +149,7 @@ func (s *LossLoggingSuite) TestLogDataLost_NoOpsIsNoOp() {
 	logDataLost("apply-failure", Key{Identity: "bob", Volume: "v"}, nil, proto.FsError_FS_OK)
 
 	s.Assert().Equal(0, observed.Len(), "no log must be emitted for an empty lostOps slice")
-	s.Assert().Equal(0.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "events")),
+	s.Assert().InDelta(0.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "events")), 0.0001,
 		"WalDataLost events must not be incremented for empty lostOps")
 }
 
@@ -170,8 +170,8 @@ func (s *LossLoggingSuite) TestLogDataLost_MetricIncrementsEventsPlusDistinctFil
 
 	logDataLost("gen-fenced", Key{Volume: "myvol"}, lostOps, proto.FsError_FS_EPERM)
 
-	s.Assert().Equal(1.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("gen-fenced", "events")))
-	s.Assert().Equal(2.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("gen-fenced", "files")),
+	s.Assert().InDelta(1.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("gen-fenced", "events")), 0.0001)
+	s.Assert().InDelta(2.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("gen-fenced", "files")), 0.0001,
 		"files metric must count DISTINCT paths, not total op count")
 }
 
@@ -186,11 +186,11 @@ func (s *LossLoggingSuite) TestLogDataLost_ReasonLabel() {
 	logDataLost("apply-failure", Key{Volume: "v"}, ops, proto.FsError_FS_EIO)
 	logDataLost("gen-fenced", Key{Volume: "v"}, ops, proto.FsError_FS_EIO)
 
-	s.Assert().Equal(1.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "events")))
-	s.Assert().Equal(1.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("gen-fenced", "events")))
+	s.Assert().InDelta(1.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "events")), 0.0001)
+	s.Assert().InDelta(1.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("gen-fenced", "events")), 0.0001)
 	// Cross-contamination check: apply-failure files should not include gen-fenced.
-	s.Assert().Equal(1.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "files")))
-	s.Assert().Equal(1.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("gen-fenced", "files")))
+	s.Assert().InDelta(1.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "files")), 0.0001)
+	s.Assert().InDelta(1.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("gen-fenced", "files")), 0.0001)
 }
 
 // ── Integration — flush ordered-halt ─────────────────────────────────────────
@@ -268,8 +268,8 @@ func (s *LossIntegrationSuite) TestFlushOrderedHalt_LogsEveryLostPathAndIncremen
 	s.Assert().Contains(paths, "movies/2026/film.mkv", "lost path must appear in log")
 
 	// Metric: events +1, files +1 (1 distinct path: movies/2026/film.mkv).
-	s.Assert().Equal(1.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "events")))
-	s.Assert().Equal(1.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "files")))
+	s.Assert().InDelta(1.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "events")), 0.0001)
+	s.Assert().InDelta(1.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "files")), 0.0001)
 }
 
 // TestReplayGenFence_LogsEveryLostPathAndIncrementMetric is the integration gate
@@ -311,8 +311,8 @@ func (s *LossIntegrationSuite) TestReplayGenFence_LogsEveryLostPathAndIncrementM
 	s.Assert().Contains(paths, "snap/beta.tar")
 
 	// Metric: events +1, files +2 (2 distinct paths).
-	s.Assert().Equal(1.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("gen-fenced", "events")))
-	s.Assert().Equal(2.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("gen-fenced", "files")))
+	s.Assert().InDelta(1.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("gen-fenced", "events")), 0.0001)
+	s.Assert().InDelta(2.0, testutil.ToFloat64(m.WalDataLost.WithLabelValues("gen-fenced", "files")), 0.0001)
 }
 
 // ── Suite runners ─────────────────────────────────────────────────────────────
