@@ -200,6 +200,29 @@ func (c *Coordinator) Xattr(path, name string) (val []byte, set bool, removed bo
 	return c.overlay.Xattr(path, name)
 }
 
+// RebuildOverlay replays all ops from the durable log (fromSeq=0) and applies
+// each to the in-memory overlay. It is called at mount time when an existing
+// wal.db is found after a dead-process crash, so RYOW is correct immediately
+// for any delegation grants re-acquired during the current mount — before the
+// async startup Replay has flushed the ops to the server.
+//
+// Returns nil when the log is empty (no-op, common case on first mount).
+// Returns an error if the log cannot be read; in that case onLoss is called
+// with reason "wal-unreadable" so the event is surfaced to ops.
+func (c *Coordinator) RebuildOverlay() error {
+	ops, err := c.log.Replay(0)
+	if err != nil {
+		if c.onLoss != nil {
+			c.onLoss("wal-unreadable", nil, proto.FsError_FS_EIO)
+		}
+		return errors.Wrap(err, "wal: RebuildOverlay read log")
+	}
+	for _, op := range ops {
+		c.overlay.Apply(op)
+	}
+	return nil
+}
+
 // Close stops the interval flusher goroutine (if running), performs a final
 // synchronous flush of all pending WAL ops, then closes the underlying WAL log.
 //
