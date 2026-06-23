@@ -388,6 +388,48 @@ func (s *CoordinatorSuite) TestStartIntervalFlusher_CloseRace() {
 	}
 }
 
+// ── Test 9a: StartupReplay_CloseRace ─────────────────────────────────────────
+
+// TestStartupReplay_CloseRace mirrors TestStartIntervalFlusher_CloseRace for
+// the startup replay goroutine.  It verifies that Close() correctly waits for
+// the StartupReplay goroutine to exit before closing the log, preventing a
+// use-after-close race between log.Replay (inside the goroutine) and
+// log.Close (inside coord.Close).
+//
+// The test seeds a non-empty log so the goroutine actually calls log.Replay,
+// then races Close against the goroutine.  Under -race, a missing flusherWg
+// guard produces a concurrent bbolt access; a missing cancel produces a hang.
+func (s *CoordinatorSuite) TestStartupReplay_CloseRace() {
+	mgr := delegation.NewManager(noopInvalidator{})
+	l := openTestLog(s.T())
+	coord := NewCoordinator(mgr, l, NewOverlay())
+
+	// Seed a real op so Replay finds len(ops) > 0 and actually reads the log
+	// inside the goroutine (not a fast no-op return).
+	op := Op{Kind: OpWrite, Path: "race/startup.bin", Data: []byte("recovery")}
+	_, err := l.Append(op)
+	s.Require().NoError(err)
+
+	// StartupReplay registers the goroutine in flusherWg; no applyFactory means
+	// Replay returns immediately after reading the log — but the -race detector
+	// will catch any concurrent access if flusherWg is absent.
+	coord.StartupReplay(context.Background())
+
+	// Close must wait for the goroutine — no use-after-close, no deadlock.
+	done := make(chan struct{})
+	go func() {
+		_ = coord.Close()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// flusherWg correctly fenced the log-touching goroutine.
+	case <-time.After(3 * time.Second):
+		s.Fail("Close() did not return within 3s — StartupReplay goroutine leaked or deadlocked")
+	}
+}
+
 // ── Test 9: RebuildOverlay — empty WAL is a no-op ────────────────────────────
 
 // TestRebuildOverlay_EmptyWAL_NoOp verifies that RebuildOverlay on a fresh

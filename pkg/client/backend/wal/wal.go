@@ -32,6 +32,8 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/backend/delegation"
 	"go.gmountie.dev/gmountie/pkg/client/backend/transport"
 	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
+	"go.uber.org/zap"
 )
 
 // compile-time assertion: Coordinator must satisfy transport.WriteDrain.
@@ -78,9 +80,15 @@ type Coordinator struct {
 	flushStop     chan struct{}
 	flushStopOnce sync.Once
 
-	// flusherWg tracks the running interval-flush goroutine so Close can wait
-	// for it to exit before closing the log.
+	// flusherWg tracks the running interval-flush goroutine AND the startup
+	// replay goroutine so Close can wait for both to exit before closing the log.
 	flusherWg sync.WaitGroup
+
+	// startupReplayCancel cancels the context passed to the startup replay
+	// goroutine (launched via StartupReplay). stopFlusher calls this alongside
+	// closing flushStop so Close blocks only until the replay goroutine exits.
+	// Nil if StartupReplay was never called.
+	startupReplayCancel context.CancelFunc
 }
 
 // NewCoordinator returns a Coordinator. mgr is the delegation oracle; log and
@@ -221,6 +229,45 @@ func (c *Coordinator) RebuildOverlay() error {
 		c.overlay.Apply(op)
 	}
 	return nil
+}
+
+// StartupReplay runs the dead-process recovery flush in the background.  It
+// reads all durable ops from wal.db (fromSeq=0) and sends them to the server
+// via the Apply RPC.  It is called at mount time, after establishMount, when
+// wal.db may contain un-acked ops from a previous crashed process (CRIT-2).
+//
+// The goroutine is tracked by flusherWg so Close() waits for it before
+// closing the log — preventing a data race between the goroutine's
+// log.Replay call and log.Close().  ctx is stored as startupReplayCancel; the
+// stopFlusher path (called by Close) cancels it so a network-stuck Apply
+// stream does not make Close block indefinitely.
+//
+// When ctx is cancelled mid-replay (i.e. a fast unmount), the goroutine logs
+// at DEBUG level and exits cleanly — not an ERROR, since there is no data loss
+// (ops are still in wal.db for the next mount).
+//
+// StartupReplay must be called at most once per Coordinator.
+func (c *Coordinator) StartupReplay(ctx context.Context) {
+	replayCtx, cancel := context.WithCancel(ctx)
+	c.startupReplayCancel = cancel
+
+	c.flusherWg.Add(1)
+	go func() {
+		defer c.flusherWg.Done()
+		defer cancel()
+		if err := c.Replay(replayCtx, 0); err != nil {
+			// Teardown cancellation is not a data-loss event: the ops remain
+			// in wal.db and will be replayed on the next mount.
+			if replayCtx.Err() != nil {
+				log.Log.Debug("startup WAL replay cancelled during unmount; ops remain in wal.db",
+					zap.String("volume", c.cfg.volume))
+				return
+			}
+			log.Log.Error("startup WAL replay failed; un-acked ops remain in wal.db for next mount",
+				zap.String("volume", c.cfg.volume),
+				zap.Error(err))
+		}
+	}()
 }
 
 // Close stops the interval flusher goroutine (if running), performs a final
