@@ -107,6 +107,57 @@ func (_c *MockRpcFsServer_Access_Call) RunAndReturn(run func(context1 context.Co
 	return _c
 }
 
+// Apply provides a mock function for the type MockRpcFsServer
+func (_mock *MockRpcFsServer) Apply(clientStreamingServer grpc.ClientStreamingServer[proto.WalOp, proto.ApplyAck]) error {
+	ret := _mock.Called(clientStreamingServer)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Apply")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(grpc.ClientStreamingServer[proto.WalOp, proto.ApplyAck]) error); ok {
+		r0 = returnFunc(clientStreamingServer)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockRpcFsServer_Apply_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Apply'
+type MockRpcFsServer_Apply_Call struct {
+	*mock.Call
+}
+
+// Apply is a helper method to define mock.On call
+//   - clientStreamingServer grpc.ClientStreamingServer[proto.WalOp, proto.ApplyAck]
+func (_e *MockRpcFsServer_Expecter) Apply(clientStreamingServer interface{}) *MockRpcFsServer_Apply_Call {
+	return &MockRpcFsServer_Apply_Call{Call: _e.mock.On("Apply", clientStreamingServer)}
+}
+
+func (_c *MockRpcFsServer_Apply_Call) Run(run func(clientStreamingServer grpc.ClientStreamingServer[proto.WalOp, proto.ApplyAck])) *MockRpcFsServer_Apply_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 grpc.ClientStreamingServer[proto.WalOp, proto.ApplyAck]
+		if args[0] != nil {
+			arg0 = args[0].(grpc.ClientStreamingServer[proto.WalOp, proto.ApplyAck])
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFsServer_Apply_Call) Return(err error) *MockRpcFsServer_Apply_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockRpcFsServer_Apply_Call) RunAndReturn(run func(clientStreamingServer grpc.ClientStreamingServer[proto.WalOp, proto.ApplyAck]) error) *MockRpcFsServer_Apply_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetAttr provides a mock function for the type MockRpcFsServer
 func (_mock *MockRpcFsServer) GetAttr(context1 context.Context, getAttrRequest *proto.GetAttrRequest) (*proto.GetAttrReply, error) {
 	ret := _mock.Called(context1, getAttrRequest)
