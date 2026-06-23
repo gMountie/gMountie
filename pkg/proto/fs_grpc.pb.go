@@ -37,6 +37,7 @@ const (
 	RpcFs_SetAttr_FullMethodName          = "/gmountie.RpcFs/SetAttr"
 	RpcFs_ReadDir_FullMethodName          = "/gmountie.RpcFs/ReadDir"
 	RpcFs_Recall_FullMethodName           = "/gmountie.RpcFs/Recall"
+	RpcFs_Apply_FullMethodName            = "/gmountie.RpcFs/Apply"
 )
 
 // RpcFsClient is the client API for RpcFs service.
@@ -69,6 +70,11 @@ type RpcFsClient interface {
 	// once per mount; the server pushes RecallMsg when another client contends a
 	// delegated subtree; the client replies RecallAck when it has released it.
 	Recall(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RecallAck, RecallMsg], error)
+	// Apply replays/flushes a batch of deferred WAL ops. Client-streaming: the
+	// client pipelines WalOps in seq order and half-closes; the server applies in
+	// order (dedup ≤ watermark, fence revoked gen), persists the watermark, then
+	// returns ONE ApplyAck. On first failure it SendAndCloses early.
+	Apply(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[WalOp, ApplyAck], error)
 }
 
 type rpcFsClient struct {
@@ -280,6 +286,19 @@ func (c *rpcFsClient) Recall(ctx context.Context, opts ...grpc.CallOption) (grpc
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RpcFs_RecallClient = grpc.BidiStreamingClient[RecallAck, RecallMsg]
 
+func (c *rpcFsClient) Apply(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[WalOp, ApplyAck], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &RpcFs_ServiceDesc.Streams[3], RpcFs_Apply_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[WalOp, ApplyAck]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RpcFs_ApplyClient = grpc.ClientStreamingClient[WalOp, ApplyAck]
+
 // RpcFsServer is the server API for RpcFs service.
 // All implementations must embed UnimplementedRpcFsServer
 // for forward compatibility.
@@ -310,6 +329,11 @@ type RpcFsServer interface {
 	// once per mount; the server pushes RecallMsg when another client contends a
 	// delegated subtree; the client replies RecallAck when it has released it.
 	Recall(grpc.BidiStreamingServer[RecallAck, RecallMsg]) error
+	// Apply replays/flushes a batch of deferred WAL ops. Client-streaming: the
+	// client pipelines WalOps in seq order and half-closes; the server applies in
+	// order (dedup ≤ watermark, fence revoked gen), persists the watermark, then
+	// returns ONE ApplyAck. On first failure it SendAndCloses early.
+	Apply(grpc.ClientStreamingServer[WalOp, ApplyAck]) error
 	mustEmbedUnimplementedRpcFsServer()
 }
 
@@ -373,6 +397,9 @@ func (UnimplementedRpcFsServer) ReadDir(*ReadDirRequest, grpc.ServerStreamingSer
 }
 func (UnimplementedRpcFsServer) Recall(grpc.BidiStreamingServer[RecallAck, RecallMsg]) error {
 	return status.Error(codes.Unimplemented, "method Recall not implemented")
+}
+func (UnimplementedRpcFsServer) Apply(grpc.ClientStreamingServer[WalOp, ApplyAck]) error {
+	return status.Error(codes.Unimplemented, "method Apply not implemented")
 }
 func (UnimplementedRpcFsServer) mustEmbedUnimplementedRpcFsServer() {}
 func (UnimplementedRpcFsServer) testEmbeddedByValue()               {}
@@ -694,6 +721,13 @@ func _RpcFs_Recall_Handler(srv interface{}, stream grpc.ServerStream) error {
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RpcFs_RecallServer = grpc.BidiStreamingServer[RecallAck, RecallMsg]
 
+func _RpcFs_Apply_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(RpcFsServer).Apply(&grpc.GenericServerStream[WalOp, ApplyAck]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RpcFs_ApplyServer = grpc.ClientStreamingServer[WalOp, ApplyAck]
+
 // RpcFs_ServiceDesc is the grpc.ServiceDesc for RpcFs service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -777,6 +811,11 @@ var RpcFs_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "Recall",
 			Handler:       _RpcFs_Recall_Handler,
 			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "Apply",
+			Handler:       _RpcFs_Apply_Handler,
 			ClientStreams: true,
 		},
 	},

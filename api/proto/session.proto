@@ -31,7 +31,8 @@ message SessionResumeRequest {
 }
 
 message SessionResumeReply {
-  bool resumed = 1;
+  bool   resumed   = 1;
+  uint64 watermark = 2;  // client's current (identity,volume) seq-watermark; replay from watermark+1
 }
 
 // KeepaliveRequest is the single message a client sends to open the

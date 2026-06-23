@@ -170,6 +170,7 @@ func (x *SessionResumeRequest) GetSessionId() string {
 type SessionResumeReply struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Resumed       bool                   `protobuf:"varint,1,opt,name=resumed,proto3" json:"resumed,omitempty"`
+	Watermark     uint64                 `protobuf:"varint,2,opt,name=watermark,proto3" json:"watermark,omitempty"` // client's current (identity,volume) seq-watermark; replay from watermark+1
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -209,6 +210,13 @@ func (x *SessionResumeReply) GetResumed() bool {
 		return x.Resumed
 	}
 	return false
+}
+
+func (x *SessionResumeReply) GetWatermark() uint64 {
+	if x != nil {
+		return x.Watermark
+	}
+	return 0
 }
 
 // KeepaliveRequest is the single message a client sends to open the
@@ -459,9 +467,10 @@ const file_api_proto_session_proto_rawDesc = "" +
 	"boot_epoch\x18\x02 \x01(\tR\tbootEpoch\"5\n" +
 	"\x14SessionResumeRequest\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId\".\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"L\n" +
 	"\x12SessionResumeReply\x12\x18\n" +
-	"\aresumed\x18\x01 \x01(\bR\aresumed\"1\n" +
+	"\aresumed\x18\x01 \x01(\bR\aresumed\x12\x1c\n" +
+	"\twatermark\x18\x02 \x01(\x04R\twatermark\"1\n" +
 	"\x10KeepaliveRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"\x0f\n" +

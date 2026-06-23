@@ -356,6 +356,74 @@ message ListXAttrReply {
   FsError status = 2;
 }
 
+// CreateRequest creates a new file and returns an open fd for it.
+// Moved here from file.proto so WalOp (below) can reference it without a
+// circular import (file.proto imports fs.proto for Attr/DelegationRequest).
+message CreateRequest {
+  string volume = 1;
+  Caller caller = 2;
+  string path = 3;
+  uint32 flags = 4;
+  uint32 mode = 5;
+  string session_id = 6;
+  string request_id = 7;
+  DelegationRequest delegation = 8;
+}
+
+// WriteOp is a path-based write (the deferred form of WriteAndFlush): no fd,
+// the server opens/writes/closes internally during Apply.
+message WriteOp {
+  string volume     = 1;
+  Caller caller     = 2;
+  string path       = 3;
+  int64  offset     = 4;
+  bytes  data       = 5;
+  string request_id = 6;
+}
+
+// ReleaseOp marks a deferred close — flushes any final state for path. Mostly a
+// no-op marker today (the create/writes already carry the bytes) but reserved so
+// the WAL records the full lifecycle.
+message ReleaseOp {
+  string volume     = 1;
+  Caller caller     = 2;
+  string path       = 3;
+  string request_id = 4;
+}
+
+// WalOp is one deferred mutating op replayed/flushed via Apply. PATH-BASED:
+// it reuses the existing unary request messages (which carry volume + path +
+// caller), so the server needs no client fd mapping. seq is the client's
+// monotone per-(identity,volume) sequence; gen is the delegation generation the
+// op was deferred under (fences superseded replay). request_id (already on each
+// inner message) still drives idempotency.
+message WalOp {
+  oneof op {
+    CreateRequest      create       = 1;
+    WriteOp            write        = 2;   // path-based write (see WriteOp)
+    MkdirRequest       mkdir        = 3;
+    RmdirRequest       rmdir        = 4;
+    UnlinkRequest      unlink       = 5;
+    RenameRequest      rename       = 6;
+    SymlinkRequest     symlink      = 7;
+    SetAttrRequest     set_attr     = 8;
+    SetXAttrRequest    set_xattr    = 9;
+    RemoveXAttrRequest remove_xattr = 10;
+    ReleaseOp          release      = 11;  // deferred close (path-based)
+  }
+  uint64 seq = 20;
+  uint64 gen = 21;
+}
+
+// ApplyAck is the single terminal reply to the Apply client-streaming RPC.
+// failed_seq=0 + fserr=FS_OK means full success. On the first failing op the
+// server returns early: failed_seq identifies it, fserr carries the error.
+message ApplyAck {
+  uint64  watermark  = 1;  // highest seq durably applied (persisted before this ack)
+  uint64  failed_seq = 2;  // 0 == no failure
+  FsError fserr      = 3;  // FS_OK unless an op failed (ordered halt)
+}
+
 // Protocol v-next BREAKING CHANGE: the OpenDir, Truncate, Chmod, Chown,
 // Utimens and Compound RPCs (and their messages) were removed — directory
 // listing goes through the streaming ReadDir, attribute changes through the
@@ -382,4 +450,9 @@ service RpcFs {
   // once per mount; the server pushes RecallMsg when another client contends a
   // delegated subtree; the client replies RecallAck when it has released it.
   rpc Recall (stream RecallAck) returns (stream RecallMsg);
+  // Apply replays/flushes a batch of deferred WAL ops. Client-streaming: the
+  // client pipelines WalOps in seq order and half-closes; the server applies in
+  // order (dedup ≤ watermark, fence revoked gen), persists the watermark, then
+  // returns ONE ApplyAck. On first failure it SendAndCloses early.
+  rpc Apply (stream WalOp) returns (ApplyAck);
 }

@@ -3025,6 +3025,577 @@ func (x *ListXAttrReply) GetStatus() FsError {
 	return FsError_FS_OK
 }
 
+// CreateRequest creates a new file and returns an open fd for it.
+// Moved here from file.proto so WalOp (below) can reference it without a
+// circular import (file.proto imports fs.proto for Attr/DelegationRequest).
+type CreateRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Volume        string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
+	Caller        *Caller                `protobuf:"bytes,2,opt,name=caller,proto3" json:"caller,omitempty"`
+	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
+	Flags         uint32                 `protobuf:"varint,4,opt,name=flags,proto3" json:"flags,omitempty"`
+	Mode          uint32                 `protobuf:"varint,5,opt,name=mode,proto3" json:"mode,omitempty"`
+	SessionId     string                 `protobuf:"bytes,6,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	RequestId     string                 `protobuf:"bytes,7,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	Delegation    *DelegationRequest     `protobuf:"bytes,8,opt,name=delegation,proto3" json:"delegation,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateRequest) Reset() {
+	*x = CreateRequest{}
+	mi := &file_api_proto_fs_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateRequest) ProtoMessage() {}
+
+func (x *CreateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_fs_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateRequest.ProtoReflect.Descriptor instead.
+func (*CreateRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_fs_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *CreateRequest) GetVolume() string {
+	if x != nil {
+		return x.Volume
+	}
+	return ""
+}
+
+func (x *CreateRequest) GetCaller() *Caller {
+	if x != nil {
+		return x.Caller
+	}
+	return nil
+}
+
+func (x *CreateRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *CreateRequest) GetFlags() uint32 {
+	if x != nil {
+		return x.Flags
+	}
+	return 0
+}
+
+func (x *CreateRequest) GetMode() uint32 {
+	if x != nil {
+		return x.Mode
+	}
+	return 0
+}
+
+func (x *CreateRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *CreateRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *CreateRequest) GetDelegation() *DelegationRequest {
+	if x != nil {
+		return x.Delegation
+	}
+	return nil
+}
+
+// WriteOp is a path-based write (the deferred form of WriteAndFlush): no fd,
+// the server opens/writes/closes internally during Apply.
+type WriteOp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Volume        string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
+	Caller        *Caller                `protobuf:"bytes,2,opt,name=caller,proto3" json:"caller,omitempty"`
+	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
+	Offset        int64                  `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`
+	Data          []byte                 `protobuf:"bytes,5,opt,name=data,proto3" json:"data,omitempty"`
+	RequestId     string                 `protobuf:"bytes,6,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WriteOp) Reset() {
+	*x = WriteOp{}
+	mi := &file_api_proto_fs_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WriteOp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WriteOp) ProtoMessage() {}
+
+func (x *WriteOp) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_fs_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WriteOp.ProtoReflect.Descriptor instead.
+func (*WriteOp) Descriptor() ([]byte, []int) {
+	return file_api_proto_fs_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *WriteOp) GetVolume() string {
+	if x != nil {
+		return x.Volume
+	}
+	return ""
+}
+
+func (x *WriteOp) GetCaller() *Caller {
+	if x != nil {
+		return x.Caller
+	}
+	return nil
+}
+
+func (x *WriteOp) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *WriteOp) GetOffset() int64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *WriteOp) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+func (x *WriteOp) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+// ReleaseOp marks a deferred close — flushes any final state for path. Mostly a
+// no-op marker today (the create/writes already carry the bytes) but reserved so
+// the WAL records the full lifecycle.
+type ReleaseOp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Volume        string                 `protobuf:"bytes,1,opt,name=volume,proto3" json:"volume,omitempty"`
+	Caller        *Caller                `protobuf:"bytes,2,opt,name=caller,proto3" json:"caller,omitempty"`
+	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
+	RequestId     string                 `protobuf:"bytes,4,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReleaseOp) Reset() {
+	*x = ReleaseOp{}
+	mi := &file_api_proto_fs_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReleaseOp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReleaseOp) ProtoMessage() {}
+
+func (x *ReleaseOp) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_fs_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReleaseOp.ProtoReflect.Descriptor instead.
+func (*ReleaseOp) Descriptor() ([]byte, []int) {
+	return file_api_proto_fs_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *ReleaseOp) GetVolume() string {
+	if x != nil {
+		return x.Volume
+	}
+	return ""
+}
+
+func (x *ReleaseOp) GetCaller() *Caller {
+	if x != nil {
+		return x.Caller
+	}
+	return nil
+}
+
+func (x *ReleaseOp) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *ReleaseOp) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+// WalOp is one deferred mutating op replayed/flushed via Apply. PATH-BASED:
+// it reuses the existing unary request messages (which carry volume + path +
+// caller), so the server needs no client fd mapping. seq is the client's
+// monotone per-(identity,volume) sequence; gen is the delegation generation the
+// op was deferred under (fences superseded replay). request_id (already on each
+// inner message) still drives idempotency.
+type WalOp struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Op:
+	//
+	//	*WalOp_Create
+	//	*WalOp_Write
+	//	*WalOp_Mkdir
+	//	*WalOp_Rmdir
+	//	*WalOp_Unlink
+	//	*WalOp_Rename
+	//	*WalOp_Symlink
+	//	*WalOp_SetAttr
+	//	*WalOp_SetXattr
+	//	*WalOp_RemoveXattr
+	//	*WalOp_Release
+	Op            isWalOp_Op `protobuf_oneof:"op"`
+	Seq           uint64     `protobuf:"varint,20,opt,name=seq,proto3" json:"seq,omitempty"`
+	Gen           uint64     `protobuf:"varint,21,opt,name=gen,proto3" json:"gen,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WalOp) Reset() {
+	*x = WalOp{}
+	mi := &file_api_proto_fs_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WalOp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WalOp) ProtoMessage() {}
+
+func (x *WalOp) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_fs_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WalOp.ProtoReflect.Descriptor instead.
+func (*WalOp) Descriptor() ([]byte, []int) {
+	return file_api_proto_fs_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *WalOp) GetOp() isWalOp_Op {
+	if x != nil {
+		return x.Op
+	}
+	return nil
+}
+
+func (x *WalOp) GetCreate() *CreateRequest {
+	if x != nil {
+		if x, ok := x.Op.(*WalOp_Create); ok {
+			return x.Create
+		}
+	}
+	return nil
+}
+
+func (x *WalOp) GetWrite() *WriteOp {
+	if x != nil {
+		if x, ok := x.Op.(*WalOp_Write); ok {
+			return x.Write
+		}
+	}
+	return nil
+}
+
+func (x *WalOp) GetMkdir() *MkdirRequest {
+	if x != nil {
+		if x, ok := x.Op.(*WalOp_Mkdir); ok {
+			return x.Mkdir
+		}
+	}
+	return nil
+}
+
+func (x *WalOp) GetRmdir() *RmdirRequest {
+	if x != nil {
+		if x, ok := x.Op.(*WalOp_Rmdir); ok {
+			return x.Rmdir
+		}
+	}
+	return nil
+}
+
+func (x *WalOp) GetUnlink() *UnlinkRequest {
+	if x != nil {
+		if x, ok := x.Op.(*WalOp_Unlink); ok {
+			return x.Unlink
+		}
+	}
+	return nil
+}
+
+func (x *WalOp) GetRename() *RenameRequest {
+	if x != nil {
+		if x, ok := x.Op.(*WalOp_Rename); ok {
+			return x.Rename
+		}
+	}
+	return nil
+}
+
+func (x *WalOp) GetSymlink() *SymlinkRequest {
+	if x != nil {
+		if x, ok := x.Op.(*WalOp_Symlink); ok {
+			return x.Symlink
+		}
+	}
+	return nil
+}
+
+func (x *WalOp) GetSetAttr() *SetAttrRequest {
+	if x != nil {
+		if x, ok := x.Op.(*WalOp_SetAttr); ok {
+			return x.SetAttr
+		}
+	}
+	return nil
+}
+
+func (x *WalOp) GetSetXattr() *SetXAttrRequest {
+	if x != nil {
+		if x, ok := x.Op.(*WalOp_SetXattr); ok {
+			return x.SetXattr
+		}
+	}
+	return nil
+}
+
+func (x *WalOp) GetRemoveXattr() *RemoveXAttrRequest {
+	if x != nil {
+		if x, ok := x.Op.(*WalOp_RemoveXattr); ok {
+			return x.RemoveXattr
+		}
+	}
+	return nil
+}
+
+func (x *WalOp) GetRelease() *ReleaseOp {
+	if x != nil {
+		if x, ok := x.Op.(*WalOp_Release); ok {
+			return x.Release
+		}
+	}
+	return nil
+}
+
+func (x *WalOp) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+func (x *WalOp) GetGen() uint64 {
+	if x != nil {
+		return x.Gen
+	}
+	return 0
+}
+
+type isWalOp_Op interface {
+	isWalOp_Op()
+}
+
+type WalOp_Create struct {
+	Create *CreateRequest `protobuf:"bytes,1,opt,name=create,proto3,oneof"`
+}
+
+type WalOp_Write struct {
+	Write *WriteOp `protobuf:"bytes,2,opt,name=write,proto3,oneof"` // path-based write (see WriteOp)
+}
+
+type WalOp_Mkdir struct {
+	Mkdir *MkdirRequest `protobuf:"bytes,3,opt,name=mkdir,proto3,oneof"`
+}
+
+type WalOp_Rmdir struct {
+	Rmdir *RmdirRequest `protobuf:"bytes,4,opt,name=rmdir,proto3,oneof"`
+}
+
+type WalOp_Unlink struct {
+	Unlink *UnlinkRequest `protobuf:"bytes,5,opt,name=unlink,proto3,oneof"`
+}
+
+type WalOp_Rename struct {
+	Rename *RenameRequest `protobuf:"bytes,6,opt,name=rename,proto3,oneof"`
+}
+
+type WalOp_Symlink struct {
+	Symlink *SymlinkRequest `protobuf:"bytes,7,opt,name=symlink,proto3,oneof"`
+}
+
+type WalOp_SetAttr struct {
+	SetAttr *SetAttrRequest `protobuf:"bytes,8,opt,name=set_attr,json=setAttr,proto3,oneof"`
+}
+
+type WalOp_SetXattr struct {
+	SetXattr *SetXAttrRequest `protobuf:"bytes,9,opt,name=set_xattr,json=setXattr,proto3,oneof"`
+}
+
+type WalOp_RemoveXattr struct {
+	RemoveXattr *RemoveXAttrRequest `protobuf:"bytes,10,opt,name=remove_xattr,json=removeXattr,proto3,oneof"`
+}
+
+type WalOp_Release struct {
+	Release *ReleaseOp `protobuf:"bytes,11,opt,name=release,proto3,oneof"` // deferred close (path-based)
+}
+
+func (*WalOp_Create) isWalOp_Op() {}
+
+func (*WalOp_Write) isWalOp_Op() {}
+
+func (*WalOp_Mkdir) isWalOp_Op() {}
+
+func (*WalOp_Rmdir) isWalOp_Op() {}
+
+func (*WalOp_Unlink) isWalOp_Op() {}
+
+func (*WalOp_Rename) isWalOp_Op() {}
+
+func (*WalOp_Symlink) isWalOp_Op() {}
+
+func (*WalOp_SetAttr) isWalOp_Op() {}
+
+func (*WalOp_SetXattr) isWalOp_Op() {}
+
+func (*WalOp_RemoveXattr) isWalOp_Op() {}
+
+func (*WalOp_Release) isWalOp_Op() {}
+
+// ApplyAck is the single terminal reply to the Apply client-streaming RPC.
+// failed_seq=0 + fserr=FS_OK means full success. On the first failing op the
+// server returns early: failed_seq identifies it, fserr carries the error.
+type ApplyAck struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Watermark     uint64                 `protobuf:"varint,1,opt,name=watermark,proto3" json:"watermark,omitempty"`                  // highest seq durably applied (persisted before this ack)
+	FailedSeq     uint64                 `protobuf:"varint,2,opt,name=failed_seq,json=failedSeq,proto3" json:"failed_seq,omitempty"` // 0 == no failure
+	Fserr         FsError                `protobuf:"varint,3,opt,name=fserr,proto3,enum=gmountie.FsError" json:"fserr,omitempty"`    // FS_OK unless an op failed (ordered halt)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ApplyAck) Reset() {
+	*x = ApplyAck{}
+	mi := &file_api_proto_fs_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApplyAck) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApplyAck) ProtoMessage() {}
+
+func (x *ApplyAck) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_fs_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApplyAck.ProtoReflect.Descriptor instead.
+func (*ApplyAck) Descriptor() ([]byte, []int) {
+	return file_api_proto_fs_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *ApplyAck) GetWatermark() uint64 {
+	if x != nil {
+		return x.Watermark
+	}
+	return 0
+}
+
+func (x *ApplyAck) GetFailedSeq() uint64 {
+	if x != nil {
+		return x.FailedSeq
+	}
+	return 0
+}
+
+func (x *ApplyAck) GetFserr() FsError {
+	if x != nil {
+		return x.Fserr
+	}
+	return FsError_FS_OK
+}
+
 var File_api_proto_fs_proto protoreflect.FileDescriptor
 
 const file_api_proto_fs_proto_rawDesc = "" +
@@ -3303,7 +3874,55 @@ const file_api_proto_fs_proto_rawDesc = "" +
 	"\n" +
 	"attributes\x18\x01 \x03(\tR\n" +
 	"attributes\x12)\n" +
-	"\x06status\x18\x02 \x01(\x0e2\x11.gmountie.FsErrorR\x06status2\xf4\b\n" +
+	"\x06status\x18\x02 \x01(\x0e2\x11.gmountie.FsErrorR\x06status\"\x8a\x02\n" +
+	"\rCreateRequest\x12\x16\n" +
+	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
+	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x12\n" +
+	"\x04path\x18\x03 \x01(\tR\x04path\x12\x14\n" +
+	"\x05flags\x18\x04 \x01(\rR\x05flags\x12\x12\n" +
+	"\x04mode\x18\x05 \x01(\rR\x04mode\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x06 \x01(\tR\tsessionId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\a \x01(\tR\trequestId\x12;\n" +
+	"\n" +
+	"delegation\x18\b \x01(\v2\x1b.gmountie.DelegationRequestR\n" +
+	"delegation\"\xaa\x01\n" +
+	"\aWriteOp\x12\x16\n" +
+	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
+	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x12\n" +
+	"\x04path\x18\x03 \x01(\tR\x04path\x12\x16\n" +
+	"\x06offset\x18\x04 \x01(\x03R\x06offset\x12\x12\n" +
+	"\x04data\x18\x05 \x01(\fR\x04data\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x06 \x01(\tR\trequestId\"\x80\x01\n" +
+	"\tReleaseOp\x12\x16\n" +
+	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
+	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x12\n" +
+	"\x04path\x18\x03 \x01(\tR\x04path\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x04 \x01(\tR\trequestId\"\xf0\x04\n" +
+	"\x05WalOp\x121\n" +
+	"\x06create\x18\x01 \x01(\v2\x17.gmountie.CreateRequestH\x00R\x06create\x12)\n" +
+	"\x05write\x18\x02 \x01(\v2\x11.gmountie.WriteOpH\x00R\x05write\x12.\n" +
+	"\x05mkdir\x18\x03 \x01(\v2\x16.gmountie.MkdirRequestH\x00R\x05mkdir\x12.\n" +
+	"\x05rmdir\x18\x04 \x01(\v2\x16.gmountie.RmdirRequestH\x00R\x05rmdir\x121\n" +
+	"\x06unlink\x18\x05 \x01(\v2\x17.gmountie.UnlinkRequestH\x00R\x06unlink\x121\n" +
+	"\x06rename\x18\x06 \x01(\v2\x17.gmountie.RenameRequestH\x00R\x06rename\x124\n" +
+	"\asymlink\x18\a \x01(\v2\x18.gmountie.SymlinkRequestH\x00R\asymlink\x125\n" +
+	"\bset_attr\x18\b \x01(\v2\x18.gmountie.SetAttrRequestH\x00R\asetAttr\x128\n" +
+	"\tset_xattr\x18\t \x01(\v2\x19.gmountie.SetXAttrRequestH\x00R\bsetXattr\x12A\n" +
+	"\fremove_xattr\x18\n" +
+	" \x01(\v2\x1c.gmountie.RemoveXAttrRequestH\x00R\vremoveXattr\x12/\n" +
+	"\arelease\x18\v \x01(\v2\x13.gmountie.ReleaseOpH\x00R\arelease\x12\x10\n" +
+	"\x03seq\x18\x14 \x01(\x04R\x03seq\x12\x10\n" +
+	"\x03gen\x18\x15 \x01(\x04R\x03genB\x04\n" +
+	"\x02op\"p\n" +
+	"\bApplyAck\x12\x1c\n" +
+	"\twatermark\x18\x01 \x01(\x04R\twatermark\x12\x1d\n" +
+	"\n" +
+	"failed_seq\x18\x02 \x01(\x04R\tfailedSeq\x12'\n" +
+	"\x05fserr\x18\x03 \x01(\x0e2\x11.gmountie.FsErrorR\x05fserr2\xa4\t\n" +
 	"\x05RpcFs\x12;\n" +
 	"\aGetAttr\x12\x18.gmountie.GetAttrRequest\x1a\x16.gmountie.GetAttrReply\x128\n" +
 	"\x06StatFs\x12\x17.gmountie.StatFsRequest\x1a\x15.gmountie.StatFsReply\x128\n" +
@@ -3322,7 +3941,8 @@ const file_api_proto_fs_proto_rawDesc = "" +
 	"\tSubscribe\x12\x1a.gmountie.SubscribeRequest\x1a\x18.gmountie.SubscribeEvent0\x01\x12;\n" +
 	"\aSetAttr\x12\x18.gmountie.SetAttrRequest\x1a\x16.gmountie.SetAttrReply\x12=\n" +
 	"\aReadDir\x12\x18.gmountie.ReadDirRequest\x1a\x16.gmountie.ReadDirBatch0\x01\x126\n" +
-	"\x06Recall\x12\x13.gmountie.RecallAck\x1a\x13.gmountie.RecallMsg(\x010\x01B\vZ\tpkg/protob\x06proto3"
+	"\x06Recall\x12\x13.gmountie.RecallAck\x1a\x13.gmountie.RecallMsg(\x010\x01\x12.\n" +
+	"\x05Apply\x12\x0f.gmountie.WalOp\x1a\x12.gmountie.ApplyAck(\x01B\vZ\tpkg/protob\x06proto3"
 
 var (
 	file_api_proto_fs_proto_rawDescOnce sync.Once
@@ -3337,7 +3957,7 @@ func file_api_proto_fs_proto_rawDescGZIP() []byte {
 }
 
 var file_api_proto_fs_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_api_proto_fs_proto_msgTypes = make([]protoimpl.MessageInfo, 42)
+var file_api_proto_fs_proto_msgTypes = make([]protoimpl.MessageInfo, 47)
 var file_api_proto_fs_proto_goTypes = []any{
 	(SubscribeEvent_Kind)(0),        // 0: gmountie.SubscribeEvent.Kind
 	(*DirEntry)(nil),                // 1: gmountie.DirEntry
@@ -3382,110 +4002,133 @@ var file_api_proto_fs_proto_goTypes = []any{
 	(*RemoveXAttrReply)(nil),        // 40: gmountie.RemoveXAttrReply
 	(*ListXAttrRequest)(nil),        // 41: gmountie.ListXAttrRequest
 	(*ListXAttrReply)(nil),          // 42: gmountie.ListXAttrReply
-	(*Owner)(nil),                   // 43: gmountie.Owner
-	(*Caller)(nil),                  // 44: gmountie.Caller
-	(FsError)(0),                    // 45: gmountie.FsError
+	(*CreateRequest)(nil),           // 43: gmountie.CreateRequest
+	(*WriteOp)(nil),                 // 44: gmountie.WriteOp
+	(*ReleaseOp)(nil),               // 45: gmountie.ReleaseOp
+	(*WalOp)(nil),                   // 46: gmountie.WalOp
+	(*ApplyAck)(nil),                // 47: gmountie.ApplyAck
+	(*Owner)(nil),                   // 48: gmountie.Owner
+	(*Caller)(nil),                  // 49: gmountie.Caller
+	(FsError)(0),                    // 50: gmountie.FsError
 }
 var file_api_proto_fs_proto_depIdxs = []int32{
-	43, // 0: gmountie.Attr.owner:type_name -> gmountie.Owner
-	44, // 1: gmountie.GetAttrRequest.caller:type_name -> gmountie.Caller
+	48, // 0: gmountie.Attr.owner:type_name -> gmountie.Owner
+	49, // 1: gmountie.GetAttrRequest.caller:type_name -> gmountie.Caller
 	7,  // 2: gmountie.GetAttrReply.attributes:type_name -> gmountie.Attr
-	45, // 3: gmountie.GetAttrReply.status:type_name -> gmountie.FsError
-	44, // 4: gmountie.GetAttrIfChangedRequest.caller:type_name -> gmountie.Caller
+	50, // 3: gmountie.GetAttrReply.status:type_name -> gmountie.FsError
+	49, // 4: gmountie.GetAttrIfChangedRequest.caller:type_name -> gmountie.Caller
 	7,  // 5: gmountie.GetAttrIfChangedReply.attrs:type_name -> gmountie.Attr
-	44, // 6: gmountie.SubscribeRequest.caller:type_name -> gmountie.Caller
+	49, // 6: gmountie.SubscribeRequest.caller:type_name -> gmountie.Caller
 	0,  // 7: gmountie.SubscribeEvent.kind:type_name -> gmountie.SubscribeEvent.Kind
-	44, // 8: gmountie.UnlinkRequest.caller:type_name -> gmountie.Caller
+	49, // 8: gmountie.UnlinkRequest.caller:type_name -> gmountie.Caller
 	2,  // 9: gmountie.UnlinkRequest.delegation:type_name -> gmountie.DelegationRequest
-	45, // 10: gmountie.UnlinkReply.status:type_name -> gmountie.FsError
+	50, // 10: gmountie.UnlinkReply.status:type_name -> gmountie.FsError
 	3,  // 11: gmountie.UnlinkReply.grant:type_name -> gmountie.DelegationGrant
-	44, // 12: gmountie.AccessRequest.caller:type_name -> gmountie.Caller
-	45, // 13: gmountie.AccessReply.status:type_name -> gmountie.FsError
-	44, // 14: gmountie.ReadlinkRequest.caller:type_name -> gmountie.Caller
-	45, // 15: gmountie.ReadlinkReply.status:type_name -> gmountie.FsError
-	44, // 16: gmountie.SetAttrRequest.caller:type_name -> gmountie.Caller
+	49, // 12: gmountie.AccessRequest.caller:type_name -> gmountie.Caller
+	50, // 13: gmountie.AccessReply.status:type_name -> gmountie.FsError
+	49, // 14: gmountie.ReadlinkRequest.caller:type_name -> gmountie.Caller
+	50, // 15: gmountie.ReadlinkReply.status:type_name -> gmountie.FsError
+	49, // 16: gmountie.SetAttrRequest.caller:type_name -> gmountie.Caller
 	6,  // 17: gmountie.SetAttrRequest.atime:type_name -> gmountie.FileTime
 	6,  // 18: gmountie.SetAttrRequest.mtime:type_name -> gmountie.FileTime
 	2,  // 19: gmountie.SetAttrRequest.delegation:type_name -> gmountie.DelegationRequest
 	7,  // 20: gmountie.SetAttrReply.attributes:type_name -> gmountie.Attr
-	45, // 21: gmountie.SetAttrReply.status:type_name -> gmountie.FsError
+	50, // 21: gmountie.SetAttrReply.status:type_name -> gmountie.FsError
 	3,  // 22: gmountie.SetAttrReply.grant:type_name -> gmountie.DelegationGrant
-	44, // 23: gmountie.ReadDirRequest.caller:type_name -> gmountie.Caller
+	49, // 23: gmountie.ReadDirRequest.caller:type_name -> gmountie.Caller
 	1,  // 24: gmountie.DirEntryPlus.entry:type_name -> gmountie.DirEntry
 	7,  // 25: gmountie.DirEntryPlus.attributes:type_name -> gmountie.Attr
 	25, // 26: gmountie.ReadDirBatch.entries:type_name -> gmountie.DirEntryPlus
-	45, // 27: gmountie.ReadDirBatch.status:type_name -> gmountie.FsError
-	44, // 28: gmountie.MkdirRequest.caller:type_name -> gmountie.Caller
+	50, // 27: gmountie.ReadDirBatch.status:type_name -> gmountie.FsError
+	49, // 28: gmountie.MkdirRequest.caller:type_name -> gmountie.Caller
 	2,  // 29: gmountie.MkdirRequest.delegation:type_name -> gmountie.DelegationRequest
-	45, // 30: gmountie.MkdirReply.status:type_name -> gmountie.FsError
+	50, // 30: gmountie.MkdirReply.status:type_name -> gmountie.FsError
 	7,  // 31: gmountie.MkdirReply.attributes:type_name -> gmountie.Attr
 	3,  // 32: gmountie.MkdirReply.grant:type_name -> gmountie.DelegationGrant
-	44, // 33: gmountie.RmdirRequest.caller:type_name -> gmountie.Caller
+	49, // 33: gmountie.RmdirRequest.caller:type_name -> gmountie.Caller
 	2,  // 34: gmountie.RmdirRequest.delegation:type_name -> gmountie.DelegationRequest
-	45, // 35: gmountie.RmdirReply.status:type_name -> gmountie.FsError
+	50, // 35: gmountie.RmdirReply.status:type_name -> gmountie.FsError
 	3,  // 36: gmountie.RmdirReply.grant:type_name -> gmountie.DelegationGrant
-	44, // 37: gmountie.RenameRequest.caller:type_name -> gmountie.Caller
+	49, // 37: gmountie.RenameRequest.caller:type_name -> gmountie.Caller
 	2,  // 38: gmountie.RenameRequest.delegation:type_name -> gmountie.DelegationRequest
-	45, // 39: gmountie.RenameReply.status:type_name -> gmountie.FsError
+	50, // 39: gmountie.RenameReply.status:type_name -> gmountie.FsError
 	3,  // 40: gmountie.RenameReply.grant:type_name -> gmountie.DelegationGrant
-	44, // 41: gmountie.SymlinkRequest.caller:type_name -> gmountie.Caller
+	49, // 41: gmountie.SymlinkRequest.caller:type_name -> gmountie.Caller
 	2,  // 42: gmountie.SymlinkRequest.delegation:type_name -> gmountie.DelegationRequest
-	45, // 43: gmountie.SymlinkReply.status:type_name -> gmountie.FsError
+	50, // 43: gmountie.SymlinkReply.status:type_name -> gmountie.FsError
 	7,  // 44: gmountie.SymlinkReply.attributes:type_name -> gmountie.Attr
 	3,  // 45: gmountie.SymlinkReply.grant:type_name -> gmountie.DelegationGrant
-	44, // 46: gmountie.GetXAttrRequest.caller:type_name -> gmountie.Caller
-	45, // 47: gmountie.GetXAttrReply.status:type_name -> gmountie.FsError
-	44, // 48: gmountie.SetXAttrRequest.caller:type_name -> gmountie.Caller
+	49, // 46: gmountie.GetXAttrRequest.caller:type_name -> gmountie.Caller
+	50, // 47: gmountie.GetXAttrReply.status:type_name -> gmountie.FsError
+	49, // 48: gmountie.SetXAttrRequest.caller:type_name -> gmountie.Caller
 	2,  // 49: gmountie.SetXAttrRequest.delegation:type_name -> gmountie.DelegationRequest
-	45, // 50: gmountie.SetXAttrReply.status:type_name -> gmountie.FsError
+	50, // 50: gmountie.SetXAttrReply.status:type_name -> gmountie.FsError
 	3,  // 51: gmountie.SetXAttrReply.grant:type_name -> gmountie.DelegationGrant
-	44, // 52: gmountie.RemoveXAttrRequest.caller:type_name -> gmountie.Caller
+	49, // 52: gmountie.RemoveXAttrRequest.caller:type_name -> gmountie.Caller
 	2,  // 53: gmountie.RemoveXAttrRequest.delegation:type_name -> gmountie.DelegationRequest
-	45, // 54: gmountie.RemoveXAttrReply.status:type_name -> gmountie.FsError
+	50, // 54: gmountie.RemoveXAttrReply.status:type_name -> gmountie.FsError
 	3,  // 55: gmountie.RemoveXAttrReply.grant:type_name -> gmountie.DelegationGrant
-	44, // 56: gmountie.ListXAttrRequest.caller:type_name -> gmountie.Caller
-	45, // 57: gmountie.ListXAttrReply.status:type_name -> gmountie.FsError
-	10, // 58: gmountie.RpcFs.GetAttr:input_type -> gmountie.GetAttrRequest
-	8,  // 59: gmountie.RpcFs.StatFs:input_type -> gmountie.StatFsRequest
-	16, // 60: gmountie.RpcFs.Unlink:input_type -> gmountie.UnlinkRequest
-	18, // 61: gmountie.RpcFs.Access:input_type -> gmountie.AccessRequest
-	27, // 62: gmountie.RpcFs.Mkdir:input_type -> gmountie.MkdirRequest
-	29, // 63: gmountie.RpcFs.Rmdir:input_type -> gmountie.RmdirRequest
-	31, // 64: gmountie.RpcFs.Rename:input_type -> gmountie.RenameRequest
-	20, // 65: gmountie.RpcFs.Readlink:input_type -> gmountie.ReadlinkRequest
-	33, // 66: gmountie.RpcFs.Symlink:input_type -> gmountie.SymlinkRequest
-	35, // 67: gmountie.RpcFs.GetXAttr:input_type -> gmountie.GetXAttrRequest
-	37, // 68: gmountie.RpcFs.SetXAttr:input_type -> gmountie.SetXAttrRequest
-	39, // 69: gmountie.RpcFs.RemoveXAttr:input_type -> gmountie.RemoveXAttrRequest
-	41, // 70: gmountie.RpcFs.ListXAttr:input_type -> gmountie.ListXAttrRequest
-	12, // 71: gmountie.RpcFs.GetAttrIfChanged:input_type -> gmountie.GetAttrIfChangedRequest
-	14, // 72: gmountie.RpcFs.Subscribe:input_type -> gmountie.SubscribeRequest
-	22, // 73: gmountie.RpcFs.SetAttr:input_type -> gmountie.SetAttrRequest
-	24, // 74: gmountie.RpcFs.ReadDir:input_type -> gmountie.ReadDirRequest
-	5,  // 75: gmountie.RpcFs.Recall:input_type -> gmountie.RecallAck
-	11, // 76: gmountie.RpcFs.GetAttr:output_type -> gmountie.GetAttrReply
-	9,  // 77: gmountie.RpcFs.StatFs:output_type -> gmountie.StatFsReply
-	17, // 78: gmountie.RpcFs.Unlink:output_type -> gmountie.UnlinkReply
-	19, // 79: gmountie.RpcFs.Access:output_type -> gmountie.AccessReply
-	28, // 80: gmountie.RpcFs.Mkdir:output_type -> gmountie.MkdirReply
-	30, // 81: gmountie.RpcFs.Rmdir:output_type -> gmountie.RmdirReply
-	32, // 82: gmountie.RpcFs.Rename:output_type -> gmountie.RenameReply
-	21, // 83: gmountie.RpcFs.Readlink:output_type -> gmountie.ReadlinkReply
-	34, // 84: gmountie.RpcFs.Symlink:output_type -> gmountie.SymlinkReply
-	36, // 85: gmountie.RpcFs.GetXAttr:output_type -> gmountie.GetXAttrReply
-	38, // 86: gmountie.RpcFs.SetXAttr:output_type -> gmountie.SetXAttrReply
-	40, // 87: gmountie.RpcFs.RemoveXAttr:output_type -> gmountie.RemoveXAttrReply
-	42, // 88: gmountie.RpcFs.ListXAttr:output_type -> gmountie.ListXAttrReply
-	13, // 89: gmountie.RpcFs.GetAttrIfChanged:output_type -> gmountie.GetAttrIfChangedReply
-	15, // 90: gmountie.RpcFs.Subscribe:output_type -> gmountie.SubscribeEvent
-	23, // 91: gmountie.RpcFs.SetAttr:output_type -> gmountie.SetAttrReply
-	26, // 92: gmountie.RpcFs.ReadDir:output_type -> gmountie.ReadDirBatch
-	4,  // 93: gmountie.RpcFs.Recall:output_type -> gmountie.RecallMsg
-	76, // [76:94] is the sub-list for method output_type
-	58, // [58:76] is the sub-list for method input_type
-	58, // [58:58] is the sub-list for extension type_name
-	58, // [58:58] is the sub-list for extension extendee
-	0,  // [0:58] is the sub-list for field type_name
+	49, // 56: gmountie.ListXAttrRequest.caller:type_name -> gmountie.Caller
+	50, // 57: gmountie.ListXAttrReply.status:type_name -> gmountie.FsError
+	49, // 58: gmountie.CreateRequest.caller:type_name -> gmountie.Caller
+	2,  // 59: gmountie.CreateRequest.delegation:type_name -> gmountie.DelegationRequest
+	49, // 60: gmountie.WriteOp.caller:type_name -> gmountie.Caller
+	49, // 61: gmountie.ReleaseOp.caller:type_name -> gmountie.Caller
+	43, // 62: gmountie.WalOp.create:type_name -> gmountie.CreateRequest
+	44, // 63: gmountie.WalOp.write:type_name -> gmountie.WriteOp
+	27, // 64: gmountie.WalOp.mkdir:type_name -> gmountie.MkdirRequest
+	29, // 65: gmountie.WalOp.rmdir:type_name -> gmountie.RmdirRequest
+	16, // 66: gmountie.WalOp.unlink:type_name -> gmountie.UnlinkRequest
+	31, // 67: gmountie.WalOp.rename:type_name -> gmountie.RenameRequest
+	33, // 68: gmountie.WalOp.symlink:type_name -> gmountie.SymlinkRequest
+	22, // 69: gmountie.WalOp.set_attr:type_name -> gmountie.SetAttrRequest
+	37, // 70: gmountie.WalOp.set_xattr:type_name -> gmountie.SetXAttrRequest
+	39, // 71: gmountie.WalOp.remove_xattr:type_name -> gmountie.RemoveXAttrRequest
+	45, // 72: gmountie.WalOp.release:type_name -> gmountie.ReleaseOp
+	50, // 73: gmountie.ApplyAck.fserr:type_name -> gmountie.FsError
+	10, // 74: gmountie.RpcFs.GetAttr:input_type -> gmountie.GetAttrRequest
+	8,  // 75: gmountie.RpcFs.StatFs:input_type -> gmountie.StatFsRequest
+	16, // 76: gmountie.RpcFs.Unlink:input_type -> gmountie.UnlinkRequest
+	18, // 77: gmountie.RpcFs.Access:input_type -> gmountie.AccessRequest
+	27, // 78: gmountie.RpcFs.Mkdir:input_type -> gmountie.MkdirRequest
+	29, // 79: gmountie.RpcFs.Rmdir:input_type -> gmountie.RmdirRequest
+	31, // 80: gmountie.RpcFs.Rename:input_type -> gmountie.RenameRequest
+	20, // 81: gmountie.RpcFs.Readlink:input_type -> gmountie.ReadlinkRequest
+	33, // 82: gmountie.RpcFs.Symlink:input_type -> gmountie.SymlinkRequest
+	35, // 83: gmountie.RpcFs.GetXAttr:input_type -> gmountie.GetXAttrRequest
+	37, // 84: gmountie.RpcFs.SetXAttr:input_type -> gmountie.SetXAttrRequest
+	39, // 85: gmountie.RpcFs.RemoveXAttr:input_type -> gmountie.RemoveXAttrRequest
+	41, // 86: gmountie.RpcFs.ListXAttr:input_type -> gmountie.ListXAttrRequest
+	12, // 87: gmountie.RpcFs.GetAttrIfChanged:input_type -> gmountie.GetAttrIfChangedRequest
+	14, // 88: gmountie.RpcFs.Subscribe:input_type -> gmountie.SubscribeRequest
+	22, // 89: gmountie.RpcFs.SetAttr:input_type -> gmountie.SetAttrRequest
+	24, // 90: gmountie.RpcFs.ReadDir:input_type -> gmountie.ReadDirRequest
+	5,  // 91: gmountie.RpcFs.Recall:input_type -> gmountie.RecallAck
+	46, // 92: gmountie.RpcFs.Apply:input_type -> gmountie.WalOp
+	11, // 93: gmountie.RpcFs.GetAttr:output_type -> gmountie.GetAttrReply
+	9,  // 94: gmountie.RpcFs.StatFs:output_type -> gmountie.StatFsReply
+	17, // 95: gmountie.RpcFs.Unlink:output_type -> gmountie.UnlinkReply
+	19, // 96: gmountie.RpcFs.Access:output_type -> gmountie.AccessReply
+	28, // 97: gmountie.RpcFs.Mkdir:output_type -> gmountie.MkdirReply
+	30, // 98: gmountie.RpcFs.Rmdir:output_type -> gmountie.RmdirReply
+	32, // 99: gmountie.RpcFs.Rename:output_type -> gmountie.RenameReply
+	21, // 100: gmountie.RpcFs.Readlink:output_type -> gmountie.ReadlinkReply
+	34, // 101: gmountie.RpcFs.Symlink:output_type -> gmountie.SymlinkReply
+	36, // 102: gmountie.RpcFs.GetXAttr:output_type -> gmountie.GetXAttrReply
+	38, // 103: gmountie.RpcFs.SetXAttr:output_type -> gmountie.SetXAttrReply
+	40, // 104: gmountie.RpcFs.RemoveXAttr:output_type -> gmountie.RemoveXAttrReply
+	42, // 105: gmountie.RpcFs.ListXAttr:output_type -> gmountie.ListXAttrReply
+	13, // 106: gmountie.RpcFs.GetAttrIfChanged:output_type -> gmountie.GetAttrIfChangedReply
+	15, // 107: gmountie.RpcFs.Subscribe:output_type -> gmountie.SubscribeEvent
+	23, // 108: gmountie.RpcFs.SetAttr:output_type -> gmountie.SetAttrReply
+	26, // 109: gmountie.RpcFs.ReadDir:output_type -> gmountie.ReadDirBatch
+	4,  // 110: gmountie.RpcFs.Recall:output_type -> gmountie.RecallMsg
+	47, // 111: gmountie.RpcFs.Apply:output_type -> gmountie.ApplyAck
+	93, // [93:112] is the sub-list for method output_type
+	74, // [74:93] is the sub-list for method input_type
+	74, // [74:74] is the sub-list for extension type_name
+	74, // [74:74] is the sub-list for extension extendee
+	0,  // [0:74] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_fs_proto_init() }
@@ -3494,13 +4137,26 @@ func file_api_proto_fs_proto_init() {
 		return
 	}
 	file_api_proto_common_proto_init()
+	file_api_proto_fs_proto_msgTypes[45].OneofWrappers = []any{
+		(*WalOp_Create)(nil),
+		(*WalOp_Write)(nil),
+		(*WalOp_Mkdir)(nil),
+		(*WalOp_Rmdir)(nil),
+		(*WalOp_Unlink)(nil),
+		(*WalOp_Rename)(nil),
+		(*WalOp_Symlink)(nil),
+		(*WalOp_SetAttr)(nil),
+		(*WalOp_SetXattr)(nil),
+		(*WalOp_RemoveXattr)(nil),
+		(*WalOp_Release)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_fs_proto_rawDesc), len(file_api_proto_fs_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   42,
+			NumMessages:   47,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
