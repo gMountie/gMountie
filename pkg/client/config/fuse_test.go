@@ -133,6 +133,28 @@ func (s *FUSEConfigSuite) TestHandleKillPrivOverride() {
 	s.False(cfg.HandleKillPriv)
 }
 
+// TestAutoXAttrDefaultsOn verifies the macFUSE auto_xattr option defaults ON
+// (nil and empty viper sub-trees), so Finder copies work out of the box.
+func (s *FUSEConfigSuite) TestAutoXAttrDefaultsOn() {
+	cfg, err := NewFUSEConfig(nil)
+	s.Require().NoError(err)
+	s.True(cfg.AutoXAttr, "auto_xattr must default on")
+
+	cfg, err = NewFUSEConfig(viper.New())
+	s.Require().NoError(err)
+	s.True(cfg.AutoXAttr, "empty viper sub-tree must default auto_xattr on")
+}
+
+// TestAutoXAttrOverride verifies fuse.auto_xattr: false round-trips (the
+// opt-out to noappledouble/clean mode is honored, not clobbered by the default).
+func (s *FUSEConfigSuite) TestAutoXAttrOverride() {
+	v := viper.New()
+	v.Set("auto_xattr", false)
+	cfg, err := NewFUSEConfig(v)
+	s.Require().NoError(err)
+	s.False(cfg.AutoXAttr)
+}
+
 func TestFUSEConfigSuite(t *testing.T) {
 	suite.Run(t, new(FUSEConfigSuite))
 }

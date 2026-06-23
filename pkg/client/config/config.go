@@ -176,6 +176,7 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		"attr_timeout",
 		"entry_timeout",
 		"handle_kill_priv",
+		"auto_xattr",
 	})
 	if cfg, err := NewFUSEConfig(fuseSub); err == nil {
 		result.FUSE = cfg
