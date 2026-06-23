@@ -116,25 +116,25 @@ type ClientImpl struct {
 	// connection (ties favour conn 0 so sequential single-stream workloads stay
 	// on one warm connection while concurrent streams spread). inflight tracks
 	// per-connection data-stream in-flight counts for the load-aware picker.
-	conns             []*grpc.ClientConn
-	dataFileClients   []proto.RpcFileClient
-	inflight          []atomic.Int64
-	connections       int
-	dialOptions       []grpc.DialOption
+	conns                   []*grpc.ClientConn
+	dataFileClients         []proto.RpcFileClient
+	inflight                []atomic.Int64
+	connections             int
+	dialOptions             []grpc.DialOption
 	extraInterceptors       []grpc.UnaryClientInterceptor
 	extraStreamInterceptors []grpc.StreamClientInterceptor
 	fs                      proto.RpcFsClient
-	file              proto.RpcFileClient
-	volume            proto.VolumeServiceClient
-	version           proto.VersionServiceClient
-	session           proto.SessionServiceClient
-	handshake         *SessionHandshake
-	metaTimeout       time.Duration
-	ioTimeout         time.Duration
-	retryWindow       time.Duration
-	lifeCtx           context.Context
-	lifeCancel        context.CancelFunc
-	perFile           PerFileConfig
+	file                    proto.RpcFileClient
+	volume                  proto.VolumeServiceClient
+	version                 proto.VersionServiceClient
+	session                 proto.SessionServiceClient
+	handshake               *SessionHandshake
+	metaTimeout             time.Duration
+	ioTimeout               time.Duration
+	retryWindow             time.Duration
+	lifeCtx                 context.Context
+	lifeCancel              context.CancelFunc
+	perFile                 PerFileConfig
 	// metrics is the per-client collector set. Set via WithMetrics; nil
 	// means no in-flight interceptor is wired (the factory always provides one).
 	metrics *metrics.Metrics
