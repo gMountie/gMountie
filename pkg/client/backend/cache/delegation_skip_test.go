@@ -31,8 +31,8 @@ func (o *fakeOracle) IsDelegated(path string) bool {
 // fakeFileHandle is a minimal backend.FileHandle used by fakeCountingInner.Open.
 type fakeFileHandle struct{ path string }
 
-func (h *fakeFileHandle) Path() string                    { return h.path }
-func (h *fakeFileHandle) Unwrap() backend.FileHandle      { return h }
+func (h *fakeFileHandle) Path() string               { return h.path }
+func (h *fakeFileHandle) Unwrap() backend.FileHandle { return h }
 
 // fakeCountingInner is a minimal FileSystemBackend that tracks
 // GetAttrIfChanged calls per path and supports setting per-path server
@@ -157,7 +157,7 @@ func (s *DelegationSkipSuite) TestDelegatedPathSkipsRevalidationWhenUnverified()
 func (s *DelegationSkipSuite) TestRecallRestoresRevalidationSoNoStale() {
 	s.oracle.delegated["proj/a"] = true
 	s.b.validity.markGlobalUnverified()
-	s.primeAttr("proj/a", 7)       // cached version 7
+	s.primeAttr("proj/a", 7)        // cached version 7
 	s.inner.setVersion("proj/a", 8) // server moved on (remote write)
 
 	// While delegated: skip revalidation → cached version 7 is served.

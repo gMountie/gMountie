@@ -65,12 +65,12 @@ func (s *ArbiterSuite) TestGrantThenForeignMutationRecalls() {
 	s.Equal("proj", g.GrantedRoot)
 
 	// B mutates inside A's subtree -> A recalled, A's grant dropped.
-	s.NoError(a.OnMutation("sessB", "proj/file"))
+	s.Require().NoError(a.OnMutation("sessB", "proj/file"))
 	s.Equal([]string{"sessA:proj"}, fr.calls)
 
 	// A's delegation is gone now; B mutating again must NOT recall (no owner).
 	fr.calls = nil
-	s.NoError(a.OnMutation("sessB", "proj/file"))
+	s.Require().NoError(a.OnMutation("sessB", "proj/file"))
 	s.Empty(fr.calls)
 }
 
@@ -78,7 +78,7 @@ func (s *ArbiterSuite) TestSelfMutationNeverRecalls() {
 	fr := &fakeRecaller{}
 	a := s.newArbiter(fr)
 	a.Request("sessA", "proj")
-	s.NoError(a.OnMutation("sessA", "proj/file")) // own subtree
+	s.Require().NoError(a.OnMutation("sessA", "proj/file")) // own subtree
 	s.Empty(fr.calls)
 }
 
@@ -86,11 +86,11 @@ func (s *ArbiterSuite) TestCooldownBlocksImmediateRegrant() {
 	fr := &fakeRecaller{}
 	a := s.newArbiter(fr)
 	a.Request("sessA", "proj")
-	s.NoError(a.OnMutation("sessB", "proj/file")) // recall + trip cooldown on "proj"
+	s.Require().NoError(a.OnMutation("sessB", "proj/file")) // recall + trip cooldown on "proj"
 	// A re-requests immediately -> denied (cooling).
 	g := a.Request("sessA", "proj")
-	s.Equal("", g.GrantedRoot)
-	s.Greater(g.RetryAfterMs, uint64(0))
+	s.Empty(g.GrantedRoot)
+	s.Positive(g.RetryAfterMs)
 }
 
 func (s *ArbiterSuite) TestReleaseSessionFreesSubtree() {
@@ -99,7 +99,7 @@ func (s *ArbiterSuite) TestReleaseSessionFreesSubtree() {
 	a.Request("sessA", "proj")
 	a.ReleaseSession("sessA")
 	// No owner now -> B's mutation recalls nothing; B can take it.
-	s.NoError(a.OnMutation("sessB", "proj/x"))
+	s.Require().NoError(a.OnMutation("sessB", "proj/x"))
 	s.Empty(fr.calls)
 	g := a.Request("sessB", "proj")
 	s.Equal("proj", g.GrantedRoot)
@@ -139,7 +139,7 @@ func (s *ArbiterSuite) TestMetricsWiredOnGrantAndRecall() {
 
 	// Foreign mutation from sessB: recall fires, then RecallInc, CooldownTripInc,
 	// and GrantsActiveSet(0) (table is now empty after release).
-	s.NoError(a.OnMutation("sessB", "proj/file"))
+	s.Require().NoError(a.OnMutation("sessB", "proj/file"))
 	s.Equal(1, fm.recalls, "exactly one recall")
 	s.Equal(1, fm.cooldowns, "exactly one cooldown trip")
 	s.Equal([]int{1, 0}, fm.grantsActive, "GrantsActiveSet must end at 0 after recall")
@@ -244,7 +244,7 @@ func (s *ArbiterSuite) TestConcurrentContendersCoalesceFailure() {
 
 	// BOTH goroutines must return non-nil: leader because recall failed;
 	// coalesced waiter because the root is still foreign-owned after the failure.
-	s.Error(errs[0], "leader must return error on recall failure")
-	s.Error(errs[1], "coalesced waiter must also return error when recall failed")
+	s.Require().Error(errs[0], "leader must return error on recall failure")
+	s.Require().Error(errs[1], "coalesced waiter must also return error when recall failed")
 	s.Equal(1, fr.callCount(), "exactly one recall must fire despite two concurrent contenders")
 }

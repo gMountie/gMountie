@@ -2,22 +2,23 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"io"
 	"sync"
 	"testing"
 	"time"
 
-	"go.gmountie.dev/gmountie/pkg/common"
-	"go.gmountie.dev/gmountie/pkg/proto"
-	serverio "go.gmountie.dev/gmountie/pkg/server/io"
-	"go.gmountie.dev/gmountie/pkg/server/delegation"
-	"go.gmountie.dev/gmountie/pkg/server/principal"
-	"go.gmountie.dev/gmountie/pkg/server/service"
-
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+
+	"go.gmountie.dev/gmountie/pkg/common"
+	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/server/delegation"
+	serverio "go.gmountie.dev/gmountie/pkg/server/io"
+	"go.gmountie.dev/gmountie/pkg/server/principal"
+	"go.gmountie.dev/gmountie/pkg/server/service"
 )
 
 // stubRecallStream is a scriptable bidi stream for the Recall controller tests.
@@ -28,8 +29,7 @@ type stubRecallStream struct {
 	ctx context.Context
 
 	mu      sync.Mutex
-	recvQ   []*proto.RecallAck // pre-loaded acks for Recv to return
-	sent    []*proto.RecallMsg  // msgs pushed by Send
+	sent    []*proto.RecallMsg // msgs pushed by Send
 	recvCh  chan *proto.RecallAck
 	sendErr error // injected Send error, if any
 }
@@ -40,13 +40,6 @@ func newStubRecallStream(ctx context.Context, acks ...*proto.RecallAck) *stubRec
 		ch <- a
 	}
 	return &stubRecallStream{ctx: ctx, recvCh: ch}
-}
-
-// closeRecv drains the ack channel, causing subsequent Recv calls to block
-// until context cancellation. Safe to call multiple times.
-func (s *stubRecallStream) closeRecv() {
-	// Draining only; don't close (to avoid a panic on double-close). The
-	// blocking select on ctx.Done() handles the terminal case.
 }
 
 func (s *stubRecallStream) Send(msg *proto.RecallMsg) error {
@@ -171,7 +164,7 @@ func (s *RecallStreamSuite) TestRecall_RegistersAndDeregisters() {
 
 	select {
 	case err := <-recallResult:
-		s.NoError(err, "recall after registration should succeed")
+		s.Require().NoError(err, "recall after registration should succeed")
 	case <-time.After(3 * time.Second):
 		s.FailNow("reg.Recall did not complete within 3s")
 	}
@@ -181,7 +174,7 @@ func (s *RecallStreamSuite) TestRecall_RegistersAndDeregisters() {
 	select {
 	case err := <-controllerDone:
 		// EOF or context cancel — both are acceptable exits.
-		s.True(err == nil || err == io.EOF ||
+		s.True(err == nil || errors.Is(err, io.EOF) ||
 			status.Code(err) == codes.Canceled ||
 			err.Error() == "EOF",
 			"unexpected error: %v", err)
@@ -191,7 +184,7 @@ func (s *RecallStreamSuite) TestRecall_RegistersAndDeregisters() {
 
 	// After the controller exits, the registry should no longer have a stream.
 	postErr := reg.Recall(sessionID, "post-deregister-root")
-	s.Error(postErr, "registry should reject recall after deregistration")
+	s.Require().Error(postErr, "registry should reject recall after deregistration")
 }
 
 // TestRecall_AckForwardsToRegistry verifies that a RecallAck received from the
@@ -234,7 +227,7 @@ func (s *RecallStreamSuite) TestRecall_AckForwardsToRegistry() {
 
 	select {
 	case err := <-recallDone:
-		s.NoError(err, "registry.Recall should complete without error when ack arrives")
+		s.Require().NoError(err, "registry.Recall should complete without error when ack arrives")
 	case <-time.After(3 * time.Second):
 		s.FailNow("registry.Recall did not complete after ack was injected")
 	}
@@ -271,7 +264,7 @@ func (s *RecallStreamSuite) TestRecall_SessionOwnershipEnforced() {
 	// Confirm the registry never got a registration: sending a recall to
 	// aliceSessionID must fail immediately (no stream registered).
 	regErr := reg.Recall(aliceSessionID, "some-root")
-	s.Error(regErr, "registry must have no registration for alice's session after the rejected stream")
+	s.Require().Error(regErr, "registry must have no registration for alice's session after the rejected stream")
 
 	// Positive control: alice herself can open the stream.
 	aliceAckQ := make(chan *proto.RecallAck, 4)
@@ -308,7 +301,7 @@ func (s *RecallStreamSuite) TestRecall_SessionOwnershipEnforced() {
 	go func() { recallDone <- reg.Recall(aliceSessionID, "alice-root") }()
 	select {
 	case rerr := <-recallDone:
-		s.NoError(rerr, "alice's legitimate recall stream must work")
+		s.Require().NoError(rerr, "alice's legitimate recall stream must work")
 	case <-time.After(3 * time.Second):
 		s.FailNow("alice's recall did not complete in time")
 	}
