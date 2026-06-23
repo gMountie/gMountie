@@ -63,6 +63,11 @@ type BackendClient struct {
 	// behaviour — no Delegation field is stamped and no Apply is called.
 	// Set via WithDelegationHook.
 	delegation DelegationHook
+	// writeDrain is the optional WAL drain injected by Task 10. nil (the
+	// default) makes newFileHandle pass nil → newWalHandle resolves to
+	// writeDrainToWire — byte-identical to the pre-Task-10 behavior.
+	// Set via WithWriteDrain.
+	writeDrain WriteDrain
 }
 
 // BackendOption customizes a BackendClient at construction.
@@ -90,6 +95,20 @@ func WithXattrListings(enabled bool) BackendOption {
 // mount factory sets this iff the cache is enabled.
 func WithoutReadahead() BackendOption {
 	return func(b *BackendClient) { b.noReadahead = true }
+}
+
+// WithWriteDrain sets a WAL drain on the BackendClient. When set, every
+// walHandle constructed by newFileHandle receives d as its WriteDrain instead
+// of the wire default (writeDrainToWire). The WAL coordinator (wal.Coordinator)
+// implements WriteDrain and uses this seam to intercept Flush on delegated
+// paths, appending the pending bytes to the WAL log instead of the wire.
+// Passing nil is a no-op: the existing wire-drain behavior is preserved.
+func WithWriteDrain(d WriteDrain) BackendOption {
+	return func(b *BackendClient) {
+		if d != nil {
+			b.writeDrain = d
+		}
+	}
 }
 
 // perFileConfig returns the client's per-fd tuning, with readahead zeroed when
@@ -1622,5 +1641,5 @@ func (b *BackendClient) newFileHandle(
 	cfg grpcclient.PerFileConfig,
 ) backend.FileHandle {
 	leaf := newGrpcFileHandle(client, volume, path, fd, flags, caller, ioTimeout, sessionID, epoch, cfg)
-	return newWalHandle(b, leaf, cfg.WriteCoalesceBytes, nil)
+	return newWalHandle(b, leaf, cfg.WriteCoalesceBytes, b.writeDrain)
 }

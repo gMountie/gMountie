@@ -47,10 +47,13 @@ import (
 // walHandle calls it on Flush to perform the fused drain+flush in one RTT.
 //
 // The default implementation (writeDrainToWire) writes straight to the wire
-// via BackendClient.writeAndFlushImpl. Task 10 injects a wal.DrainTarget that
+// via BackendClient.writeAndFlushImpl. Task 10 injects a wal.Coordinator that
 // appends an Op to BboltLog before forwarding to the same leaf primitive.
 //
 // Contract:
+//   - path is the file path the handle was opened against (h.leaf.path). The
+//     WAL coordinator uses it for the IsDelegated oracle and the Op.Path field.
+//     The wire-default implementation ignores it.
 //   - pendingData/pendingOff are the snapshot from the coalescer; both are
 //     zero/nil when the coalescer was empty (pure Flush with no buffered bytes).
 //   - requestID is allocated once by walHandle before any retry so the server's
@@ -61,6 +64,7 @@ import (
 type WriteDrain interface {
 	Drain(
 		ctx context.Context,
+		path string,
 		pendingData []byte,
 		pendingOff int64,
 		requestID string,
@@ -75,6 +79,7 @@ type writeDrainToWire struct{}
 
 func (writeDrainToWire) Drain(
 	ctx context.Context,
+	_ string, // path — ignored by the wire drain; used by wal.Coordinator
 	pendingData []byte,
 	pendingOff int64,
 	requestID string,
@@ -252,7 +257,7 @@ func (wh *walHandle) flush(ctx context.Context) proto.FsError {
 	leafFlush := func(ctx context.Context, data []byte, off int64, reqID string) proto.FsError {
 		return wh.b.writeAndFlushImpl(ctx, wh.leaf, data, off, reqID)
 	}
-	st := wh.drain.Drain(ctx, pendingData, pendingOff, requestID, leafFlush)
+	st := wh.drain.Drain(ctx, wh.leaf.path, pendingData, pendingOff, requestID, leafFlush)
 	if st == proto.FsError_FS_OK {
 		wh.dirty.Store(false)
 	}
