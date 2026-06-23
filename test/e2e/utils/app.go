@@ -95,6 +95,11 @@ type AppTestingContext struct {
 	// to the package-level defaults in NewAppTestingContext;
 	// WithFUSEConfig overrides this before NewAppContext sees it.
 	fuseCfg *clientConfig.FUSEConfig
+	// serverAppCtxOpts holds extra AppContextOption values to forward to
+	// server.NewServerAppContext. Used by WAL e2e tests to inject an
+	// in-memory watermark store instead of the default bbolt file.
+	serverAppCtxOpts []server.AppContextOption
+
 	// closed and closeErr make Close idempotent: the first call performs
 	// the teardown and records its result; later calls return that result.
 	// This lets suites register a t.Cleanup safety net right after Start
@@ -145,6 +150,16 @@ func WithHeartbeatInterval(d time.Duration) TestOptions {
 			return
 		}
 		c.cfg.Server.SubscribeHeartbeatInterval = d
+	}
+}
+
+// WithServerAppContextOption forwards an AppContextOption to the
+// server.NewServerAppContext call inside NewAppTestingContext. Use this to
+// inject test-specific server components (e.g. an in-memory watermark store)
+// without modifying the core harness.
+func WithServerAppContextOption(opt server.AppContextOption) TestOptions {
+	return func(c *AppTestingContext) {
+		c.serverAppCtxOpts = append(c.serverAppCtxOpts, opt)
 	}
 }
 
@@ -509,8 +524,8 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 	for _, opt := range options {
 		opt(appCtx)
 	}
-	// Create a new server app context
-	serverCtx, err := server.NewServerAppContext(&appCtx.cfg)
+	// Create a new server app context, forwarding any caller-injected options.
+	serverCtx, err := server.NewServerAppContext(&appCtx.cfg, appCtx.serverAppCtxOpts...)
 	if err != nil {
 		return nil, errors.Wrap(err, "build server app context")
 	}

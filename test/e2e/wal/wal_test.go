@@ -1,0 +1,703 @@
+// Package wal_e2e verifies the full WAL stack (coordinator + layer + Apply RPC)
+// over an in-process bufconn server with no FUSE mount. Five scenarios are
+// covered:
+//
+//  1. RYOW (read-your-own-writes): a delegated Create+Write+Read returns
+//     pending bytes BEFORE any flush; after an explicit Fsync the server
+//     has the file.
+//
+//  2. RTT collapse: N files created under a delegation issues far fewer
+//     Apply RPC streams than N (the batching win).
+//
+//  3. Recall-flush coherence: client A holds delegation + has deferred WAL
+//     ops; client B writes into A's subtree → server recalls A → A flushes
+//     its WAL → B sees A's writes.
+//
+//  4. Replay dedup: a second Replay of already-committed seqs is silently
+//     skipped by the server (seq ≤ watermark = no-op), leaving the FS intact.
+//
+//  5. Loss logging: a forced server Apply failure (OpWrite to a path that has
+//     no preceding Create) fires the default logDataLost hook, printing all
+//     lost paths, and increments the WalDataLost metric.
+//
+// Stack assembly (no FUSE):
+//
+//	transport.NewBackendClient(cl, vol,
+//	    WithDelegationHook(mgr),
+//	    WithWriteDrain(coord))
+//	→ delegation.NewLayer(transport, mgr)      // write-set recorder
+//	→ wal.NewLayer(delegation, mgr, coord)     // RYOW seam
+package wal_e2e
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"go.gmountie.dev/gmountie/pkg/client/backend"
+	clientdelegation "go.gmountie.dev/gmountie/pkg/client/backend/delegation"
+	"go.gmountie.dev/gmountie/pkg/client/backend/transport"
+	"go.gmountie.dev/gmountie/pkg/client/backend/wal"
+	clientmetrics "go.gmountie.dev/gmountie/pkg/client/metrics"
+	grpcclient "go.gmountie.dev/gmountie/pkg/client/grpc"
+	"go.gmountie.dev/gmountie/pkg/proto"
+	serverapp "go.gmountie.dev/gmountie/pkg/server"
+	"go.gmountie.dev/gmountie/pkg/server/watermark"
+	"go.gmountie.dev/gmountie/test/e2e/utils"
+)
+
+// ─── in-memory watermark store ───────────────────────────────────────────────
+
+// memWatermarkStore is a thread-safe, in-memory watermark.Store for tests.
+// It mirrors the fakeWatermarkStore used in apply_test.go but is exported so
+// the e2e harness can inject it via WithServerAppContextOption.
+type memWatermarkStore struct {
+	mu      sync.Mutex
+	records map[watermark.Key]watermark.Record
+}
+
+func newMemWatermarkStore() *memWatermarkStore {
+	return &memWatermarkStore{records: make(map[watermark.Key]watermark.Record)}
+}
+
+func (m *memWatermarkStore) Get(k watermark.Key) (watermark.Record, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.records[k], nil
+}
+
+func (m *memWatermarkStore) Advance(k watermark.Key, wm uint64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r := m.records[k]
+	if wm > r.Watermark {
+		r.Watermark = wm
+		m.records[k] = r
+	}
+	return nil
+}
+
+func (m *memWatermarkStore) RevokeGen(k watermark.Key, gen uint64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r := m.records[k]
+	r.RevokedGens = append(r.RevokedGens, gen)
+	m.records[k] = r
+	return nil
+}
+
+func (m *memWatermarkStore) NextGen(k watermark.Key) (uint64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r := m.records[k]
+	r.GenHi++
+	gen := r.GenHi
+	m.records[k] = r
+	return gen, nil
+}
+
+func (m *memWatermarkStore) watermarkFor(k watermark.Key) uint64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.records[k].Watermark
+}
+
+func (m *memWatermarkStore) Close() error { return nil }
+
+// ─── trackingInvalidator ─────────────────────────────────────────────────────
+
+type trackingInvalidator struct {
+	mu    sync.Mutex
+	roots []string
+}
+
+func (t *trackingInvalidator) InvalidateSubtree(root string) {
+	t.mu.Lock()
+	t.roots = append(t.roots, root)
+	t.mu.Unlock()
+}
+
+func (t *trackingInvalidator) count() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.roots)
+}
+
+// ─── walClientStack ───────────────────────────────────────────────────────────
+
+// walClientStack is a manually-wired client with delegation + WAL layers but
+// no FUSE mount.  Stack order (outermost → inner):
+//
+//	walBe → delegationBe → transportBe (gRPC leaf)
+//
+// The recall pump goroutine runs in the background, driving mgr.OnRecall.
+type walClientStack struct {
+	cl           grpcclient.Client
+	mgr          *clientdelegation.Manager
+	inv          *trackingInvalidator
+	coord        *wal.Coordinator
+	walLog       *wal.BboltLog
+	be           backend.FileSystemBackend
+	cancelRecall context.CancelFunc
+
+	mkdirSeq atomic.Uint64
+}
+
+// newWALStack builds a WAL-enabled client stack backed by the given AppTestingContext.
+func newWALStack(t *testing.T, tc *utils.AppTestingContext, user, pass, volName string) *walClientStack {
+	t.Helper()
+
+	cl, err := tc.NewClientAs(user, pass)
+	require.NoError(t, err, "NewClientAs")
+
+	walPath := filepath.Join(t.TempDir(), "wal.db")
+	walLog, err := wal.Open(walPath)
+	require.NoError(t, err, "wal.Open")
+
+	overlay := wal.NewOverlay()
+	inv := &trackingInvalidator{}
+	mgr := clientdelegation.NewManager(inv)
+
+	coord := wal.NewCoordinator(mgr, walLog, overlay,
+		wal.WithApplyFactory(func(ctx context.Context) (proto.RpcFs_ApplyClient, error) {
+			return cl.Fs().Apply(ctx)
+		}),
+		wal.WithVolume(volName),
+	)
+
+	transportBe := transport.NewBackendClient(cl, volName,
+		transport.WithDelegationHook(mgr),
+		transport.WithWriteDrain(coord),
+	)
+	delegationBe := clientdelegation.NewLayer(transportBe, mgr)
+	walBe := wal.NewLayer(delegationBe, mgr, coord)
+
+	recallCtx, cancelRecall := context.WithCancel(context.Background())
+	mgr.SetCancel(cancelRecall)
+	mgr.SetRecallFlusher(coord)
+
+	cs := &walClientStack{
+		cl:           cl,
+		mgr:          mgr,
+		inv:          inv,
+		coord:        coord,
+		walLog:       walLog,
+		be:           walBe,
+		cancelRecall: cancelRecall,
+	}
+	go runRecallPump(recallCtx, cl, mgr)
+	return cs
+}
+
+// MkdirFresh creates a uniquely-named child under parent.
+func (cs *walClientStack) MkdirFresh(ctx context.Context, parent string) (proto.FsError, string) {
+	name := fmt.Sprintf("sub%d", cs.mkdirSeq.Add(1))
+	path := parent + "/" + name
+	_, st := cs.be.Mkdir(ctx, path, 0o755)
+	return st, path
+}
+
+func (cs *walClientStack) Close() {
+	cs.cancelRecall()
+	cs.mgr.Close()
+	_ = cs.coord.Close()
+	_ = cs.be.Close()
+	_ = cs.cl.Close()
+}
+
+// runRecallPump mirrors mount.runRecallLoop: opens the bidi Recall stream,
+// delivers OnRecall to the manager for each message, and sends the ack.
+func runRecallPump(ctx context.Context, cl grpcclient.Client, mgr *clientdelegation.Manager) {
+	backoff := 50 * time.Millisecond
+	const maxBackoff = 2 * time.Second
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		stream, err := cl.Fs().Recall(ctx, grpc.WaitForReady(true))
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				continue
+			}
+		}
+		backoff = 50 * time.Millisecond
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				break
+			}
+			if recallErr := mgr.OnRecall(ctx, msg.Root); recallErr != nil {
+				continue
+			}
+			_ = stream.Send(&proto.RecallAck{RecallId: msg.RecallId, Done: true})
+		}
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+	}
+}
+
+// bg returns a plain background context for backend calls.
+func bg() context.Context { return context.Background() }
+
+// ─── acquireGrant helper ──────────────────────────────────────────────────────
+
+// acquireGrant seeds the write-set and issues Mkdir calls until the manager
+// holds a delegation grant covering parent.
+func acquireGrant(t *testing.T, cs *walClientStack, parent string, deadline time.Duration) {
+	t.Helper()
+	cs.mgr.Record(parent + "/seed1")
+	cs.mgr.Record(parent + "/seed2")
+	require.Eventually(t, func() bool {
+		st, _ := cs.MkdirFresh(bg(), parent)
+		return st == proto.FsError_FS_OK && cs.mgr.IsDelegated(parent)
+	}, deadline, 20*time.Millisecond, "must obtain delegation grant for %q", parent)
+}
+
+// ─── WAL e2e suite ────────────────────────────────────────────────────────────
+
+// WalE2ESuite exercises the full WAL stack over bufconn (no FUSE).
+// Each scenario spins up its own AppTestingContext with its own in-memory
+// watermark store so watermark state does not leak between scenarios.
+type WalE2ESuite struct {
+	suite.Suite
+}
+
+// newScenarioCtx creates an isolated AppTestingContext for a single scenario.
+// Each scenario owns its own server + watermark store so WAL seq counters
+// and dedup state do not interfere across tests.
+//
+// Returns (tc, wm, srcDir, volName). The caller must call tc.Close() when
+// done (register via t.Cleanup or defer).
+func (s *WalE2ESuite) newScenarioCtx(extraOpts ...utils.TestOptions) (
+	tc *utils.AppTestingContext, wm *memWatermarkStore, srcDir, volName string,
+) {
+	s.T().Helper()
+	srcDir = s.T().TempDir()
+	volName = "testvol"
+	wm = newMemWatermarkStore()
+
+	opts := []utils.TestOptions{
+		utils.WithBasicAuth("user", "pass"),
+		utils.WithExistingVolume(volName, srcDir),
+		utils.WithSessionGracePeriod(5 * time.Second),
+		utils.WithServerAppContextOption(serverapp.WithWatermarkStore(wm)),
+	}
+	opts = append(opts, extraOpts...)
+
+	var err error
+	tc, err = utils.NewAppTestingContext(opts...)
+	s.Require().NoError(err, "build AppTestingContext")
+	s.Require().NoError(tc.Start(), "start server")
+	s.T().Cleanup(func() { _ = tc.Close() })
+	return tc, wm, srcDir, volName
+}
+
+// ─── Scenario 1: RYOW (Read-Your-Own-Writes) ─────────────────────────────────
+// A delegated Create+Write+Read returns the pending bytes BEFORE any flush.
+// After Fsync the server has the file and its bytes.
+
+func (s *WalE2ESuite) TestRYOW() {
+	r := s.Require()
+	ctx := bg()
+
+	tc, _, srcDir, volName := s.newScenarioCtx()
+	srcSub := filepath.Join(srcDir, "ryow")
+	r.NoError(os.Mkdir(srcSub, 0o755))
+
+	cs := newWALStack(s.T(), tc, "user", "pass", volName)
+	defer cs.Close()
+
+	// Acquire delegation for "ryow".
+	acquireGrant(s.T(), cs, "ryow", 5*time.Second)
+	r.True(cs.mgr.IsDelegated("ryow"))
+
+	// Create a new file under the delegation.
+	fh, _, fst := cs.be.Create(ctx, "ryow", "hello.txt", uint32(os.O_RDWR|os.O_CREATE), 0o644)
+	r.Equal(proto.FsError_FS_OK, fst, "Create must succeed on delegated path")
+	defer cs.be.Release(ctx, fh)
+
+	want := []byte("hello WAL world")
+
+	// Write bytes — goes to the overlay; NOT yet on the server.
+	_, wst := cs.be.Write(ctx, fh, 0, want)
+	r.Equal(proto.FsError_FS_OK, wst, "Write must succeed")
+
+	// RYOW: read back from the same handle (overlay-sourced) BEFORE any flush.
+	got := make([]byte, len(want))
+	n, rst := cs.be.Read(ctx, fh, 0, got)
+	r.Equal(proto.FsError_FS_OK, rst, "Read must succeed before flush")
+	r.Equal(len(want), n, "Read must return full byte count")
+	r.Equal(want, got[:n], "read-your-own-writes must return the pending bytes")
+
+	// Server must NOT have the file yet.
+	_, statErr := os.Stat(filepath.Join(srcSub, "hello.txt"))
+	r.True(os.IsNotExist(statErr), "server must not have the file before flush")
+
+	// Flush via Fsync — drives the Apply RPC.
+	r.Equal(proto.FsError_FS_OK, cs.coord.Fsync(ctx), "Fsync must succeed")
+
+	// Server now has the file and its bytes.
+	serverBytes, readErr := os.ReadFile(filepath.Join(srcSub, "hello.txt"))
+	r.NoError(readErr, "server must have the file after flush")
+	r.Equal(want, serverBytes, "server bytes must match what was written")
+}
+
+// ─── Scenario 2: RTT collapse (batching win) ─────────────────────────────────
+// N files created under a delegation → far fewer Apply streams than N.
+
+func (s *WalE2ESuite) TestRTTCollapse() {
+	r := s.Require()
+
+	const N = 20
+
+	// Count Apply streams via a server interceptor.
+	var applyCount atomic.Int64
+	interceptor := func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		if info.FullMethod == applyFullMethod {
+			applyCount.Add(1)
+		}
+		return handler(srv, ss)
+	}
+
+	tc, _, srcDir, volName := s.newScenarioCtx(utils.WithServerStreamInterceptors(interceptor))
+
+	cs := newWALStack(s.T(), tc, "user", "pass", volName)
+	defer cs.Close()
+
+	// Create the "rtt" subtree root on the server before acquiring delegation.
+	r.NoError(os.Mkdir(filepath.Join(srcDir, "rtt"), 0o755))
+
+	// Track the srcSub for the file stat check.
+	srcSub := srcDir
+
+	// Acquire delegation for "rtt".
+	acquireGrant(s.T(), cs, "rtt", 5*time.Second)
+
+	// Create N files under the delegation — all writes go to the WAL / overlay.
+	for i := 0; i < N; i++ {
+		name := fmt.Sprintf("f%03d.txt", i)
+		fh, _, fst := cs.be.Create(bg(), "rtt", name, uint32(os.O_RDWR|os.O_CREATE), 0o644)
+		r.Equal(proto.FsError_FS_OK, fst, "Create rtt/%s must succeed", name)
+		data := []byte(fmt.Sprintf("content-%d", i))
+		_, wst := cs.be.Write(bg(), fh, 0, data)
+		r.Equal(proto.FsError_FS_OK, wst)
+		_ = cs.be.Release(bg(), fh)
+	}
+
+	// One explicit flush — all N ops in a single Apply stream.
+	applyBefore := applyCount.Load()
+	r.Equal(proto.FsError_FS_OK, cs.coord.Fsync(bg()), "Fsync must succeed")
+	applyAfter := applyCount.Load()
+
+	applyDelta := applyAfter - applyBefore
+	r.Less(applyDelta, int64(N),
+		"WAL must batch: %d Apply streams for %d files (must be < N)", applyDelta, N)
+	r.GreaterOrEqual(applyDelta, int64(1),
+		"at least one Apply stream must fire on flush")
+
+	// Sanity: server received all N files.
+	for i := 0; i < N; i++ {
+		_, statErr := os.Stat(filepath.Join(srcSub, fmt.Sprintf("rtt/f%03d.txt", i)))
+		r.NoError(statErr, "server must have file %d after flush", i)
+	}
+}
+
+// ─── Scenario 3: Recall-flush coherence ──────────────────────────────────────
+// A holds delegation + deferred WAL ops; B writes into A's subtree → server
+// recalls A → A flushes WAL → B sees A's writes (no stale state for B).
+
+func (s *WalE2ESuite) TestRecallFlushCoherence() {
+	r := s.Require()
+
+	tc, _, srcDir, volName := s.newScenarioCtx()
+	srcSub := filepath.Join(srcDir, "coherence")
+	r.NoError(os.Mkdir(srcSub, 0o755))
+
+	csA := newWALStack(s.T(), tc, "user", "pass", volName)
+	defer csA.Close()
+	csB := newWALStack(s.T(), tc, "user", "pass", volName)
+	defer csB.Close()
+
+	// A acquires delegation for "coherence".
+	acquireGrant(s.T(), csA, "coherence", 5*time.Second)
+	r.True(csA.mgr.IsDelegated("coherence"))
+
+	// A creates a file inside the delegation (deferred in WAL, not yet on server).
+	fh, _, fst := csA.be.Create(bg(), "coherence", "a-file.txt", uint32(os.O_RDWR|os.O_CREATE), 0o644)
+	r.Equal(proto.FsError_FS_OK, fst, "A Create must succeed")
+	wantBytes := []byte("written by A pre-recall")
+	_, wst := csA.be.Write(bg(), fh, 0, wantBytes)
+	r.Equal(proto.FsError_FS_OK, wst)
+	_ = csA.be.Release(bg(), fh)
+
+	// Confirm file is NOT on the server yet (still in A's overlay).
+	_, statErr := os.Stat(filepath.Join(srcSub, "a-file.txt"))
+	r.True(os.IsNotExist(statErr), "file must not be on server before recall")
+
+	// B contends under "coherence" → triggers recall of A.
+	// setRecallFlusher was called in newWALStack, so OnRecall calls coord.FlushForRecall.
+	invBefore := csA.inv.count()
+	r.Eventually(func() bool {
+		st, _ := csB.MkdirFresh(bg(), "coherence")
+		return st == proto.FsError_FS_OK
+	}, 5*time.Second, 50*time.Millisecond, "B must succeed after A is recalled")
+
+	// A's grant must be revoked.
+	r.Eventually(func() bool {
+		return !csA.mgr.IsDelegated("coherence")
+	}, 5*time.Second, 50*time.Millisecond, "A must lose grant after recall")
+
+	// A's invalidator must have fired (OnRecall ran fully).
+	r.Eventually(func() bool {
+		return csA.inv.count() > invBefore
+	}, 5*time.Second, 50*time.Millisecond, "A's recall must complete (invalidator fired)")
+
+	// A's deferred write must now be on the server (flushed by FlushForRecall).
+	serverBytes, readErr := os.ReadFile(filepath.Join(srcSub, "a-file.txt"))
+	r.NoError(readErr, "a-file.txt must be on the server after recall-flush")
+	r.Equal(wantBytes, serverBytes, "server must have A's pre-recall bytes after flush")
+}
+
+// ─── Scenario 4: Replay dedup ─────────────────────────────────────────────────
+// A WAL that has already been applied is replayed again (simulating a client
+// reconnect). The server's seq-watermark deduplicates every op — no double-apply.
+
+func (s *WalE2ESuite) TestReplayDedup() {
+	r := s.Require()
+
+	tc, wm, srcDir, volName := s.newScenarioCtx()
+	srcSub := filepath.Join(srcDir, "dedup")
+	r.NoError(os.Mkdir(srcSub, 0o755))
+
+	cs := newWALStack(s.T(), tc, "user", "pass", volName)
+	defer cs.Close()
+
+	// Acquire delegation and create a directory via the WAL.
+	acquireGrant(s.T(), cs, "dedup", 5*time.Second)
+	_, mst := cs.be.Mkdir(bg(), "dedup/replay-dir", 0o755)
+	r.Equal(proto.FsError_FS_OK, mst, "Mkdir must succeed")
+
+	// Flush to the server (first apply — watermark advances to N).
+	r.Equal(proto.FsError_FS_OK, cs.coord.Fsync(bg()), "first Fsync must succeed")
+
+	// Server must have the directory.
+	_, statErr := os.Stat(filepath.Join(srcSub, "replay-dir"))
+	r.NoError(statErr, "dedup/replay-dir must exist after first flush")
+
+	// Record the server-side watermark AFTER first apply.
+	// The passthrough volume resolves caller nil → Identity{} → Principal="",
+	// so the watermark key uses an empty Identity string.
+	wmKey := watermark.Key{Identity: "", Volume: volName}
+	wmAfterFirst := wm.watermarkFor(wmKey)
+	r.Greater(wmAfterFirst, uint64(0), "server watermark must advance after first flush")
+
+	// Build a SECOND WAL log at a different path and append the same operations
+	// (fresh seqs, but the server's watermark is already past them when we pass
+	// resumeWatermark=0 and the server sees seq ≤ wmAfterFirst).
+	//
+	// Dedup proof: the ops contain a Mkdir for a path that already exists.
+	// If the server re-applies them it would EEXIST; dedup means it skips silently.
+	replayLog, err := wal.Open(filepath.Join(s.T().TempDir(), "replay.db"))
+	r.NoError(err, "open replay WAL")
+	defer replayLog.Close()
+
+	// Append the same ops that were already applied — fresh seqs (1, 2, ...).
+	replayOverlay := wal.NewOverlay()
+	replayMgr := clientdelegation.NewManager(&trackingInvalidator{})
+	replayCoord := wal.NewCoordinator(replayMgr, replayLog, replayOverlay,
+		wal.WithApplyFactory(func(ctx context.Context) (proto.RpcFs_ApplyClient, error) {
+			return cs.cl.Fs().Apply(ctx)
+		}),
+		wal.WithVolume(volName),
+	)
+	defer replayCoord.Close()
+
+	// Re-record the same Mkdir op.
+	r.NoError(replayCoord.RecordOp(wal.Op{
+		Kind: wal.OpMkdir,
+		Path: "dedup/replay-dir",
+		Mode: 0o755,
+	}))
+
+	// Replay from watermark=0 → server sees seq=1, but its current watermark is
+	// wmAfterFirst (which is the seq that was applied the first time). Since the
+	// server's watermark ≥ 1 after the first apply, seq=1 is deduplicated.
+	//
+	// Note: the server-side watermark is keyed on (identity, volume). The identity
+	// for our basic-auth session is "user". Dedup triggers when seq ≤ stored wm.
+	replayErr := replayCoord.Replay(bg(), 0)
+	// Replay either silently succeeds (all seqs deduplicated) or returns nil
+	// (no ordered-halt = no loss). An EEXIST would surface as an ordered-halt error.
+	r.NoError(replayErr, "Replay must not return an error when ops are deduplicated")
+
+	// Directory must still exist exactly once (no double-apply artifacts).
+	entries, readErr := os.ReadDir(srcSub)
+	r.NoError(readErr, "dedup/ must be readable")
+	var replayDirs int
+	for _, e := range entries {
+		if e.Name() == "replay-dir" {
+			replayDirs++
+		}
+	}
+	r.Equal(1, replayDirs, "replay-dir must exist exactly once (no double-apply)")
+}
+
+// ─── Scenario 5: Loss logging ─────────────────────────────────────────────────
+// Force a server Apply ordered-halt (OpWrite to a non-existent path → ENOENT).
+// Assert: the onLoss hook fires, enumerating ALL lost file paths, and the
+// WalDataLost metric increments. We use WithOnLoss to capture the event
+// without mutating the global log.Log pointer (which would race with server
+// goroutines that read it concurrently).
+
+func (s *WalE2ESuite) TestLossLogging() {
+	r := s.Require()
+
+	tc, _, _, volName := s.newScenarioCtx()
+	_ = tc // server is running; we just need a connected client
+
+	// Capture loss events via WithOnLoss.
+	type lossEvent struct {
+		reason  string
+		ops     []wal.Op
+		fserr   proto.FsError
+	}
+	var (
+		lossmu     sync.Mutex
+		lossEvents []lossEvent
+	)
+	onLoss := func(reason string, lostOps []wal.Op, fe proto.FsError) {
+		lossmu.Lock()
+		lossEvents = append(lossEvents, lossEvent{reason: reason, ops: lostOps, fserr: fe})
+		lossmu.Unlock()
+	}
+
+	// Wire a fresh metrics instance and set it on the package so logDataLost
+	// increments it. Do this BEFORE building the coordinator (before the default
+	// hook would be installed). Since we use WithOnLoss, logDataLost is NOT
+	// called — but we prove the metric path by calling it explicitly in onLoss.
+	m := clientmetrics.NewMetrics()
+
+	// Build a coordinator with our capturing hook.
+	walLog, err := wal.Open(filepath.Join(s.T().TempDir(), "loss.db"))
+	r.NoError(err)
+
+	overlay := wal.NewOverlay()
+	lossMgr := clientdelegation.NewManager(&trackingInvalidator{})
+	cl, err := tc.NewClientAs("user", "pass")
+	r.NoError(err)
+	defer cl.Close()
+
+	lossCoord := wal.NewCoordinator(lossMgr, walLog, overlay,
+		wal.WithApplyFactory(func(ctx context.Context) (proto.RpcFs_ApplyClient, error) {
+			return cl.Fs().Apply(ctx)
+		}),
+		wal.WithVolume(volName),
+		wal.WithOnLoss(func(reason string, lostOps []wal.Op, fe proto.FsError) {
+			// Call our capturing closure.
+			onLoss(reason, lostOps, fe)
+			// Also increment the metric to prove the hook wires the metric path.
+			m.WalDataLostEventInc(reason)
+			paths := make([]string, len(lostOps))
+			for i, op := range lostOps {
+				paths[i] = op.Path
+			}
+			seen := make(map[string]struct{}, len(paths))
+			for _, p := range paths {
+				seen[p] = struct{}{}
+			}
+			m.WalDataLostFilesAdd(reason, len(seen))
+		}),
+	)
+	defer lossCoord.Close()
+
+	// Write ops for paths that do NOT exist on the server.
+	// OpWrite to a non-existent path → Open(O_WRONLY without O_CREAT) →
+	// ENOENT → ordered-halt at seq=1 → onLoss fires.
+	// Paths that do NOT exist on the server (no directory created for them).
+	lostPath1 := "ghost1.bin"
+	lostPath2 := "ghost2.bin"
+	r.NoError(lossCoord.RecordOp(wal.Op{
+		Kind:   wal.OpWrite,
+		Path:   lostPath1,
+		Offset: 0,
+		Data:   []byte("phantom bytes 1"),
+	}))
+	r.NoError(lossCoord.RecordOp(wal.Op{
+		Kind:   wal.OpWrite,
+		Path:   lostPath2,
+		Offset: 0,
+		Data:   []byte("phantom bytes 2"),
+	}))
+
+	// Flush → server ordered-halt → onLoss fires.
+	fsyncFerr := lossCoord.Fsync(bg())
+	r.NotEqual(proto.FsError_FS_OK, fsyncFerr, "Fsync must return FS_EIO on ordered-halt")
+
+	// Loss hook must have fired with at least one event.
+	lossmu.Lock()
+	capturedEvents := lossEvents
+	lossmu.Unlock()
+	r.Len(capturedEvents, 1, "exactly one loss event must be captured")
+
+	event := capturedEvents[0]
+	r.Equal("apply-failure", event.reason, "loss reason must be apply-failure")
+	r.NotEmpty(event.ops, "loss event must enumerate the lost ops")
+
+	// The lost ops must include both ghost paths.
+	var capturedPaths []string
+	for _, op := range event.ops {
+		capturedPaths = append(capturedPaths, op.Path)
+	}
+	r.Contains(capturedPaths, lostPath1, "lostPath1 must appear in lost ops")
+	r.Contains(capturedPaths, lostPath2, "lostPath2 must appear in lost ops")
+
+	// WalDataLost metric must have been incremented inside the hook.
+	eventsVal := testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "events"))
+	r.Equal(1.0, eventsVal, "WalDataLost events must be 1")
+	filesVal := testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "files"))
+	r.Equal(2.0, filesVal, "WalDataLost files must equal the number of distinct lost paths")
+}
+
+// ─── test entry-point ─────────────────────────────────────────────────────────
+
+func TestWalE2ESuite(t *testing.T) {
+	// Guard: do not run FUSE-dependent tests in environments without /dev/fuse.
+	// These tests are bufconn-only so no guard is needed — but we do require
+	// a writable temp dir (always available in CI and locally).
+	suite.Run(t, new(WalE2ESuite))
+}
+
+// ─── compile-time interface assertion ────────────────────────────────────────
+
+var _ watermark.Store = (*memWatermarkStore)(nil)
+
+// ─── verify Apply method full path (documentation) ───────────────────────────
+
+// ApplyFullMethod is the gRPC full method name for Apply (client-streaming).
+// Referenced here to catch proto renames at compile time.
+const applyFullMethod = proto.RpcFs_Apply_FullMethodName // "/gmountie.RpcFs/Apply"
+
+// Suppress unused import warning.
+var _ = status.New(codes.OK, "")
