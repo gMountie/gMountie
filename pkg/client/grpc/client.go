@@ -121,8 +121,9 @@ type ClientImpl struct {
 	inflight          []atomic.Int64
 	connections       int
 	dialOptions       []grpc.DialOption
-	extraInterceptors []grpc.UnaryClientInterceptor
-	fs                proto.RpcFsClient
+	extraInterceptors       []grpc.UnaryClientInterceptor
+	extraStreamInterceptors []grpc.StreamClientInterceptor
+	fs                      proto.RpcFsClient
 	file              proto.RpcFileClient
 	volume            proto.VolumeServiceClient
 	version           proto.VersionServiceClient
@@ -178,6 +179,17 @@ func WithBasicAuth(username, password string) ClientOption {
 func WithUnaryInterceptors(interceptors ...grpc.UnaryClientInterceptor) ClientOption {
 	return func(c *ClientImpl) {
 		c.extraInterceptors = append(c.extraInterceptors, interceptors...)
+	}
+}
+
+// WithStreamInterceptors appends extra stream client interceptors alongside
+// the built-in sessionIDStreamInterceptor. Extras run after the built-in,
+// closest to the streamer. Each interceptor is called once at stream
+// establishment (not per Send/RecvMsg), so sleeping here models one RTT per
+// stream open — the correct model for client-streaming Apply RPCs.
+func WithStreamInterceptors(interceptors ...grpc.StreamClientInterceptor) ClientOption {
+	return func(c *ClientImpl) {
+		c.extraStreamInterceptors = append(c.extraStreamInterceptors, interceptors...)
 	}
 }
 
@@ -554,13 +566,15 @@ func resolverDialTarget(endpoint string) string {
 }
 
 func (c *ClientImpl) getDialOptions() []grpc.DialOption {
+	streamInterceptors := append(
+		[]grpc.StreamClientInterceptor{c.sessionIDStreamInterceptor()},
+		c.extraStreamInterceptors...,
+	)
 	opts := []grpc.DialOption{
 		grpc.WithChainUnaryInterceptor(
 			c.getInterceptors()...,
 		),
-		grpc.WithChainStreamInterceptor(
-			c.sessionIDStreamInterceptor(),
-		),
+		grpc.WithChainStreamInterceptor(streamInterceptors...),
 	}
 
 	// Append the dial options (includes transport credentials from factory).

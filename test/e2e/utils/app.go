@@ -191,6 +191,18 @@ func WithClientUnaryInterceptors(interceptors ...grpc.UnaryClientInterceptor) Te
 	}
 }
 
+// WithClientStreamInterceptors installs extra stream client interceptors on
+// the test gRPC client. The interceptors fire once at stream establishment
+// (not per Send/RecvMsg), so sleeping here models one RTT per stream open.
+// Used by WAN-speedup tests to inject artificial latency that exercises the
+// Apply batching win without requiring tc netem on the loopback interface.
+func WithClientStreamInterceptors(interceptors ...grpc.StreamClientInterceptor) TestOptions {
+	return func(c *AppTestingContext) {
+		c.userClientOptions = append(c.userClientOptions, grpcClient.WithStreamInterceptors(interceptors...))
+		c.clientOptions = append(c.clientOptions, grpcClient.WithStreamInterceptors(interceptors...))
+	}
+}
+
 // WithSessionGracePeriod overrides the server-side session grace period — how
 // long a disconnected session (fds + idempotency cache) is retained before the
 // reaper releases it. Resilience tests set a short grace (e.g. 200ms) so a drop
