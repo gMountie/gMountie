@@ -81,6 +81,25 @@ const (
 	// no loss of privilege-stripping. Older kernels that do not support the
 	// cap simply ignore it. Opt out with fuse.handle_kill_priv: false.
 	DefaultFUSEHandleKillPriv = true
+	// DefaultFUSEAutoXAttr mounts macFUSE with the `auto_xattr` option by
+	// default, so macFUSE stores macOS extended attributes (FinderInfo,
+	// quarantine, resource forks) in `._` AppleDouble sidecar files at the
+	// kernel layer. This is what makes Finder copies work: Finder stamps
+	// FinderInfo on every copy via setattrlist(ATTR_CMN_FNDRINFO), which the
+	// macFUSE 5.x kext rejects with EINVAL — surfacing as Finder "error -50" —
+	// unless it has a `._` store to fall back on. Setting fuse.auto_xattr:
+	// false mounts `noappledouble` instead (no `._`/.DS_Store clutter; xattrs
+	// go server-side through the com.apple.* remap) but then Finder copies
+	// that set FinderInfo fail.
+	//
+	// SUBOPTIMAL by design: the `._` sidecars are kernel-local, not stored as
+	// real server-side xattrs. The cleaner fix — advertising FinderInfo
+	// support so the kext routes setattrlist to our (working) setxattr handler
+	// — is upstream go-fuse work (its darwin layer is community-maintained and
+	// the maintainer has no Mac). FUSE-T/fskit already gives the clean
+	// behaviour. See docs/design/macos-mount.md. macFUSE (go-fuse) path only;
+	// ignored on FUSE-T and Linux.
+	DefaultFUSEAutoXAttr = true
 )
 
 // FUSEConfig holds the FUSE-kernel-side tuning knobs surfaced through
@@ -147,6 +166,13 @@ type FUSEConfig struct {
 	// to NFS; "fskit" forces it (macOS 15+ with the FskitSrvModule extension
 	// installed and enabled, else the mount fails clearly).
 	FuseTBackend string `validate:"omitempty,oneof=auto nfs fskit" mapstructure:"fuset_backend"`
+	// AutoXAttr toggles the macFUSE `auto_xattr` mount option (default true).
+	// True: macFUSE stores macOS xattrs/FinderInfo in `._` AppleDouble files so
+	// Finder copies work. False: mount `noappledouble` (clean, server-side
+	// xattrs) at the cost of Finder copies failing on FinderInfo with -50.
+	// macFUSE (go-fuse) only; ignored on FUSE-T and Linux. See
+	// DefaultFUSEAutoXAttr for the full rationale and tradeoff.
+	AutoXAttr bool `mapstructure:"auto_xattr"`
 }
 
 // NewFUSEConfig parses a FUSEConfig from a viper sub-tree. A nil v
@@ -163,6 +189,7 @@ func NewFUSEConfig(v *viper.Viper) (*FUSEConfig, error) {
 		EntryTimeout:   DefaultFUSEEntryTimeout,
 		Provider:       DefaultFUSEProvider,
 		FuseTBackend:   DefaultFUSETBackend,
+		AutoXAttr:      DefaultFUSEAutoXAttr,
 	}
 	if v == nil {
 		return cfg, nil
@@ -176,6 +203,7 @@ func NewFUSEConfig(v *viper.Viper) (*FUSEConfig, error) {
 	v.SetDefault("entry_timeout", DefaultFUSEEntryTimeout)
 	v.SetDefault("provider", DefaultFUSEProvider)
 	v.SetDefault("fuset_backend", DefaultFUSETBackend)
+	v.SetDefault("auto_xattr", DefaultFUSEAutoXAttr)
 	if err := v.UnmarshalExact(cfg, viper.DecodeHook(mapstructure.StringToTimeDurationHookFunc())); err != nil {
 		return nil, err
 	}

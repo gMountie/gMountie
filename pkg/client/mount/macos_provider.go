@@ -110,8 +110,18 @@ func adapterForProvider(p fuseProvider) adapterKind {
 // go-fuse's MountOptions.Options (it joins them as a single -o list and adds
 // -o iosize=MaxWrite itself in mount_darwin.go). "local" makes Finder show a
 // browsable volume (fixes "terminal sees files, Finder doesn't"); "volname"
-// names it; "noappledouble" suppresses ._*/.DS_Store chatter. go-fuse on darwin
-// is only ever the macFUSE path, so these are unconditional here.
-func goFuseMacFUSEOptions(volume string) []string {
-	return []string{"volname=" + volume, "local", "noappledouble"}
+// names it. go-fuse on darwin is only ever the macFUSE path.
+//
+// The last option toggles macOS xattr handling (see config.DefaultFUSEAutoXAttr):
+//   - autoXattr true (default): "auto_xattr" — macFUSE stores xattrs/FinderInfo
+//     in ._ AppleDouble files, so Finder copies work (Finder's
+//     setattrlist(ATTR_CMN_FNDRINFO) would otherwise EINVAL → "error -50").
+//   - autoXattr false: "noappledouble" — suppresses ._*/.DS_Store chatter and
+//     routes xattrs server-side, but Finder copies that set FinderInfo fail.
+func goFuseMacFUSEOptions(volume string, autoXattr bool) []string {
+	appleXattr := "noappledouble"
+	if autoXattr {
+		appleXattr = "auto_xattr"
+	}
+	return []string{"volname=" + volume, "local", appleXattr}
 }
