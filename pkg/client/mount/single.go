@@ -273,7 +273,21 @@ func (m *SingleVolumeMounterImpl) runRecallLoop(ctx context.Context, mgr *delega
 				if rerr != nil {
 					break
 				}
-				mgr.OnRecall(msg.GetRoot())
+				if err := mgr.OnRecall(ctx, msg.GetRoot()); err != nil {
+					// WAL flush failed: the handoff is aborted. Do NOT send a
+					// RecallAck — letting the server-side RecallRegistry time out
+					// is the least-bad option given the current wire protocol
+					// (RecallAck has no error field). The server will treat the
+					// timeout as a failed recall and may revoke the grant itself.
+					// The inner stream loop continues so later recalls on
+					// unaffected roots can still be processed.
+					log.Log.Error("recall OnRecall failed; skipping RecallAck",
+						zap.String("volume", volume),
+						zap.String("root", msg.GetRoot()),
+						zap.Error(err),
+					)
+					continue
+				}
 				_ = stream.Send(&proto.RecallAck{RecallId: msg.GetRecallId(), Done: true})
 			}
 		}

@@ -6,12 +6,28 @@ import (
 	"sync"
 
 	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
+	"go.uber.org/zap"
 )
 
 // CacheInvalidator is the outward signal sent on recall: the cache must evict
 // every entry whose path falls under the recalled subtree.
 type CacheInvalidator interface {
 	InvalidateSubtree(path string)
+}
+
+// RecallFlusher is implemented by the WAL Coordinator (wired in Task 14). It
+// flushes all pending WAL ops to the server before the recall handoff completes,
+// so the contender always sees the holder's deferred writes. The root parameter
+// names the recalled subtree (for logging/tracing); the current implementation
+// flushes the entire pending prefix, which is a correct superset of root.
+//
+// Implementations must block until the ops are durably acked by the server (or
+// until ctx is cancelled). On permanent failure (ENOSPC, EIO) the WAL onLoss
+// hook has already fired; the error returned here prevents the caller from
+// completing the clean handoff.
+type RecallFlusher interface {
+	FlushForRecall(ctx context.Context, root string) error
 }
 
 // grantState holds one active delegation grant.
@@ -26,12 +42,13 @@ type grantState struct {
 //
 // Concurrency: all exported methods are safe for concurrent use.
 type Manager struct {
-	inv    CacheInvalidator
-	ws     *writeSet
-	mu     sync.RWMutex
-	grants map[string]grantState // keyed by grantedRoot
-	cancel context.CancelFunc    // cancels the recall goroutine; set via SetCancel
-	once   sync.Once
+	inv     CacheInvalidator
+	ws      *writeSet
+	mu      sync.RWMutex
+	grants  map[string]grantState // keyed by grantedRoot
+	cancel  context.CancelFunc    // cancels the recall goroutine; set via SetCancel
+	flusher RecallFlusher         // optional; wired in Task 14 via SetRecallFlusher
+	once    sync.Once
 }
 
 // NewManager constructs a Manager. inv is called with the recalled subtree root
@@ -106,10 +123,49 @@ func (m *Manager) Record(path string) {
 	m.ws.record(path)
 }
 
-// OnRecall drops all grants that cover or are covered by root and then
-// signals the cache to evict the subtree. It is the unit-testable core of
-// the server-driven recall flow (the stream pump is wired in Task 10).
-func (m *Manager) OnRecall(root string) {
+// OnRecall is the handoff barrier for a server-driven recall. It:
+//
+//  1. Flushes the WAL (if a RecallFlusher is wired) BEFORE touching the grant
+//     table or the cache — so the contender always sees the holder's deferred
+//     writes durably on the server before the ack is sent.
+//  2. Drops all grants covering or covered by root.
+//  3. Signals the cache to evict the subtree.
+//
+// The ack is sent by the recall loop in single.go AFTER OnRecall returns. By
+// flushing inside OnRecall the ack is gated on durable write propagation.
+//
+// Flush failure (ENOSPC / EIO): OnRecall returns the error WITHOUT dropping the
+// grant or invalidating the cache. The recall loop must NOT send a RecallAck on
+// error — it skips the Send so the server-side RecallRegistry times out and the
+// contender does not observe a clean handoff. The WAL's onLoss hook (Task 13)
+// has already fired for the lost ops when the error is returned here.
+//
+// nil flusher or no pending WAL ops: flush is skipped, and Phase-1 behaviour
+// (invalidate + drop) is preserved unchanged.
+func (m *Manager) OnRecall(ctx context.Context, root string) error {
+	// Step 1: flush the entire pending WAL prefix (a correct superset of root).
+	// The full-pending-prefix approach is correct because every deferred write
+	// belongs to at least one grant that is being recalled or superseded; the
+	// optimization of flushing only ops touching root is deferred (Task 14 note).
+	m.mu.RLock()
+	flusher := m.flusher
+	m.mu.RUnlock()
+
+	if flusher != nil {
+		if err := flusher.FlushForRecall(ctx, root); err != nil {
+			// Flush failed: onLoss has already fired (Task 11/13) for the lost ops.
+			// Do NOT drop the grant or invalidate — the handoff is aborted. The
+			// recall loop will skip the RecallAck, letting the server timeout the
+			// recall instead of accepting a false clean handoff.
+			log.Log.Error("WAL flush failed before recall handoff; aborting clean ack",
+				zap.String("root", root),
+				zap.Error(err),
+			)
+			return err
+		}
+	}
+
+	// Step 2: drop grants (only after flush succeeds).
 	m.mu.Lock()
 	for key, g := range m.grants {
 		if contains(root, g.grantedRoot) || contains(g.grantedRoot, root) {
@@ -117,9 +173,21 @@ func (m *Manager) OnRecall(root string) {
 		}
 	}
 	m.mu.Unlock()
-	// Call the invalidator outside the lock to avoid holding it during an
-	// external callback (prevents deadlock if the invalidator re-enters Manager).
+
+	// Step 3: signal the cache outside the lock to avoid deadlock if the
+	// invalidator re-enters Manager.
 	m.inv.InvalidateSubtree(root)
+	return nil
+}
+
+// SetRecallFlusher wires the WAL Coordinator's flush capability into the Manager.
+// It must be called before the recall goroutine starts (typically right after
+// NewCoordinator returns in the mount wiring path). Thread-safe: protected by m.mu.
+// Task 14 calls this. Until it is called, OnRecall skips the flush (Phase-1 behavior).
+func (m *Manager) SetRecallFlusher(f RecallFlusher) {
+	m.mu.Lock()
+	m.flusher = f
+	m.mu.Unlock()
 }
 
 // SetCancel registers the context cancel function for the recall goroutine

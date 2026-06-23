@@ -163,7 +163,10 @@ func runRecallPump(ctx context.Context, cl grpcclient.Client, mgr *clientdelegat
 			if err != nil {
 				break // stream dropped; outer loop reconnects
 			}
-			mgr.OnRecall(msg.Root)
+			if recallErr := mgr.OnRecall(ctx, msg.Root); recallErr != nil {
+				// Flush failed: skip the ack (server times out this recall).
+				continue
+			}
 			_ = stream.Send(&proto.RecallAck{RecallId: msg.RecallId, Done: true})
 		}
 		select {
