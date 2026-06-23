@@ -38,6 +38,12 @@ type Metrics struct {
 
 	// Op-level boundary metrics, emitted by the metrics observer layer.
 	OpSeconds *prometheus.HistogramVec
+
+	// WAL data-loss counters. WalDataLost is labelled by reason (apply-failure |
+	// gen-fenced | recall-flush-failure | wal-unreadable) and kind (events | files).
+	// Each discard event increments kind=events by 1 and kind=files by the number
+	// of distinct lost paths.
+	WalDataLost *prometheus.CounterVec
 }
 
 // NewMetrics constructs the set of client collectors. They are NOT
@@ -117,6 +123,10 @@ func NewMetrics() *Metrics {
 			Help:    "FileSystemBackend op latency in seconds, by op and FsError code.",
 			Buckets: prometheus.DefBuckets,
 		}, []string{"op", "code"}),
+		WalDataLost: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gmountie_wal_data_lost_total",
+			Help: "WAL entries discarded without reaching the server. labelled by reason (apply-failure|gen-fenced|recall-flush-failure|wal-unreadable) and kind (events|files).",
+		}, []string{"reason", "kind"}),
 	}
 }
 
@@ -130,6 +140,7 @@ func (m *Metrics) MustRegister(r prometheus.Registerer) {
 		m.ChunksUnlinked, m.GhostEntriesDeleted, m.RefcountUnderflows,
 		m.OrphansReclaimed, m.TmpReclaimed, m.BudgetEvictions, m.DiskBytesUsed,
 		m.OpSeconds,
+		m.WalDataLost,
 	)
 }
 
@@ -146,6 +157,7 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 		m.ChunksUnlinked, m.GhostEntriesDeleted, m.RefcountUnderflows,
 		m.OrphansReclaimed, m.TmpReclaimed, m.BudgetEvictions, m.DiskBytesUsed,
 		m.OpSeconds,
+		m.WalDataLost,
 	}
 	for _, c := range collectors {
 		if err := r.Register(c); err != nil {
@@ -174,6 +186,8 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 					m.SubscribeEventsReceived = existing
 				case prometheus.Collector(m.ChunksUnlinked):
 					m.ChunksUnlinked = existing
+				case prometheus.Collector(m.WalDataLost):
+					m.WalDataLost = existing
 				}
 			case *prometheus.GaugeVec:
 				if c == prometheus.Collector(m.InFlight) {
@@ -289,3 +303,15 @@ func (m *Metrics) BudgetEvictionInc() { m.BudgetEvictions.Inc() }
 
 // DiskBytesUsedSet sets the disk-bytes-used gauge.
 func (m *Metrics) DiskBytesUsedSet(n int64) { m.DiskBytesUsed.Set(float64(n)) }
+
+// WalDataLostEventInc increments the WAL data-loss events counter for the given reason.
+// Call once per discard event (regardless of how many files were lost).
+func (m *Metrics) WalDataLostEventInc(reason string) {
+	m.WalDataLost.WithLabelValues(reason, "events").Inc()
+}
+
+// WalDataLostFilesAdd increments the WAL data-loss files counter for the given reason
+// by count (the number of lost file paths in a single discard event).
+func (m *Metrics) WalDataLostFilesAdd(reason string, count int) {
+	m.WalDataLost.WithLabelValues(reason, "files").Add(float64(count))
+}

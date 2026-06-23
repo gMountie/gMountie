@@ -54,7 +54,9 @@ type Coordinator struct {
 
 	// onLoss is the hook called on an ordered halt (FailedSeq > 0) or gen-fence.
 	// Default is nil (no-op). Set via WithOnLoss.
-	onLoss func(lostOps []Op, fe proto.FsError)
+	// reason identifies the loss path: "apply-failure", "gen-fenced",
+	// "recall-flush-failure", "wal-unreadable".
+	onLoss func(reason string, lostOps []Op, fe proto.FsError)
 
 	// watermark is the highest seq durably acked by the server. Written only
 	// inside Flush/Replay (which hold flushMu); read concurrently by
@@ -79,6 +81,10 @@ type Coordinator struct {
 // NewCoordinator returns a Coordinator. mgr is the delegation oracle; log and
 // overlay hold the durable + in-memory pending state respectively. opts are
 // applied in order and enable flush behaviour (WithApplyFactory, WithVolume, etc.).
+//
+// If no WithOnLoss option is supplied the Coordinator installs a default hook
+// that calls logDataLost (loud ERROR log + WalDataLost metric) using the
+// (identity, volume) derived from the final cfg (after all opts are applied).
 func NewCoordinator(mgr *delegation.Manager, log *BboltLog, overlay *Overlay, opts ...Option) *Coordinator {
 	c := &Coordinator{
 		mgr:       mgr,
@@ -89,6 +95,10 @@ func NewCoordinator(mgr *delegation.Manager, log *BboltLog, overlay *Overlay, op
 	c.capCond = sync.NewCond(&c.capMu)
 	for _, opt := range opts {
 		opt(c)
+	}
+	// Install the default loud-loss hook when the caller hasn't provided one.
+	if c.onLoss == nil {
+		c.onLoss = c.defaultOnLoss()
 	}
 	return c
 }
