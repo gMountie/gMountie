@@ -201,6 +201,21 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 			wal.SetMetrics(cm)
 		}
 
+		// Dead-process recovery (CRIT-2): if a previous mount of this volume left
+		// un-acked ops in wal.db, apply them to the in-memory overlay now so RYOW
+		// is correct for any delegation grants re-acquired during this mount.
+		// This runs synchronously before FUSE starts serving so no reads can
+		// arrive before the overlay is populated.
+		//
+		// A persistent-replay of the ops to the server happens asynchronously once
+		// FUSE is live; see the startup replay goroutine started after establishMount.
+		if err := coord.RebuildOverlay(); err != nil {
+			// RebuildOverlay already fired onLoss("wal-unreadable"); surface the
+			// error to the caller so the mount is rejected rather than silently
+			// operating with a broken overlay.
+			return errors.Wrap(err, "wal: startup overlay rebuild")
+		}
+
 		// Wire the WAL drain into the transport BEFORE constructing the transport
 		// backend (backendOpts are consumed by NewBackendClient below).
 		backendOpts = append(backendOpts, transport.WithWriteDrain(coord))
@@ -307,6 +322,34 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 		if coord != nil {
 			delMgr.SetRecallFlusher(coord)
 			coord.StartIntervalFlusher(walFlushInterval)
+
+			// Startup replay: if wal.db had leftover un-acked ops from a previous
+			// crashed process (CRIT-2), replay them to the server now that a live
+			// connection is available.  The overlay was already rebuilt above
+			// (RebuildOverlay), so RYOW is correct immediately; this goroutine
+			// sends the ops to the server so the data is durably committed.
+			//
+			// coord.Replay is safe to call while flushMu is not held; it acquires
+			// flushMu internally and returns after the Apply stream closes.
+			// Transport errors do NOT fire onLoss (per processAck contract) —
+			// the ops remain in wal.db for the next mount attempt.  Ordered-halt
+			// failures DO fire onLoss (loud ERROR + WalDataLost metric).
+			//
+			// The goroutine captures the mount context so it exits when the volume
+			// is unmounted.  A background context is used for the Apply stream so
+			// the replay can outlive the caller's context without being cancelled.
+			coord_ := coord
+			go func() {
+				// Use a background context so the replay stream is not cancelled
+				// when (for example) a short-lived caller context expires.  The
+				// coord itself is closed on unmount, which terminates any in-flight
+				// stream naturally.
+				if replayErr := coord_.Replay(context.Background(), 0); replayErr != nil {
+					log.Log.Error("startup WAL replay failed; un-acked ops remain in wal.db for next mount",
+						zap.String("volume", volume),
+						zap.Error(replayErr))
+				}
+			}()
 		}
 		m.startRecallGoroutine(delMgr, volume)
 	}

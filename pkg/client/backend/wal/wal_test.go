@@ -388,6 +388,72 @@ func (s *CoordinatorSuite) TestStartIntervalFlusher_CloseRace() {
 	}
 }
 
+// ── Test 9: RebuildOverlay — empty WAL is a no-op ────────────────────────────
+
+// TestRebuildOverlay_EmptyWAL_NoOp verifies that RebuildOverlay on a fresh
+// (empty) log returns nil and leaves the overlay untouched.
+func (s *CoordinatorSuite) TestRebuildOverlay_EmptyWAL_NoOp() {
+	// Fresh coordinator with no ops recorded.
+	err := s.coord.RebuildOverlay()
+	s.Require().NoError(err, "RebuildOverlay on empty WAL must succeed")
+	// Overlay must remain pristine: no paths, no state.
+	s.Assert().False(s.overlay.Has("any/path"), "overlay must be empty after no-op rebuild")
+}
+
+// ── Test 10: RebuildOverlay — leftover ops populate the overlay ───────────────
+
+// TestRebuildOverlay_LeftoverOps_OverlayPopulated verifies the dead-process
+// recovery path:
+//
+//  1. Record ops into a BboltLog without acking them (simulate a crash: write
+//     ops to the log but do NOT call coord.Close(), which would flush them).
+//  2. Close ONLY the BboltLog (release the bbolt file lock).
+//  3. Open a fresh BboltLog on the same file.
+//  4. Build a fresh Coordinator with the new log and a fresh empty Overlay.
+//  5. Call RebuildOverlay.
+//  6. Assert (a) the overlay has the pending state (RYOW correct immediately)
+//     before any Replay.
+func (s *CoordinatorSuite) TestRebuildOverlay_LeftoverOps_OverlayPopulated() {
+	// Step 1: record ops into the existing log WITHOUT closing the coord
+	// (closing coord auto-flushes, which would empty the log).
+	walPath := filepath.Join(s.T().TempDir(), "recovery.db")
+	seedLog, err := Open(walPath)
+	s.Require().NoError(err, "open seed log")
+
+	seedMgr := delegation.NewManager(noopInvalidator{})
+	seedOverlay := NewOverlay()
+	seedCoord := NewCoordinator(seedMgr, seedLog, seedOverlay)
+
+	// Record a Mkdir and a Create op.
+	s.Require().NoError(seedCoord.RecordOp(Op{Kind: OpMkdir, Path: "crash/dir", Mode: 0o40755}))
+	s.Require().NoError(seedCoord.RecordOp(Op{Kind: OpCreate, Path: "crash/dir/file.txt", Mode: 0o644}))
+
+	// Step 2: close ONLY the log (not the coordinator — that would flush).
+	s.Require().NoError(seedLog.Close())
+
+	// Step 3: open a fresh log on the same file.
+	freshLog, err := Open(walPath)
+	s.Require().NoError(err, "open fresh log on same file")
+	s.T().Cleanup(func() { _ = freshLog.Close() })
+
+	// Step 4: fresh coordinator + empty overlay (simulates new process).
+	freshOverlay := NewOverlay()
+	freshMgr := delegation.NewManager(noopInvalidator{})
+	freshCoord := NewCoordinator(freshMgr, freshLog, freshOverlay)
+
+	// Step 5: RebuildOverlay.
+	s.Require().NoError(freshCoord.RebuildOverlay())
+
+	// Step 6(a): overlay must reflect the seeded ops — RYOW before any Replay.
+	s.Assert().True(freshOverlay.Has("crash/dir"), "overlay must have the crashed mkdir")
+	s.Assert().True(freshOverlay.Has("crash/dir/file.txt"), "overlay must have the crashed create")
+
+	// The log must still have all ops (RebuildOverlay is read-only).
+	ops, err := freshLog.Replay(0)
+	s.Require().NoError(err)
+	s.Assert().Len(ops, 2, "log must retain all ops after RebuildOverlay (no truncation)")
+}
+
 func TestCoordinatorSuite(t *testing.T) {
 	suite.Run(t, new(CoordinatorSuite))
 }
