@@ -227,6 +227,35 @@ write-back trade:
   power loss, and to NFS/SMB lease expiry. Target workloads (build trees,
   `node_modules`, scratch, checkpoints) regenerate it.
 
+### 5.1 Loud data-loss logging (REQUIRED)
+
+Deferral makes data loss asynchronous and silent by nature; the **loud,
+file-naming log is the required mitigation that makes any loss auditable and
+hand-recoverable.** On ANY event that discards un-flushed WAL data, emit an
+**ERROR-level** log via `pkg/utils/log` (`log.Log`) that **enumerates the
+affected file paths** — not a count, the actual paths — plus the cause, the seq
+range, and the `(identity, volume)` / delegation. The overlay + WAL are fully
+enumerable at discard time, so the client always knows exactly which files it is
+about to lose. This logging is non-negotiable and is its own tested behavior.
+
+Events that MUST log (client-side, file-level — paths are known):
+
+| Event (§ref) | Logged detail |
+|---|---|
+| Permanent apply-failure, ordered-halt (§3.4) | The failed op's path + `fserr` + seq, **and every still-deferred path after it** (stuck behind the halt, now discarded with the poisoned overlay) |
+| Gen-fence discard on replay (§3.3, §3.5) | Every fenced path (data lost because another client took over the region) + the revoked gen + seq range |
+| Recall-flush failure aborting handoff (§4.3) | The recalled region's pending paths + `fserr` |
+| WAL unreadable on startup (corrupt persist tier) | The WAL file + any entries recoverable enough to name; explicitly log that some entries may be unrecoverable/unnameable |
+
+**Honest limit — machine-death loss is server-side and region-level only.** When
+the client machine dies, its WAL dies with it, so no client-side enumeration is
+possible. The server logs (ERROR) that a reaped/fenced session's region `R` was
+handed off with un-acked WAL — but it cannot name the lost files (it never
+received them). Document this gap; it is irreducible.
+
+A **`WalDataLost` metric** (counter of loss events + a files-lost counter)
+accompanies the log so the loss is alertable, not just greppable.
+
 Data-safety summary (extends delegation-recall.md §8):
 
 | Scenario | Phase 2 |
@@ -281,6 +310,11 @@ resume reply gains `watermark`. Unary op messages unchanged.
   double-apply); superseded replay (revoked gen) → fenced; ordered-halt on
   apply-error → subtree poisoned; WAL survives client-process restart (boot-epoch
   reclaim).
+- **Loud data-loss logging (§5.1, required):** each loss path (permanent
+  apply-failure, gen-fence discard, recall-flush failure) asserts an ERROR log
+  that **enumerates the exact lost file paths** (capture the zap logs in the test
+  and assert the paths appear) + the `WalDataLost` metric increments. A loss that
+  logs only a count, or omits a known path, is a test failure.
 - **E2E (bufconn + netem):** the headline — an `npm install`-like create-heavy
   workload over simulated WAN showing the per-file-RTT collapse (the actual win);
   two-client contention → recall-flush → coherent; machine-death sim → bounded
@@ -301,6 +335,10 @@ resume reply gains `watermark`. Unary op messages unchanged.
    for un-flushed state.
 5. **Recall-flush failure aborting the handoff** — the server must never serve a
    contender on an unconfirmed flush.
+6. **Loud data-loss logging (§5.1)** — EVERY un-flushed-WAL discard path must emit
+   the ERROR log enumerating the lost file paths. A silent discard is the worst
+   possible failure mode here; the plan must cover every loss path, and each is
+   tested for the enumerated-paths log.
 
 ---
 
