@@ -85,18 +85,22 @@ func (r *RpcServerImpl) Mkdir(ctx context.Context, request *proto.MkdirRequest) 
 		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
 			return &proto.MkdirReply{Status: st}, nil
 		}
-		fctx := createContext(ctx, request.Caller)
-		if s := fs.Mkdir(request.Path, request.Mode, fctx); s != fuse.OK {
-			return &proto.MkdirReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
+		res := r.applyPathOp(ctx, fs, &id, request.Volume, PathOp{
+			Kind:   opMkdir,
+			Path:   request.Path,
+			Mode:   request.Mode,
+			Caller: request.Caller,
+		})
+		if res.Status != fuse.OK {
+			return &proto.MkdirReply{Status: applyOpProtoStatus(res.Status)}, nil
 		}
 		// ONE trailing stat serves both the reply attrs and the event seed —
 		// see statAttrsAndEmit for the stat-fail partial-success contract.
-		reply := &proto.MkdirReply{
+		return &proto.MkdirReply{
 			Status:     proto.FsError_FS_OK,
-			Attributes: r.statAttrsAndEmit(ctx, fs, request.Volume, request.Path, &id, fctx),
+			Attributes: res.Attr,
 			Grant:      grantFor(r.arbiter, request.SessionId, request.Delegation),
-		}
-		return reply, nil
+		}, nil
 	})
 }
 
@@ -113,11 +117,13 @@ func (r *RpcServerImpl) Rmdir(ctx context.Context, request *proto.RmdirRequest) 
 		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
 			return &proto.RmdirReply{Status: st}, nil
 		}
-		s := r.deleteEmit(ctx, request.Volume, request.Path, func() fuse.Status {
-			return fs.Rmdir(request.Path, createContext(ctx, request.Caller))
+		res := r.applyPathOp(ctx, fs, nil, request.Volume, PathOp{
+			Kind:   opRmdir,
+			Path:   request.Path,
+			Caller: request.Caller,
 		})
-		reply := &proto.RmdirReply{Status: fserr.FromErrno(syscall.Errno(s))}
-		if s == fuse.OK {
+		reply := &proto.RmdirReply{Status: applyOpProtoStatus(res.Status)}
+		if res.Status == fuse.OK {
 			reply.Grant = grantFor(r.arbiter, request.SessionId, request.Delegation)
 		}
 		return reply, nil
@@ -141,11 +147,14 @@ func (r *RpcServerImpl) Rename(ctx context.Context, request *proto.RenameRequest
 		if st := arbitrateContention(r.arbiter, request.SessionId, request.NewName); st != proto.FsError_FS_OK {
 			return &proto.RenameReply{Status: st}, nil
 		}
-		s := r.renameEmit(ctx, fs, request.Volume, request.OldName, request.NewName, request.Caller, func() fuse.Status {
-			return fs.Rename(request.OldName, request.NewName, createContext(ctx, request.Caller))
+		res := r.applyPathOp(ctx, fs, nil, request.Volume, PathOp{
+			Kind:    opRename,
+			OldName: request.OldName,
+			NewName: request.NewName,
+			Caller:  request.Caller,
 		})
-		reply := &proto.RenameReply{Status: fserr.FromErrno(syscall.Errno(s))}
-		if s == fuse.OK {
+		reply := &proto.RenameReply{Status: applyOpProtoStatus(res.Status)}
+		if res.Status == fuse.OK {
 			reply.Grant = grantFor(r.arbiter, request.SessionId, request.Delegation)
 		}
 		return reply, nil
@@ -180,18 +189,22 @@ func (r *RpcServerImpl) Symlink(ctx context.Context, request *proto.SymlinkReque
 		if st := arbitrateContention(r.arbiter, request.SessionId, request.LinkPath); st != proto.FsError_FS_OK {
 			return &proto.SymlinkReply{Status: st}, nil
 		}
-		fctx := createContext(ctx, request.Caller)
-		if s := fs.Symlink(request.Target, request.LinkPath, fctx); s != fuse.OK {
-			return &proto.SymlinkReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
+		res := r.applyPathOp(ctx, fs, &id, request.Volume, PathOp{
+			Kind:   opSymlink,
+			Path:   request.LinkPath,
+			Target: request.Target,
+			Caller: request.Caller,
+		})
+		if res.Status != fuse.OK {
+			return &proto.SymlinkReply{Status: applyOpProtoStatus(res.Status)}, nil
 		}
 		// ONE trailing stat for both reply attrs and event seed — see
 		// statAttrsAndEmit for the stat-fail partial-success contract.
-		reply := &proto.SymlinkReply{
+		return &proto.SymlinkReply{
 			Status:     proto.FsError_FS_OK,
-			Attributes: r.statAttrsAndEmit(ctx, fs, request.Volume, request.LinkPath, &id, fctx),
+			Attributes: res.Attr,
 			Grant:      grantFor(r.arbiter, request.SessionId, request.Delegation),
-		}
-		return reply, nil
+		}, nil
 	})
 }
 
@@ -295,11 +308,13 @@ func (r *RpcServerImpl) Unlink(ctx context.Context, request *proto.UnlinkRequest
 		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
 			return &proto.UnlinkReply{Status: st}, nil
 		}
-		s := r.deleteEmit(ctx, request.Volume, request.Path, func() fuse.Status {
-			return fs.Unlink(request.Path, createContext(ctx, request.Caller))
+		res := r.applyPathOp(ctx, fs, nil, request.Volume, PathOp{
+			Kind:   opUnlink,
+			Path:   request.Path,
+			Caller: request.Caller,
 		})
-		reply := &proto.UnlinkReply{Status: fserr.FromErrno(syscall.Errno(s))}
-		if s == fuse.OK {
+		reply := &proto.UnlinkReply{Status: applyOpProtoStatus(res.Status)}
+		if res.Status == fuse.OK {
 			reply.Grant = grantFor(r.arbiter, request.SessionId, request.Delegation)
 		}
 		return reply, nil
@@ -348,34 +363,15 @@ func (r *RpcServerImpl) SetAttr(ctx context.Context, request *proto.SetAttrReque
 		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
 			return &proto.SetAttrReply{Status: st}, nil
 		}
-		fctx := createContext(ctx, request.Caller)
-		s, mutated := applySetAttr(fs, request, fctx)
-		if s != fuse.OK {
-			// A failure mid-sequence may leave earlier fields applied; client
-			// caches must still be invalidated. Version 0 (no fresh attr in
-			// hand) makes them revalidate via GetAttrIfChanged.
-			if mutated {
-				r.emitMutatedAttr(ctx, request.Volume, request.Path, nil)
-			}
-			return &proto.SetAttrReply{Status: fserr.FromErrno(syscall.Errno(s))}, nil
+		res := r.applySetAttrOp(ctx, fs, &id, request.Volume, request)
+		if res.Status != fuse.OK {
+			return &proto.SetAttrReply{Status: applyOpProtoStatus(res.Status)}, nil
 		}
-		reply := &proto.SetAttrReply{
-			Status: proto.FsError_FS_OK,
-			Grant:  grantFor(r.arbiter, request.SessionId, request.Delegation),
-		}
-		// ONE trailing stat serves both the reply attrs and the event seed —
-		// emitMutatedAttr deliberately replaces versionAfter, which re-stats.
-		// mutated is false only for a degenerate request with no settable
-		// bits: nothing changed, so no invalidation event is broadcast.
-		if attr, gst := fs.GetAttr(request.Path, fctx); gst.Ok() {
-			reply.Attributes = toProtoAttr(attr, &id)
-			if mutated {
-				r.emitMutatedAttr(ctx, request.Volume, request.Path, attr)
-			}
-		} else if mutated {
-			r.emitMutatedAttr(ctx, request.Volume, request.Path, nil)
-		}
-		return reply, nil
+		return &proto.SetAttrReply{
+			Status:     proto.FsError_FS_OK,
+			Attributes: res.Attr,
+			Grant:      grantFor(r.arbiter, request.SessionId, request.Delegation),
+		}, nil
 	})
 }
 
@@ -478,11 +474,16 @@ func (r *RpcServerImpl) SetXAttr(ctx context.Context, request *proto.SetXAttrReq
 		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
 			return &proto.SetXAttrReply{Status: st}, nil
 		}
-		s := r.mutateEmit(ctx, fs, request.Volume, request.Path, request.Caller, func() fuse.Status {
-			return fs.SetXAttr(request.Path, request.Attribute, request.Data, int(request.Flags), createContext(ctx, request.Caller))
+		res := r.applyPathOp(ctx, fs, nil, request.Volume, PathOp{
+			Kind:   opSetXAttr,
+			Path:   request.Path,
+			XAttr:  request.Attribute,
+			XData:  request.Data,
+			XFlags: int(request.Flags),
+			Caller: request.Caller,
 		})
-		reply := &proto.SetXAttrReply{Status: fserr.FromErrno(syscall.Errno(s))}
-		if s == fuse.OK {
+		reply := &proto.SetXAttrReply{Status: applyOpProtoStatus(res.Status)}
+		if res.Status == fuse.OK {
 			reply.Grant = grantFor(r.arbiter, request.SessionId, request.Delegation)
 		}
 		return reply, nil
@@ -505,11 +506,14 @@ func (r *RpcServerImpl) RemoveXAttr(ctx context.Context, request *proto.RemoveXA
 		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
 			return &proto.RemoveXAttrReply{Status: st}, nil
 		}
-		s := r.mutateEmit(ctx, fs, request.Volume, request.Path, request.Caller, func() fuse.Status {
-			return fs.RemoveXAttr(request.Path, request.Attribute, createContext(ctx, request.Caller))
+		res := r.applyPathOp(ctx, fs, nil, request.Volume, PathOp{
+			Kind:   opRemoveXAttr,
+			Path:   request.Path,
+			XAttr:  request.Attribute,
+			Caller: request.Caller,
 		})
-		reply := &proto.RemoveXAttrReply{Status: fserr.FromErrno(syscall.Errno(s))}
-		if s == fuse.OK {
+		reply := &proto.RemoveXAttrReply{Status: applyOpProtoStatus(res.Status)}
+		if res.Status == fuse.OK {
 			reply.Grant = grantFor(r.arbiter, request.SessionId, request.Delegation)
 		}
 		return reply, nil
