@@ -57,3 +57,86 @@ func (s *StoreSuite) TestGetMissingIsZeroRecord() {
 	s.Equal(uint64(0), r.Watermark)
 	s.Empty(r.RevokedGens)
 }
+
+// TestNextGenMonotoneAndPerKey verifies that NextGen returns 1,2,3,... and
+// that two different keys have independent counters.
+func (s *StoreSuite) TestNextGenMonotoneAndPerKey() {
+	k1 := Key{Identity: "alice", Volume: "vol"}
+	k2 := Key{Identity: "bob", Volume: "vol"}
+	st := s.open()
+	defer func() { s.Require().NoError(st.Close()) }()
+
+	g1, err := st.NextGen(k1)
+	s.Require().NoError(err)
+	s.Equal(uint64(1), g1)
+
+	g2, err := st.NextGen(k1)
+	s.Require().NoError(err)
+	s.Equal(uint64(2), g2)
+
+	g3, err := st.NextGen(k1)
+	s.Require().NoError(err)
+	s.Equal(uint64(3), g3)
+
+	// k2 is a separate key — starts its own counter at 1.
+	gk2, err := st.NextGen(k2)
+	s.Require().NoError(err)
+	s.Equal(uint64(1), gk2, "distinct keys must have independent counters")
+}
+
+// TestNextGenDurableAcrossRestart verifies that reopening the store on the
+// same bbolt file (simulating a server restart) continues the counter ABOVE
+// the prior max and never resets to 1.
+func (s *StoreSuite) TestNextGenDurableAcrossRestart() {
+	k := Key{Identity: "carol", Volume: "vol"}
+
+	st := s.open()
+	g1, _ := st.NextGen(k)
+	g2, _ := st.NextGen(k)
+	g3, _ := st.NextGen(k)
+	s.Require().NoError(st.Close())
+
+	// "Restart": open the same file.
+	st2 := s.open()
+	defer func() { s.Require().NoError(st2.Close()) }()
+
+	g4, err := st2.NextGen(k)
+	s.Require().NoError(err)
+	s.Greater(g4, g3, "post-restart NextGen must be > all pre-restart gens (%d, %d, %d)", g1, g2, g3)
+	s.Equal(g3+1, g4, "gen must be strictly sequential across restart (no gap)")
+}
+
+// TestNextGenNoFalseFenceAcrossRestart is the regression test for the
+// original correctness hole: a gen issued after a restart must NOT collide
+// with a durably-revoked gen from before the restart.
+//
+// Sequence:
+//   1. Issue gen G for key K (pre-restart).
+//   2. RevokeGen(K, G) — durably marks G as revoked.
+//   3. Simulate restart: open a fresh Store on the same file.
+//   4. NextGen(K) must return a value > G (no collision with the revoked gen).
+//   5. The new gen must NOT appear in RevokedGens (no false-fence).
+func (s *StoreSuite) TestNextGenNoFalseFenceAcrossRestart() {
+	k := Key{Identity: "dave", Volume: "vault"}
+
+	st := s.open()
+	g, err := st.NextGen(k)
+	s.Require().NoError(err)
+	s.Require().NoError(st.RevokeGen(k, g))
+	s.Require().NoError(st.Close())
+
+	// Simulate restart.
+	st2 := s.open()
+	defer func() { s.Require().NoError(st2.Close()) }()
+
+	newGen, err := st2.NextGen(k)
+	s.Require().NoError(err)
+	s.Greater(newGen, g, "post-restart gen must be > the revoked gen (no reuse)")
+
+	// The new gen must not be in RevokedGens — that would cause a false-fence.
+	rec, err := st2.Get(k)
+	s.Require().NoError(err)
+	for _, rg := range rec.RevokedGens {
+		s.NotEqual(newGen, rg, "new post-restart gen must not appear in RevokedGens")
+	}
+}

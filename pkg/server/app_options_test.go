@@ -13,10 +13,11 @@ import (
 // fakeWMStore is a minimal in-memory watermark.Store for option-seam tests.
 type fakeWMStore struct{}
 
-func (f *fakeWMStore) Get(_ watermark.Key) (watermark.Record, error)        { return watermark.Record{}, nil }
-func (f *fakeWMStore) Advance(_ watermark.Key, _ uint64) error              { return nil }
-func (f *fakeWMStore) RevokeGen(_ watermark.Key, _ uint64) error            { return nil }
-func (f *fakeWMStore) Close() error                                         { return nil }
+func (f *fakeWMStore) Get(_ watermark.Key) (watermark.Record, error)     { return watermark.Record{}, nil }
+func (f *fakeWMStore) Advance(_ watermark.Key, _ uint64) error           { return nil }
+func (f *fakeWMStore) RevokeGen(_ watermark.Key, _ uint64) error         { return nil }
+func (f *fakeWMStore) NextGen(_ watermark.Key) (uint64, error)           { return 1, nil }
+func (f *fakeWMStore) Close() error                                      { return nil }
 
 // testConfig builds a minimal server config suitable for NewServerAppContext
 // in tests. TLS is disabled and bound to loopback only.

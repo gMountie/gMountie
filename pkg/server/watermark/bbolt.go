@@ -109,6 +109,26 @@ func (s *bboltStore) RevokeGen(k Key, gen uint64) error {
 	}), "RevokeGen watermark")
 }
 
+// NextGen atomically increments GenHi for k and returns the new value.
+// The update is committed durably before return.  gen=0 is never returned
+// (GenHi starts at 0; first call returns 1).
+func (s *bboltStore) NextGen(k Key) (uint64, error) {
+	var next uint64
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		r, err := getRecord(tx, k)
+		if err != nil {
+			return err
+		}
+		r.GenHi++
+		next = r.GenHi
+		return putRecord(tx, k, r)
+	})
+	if err != nil {
+		return 0, errors.Wrap(err, "NextGen watermark")
+	}
+	return next, nil
+}
+
 // Close closes the underlying bbolt database.
 func (s *bboltStore) Close() error {
 	return errors.Wrap(s.db.Close(), "close watermark bbolt")
