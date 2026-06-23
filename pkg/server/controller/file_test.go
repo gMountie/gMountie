@@ -21,7 +21,6 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse/nodefs"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
-	"golang.org/x/sys/unix"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -716,14 +715,14 @@ func (s *RpcFileServerTestSuite) TestLseek_DataAndPastEOF() {
 	fd := s.registerRawFile("lf", []byte("0123456789"))
 
 	reply, err := s.server.Lseek(testAuthedCtx("test-user"), &proto.LseekRequest{
-		Volume: "testVolume", Fd: fd, Offset: 0, Whence: uint32(unix.SEEK_DATA), SessionId: s.sessionID,
+		Volume: "testVolume", Fd: fd, Offset: 0, Whence: proto.SeekWhence_SEEK_WHENCE_DATA, SessionId: s.sessionID,
 	})
 	s.Require().NoError(err)
 	s.Equal(proto.FsError_FS_OK, reply.Status)
 	s.Equal(uint64(0), reply.Offset)
 
 	reply, err = s.server.Lseek(testAuthedCtx("test-user"), &proto.LseekRequest{
-		Volume: "testVolume", Fd: fd, Offset: 100, Whence: uint32(unix.SEEK_DATA), SessionId: s.sessionID,
+		Volume: "testVolume", Fd: fd, Offset: 100, Whence: proto.SeekWhence_SEEK_WHENCE_DATA, SessionId: s.sessionID,
 	})
 	s.Require().NoError(err)
 	s.Equal(proto.FsError_FS_ENXIO, reply.Status)
@@ -732,7 +731,7 @@ func (s *RpcFileServerTestSuite) TestLseek_DataAndPastEOF() {
 func (s *RpcFileServerTestSuite) TestLseek_BadWhence_EINVAL() {
 	fd := s.registerRawFile("lf2", []byte("x"))
 	reply, err := s.server.Lseek(testAuthedCtx("test-user"), &proto.LseekRequest{
-		Volume: "testVolume", Fd: fd, Whence: 0 /* SEEK_SET — kernel never sends it */, SessionId: s.sessionID,
+		Volume: "testVolume", Fd: fd, Whence: proto.SeekWhence_SEEK_WHENCE_SET /* not DATA/HOLE */, SessionId: s.sessionID,
 	})
 	s.Require().NoError(err)
 	s.Equal(proto.FsError_FS_EINVAL, reply.Status)
@@ -740,7 +739,7 @@ func (s *RpcFileServerTestSuite) TestLseek_BadWhence_EINVAL() {
 
 func (s *RpcFileServerTestSuite) TestLseek_BadFd() {
 	reply, err := s.server.Lseek(testAuthedCtx("test-user"), &proto.LseekRequest{
-		Volume: "testVolume", Fd: 9999, Whence: uint32(unix.SEEK_DATA), SessionId: s.sessionID,
+		Volume: "testVolume", Fd: 9999, Whence: proto.SeekWhence_SEEK_WHENCE_DATA, SessionId: s.sessionID,
 	})
 	s.Require().NoError(err)
 	s.Equal(proto.FsError_FS_EBADF, reply.Status)

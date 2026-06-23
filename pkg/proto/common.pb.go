@@ -167,6 +167,177 @@ func (FsError) EnumDescriptor() ([]byte, []int) {
 	return file_api_proto_common_proto_rawDescGZIP(), []int{0}
 }
 
+// SeekWhence is the OS-neutral whence for Lseek. The wire never carries a raw
+// SEEK_* constant because their values differ across OSes — notably SEEK_DATA
+// and SEEK_HOLE are SWAPPED between Linux (3/4) and macOS (4/3). Each side maps
+// to/from its host value via pkg/common/fsconv.
+type SeekWhence int32
+
+const (
+	SeekWhence_SEEK_WHENCE_UNSPECIFIED SeekWhence = 0
+	SeekWhence_SEEK_WHENCE_SET         SeekWhence = 1 // from start
+	SeekWhence_SEEK_WHENCE_CUR         SeekWhence = 2 // from current
+	SeekWhence_SEEK_WHENCE_END         SeekWhence = 3 // from end
+	SeekWhence_SEEK_WHENCE_DATA        SeekWhence = 4 // next data >= offset
+	SeekWhence_SEEK_WHENCE_HOLE        SeekWhence = 5 // next hole >= offset
+)
+
+// Enum value maps for SeekWhence.
+var (
+	SeekWhence_name = map[int32]string{
+		0: "SEEK_WHENCE_UNSPECIFIED",
+		1: "SEEK_WHENCE_SET",
+		2: "SEEK_WHENCE_CUR",
+		3: "SEEK_WHENCE_END",
+		4: "SEEK_WHENCE_DATA",
+		5: "SEEK_WHENCE_HOLE",
+	}
+	SeekWhence_value = map[string]int32{
+		"SEEK_WHENCE_UNSPECIFIED": 0,
+		"SEEK_WHENCE_SET":         1,
+		"SEEK_WHENCE_CUR":         2,
+		"SEEK_WHENCE_END":         3,
+		"SEEK_WHENCE_DATA":        4,
+		"SEEK_WHENCE_HOLE":        5,
+	}
+)
+
+func (x SeekWhence) Enum() *SeekWhence {
+	p := new(SeekWhence)
+	*p = x
+	return p
+}
+
+func (x SeekWhence) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SeekWhence) Descriptor() protoreflect.EnumDescriptor {
+	return file_api_proto_common_proto_enumTypes[1].Descriptor()
+}
+
+func (SeekWhence) Type() protoreflect.EnumType {
+	return &file_api_proto_common_proto_enumTypes[1]
+}
+
+func (x SeekWhence) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SeekWhence.Descriptor instead.
+func (SeekWhence) EnumDescriptor() ([]byte, []int) {
+	return file_api_proto_common_proto_rawDescGZIP(), []int{1}
+}
+
+// LockType is the OS-neutral fcntl byte-range lock type. Raw F_RDLCK/F_WRLCK/
+// F_UNLCK values differ across OSes (Linux 0/1/2, macOS 1/3/2), so the wire
+// carries this and each side maps via pkg/common/fsconv.
+type LockType int32
+
+const (
+	LockType_LOCK_TYPE_UNSPECIFIED LockType = 0
+	LockType_LOCK_TYPE_READ        LockType = 1 // F_RDLCK
+	LockType_LOCK_TYPE_WRITE       LockType = 2 // F_WRLCK
+	LockType_LOCK_TYPE_UNLOCK      LockType = 3 // F_UNLCK
+)
+
+// Enum value maps for LockType.
+var (
+	LockType_name = map[int32]string{
+		0: "LOCK_TYPE_UNSPECIFIED",
+		1: "LOCK_TYPE_READ",
+		2: "LOCK_TYPE_WRITE",
+		3: "LOCK_TYPE_UNLOCK",
+	}
+	LockType_value = map[string]int32{
+		"LOCK_TYPE_UNSPECIFIED": 0,
+		"LOCK_TYPE_READ":        1,
+		"LOCK_TYPE_WRITE":       2,
+		"LOCK_TYPE_UNLOCK":      3,
+	}
+)
+
+func (x LockType) Enum() *LockType {
+	p := new(LockType)
+	*p = x
+	return p
+}
+
+func (x LockType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (LockType) Descriptor() protoreflect.EnumDescriptor {
+	return file_api_proto_common_proto_enumTypes[2].Descriptor()
+}
+
+func (LockType) Type() protoreflect.EnumType {
+	return &file_api_proto_common_proto_enumTypes[2]
+}
+
+func (x LockType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use LockType.Descriptor instead.
+func (LockType) EnumDescriptor() ([]byte, []int) {
+	return file_api_proto_common_proto_rawDescGZIP(), []int{2}
+}
+
+// XAttrCreateMode is the OS-neutral create/replace semantics of a SetXAttr.
+// Raw XATTR_CREATE/XATTR_REPLACE flag values differ (Linux 0x1/0x2, macOS
+// 0x2/0x4) and macOS adds bits Linux rejects with EINVAL (NODEFAULT 0x10 etc.);
+// the two are mutually exclusive, so this enum captures the only portable
+// semantics. Each side maps via pkg/common/fsconv.
+type XAttrCreateMode int32
+
+const (
+	XAttrCreateMode_XATTR_CREATE_MODE_NONE    XAttrCreateMode = 0 // plain set (create or replace)
+	XAttrCreateMode_XATTR_CREATE_MODE_CREATE  XAttrCreateMode = 1 // XATTR_CREATE: fail if it exists
+	XAttrCreateMode_XATTR_CREATE_MODE_REPLACE XAttrCreateMode = 2 // XATTR_REPLACE: fail if it does not exist
+)
+
+// Enum value maps for XAttrCreateMode.
+var (
+	XAttrCreateMode_name = map[int32]string{
+		0: "XATTR_CREATE_MODE_NONE",
+		1: "XATTR_CREATE_MODE_CREATE",
+		2: "XATTR_CREATE_MODE_REPLACE",
+	}
+	XAttrCreateMode_value = map[string]int32{
+		"XATTR_CREATE_MODE_NONE":    0,
+		"XATTR_CREATE_MODE_CREATE":  1,
+		"XATTR_CREATE_MODE_REPLACE": 2,
+	}
+)
+
+func (x XAttrCreateMode) Enum() *XAttrCreateMode {
+	p := new(XAttrCreateMode)
+	*p = x
+	return p
+}
+
+func (x XAttrCreateMode) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (XAttrCreateMode) Descriptor() protoreflect.EnumDescriptor {
+	return file_api_proto_common_proto_enumTypes[3].Descriptor()
+}
+
+func (XAttrCreateMode) Type() protoreflect.EnumType {
+	return &file_api_proto_common_proto_enumTypes[3]
+}
+
+func (x XAttrCreateMode) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use XAttrCreateMode.Descriptor instead.
+func (XAttrCreateMode) EnumDescriptor() ([]byte, []int) {
+	return file_api_proto_common_proto_rawDescGZIP(), []int{3}
+}
+
 type Owner struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Uid           uint32                 `protobuf:"varint,1,opt,name=uid,proto3" json:"uid,omitempty"`
@@ -341,7 +512,24 @@ const file_api_proto_common_proto_rawDesc = "" +
 	"FS_ETXTBSY\x10\x1f\x12\x0e\n" +
 	"\n" +
 	"FS_EDEADLK\x10 \x12\r\n" +
-	"\tFS_ENOLCK\x10!B\vZ\tpkg/protob\x06proto3"
+	"\tFS_ENOLCK\x10!*\x94\x01\n" +
+	"\n" +
+	"SeekWhence\x12\x1b\n" +
+	"\x17SEEK_WHENCE_UNSPECIFIED\x10\x00\x12\x13\n" +
+	"\x0fSEEK_WHENCE_SET\x10\x01\x12\x13\n" +
+	"\x0fSEEK_WHENCE_CUR\x10\x02\x12\x13\n" +
+	"\x0fSEEK_WHENCE_END\x10\x03\x12\x14\n" +
+	"\x10SEEK_WHENCE_DATA\x10\x04\x12\x14\n" +
+	"\x10SEEK_WHENCE_HOLE\x10\x05*d\n" +
+	"\bLockType\x12\x19\n" +
+	"\x15LOCK_TYPE_UNSPECIFIED\x10\x00\x12\x12\n" +
+	"\x0eLOCK_TYPE_READ\x10\x01\x12\x13\n" +
+	"\x0fLOCK_TYPE_WRITE\x10\x02\x12\x14\n" +
+	"\x10LOCK_TYPE_UNLOCK\x10\x03*j\n" +
+	"\x0fXAttrCreateMode\x12\x1a\n" +
+	"\x16XATTR_CREATE_MODE_NONE\x10\x00\x12\x1c\n" +
+	"\x18XATTR_CREATE_MODE_CREATE\x10\x01\x12\x1d\n" +
+	"\x19XATTR_CREATE_MODE_REPLACE\x10\x02B\vZ\tpkg/protob\x06proto3"
 
 var (
 	file_api_proto_common_proto_rawDescOnce sync.Once
@@ -355,15 +543,18 @@ func file_api_proto_common_proto_rawDescGZIP() []byte {
 	return file_api_proto_common_proto_rawDescData
 }
 
-var file_api_proto_common_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_api_proto_common_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
 var file_api_proto_common_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_api_proto_common_proto_goTypes = []any{
-	(FsError)(0),   // 0: gmountie.FsError
-	(*Owner)(nil),  // 1: gmountie.Owner
-	(*Caller)(nil), // 2: gmountie.Caller
+	(FsError)(0),         // 0: gmountie.FsError
+	(SeekWhence)(0),      // 1: gmountie.SeekWhence
+	(LockType)(0),        // 2: gmountie.LockType
+	(XAttrCreateMode)(0), // 3: gmountie.XAttrCreateMode
+	(*Owner)(nil),        // 4: gmountie.Owner
+	(*Caller)(nil),       // 5: gmountie.Caller
 }
 var file_api_proto_common_proto_depIdxs = []int32{
-	1, // 0: gmountie.Caller.owner:type_name -> gmountie.Owner
+	4, // 0: gmountie.Caller.owner:type_name -> gmountie.Owner
 	1, // [1:1] is the sub-list for method output_type
 	1, // [1:1] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
@@ -381,7 +572,7 @@ func file_api_proto_common_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_common_proto_rawDesc), len(file_api_proto_common_proto_rawDesc)),
-			NumEnums:      1,
+			NumEnums:      4,
 			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,

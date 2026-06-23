@@ -25,7 +25,7 @@ type FileLock struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Start         uint64                 `protobuf:"varint,1,opt,name=start,proto3" json:"start,omitempty"`
 	End           uint64                 `protobuf:"varint,2,opt,name=end,proto3" json:"end,omitempty"`
-	Typ           uint32                 `protobuf:"varint,3,opt,name=typ,proto3" json:"typ,omitempty"`
+	Typ           LockType               `protobuf:"varint,3,opt,name=typ,proto3,enum=gmountie.LockType" json:"typ,omitempty"` // OS-neutral; mapped per-host via pkg/common/fsconv
 	Pid           uint32                 `protobuf:"varint,4,opt,name=pid,proto3" json:"pid,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -75,11 +75,11 @@ func (x *FileLock) GetEnd() uint64 {
 	return 0
 }
 
-func (x *FileLock) GetTyp() uint32 {
+func (x *FileLock) GetTyp() LockType {
 	if x != nil {
 		return x.Typ
 	}
-	return 0
+	return LockType_LOCK_TYPE_UNSPECIFIED
 }
 
 func (x *FileLock) GetPid() uint32 {
@@ -1783,7 +1783,7 @@ type LseekRequest struct {
 	Fd            uint64                 `protobuf:"varint,3,opt,name=fd,proto3" json:"fd,omitempty"`
 	Path          string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"` // advisory (logs/diagnostics); server resolves by fd
 	Offset        uint64                 `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
-	Whence        uint32                 `protobuf:"varint,6,opt,name=whence,proto3" json:"whence,omitempty"` // SEEK_DATA | SEEK_HOLE only
+	Whence        SeekWhence             `protobuf:"varint,6,opt,name=whence,proto3,enum=gmountie.SeekWhence" json:"whence,omitempty"` // OS-neutral; mapped per-host via pkg/common/fsconv
 	SessionId     string                 `protobuf:"bytes,7,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1854,11 +1854,11 @@ func (x *LseekRequest) GetOffset() uint64 {
 	return 0
 }
 
-func (x *LseekRequest) GetWhence() uint32 {
+func (x *LseekRequest) GetWhence() SeekWhence {
 	if x != nil {
 		return x.Whence
 	}
-	return 0
+	return SeekWhence_SEEK_WHENCE_UNSPECIFIED
 }
 
 func (x *LseekRequest) GetSessionId() string {
@@ -1924,11 +1924,11 @@ var File_api_proto_file_proto protoreflect.FileDescriptor
 
 const file_api_proto_file_proto_rawDesc = "" +
 	"\n" +
-	"\x14api/proto/file.proto\x12\bgmountie\x1a\x16api/proto/common.proto\x1a\x12api/proto/fs.proto\"V\n" +
+	"\x14api/proto/file.proto\x12\bgmountie\x1a\x16api/proto/common.proto\x1a\x12api/proto/fs.proto\"j\n" +
 	"\bFileLock\x12\x14\n" +
 	"\x05start\x18\x01 \x01(\x04R\x05start\x12\x10\n" +
-	"\x03end\x18\x02 \x01(\x04R\x03end\x12\x10\n" +
-	"\x03typ\x18\x03 \x01(\rR\x03typ\x12\x10\n" +
+	"\x03end\x18\x02 \x01(\x04R\x03end\x12$\n" +
+	"\x03typ\x18\x03 \x01(\x0e2\x12.gmountie.LockTypeR\x03typ\x12\x10\n" +
 	"\x03pid\x18\x04 \x01(\rR\x03pid\"\xb7\x01\n" +
 	"\vOpenRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
@@ -2081,14 +2081,14 @@ const file_api_proto_file_proto_rawDesc = "" +
 	"request_id\x18\f \x01(\tR\trequestId\"b\n" +
 	"\x12CopyFileRangeReply\x12!\n" +
 	"\fbytes_copied\x18\x01 \x01(\x04R\vbytesCopied\x12)\n" +
-	"\x06status\x18\x02 \x01(\x0e2\x11.gmountie.FsErrorR\x06status\"\xc3\x01\n" +
+	"\x06status\x18\x02 \x01(\x0e2\x11.gmountie.FsErrorR\x06status\"\xd9\x01\n" +
 	"\fLseekRequest\x12\x16\n" +
 	"\x06volume\x18\x01 \x01(\tR\x06volume\x12(\n" +
 	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x0e\n" +
 	"\x02fd\x18\x03 \x01(\x04R\x02fd\x12\x12\n" +
 	"\x04path\x18\x04 \x01(\tR\x04path\x12\x16\n" +
-	"\x06offset\x18\x05 \x01(\x04R\x06offset\x12\x16\n" +
-	"\x06whence\x18\x06 \x01(\rR\x06whence\x12\x1d\n" +
+	"\x06offset\x18\x05 \x01(\x04R\x06offset\x12,\n" +
+	"\x06whence\x18\x06 \x01(\x0e2\x14.gmountie.SeekWhenceR\x06whence\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\a \x01(\tR\tsessionId\"O\n" +
 	"\n" +
@@ -2153,75 +2153,79 @@ var file_api_proto_file_proto_goTypes = []any{
 	(*CopyFileRangeReply)(nil),   // 25: gmountie.CopyFileRangeReply
 	(*LseekRequest)(nil),         // 26: gmountie.LseekRequest
 	(*LseekReply)(nil),           // 27: gmountie.LseekReply
-	(*Caller)(nil),               // 28: gmountie.Caller
-	(FsError)(0),                 // 29: gmountie.FsError
-	(*Attr)(nil),                 // 30: gmountie.Attr
-	(*DelegationGrant)(nil),      // 31: gmountie.DelegationGrant
-	(*DelegationRequest)(nil),    // 32: gmountie.DelegationRequest
-	(*CreateRequest)(nil),        // 33: gmountie.CreateRequest
+	(LockType)(0),                // 28: gmountie.LockType
+	(*Caller)(nil),               // 29: gmountie.Caller
+	(FsError)(0),                 // 30: gmountie.FsError
+	(*Attr)(nil),                 // 31: gmountie.Attr
+	(*DelegationGrant)(nil),      // 32: gmountie.DelegationGrant
+	(*DelegationRequest)(nil),    // 33: gmountie.DelegationRequest
+	(SeekWhence)(0),              // 34: gmountie.SeekWhence
+	(*CreateRequest)(nil),        // 35: gmountie.CreateRequest
 }
 var file_api_proto_file_proto_depIdxs = []int32{
-	28, // 0: gmountie.OpenRequest.caller:type_name -> gmountie.Caller
-	29, // 1: gmountie.OpenReply.status:type_name -> gmountie.FsError
-	29, // 2: gmountie.CreateReply.status:type_name -> gmountie.FsError
-	30, // 3: gmountie.CreateReply.attributes:type_name -> gmountie.Attr
-	31, // 4: gmountie.CreateReply.grant:type_name -> gmountie.DelegationGrant
-	29, // 5: gmountie.ReadFrame.status:type_name -> gmountie.FsError
-	32, // 6: gmountie.WriteFrame.delegation:type_name -> gmountie.DelegationRequest
-	29, // 7: gmountie.WriteReply.status:type_name -> gmountie.FsError
-	31, // 8: gmountie.WriteReply.grant:type_name -> gmountie.DelegationGrant
-	29, // 9: gmountie.FsyncReply.status:type_name -> gmountie.FsError
-	29, // 10: gmountie.FlushReply.status:type_name -> gmountie.FsError
-	29, // 11: gmountie.WriteAndFlushReply.status:type_name -> gmountie.FsError
-	30, // 12: gmountie.WriteAndFlushReply.final_attr:type_name -> gmountie.Attr
-	0,  // 13: gmountie.GetLkRequest.lk:type_name -> gmountie.FileLock
-	29, // 14: gmountie.GetLkReply.status:type_name -> gmountie.FsError
-	0,  // 15: gmountie.GetLkReply.lk:type_name -> gmountie.FileLock
-	0,  // 16: gmountie.SetLkRequest.lk:type_name -> gmountie.FileLock
-	29, // 17: gmountie.SetLkReply.status:type_name -> gmountie.FsError
-	0,  // 18: gmountie.SetLkwRequest.lk:type_name -> gmountie.FileLock
-	29, // 19: gmountie.SetLkwReply.status:type_name -> gmountie.FsError
-	28, // 20: gmountie.AllocateRequest.caller:type_name -> gmountie.Caller
-	32, // 21: gmountie.AllocateRequest.delegation:type_name -> gmountie.DelegationRequest
-	29, // 22: gmountie.AllocateReply.status:type_name -> gmountie.FsError
-	31, // 23: gmountie.AllocateReply.grant:type_name -> gmountie.DelegationGrant
-	28, // 24: gmountie.CopyFileRangeRequest.caller:type_name -> gmountie.Caller
-	29, // 25: gmountie.CopyFileRangeReply.status:type_name -> gmountie.FsError
-	28, // 26: gmountie.LseekRequest.caller:type_name -> gmountie.Caller
-	29, // 27: gmountie.LseekReply.status:type_name -> gmountie.FsError
-	1,  // 28: gmountie.RpcFile.Open:input_type -> gmountie.OpenRequest
-	33, // 29: gmountie.RpcFile.Create:input_type -> gmountie.CreateRequest
-	4,  // 30: gmountie.RpcFile.Read:input_type -> gmountie.ReadRequest
-	6,  // 31: gmountie.RpcFile.Write:input_type -> gmountie.WriteFrame
-	10, // 32: gmountie.RpcFile.Release:input_type -> gmountie.ReleaseRequest
-	8,  // 33: gmountie.RpcFile.Fsync:input_type -> gmountie.FsyncRequest
-	12, // 34: gmountie.RpcFile.Flush:input_type -> gmountie.FlushRequest
-	14, // 35: gmountie.RpcFile.WriteAndFlush:input_type -> gmountie.WriteAndFlushRequest
-	16, // 36: gmountie.RpcFile.GetLk:input_type -> gmountie.GetLkRequest
-	18, // 37: gmountie.RpcFile.SetLk:input_type -> gmountie.SetLkRequest
-	20, // 38: gmountie.RpcFile.SetLkw:input_type -> gmountie.SetLkwRequest
-	22, // 39: gmountie.RpcFile.Allocate:input_type -> gmountie.AllocateRequest
-	24, // 40: gmountie.RpcFile.CopyFileRange:input_type -> gmountie.CopyFileRangeRequest
-	26, // 41: gmountie.RpcFile.Lseek:input_type -> gmountie.LseekRequest
-	2,  // 42: gmountie.RpcFile.Open:output_type -> gmountie.OpenReply
-	3,  // 43: gmountie.RpcFile.Create:output_type -> gmountie.CreateReply
-	5,  // 44: gmountie.RpcFile.Read:output_type -> gmountie.ReadFrame
-	7,  // 45: gmountie.RpcFile.Write:output_type -> gmountie.WriteReply
-	11, // 46: gmountie.RpcFile.Release:output_type -> gmountie.ReleaseReply
-	9,  // 47: gmountie.RpcFile.Fsync:output_type -> gmountie.FsyncReply
-	13, // 48: gmountie.RpcFile.Flush:output_type -> gmountie.FlushReply
-	15, // 49: gmountie.RpcFile.WriteAndFlush:output_type -> gmountie.WriteAndFlushReply
-	17, // 50: gmountie.RpcFile.GetLk:output_type -> gmountie.GetLkReply
-	19, // 51: gmountie.RpcFile.SetLk:output_type -> gmountie.SetLkReply
-	21, // 52: gmountie.RpcFile.SetLkw:output_type -> gmountie.SetLkwReply
-	23, // 53: gmountie.RpcFile.Allocate:output_type -> gmountie.AllocateReply
-	25, // 54: gmountie.RpcFile.CopyFileRange:output_type -> gmountie.CopyFileRangeReply
-	27, // 55: gmountie.RpcFile.Lseek:output_type -> gmountie.LseekReply
-	42, // [42:56] is the sub-list for method output_type
-	28, // [28:42] is the sub-list for method input_type
-	28, // [28:28] is the sub-list for extension type_name
-	28, // [28:28] is the sub-list for extension extendee
-	0,  // [0:28] is the sub-list for field type_name
+	28, // 0: gmountie.FileLock.typ:type_name -> gmountie.LockType
+	29, // 1: gmountie.OpenRequest.caller:type_name -> gmountie.Caller
+	30, // 2: gmountie.OpenReply.status:type_name -> gmountie.FsError
+	30, // 3: gmountie.CreateReply.status:type_name -> gmountie.FsError
+	31, // 4: gmountie.CreateReply.attributes:type_name -> gmountie.Attr
+	32, // 5: gmountie.CreateReply.grant:type_name -> gmountie.DelegationGrant
+	30, // 6: gmountie.ReadFrame.status:type_name -> gmountie.FsError
+	33, // 7: gmountie.WriteFrame.delegation:type_name -> gmountie.DelegationRequest
+	30, // 8: gmountie.WriteReply.status:type_name -> gmountie.FsError
+	32, // 9: gmountie.WriteReply.grant:type_name -> gmountie.DelegationGrant
+	30, // 10: gmountie.FsyncReply.status:type_name -> gmountie.FsError
+	30, // 11: gmountie.FlushReply.status:type_name -> gmountie.FsError
+	30, // 12: gmountie.WriteAndFlushReply.status:type_name -> gmountie.FsError
+	31, // 13: gmountie.WriteAndFlushReply.final_attr:type_name -> gmountie.Attr
+	0,  // 14: gmountie.GetLkRequest.lk:type_name -> gmountie.FileLock
+	30, // 15: gmountie.GetLkReply.status:type_name -> gmountie.FsError
+	0,  // 16: gmountie.GetLkReply.lk:type_name -> gmountie.FileLock
+	0,  // 17: gmountie.SetLkRequest.lk:type_name -> gmountie.FileLock
+	30, // 18: gmountie.SetLkReply.status:type_name -> gmountie.FsError
+	0,  // 19: gmountie.SetLkwRequest.lk:type_name -> gmountie.FileLock
+	30, // 20: gmountie.SetLkwReply.status:type_name -> gmountie.FsError
+	29, // 21: gmountie.AllocateRequest.caller:type_name -> gmountie.Caller
+	33, // 22: gmountie.AllocateRequest.delegation:type_name -> gmountie.DelegationRequest
+	30, // 23: gmountie.AllocateReply.status:type_name -> gmountie.FsError
+	32, // 24: gmountie.AllocateReply.grant:type_name -> gmountie.DelegationGrant
+	29, // 25: gmountie.CopyFileRangeRequest.caller:type_name -> gmountie.Caller
+	30, // 26: gmountie.CopyFileRangeReply.status:type_name -> gmountie.FsError
+	29, // 27: gmountie.LseekRequest.caller:type_name -> gmountie.Caller
+	34, // 28: gmountie.LseekRequest.whence:type_name -> gmountie.SeekWhence
+	30, // 29: gmountie.LseekReply.status:type_name -> gmountie.FsError
+	1,  // 30: gmountie.RpcFile.Open:input_type -> gmountie.OpenRequest
+	35, // 31: gmountie.RpcFile.Create:input_type -> gmountie.CreateRequest
+	4,  // 32: gmountie.RpcFile.Read:input_type -> gmountie.ReadRequest
+	6,  // 33: gmountie.RpcFile.Write:input_type -> gmountie.WriteFrame
+	10, // 34: gmountie.RpcFile.Release:input_type -> gmountie.ReleaseRequest
+	8,  // 35: gmountie.RpcFile.Fsync:input_type -> gmountie.FsyncRequest
+	12, // 36: gmountie.RpcFile.Flush:input_type -> gmountie.FlushRequest
+	14, // 37: gmountie.RpcFile.WriteAndFlush:input_type -> gmountie.WriteAndFlushRequest
+	16, // 38: gmountie.RpcFile.GetLk:input_type -> gmountie.GetLkRequest
+	18, // 39: gmountie.RpcFile.SetLk:input_type -> gmountie.SetLkRequest
+	20, // 40: gmountie.RpcFile.SetLkw:input_type -> gmountie.SetLkwRequest
+	22, // 41: gmountie.RpcFile.Allocate:input_type -> gmountie.AllocateRequest
+	24, // 42: gmountie.RpcFile.CopyFileRange:input_type -> gmountie.CopyFileRangeRequest
+	26, // 43: gmountie.RpcFile.Lseek:input_type -> gmountie.LseekRequest
+	2,  // 44: gmountie.RpcFile.Open:output_type -> gmountie.OpenReply
+	3,  // 45: gmountie.RpcFile.Create:output_type -> gmountie.CreateReply
+	5,  // 46: gmountie.RpcFile.Read:output_type -> gmountie.ReadFrame
+	7,  // 47: gmountie.RpcFile.Write:output_type -> gmountie.WriteReply
+	11, // 48: gmountie.RpcFile.Release:output_type -> gmountie.ReleaseReply
+	9,  // 49: gmountie.RpcFile.Fsync:output_type -> gmountie.FsyncReply
+	13, // 50: gmountie.RpcFile.Flush:output_type -> gmountie.FlushReply
+	15, // 51: gmountie.RpcFile.WriteAndFlush:output_type -> gmountie.WriteAndFlushReply
+	17, // 52: gmountie.RpcFile.GetLk:output_type -> gmountie.GetLkReply
+	19, // 53: gmountie.RpcFile.SetLk:output_type -> gmountie.SetLkReply
+	21, // 54: gmountie.RpcFile.SetLkw:output_type -> gmountie.SetLkwReply
+	23, // 55: gmountie.RpcFile.Allocate:output_type -> gmountie.AllocateReply
+	25, // 56: gmountie.RpcFile.CopyFileRange:output_type -> gmountie.CopyFileRangeReply
+	27, // 57: gmountie.RpcFile.Lseek:output_type -> gmountie.LseekReply
+	44, // [44:58] is the sub-list for method output_type
+	30, // [30:44] is the sub-list for method input_type
+	30, // [30:30] is the sub-list for extension type_name
+	30, // [30:30] is the sub-list for extension extendee
+	0,  // [0:30] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_file_proto_init() }

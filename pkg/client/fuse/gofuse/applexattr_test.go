@@ -54,22 +54,3 @@ func (s *AppleXattrSuite) TestRoundTripIsIdentity() {
 			"round-trip must be identity for %q", name)
 	}
 }
-
-func (s *AppleXattrSuite) TestFlagsToBackendTranslatesCreateReplace() {
-	// macOS XATTR_CREATE (0x2) / XATTR_REPLACE (0x4) -> Linux 0x1 / 0x2.
-	s.Equal(uint32(0x1), appleXattrFlagsToBackend(0x2), "macOS XATTR_CREATE -> Linux XATTR_CREATE")
-	s.Equal(uint32(0x2), appleXattrFlagsToBackend(0x4), "macOS XATTR_REPLACE -> Linux XATTR_REPLACE")
-	s.Equal(uint32(0x0), appleXattrFlagsToBackend(0x0), "no flags -> no flags")
-}
-
-func (s *AppleXattrSuite) TestFlagsToBackendDropsMacOSOnlyBits() {
-	// The bits Linux setxattr rejects with EINVAL must be stripped:
-	// XATTR_NOFOLLOW 0x1, XATTR_NOSECURITY 0x8, XATTR_NODEFAULT 0x10 (the one
-	// Finder sends on the FinderInfo write), XATTR_SHOWCOMPRESSION 0x20.
-	for _, f := range []uint32{0x1, 0x8, 0x10, 0x20, 0x10 | 0x1} {
-		s.Equal(uint32(0), appleXattrFlagsToBackend(f),
-			"macOS-only flag 0x%x must translate to 0", f)
-	}
-	// CREATE plus a dropped bit keeps only CREATE.
-	s.Equal(uint32(0x1), appleXattrFlagsToBackend(0x2|0x10))
-}

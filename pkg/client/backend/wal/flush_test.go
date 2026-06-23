@@ -449,7 +449,9 @@ func (s *FlushSuite) TestOpToWalOp_AllKinds() {
 				s.Equal("h.txt", v.SetXattr.Path)
 				s.Equal("user.k", v.SetXattr.Attribute)
 				s.Equal([]byte("v"), v.SetXattr.Data)
-				s.Equal(uint32(1), v.SetXattr.Flags)
+				// #171 retyped Flags to the OS-neutral XAttrCreateMode enum;
+				// raw XATTR_CREATE (1) maps to CREATE via pkg/common/fsconv.
+				s.Equal(proto.XAttrCreateMode_XATTR_CREATE_MODE_CREATE, v.SetXattr.Flags)
 				s.Equal(volume, v.SetXattr.Volume)
 			},
 		},

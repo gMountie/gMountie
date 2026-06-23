@@ -323,7 +323,7 @@ message SetXAttrRequest {
   string path = 3;
   string attribute = 4;
   bytes data = 5;
-  uint32 flags = 6;       // XATTR_CREATE / XATTR_REPLACE
+  XAttrCreateMode flags = 6;  // OS-neutral; mapped per-host via pkg/common/fsconv
   string request_id = 7;
   string session_id = 8;
   DelegationRequest delegation = 9;

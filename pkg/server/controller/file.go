@@ -5,6 +5,7 @@ import (
 	stdio "io"
 	"syscall"
 
+	"go.gmountie.dev/gmountie/pkg/common/fsconv"
 	fserr "go.gmountie.dev/gmountie/pkg/common/fserr"
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/server/delegation"
@@ -14,7 +15,6 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pkg/errors"
-	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -450,11 +450,11 @@ func (r *RpcFileServerImpl) GetLk(ctx context.Context, request *proto.GetLkReque
 		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 	}
 	defer entry.ReleaseRef()
-	lock := &fuse.FileLock{Start: request.Lk.Start, End: request.Lk.End, Typ: request.Lk.Typ, Pid: request.Lk.Pid}
+	lock := &fuse.FileLock{Start: request.Lk.Start, End: request.Lk.End, Typ: fsconv.LockTypeFromProto(request.Lk.Typ), Pid: request.Lk.Pid}
 	out := &fuse.FileLock{}
 	s := entry.File.GetLk(request.Owner, lock, request.Flags, out)
 	return &proto.GetLkReply{
-		Lk:     &proto.FileLock{Start: out.Start, End: out.End, Typ: out.Typ, Pid: out.Pid},
+		Lk:     &proto.FileLock{Start: out.Start, End: out.End, Typ: fsconv.LockTypeToProto(out.Typ), Pid: out.Pid},
 		Status: fserr.FromErrno(syscall.Errno(s)),
 	}, nil
 }
@@ -469,7 +469,7 @@ func (r *RpcFileServerImpl) SetLk(ctx context.Context, request *proto.SetLkReque
 		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 	}
 	defer entry.ReleaseRef()
-	lock := &fuse.FileLock{Start: request.Lk.Start, End: request.Lk.End, Typ: request.Lk.Typ, Pid: request.Lk.Pid}
+	lock := &fuse.FileLock{Start: request.Lk.Start, End: request.Lk.End, Typ: fsconv.LockTypeFromProto(request.Lk.Typ), Pid: request.Lk.Pid}
 	return &proto.SetLkReply{Status: fserr.FromErrno(syscall.Errno(entry.File.SetLk(request.Owner, lock, request.Flags)))}, nil
 }
 
@@ -483,7 +483,7 @@ func (r *RpcFileServerImpl) SetLkw(ctx context.Context, request *proto.SetLkwReq
 		return nil, status.Errorf(codes.NotFound, "fd %d not found in session", request.Fd)
 	}
 	defer entry.ReleaseRef()
-	lock := &fuse.FileLock{Start: request.Lk.Start, End: request.Lk.End, Typ: request.Lk.Typ, Pid: request.Lk.Pid}
+	lock := &fuse.FileLock{Start: request.Lk.Start, End: request.Lk.End, Typ: fsconv.LockTypeFromProto(request.Lk.Typ), Pid: request.Lk.Pid}
 	return &proto.SetLkwReply{Status: fserr.FromErrno(syscall.Errno(entry.File.SetLkw(request.Owner, lock, request.Flags)))}, nil
 }
 
@@ -645,7 +645,7 @@ func (r *RpcFileServerImpl) Lseek(ctx context.Context, request *proto.LseekReque
 	if err != nil {
 		return nil, err
 	}
-	if request.Whence != uint32(unix.SEEK_DATA) && request.Whence != uint32(unix.SEEK_HOLE) {
+	if request.Whence != proto.SeekWhence_SEEK_WHENCE_DATA && request.Whence != proto.SeekWhence_SEEK_WHENCE_HOLE {
 		return &proto.LseekReply{Status: proto.FsError_FS_EINVAL}, nil
 	}
 	entry, ok := sessionFile(sess, request.Fd, request.Volume)
@@ -653,6 +653,6 @@ func (r *RpcFileServerImpl) Lseek(ctx context.Context, request *proto.LseekReque
 		return &proto.LseekReply{Status: proto.FsError_FS_EBADF}, nil
 	}
 	defer entry.ReleaseRef()
-	off, st := serverio.Lseek(entry.File, request.Offset, request.Whence)
+	off, st := serverio.Lseek(entry.File, request.Offset, uint32(fsconv.WhenceFromProto(request.Whence)))
 	return &proto.LseekReply{Offset: off, Status: fserr.FromErrno(syscall.Errno(st))}, nil
 }

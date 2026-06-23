@@ -8,7 +8,7 @@ import "api/proto/fs.proto";
 message FileLock {
   uint64 start = 1;
   uint64 end = 2;
-  uint32 typ = 3;
+  LockType typ = 3;   // OS-neutral; mapped per-host via pkg/common/fsconv
   uint32 pid = 4;
 }
 
@@ -202,7 +202,7 @@ message LseekRequest {
   uint64 fd = 3;
   string path = 4;        // advisory (logs/diagnostics); server resolves by fd
   uint64 offset = 5;
-  uint32 whence = 6;      // SEEK_DATA | SEEK_HOLE only
+  SeekWhence whence = 6;  // OS-neutral; mapped per-host via pkg/common/fsconv
   string session_id = 7;
 }
 
