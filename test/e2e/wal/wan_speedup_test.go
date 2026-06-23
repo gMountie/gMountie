@@ -252,8 +252,7 @@ func (s *WANSpeedupSuite) TestWANSpeedupSuite_Speedup() {
 	var results []wanResult
 
 	for _, delay := range delays {
-		delay := delay
-		s.T().Run(fmt.Sprintf("delay=%v", delay), func(t *testing.T) {
+		s.Run(fmt.Sprintf("delay=%v", delay), func() {
 			// Each sub-run gets its own counter pair (reset inside each run-fn).
 			var unaryCount, streamCount atomic.Int64
 
@@ -276,7 +275,7 @@ func (s *WANSpeedupSuite) TestWANSpeedupSuite_Speedup() {
 			}
 			results = append(results, r)
 
-			t.Logf("delay=%-6v  N=%d  WAL-off=%v  WAL-on=%v  speedup=%.1fx  off-unary=%d  off-streams=%d  on-apply=%d",
+			s.T().Logf("delay=%-6v  N=%d  WAL-off=%v  WAL-on=%v  speedup=%.1fx  off-unary=%d  off-streams=%d  on-apply=%d",
 				delay, N, offDur.Round(time.Millisecond), onDur.Round(time.Millisecond),
 				r.speedup(), offUnary, offStream, onApply)
 
@@ -326,4 +325,3 @@ func (s *WANSpeedupSuite) TestWANSpeedupSuite_Speedup() {
 func TestWANSpeedupSuite(t *testing.T) {
 	suite.Run(t, new(WANSpeedupSuite))
 }
-
