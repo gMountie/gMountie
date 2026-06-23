@@ -7,8 +7,19 @@ import (
 	"go.gmountie.dev/gmountie/pkg/proto"
 )
 
+// Metrics is the arbiter's optional observability sink. Nil = no-op.
+// The interface is defined here (not in pkg/server/metrics) so the
+// delegation package stays free of a metrics import; the adapter at the
+// wiring site satisfies it structurally.
+type Metrics interface {
+	GrantsActiveSet(n int) // current count of held delegations
+	RecallInc()            // a successful recall RTT
+	CooldownTripInc()      // a root entered cooldown
+}
+
 type Config struct {
 	Cooldown cooldownConfig
+	Metrics  Metrics // nil = no observability
 }
 
 // regionState tracks an in-flight recall so concurrent contenders coalesce
@@ -20,6 +31,7 @@ type regionState struct {
 type Arbiter struct {
 	recaller Recaller
 	now      func() time.Time
+	metrics  Metrics // nil = no-op
 
 	mu       sync.Mutex
 	table    *delegationTable
@@ -31,9 +43,31 @@ func NewArbiter(r Recaller, cfg Config, now func() time.Time) *Arbiter {
 	return &Arbiter{
 		recaller: r,
 		now:      now,
+		metrics:  cfg.Metrics,
 		table:    newDelegationTable(),
 		cooldown: newCooldownTable(cfg.Cooldown),
 		regions:  make(map[string]*regionState),
+	}
+}
+
+// mGrantsActive emits the current delegation count; nil-guarded.
+func (a *Arbiter) mGrantsActive() {
+	if a.metrics != nil {
+		a.metrics.GrantsActiveSet(a.table.size())
+	}
+}
+
+// mRecall emits a successful recall; nil-guarded.
+func (a *Arbiter) mRecall() {
+	if a.metrics != nil {
+		a.metrics.RecallInc()
+	}
+}
+
+// mCooldownTrip emits a cooldown trip; nil-guarded.
+func (a *Arbiter) mCooldownTrip() {
+	if a.metrics != nil {
+		a.metrics.CooldownTripInc()
 	}
 }
 
@@ -56,6 +90,7 @@ func (a *Arbiter) Request(owner, root string) *proto.DelegationGrant {
 	if !ok {
 		return &proto.DelegationGrant{RetryAfterMs: uint64(a.cfgRetryMs())}
 	}
+	a.mGrantsActive()
 	return &proto.DelegationGrant{GrantedRoot: granted, ExcludedPaths: excluded}
 }
 
@@ -90,6 +125,9 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 	if err == nil {
 		a.table.release(root)
 		a.cooldown.trip(root, a.now())
+		a.mRecall()
+		a.mCooldownTrip()
+		a.mGrantsActive()
 	}
 	delete(a.regions, root)
 	close(rs.done)
@@ -101,5 +139,6 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 func (a *Arbiter) ReleaseSession(sessionID string) {
 	a.mu.Lock()
 	a.table.releaseOwner(sessionID)
+	a.mGrantsActive()
 	a.mu.Unlock()
 }

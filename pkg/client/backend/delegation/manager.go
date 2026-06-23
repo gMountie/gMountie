@@ -31,7 +31,6 @@ type Manager struct {
 	mu     sync.RWMutex
 	grants map[string]grantState // keyed by grantedRoot
 	cancel context.CancelFunc   // cancels the recall goroutine; set via SetCancel
-	stop   chan struct{}
 	once   sync.Once
 }
 
@@ -42,7 +41,6 @@ func NewManager(inv CacheInvalidator) *Manager {
 		inv:    inv,
 		ws:     newWriteSet(64),
 		grants: make(map[string]grantState),
-		stop:   make(chan struct{}),
 	}
 }
 
@@ -135,8 +133,8 @@ func (m *Manager) SetCancel(cancel context.CancelFunc) {
 	m.mu.Unlock()
 }
 
-// Close stops the recall goroutine by cancelling its context and closing the
-// stop channel. Safe to call multiple times.
+// Close stops the recall goroutine by cancelling its context. Safe to call
+// multiple times.
 func (m *Manager) Close() {
 	m.once.Do(func() {
 		m.mu.RLock()
@@ -145,6 +143,5 @@ func (m *Manager) Close() {
 		if cancel != nil {
 			cancel()
 		}
-		close(m.stop)
 	})
 }

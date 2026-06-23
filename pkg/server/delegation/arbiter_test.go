@@ -112,6 +112,54 @@ func (s *ArbiterSuite) TestRecallFailurePropagates() {
 	s.Error(a.OnMutation("sessB", "proj/file")) // handler maps to FS_EAGAIN
 }
 
+// fakeMetrics records delegation.Metrics calls for assertions.
+type fakeMetrics struct {
+	grantsActive []int
+	recalls      int
+	cooldowns    int
+}
+
+func (f *fakeMetrics) GrantsActiveSet(n int) { f.grantsActive = append(f.grantsActive, n) }
+func (f *fakeMetrics) RecallInc()            { f.recalls++ }
+func (f *fakeMetrics) CooldownTripInc()      { f.cooldowns++ }
+
+func (s *ArbiterSuite) TestMetricsWiredOnGrantAndRecall() {
+	fr := &fakeRecaller{}
+	fm := &fakeMetrics{}
+	s.clock = time.Unix(1000, 0)
+	a := NewArbiter(fr, Config{
+		Cooldown: cooldownConfig{Base: time.Second, Max: time.Minute, Cap: 256},
+		Metrics:  fm,
+	}, s.now)
+
+	// Grant to sessA: should emit GrantsActiveSet(1).
+	g := a.Request("sessA", "proj")
+	s.Equal("proj", g.GrantedRoot)
+	s.Equal([]int{1}, fm.grantsActive, "grant must emit GrantsActiveSet(1)")
+
+	// Foreign mutation from sessB: recall fires, then RecallInc, CooldownTripInc,
+	// and GrantsActiveSet(0) (table is now empty after release).
+	s.NoError(a.OnMutation("sessB", "proj/file"))
+	s.Equal(1, fm.recalls, "exactly one recall")
+	s.Equal(1, fm.cooldowns, "exactly one cooldown trip")
+	s.Equal([]int{1, 0}, fm.grantsActive, "GrantsActiveSet must end at 0 after recall")
+}
+
+func (s *ArbiterSuite) TestMetricsReleaseSession() {
+	fr := &fakeRecaller{}
+	fm := &fakeMetrics{}
+	s.clock = time.Unix(1000, 0)
+	a := NewArbiter(fr, Config{
+		Cooldown: cooldownConfig{Base: time.Second, Max: time.Minute, Cap: 256},
+		Metrics:  fm,
+	}, s.now)
+
+	a.Request("sessA", "proj")
+	fm.grantsActive = nil // reset after grant observation
+	a.ReleaseSession("sessA")
+	s.Equal([]int{0}, fm.grantsActive, "ReleaseSession must emit GrantsActiveSet(0)")
+}
+
 func (s *ArbiterSuite) TestConcurrentContendersCoalesce() {
 	fr := &fakeRecaller{block: make(chan struct{})}
 	a := s.newArbiter(fr)
