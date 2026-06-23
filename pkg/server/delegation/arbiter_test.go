@@ -198,3 +198,53 @@ func (s *ArbiterSuite) TestConcurrentContendersCoalesce() {
 	s.NoError(errs[1])
 	s.Equal(1, fr.callCount(), "exactly one recall must fire despite two concurrent contenders")
 }
+
+// TestConcurrentContendersCoalesceFailure verifies that when the leader's recall
+// FAILS, every coalesced waiter also returns a non-nil error — they must NOT
+// return nil (safe to proceed) while the root is still foreign-owned.
+// This is the C3 coherence fix: prevent coalesced waiters from mutating a
+// still-delegated subtree.
+func (s *ArbiterSuite) TestConcurrentContendersCoalesceFailure() {
+	block := make(chan struct{})
+	fr := &fakeRecaller{
+		failOn: map[string]bool{"sessA": true},
+		block:  block,
+	}
+	a := s.newArbiter(fr)
+	a.Request("sessA", "proj")
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+
+	// Goroutine #1: triggers the recall; the recaller blocks then fails.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		errs[0] = a.OnMutation("sessB", "proj/x")
+	}()
+
+	// Wait until the recall is in-flight.
+	s.Eventually(func() bool {
+		return fr.callCount() == 1
+	}, time.Second, time.Millisecond)
+
+	// Goroutine #2: coalesces onto the in-flight (failing) recall.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		errs[1] = a.OnMutation("sessB", "proj/x")
+	}()
+
+	// Give goroutine #2 a moment to enter the coalesce branch, then let the
+	// recall fail.
+	time.Sleep(10 * time.Millisecond)
+	close(block)
+
+	wg.Wait()
+
+	// BOTH goroutines must return non-nil: leader because recall failed;
+	// coalesced waiter because the root is still foreign-owned after the failure.
+	s.Error(errs[0], "leader must return error on recall failure")
+	s.Error(errs[1], "coalesced waiter must also return error when recall failed")
+	s.Equal(1, fr.callCount(), "exactly one recall must fire despite two concurrent contenders")
+}
