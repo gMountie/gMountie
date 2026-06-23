@@ -189,7 +189,11 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 		layers = append(layers, backendLayer{pos: posCache, build: func(inner backend.FileSystemBackend) backend.FileSystemBackend {
 			cb := cache.NewCachedBackend(inner, cacheCfg, p, client.Fs(), volume, rec, delMgr_)
 			// Wire the forward-ref adapter: after this point OnRecall can reach the real cache.
-			inv_.set(cb.(delegation.CacheInvalidator))
+			if ci, ok := cb.(delegation.CacheInvalidator); ok {
+				inv_.set(ci)
+			} else {
+				log.Log.Error("cache backend does not implement CacheInvalidator; delegation recalls will not invalidate the cache")
+			}
 			return cb
 		}})
 
@@ -261,6 +265,9 @@ func (m *SingleVolumeMounterImpl) runRecallLoop(ctx context.Context, mgr *delega
 	for ctx.Err() == nil {
 		stream, err := m.client.Fs().Recall(ctx, waitForReady())
 		if err == nil {
+			// Reset backoff on a successful stream open so that after a
+			// server restart the goroutine doesn't stay pinned at the max.
+			backoff = time.Second
 			for {
 				msg, rerr := stream.Recv()
 				if rerr != nil {

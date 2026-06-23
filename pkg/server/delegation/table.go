@@ -34,6 +34,9 @@ type delegationTable struct {
 
 func newDelegationTable() *delegationTable { return &delegationTable{} }
 
+// size returns the number of active delegation entries.
+func (t *delegationTable) size() int { return len(t.entries) }
+
 // ownerOf returns the entry whose root contains path, if any.
 func (t *delegationTable) ownerOf(path string) (owner, root string, ok bool) {
 	for _, e := range t.entries {

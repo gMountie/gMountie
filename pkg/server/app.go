@@ -82,6 +82,7 @@ func NewServerAppContext(cfg *config.Config) (*AppContext, error) {
 	recalls := delegation.NewRecallRegistry(cfg.Server.Session.GracePeriod)
 	arbiter := delegation.NewArbiter(recalls, delegation.Config{
 		Cooldown: delegation.CooldownConfigDefault(),
+		Metrics:  &delegationMetricsAdapter{m: m},
 	}, time.Now)
 	sessionMgr := service.NewSessionManager(service.SessionManagerOptions{
 		Metrics:              m,
@@ -491,6 +492,16 @@ func rejectIfRevoked(rs *service.RevocationStore, verifiedChains [][]*x509.Certi
 	}
 	return nil
 }
+
+// delegationMetricsAdapter bridges delegation.Metrics to *metrics.Metrics so
+// the arbiter package stays free of a direct metrics import (dependency inversion).
+type delegationMetricsAdapter struct{ m *metrics.Metrics }
+
+func (a *delegationMetricsAdapter) GrantsActiveSet(n int) {
+	a.m.DelegationGrantsActive.Set(float64(n))
+}
+func (a *delegationMetricsAdapter) RecallInc()      { a.m.DelegationRecallInc() }
+func (a *delegationMetricsAdapter) CooldownTripInc() { a.m.DelegationCooldownTripInc() }
 
 // warnIfIdentityEnforcementUnprivileged emits a loud startup warning when the
 // server is running unprivileged on Linux. The per-request identity-bound
