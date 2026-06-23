@@ -8,15 +8,13 @@ import (
 )
 
 type Config struct {
-	RecallTimeout time.Duration
-	Cooldown      cooldownConfig
+	Cooldown cooldownConfig
 }
 
 // regionState tracks an in-flight recall so concurrent contenders coalesce
 // onto one recall instead of stampeding the holder.
 type regionState struct {
-	recalling bool
-	done      chan struct{} // closed when the in-flight recall finishes
+	done chan struct{} // closed when the in-flight recall finishes
 }
 
 type Arbiter struct {
@@ -75,13 +73,13 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 		return nil // free, or self-access -> never recall
 	}
 	// Coalesce: if this root is already being recalled, wait for that recall.
-	if rs := a.regions[root]; rs != nil && rs.recalling {
+	if rs := a.regions[root]; rs != nil {
 		done := rs.done
 		a.mu.Unlock()
 		<-done
 		return nil // the in-flight recall already freed (or cooled) the root
 	}
-	rs := &regionState{recalling: true, done: make(chan struct{})}
+	rs := &regionState{done: make(chan struct{})}
 	a.regions[root] = rs
 	a.mu.Unlock()
 
