@@ -23,14 +23,14 @@ import (
 type OpKind uint8
 
 const (
-	OpWrite        OpKind = 1
-	OpCreate       OpKind = 2
-	OpSetAttr      OpKind = 3
-	OpMkdir        OpKind = 4
-	OpRename       OpKind = 5
-	OpUnlink       OpKind = 6
-	OpRmdir        OpKind = 7
-	OpSymlink      OpKind = 8
+	OpWrite       OpKind = 1
+	OpCreate      OpKind = 2
+	OpSetAttr     OpKind = 3
+	OpMkdir       OpKind = 4
+	OpRename      OpKind = 5
+	OpUnlink      OpKind = 6
+	OpRmdir       OpKind = 7
+	OpSymlink     OpKind = 8
 	OpSetXAttr    OpKind = 9
 	OpRemoveXAttr OpKind = 10
 )

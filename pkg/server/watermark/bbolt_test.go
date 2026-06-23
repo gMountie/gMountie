@@ -13,7 +13,7 @@ type StoreSuite struct {
 }
 
 func TestStoreSuite(t *testing.T) { suite.Run(t, new(StoreSuite)) }
-func (s *StoreSuite) SetupTest() { s.dir = s.T().TempDir() }
+func (s *StoreSuite) SetupTest()  { s.dir = s.T().TempDir() }
 
 func (s *StoreSuite) open() Store {
 	st, err := OpenBBolt(filepath.Join(s.dir, "wm.db"))
@@ -111,11 +111,11 @@ func (s *StoreSuite) TestNextGenDurableAcrossRestart() {
 // with a durably-revoked gen from before the restart.
 //
 // Sequence:
-//   1. Issue gen G for key K (pre-restart).
-//   2. RevokeGen(K, G) — durably marks G as revoked.
-//   3. Simulate restart: open a fresh Store on the same file.
-//   4. NextGen(K) must return a value > G (no collision with the revoked gen).
-//   5. The new gen must NOT appear in RevokedGens (no false-fence).
+//  1. Issue gen G for key K (pre-restart).
+//  2. RevokeGen(K, G) — durably marks G as revoked.
+//  3. Simulate restart: open a fresh Store on the same file.
+//  4. NextGen(K) must return a value > G (no collision with the revoked gen).
+//  5. The new gen must NOT appear in RevokedGens (no false-fence).
 func (s *StoreSuite) TestNextGenNoFalseFenceAcrossRestart() {
 	k := Key{Identity: "dave", Volume: "vault"}
 

@@ -58,7 +58,7 @@ func newFakeStore() *fakeStore { return &fakeStore{genHi: make(map[watermark.Key
 
 func (f *fakeStore) Get(k watermark.Key) (watermark.Record, error) { return watermark.Record{}, nil }
 func (f *fakeStore) Advance(_ watermark.Key, _ uint64) error       { return nil }
-func (f *fakeStore) Close() error                                   { return nil }
+func (f *fakeStore) Close() error                                  { return nil }
 
 func (f *fakeStore) RevokeGen(k watermark.Key, gen uint64) error {
 	f.mu.Lock()
@@ -353,7 +353,7 @@ func (s *ArbiterSuite) TestGenMonotoneAndReturnedInGrant() {
 
 	g1 := a.Request("sessA", "dir1", "userA", "vol")
 	s.Require().NotEmpty(g1.GrantedRoot)
-	s.Greater(g1.Gen, uint64(0), "gen must be > 0 (0 is reserved for untagged)")
+	s.Positive(g1.Gen, "gen must be > 0 (0 is reserved for untagged)")
 
 	g2 := a.Request("sessA", "dir2", "userA", "vol")
 	s.Require().NotEmpty(g2.GrantedRoot)

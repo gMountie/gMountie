@@ -261,7 +261,7 @@ func (s *ApplySuite) TestApply_HappyPath_MkdirBatch() {
 
 	wmKey := watermark.Key{Identity: "test-user", Volume: vol}
 	s.Equal(uint64(3), s.wmStore.getWatermark(wmKey))
-	s.Greater(s.wmStore.advanceCount(), 0)
+	s.Positive(s.wmStore.advanceCount())
 }
 
 // TestApply_Dedup_SkipsAlreadyApplied: ops with seq ≤ store watermark are
@@ -370,9 +370,9 @@ func (s *ApplySuite) TestApply_OrderedHalt_FailingOp() {
 	s.bindVolume(vol)
 
 	ops := []*proto.WalOp{
-		mkdirOp(vol, "alpha", 1, s.sessionID, "r1"),         // succeeds
-		mkdirOp(vol, "alpha", 2, s.sessionID, "r2"),         // EEXIST → halt
-		mkdirOp(vol, "gamma", 3, s.sessionID, "r3"),         // must NOT be applied
+		mkdirOp(vol, "alpha", 1, s.sessionID, "r1"), // succeeds
+		mkdirOp(vol, "alpha", 2, s.sessionID, "r2"), // EEXIST → halt
+		mkdirOp(vol, "gamma", 3, s.sessionID, "r3"), // must NOT be applied
 	}
 	stream := newStubApplyStream(s.ctxWithSession(), ops...)
 	// Apply returns nil on in-band failure; the error is in the ack.

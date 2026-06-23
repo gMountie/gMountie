@@ -131,6 +131,28 @@ linters:
           - errcheck
           - noctx
 
+      # Proto-generated and mockery-generated files: suppress findings whose
+      # fixes belong to the generator, not hand-edited source.
+      - path: \.pb\.go$
+        linters:
+          - staticcheck
+          - goimports
+          - errcheck
+      - path: internal/mocks/
+        linters:
+          - staticcheck
+          - errcheck
+
+      # Sibling worktree (delegation-wal) leaks into this worktree's module
+      # analysis when both share the same build cache. Those files do not exist
+      # here; suppress any findings that reference that path.
+      - path: delegation-wal/
+        linters:
+          - errcheck
+          - nilerr
+          - nilnil
+          - staticcheck
+
 formatters:
   enable:
     - goimports        # also formats; replaces gofmt

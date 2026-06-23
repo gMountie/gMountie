@@ -377,7 +377,7 @@ func (s *OverlaySuite) TestPathsEnumeratesAllPendingIncludingTombstones() {
 	ov := s.newOverlay()
 	ov.Apply(s.createOp("a.txt", 0o100644))
 	ov.Apply(s.mkdirOp("b", 0o40755))
-	ov.Apply(s.unlinkOp("c.txt"))                     // tombstone only
+	ov.Apply(s.unlinkOp("c.txt"))                // tombstone only
 	ov.Apply(s.writeOp("d.txt", 0, []byte("x"))) // write without prior create
 
 	paths := ov.Paths()

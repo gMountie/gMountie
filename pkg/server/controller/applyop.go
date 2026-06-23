@@ -40,7 +40,7 @@ import (
 type pathOpKind uint8
 
 const (
-	opMkdir       pathOpKind = iota + 1
+	opMkdir pathOpKind = iota + 1
 	opRmdir
 	opUnlink
 	opSymlink

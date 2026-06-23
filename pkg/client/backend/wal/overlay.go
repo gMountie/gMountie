@@ -67,7 +67,7 @@ type overlayNode struct {
 	uid uint32
 	gid uint32
 
-	atime, mtime, ctime time.Time
+	atime, mtime, ctime  time.Time
 	atimeNsec, mtimeNsec uint32
 
 	// version is bumped on each mutation (cheap revalidation support).
@@ -490,14 +490,14 @@ func (ov *Overlay) applyRemoveXAttr(op Op) {
 //
 // Callers must interpret the result as follows:
 //
-//   ok=false                 → no overlay entry; consult base only.
-//   ok=true, tombstoned=true → path was deleted; return ENOENT (do not consult base).
-//   ok=true, baseDelta=false → full-create node; attr is authoritative.
-//   ok=true, baseDelta=true  → base-delta node; attr carries ONLY the fields
-//                              whose FATTR_* bit is set in valid. The caller
-//                              (Task 10) MUST merge: for each FATTR_* bit set
-//                              in valid, apply attr's field over the base Attr;
-//                              keep all other base fields including type bits.
+//	ok=false                 → no overlay entry; consult base only.
+//	ok=true, tombstoned=true → path was deleted; return ENOENT (do not consult base).
+//	ok=true, baseDelta=false → full-create node; attr is authoritative.
+//	ok=true, baseDelta=true  → base-delta node; attr carries ONLY the fields
+//	                           whose FATTR_* bit is set in valid. The caller
+//	                           (Task 10) MUST merge: for each FATTR_* bit set
+//	                           in valid, apply attr's field over the base Attr;
+//	                           keep all other base fields including type bits.
 //
 // SIZE note for base-delta nodes: if FATTR_SIZE is set in valid, attr.Size is
 // the authoritative target (a SetAttr truncate/extend). If FATTR_SIZE is NOT
@@ -638,8 +638,8 @@ func (ov *Overlay) ReadMerge(path string, off int64, base []byte) []byte {
 	// Overlay each pending interval.
 	for _, r := range n.intervals {
 		// Intersect interval [r.start, r.end) with our output range [off, off+len(out)).
-		srcStart := r.start    // position in file-space
-		srcEnd := r.end        // position in file-space
+		srcStart := r.start // position in file-space
+		srcEnd := r.end     // position in file-space
 		outStart := srcStart - off
 		outEnd := srcEnd - off
 

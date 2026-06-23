@@ -62,7 +62,7 @@ func (f *fakeApplyStream) CloseAndRecv() (*proto.ApplyAck, error) {
 	return f.ack, nil
 }
 
-func (f *fakeApplyStream) Header() (metadata.MD, error) { return nil, nil }
+func (f *fakeApplyStream) Header() (metadata.MD, error) { return nil, nil } //nolint:nilnil // fake gRPC stream: no metadata and no error is the correct test-double contract
 func (f *fakeApplyStream) Trailer() metadata.MD         { return nil }
 func (f *fakeApplyStream) CloseSend() error             { return nil }
 func (f *fakeApplyStream) Context() context.Context     { return context.Background() }
@@ -297,8 +297,8 @@ func (s *FlushSuite) TestOpToWalOp_AllKinds() {
 	caller := (*proto.Caller)(nil)
 
 	cases := []struct {
-		name string
-		op   Op
+		name  string
+		op    Op
 		check func(walOp *proto.WalOp)
 	}{
 		{
@@ -383,12 +383,12 @@ func (s *FlushSuite) TestOpToWalOp_AllKinds() {
 			// regression guard for the silent timestamp clobber bug.
 			name: "OpSetAttr_ModeUID",
 			op: Op{
-				Seq:       8,
-				Kind:      OpSetAttr,
-				Path:      "g.txt",
-				Valid:     backend.FATTR_MODE | backend.FATTR_UID,
-				Mode:      0o644,
-				UID:       1000,
+				Seq:   8,
+				Kind:  OpSetAttr,
+				Path:  "g.txt",
+				Valid: backend.FATTR_MODE | backend.FATTR_UID,
+				Mode:  0o644,
+				UID:   1000,
 				// AtimeSec/MtimeSec intentionally non-zero to prove suppression is
 				// bit-driven, not "zero data → nil".
 				AtimeSec:  123,

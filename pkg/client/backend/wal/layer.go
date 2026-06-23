@@ -50,10 +50,10 @@
 // on a path that existed only in base (not created by this overlay). In that
 // case the overlay attr carries only the touched fields (FATTR_* bitmask in
 // valid); the full attr is formed by:
-//   1. Fetching base from inner.
-//   2. OR-ing the base's S_IFMT type bits into the overlay mode.
-//   3. Applying only the fields whose FATTR_* bit is set in valid.
-//   4. Size: if FATTR_SIZE is set → use overlay.Size; else → max(base, overlay).
+//  1. Fetching base from inner.
+//  2. OR-ing the base's S_IFMT type bits into the overlay mode.
+//  3. Applying only the fields whose FATTR_* bit is set in valid.
+//  4. Size: if FATTR_SIZE is set → use overlay.Size; else → max(base, overlay).
 //
 // This merge is implemented in mergedStat to be reused by Stat, Lookup,
 // GetAttrIfChanged, and SetAttr.
@@ -114,7 +114,7 @@ type Layer struct {
 // Coordinator that holds the durable log and in-memory overlay.
 func NewLayer(inner backend.FileSystemBackend, mgr *delegation.Manager, coord *Coordinator) backend.FileSystemBackend {
 	l := &Layer{mgr: mgr, coord: coord}
-	l.PassthroughBackend.Inner = inner
+	l.Inner = inner
 	return l
 }
 
@@ -538,4 +538,3 @@ func joinPath(parent, name string) string {
 	}
 	return parent + "/" + name
 }
-
