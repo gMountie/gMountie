@@ -104,7 +104,7 @@ func (r *RpcServerImpl) Mkdir(ctx context.Context, request *proto.MkdirRequest) 
 		return &proto.MkdirReply{
 			Status:     proto.FsError_FS_OK,
 			Attributes: res.Attr,
-			Grant:      grantFor(r.arbiter, request.SessionId, request.Delegation),
+			Grant:      grantFor(r.arbiter, request.SessionId, id.Principal, request.Volume, request.Delegation),
 		}, nil
 	})
 }
@@ -114,7 +114,7 @@ func (r *RpcServerImpl) Rmdir(ctx context.Context, request *proto.RmdirRequest) 
 	if err != nil {
 		return nil, err
 	}
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
+	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +129,7 @@ func (r *RpcServerImpl) Rmdir(ctx context.Context, request *proto.RmdirRequest) 
 		})
 		reply := &proto.RmdirReply{Status: applyOpProtoStatus(res.Status)}
 		if res.Status == fuse.OK {
-			reply.Grant = grantFor(r.arbiter, request.SessionId, request.Delegation)
+			reply.Grant = grantFor(r.arbiter, request.SessionId, id.Principal, request.Volume, request.Delegation)
 		}
 		return reply, nil
 	})
@@ -140,7 +140,7 @@ func (r *RpcServerImpl) Rename(ctx context.Context, request *proto.RenameRequest
 	if err != nil {
 		return nil, err
 	}
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
+	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +160,7 @@ func (r *RpcServerImpl) Rename(ctx context.Context, request *proto.RenameRequest
 		})
 		reply := &proto.RenameReply{Status: applyOpProtoStatus(res.Status)}
 		if res.Status == fuse.OK {
-			reply.Grant = grantFor(r.arbiter, request.SessionId, request.Delegation)
+			reply.Grant = grantFor(r.arbiter, request.SessionId, id.Principal, request.Volume, request.Delegation)
 		}
 		return reply, nil
 	})
@@ -208,7 +208,7 @@ func (r *RpcServerImpl) Symlink(ctx context.Context, request *proto.SymlinkReque
 		return &proto.SymlinkReply{
 			Status:     proto.FsError_FS_OK,
 			Attributes: res.Attr,
-			Grant:      grantFor(r.arbiter, request.SessionId, request.Delegation),
+			Grant:      grantFor(r.arbiter, request.SessionId, id.Principal, request.Volume, request.Delegation),
 		}, nil
 	})
 }
@@ -305,7 +305,7 @@ func (r *RpcServerImpl) Unlink(ctx context.Context, request *proto.UnlinkRequest
 	if err != nil {
 		return nil, err
 	}
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
+	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +320,7 @@ func (r *RpcServerImpl) Unlink(ctx context.Context, request *proto.UnlinkRequest
 		})
 		reply := &proto.UnlinkReply{Status: applyOpProtoStatus(res.Status)}
 		if res.Status == fuse.OK {
-			reply.Grant = grantFor(r.arbiter, request.SessionId, request.Delegation)
+			reply.Grant = grantFor(r.arbiter, request.SessionId, id.Principal, request.Volume, request.Delegation)
 		}
 		return reply, nil
 	})
@@ -375,7 +375,7 @@ func (r *RpcServerImpl) SetAttr(ctx context.Context, request *proto.SetAttrReque
 		return &proto.SetAttrReply{
 			Status:     proto.FsError_FS_OK,
 			Attributes: res.Attr,
-			Grant:      grantFor(r.arbiter, request.SessionId, request.Delegation),
+			Grant:      grantFor(r.arbiter, request.SessionId, id.Principal, request.Volume, request.Delegation),
 		}, nil
 	})
 }
@@ -471,7 +471,7 @@ func (r *RpcServerImpl) SetXAttr(ctx context.Context, request *proto.SetXAttrReq
 	if !xattrWriteAllowed(request.Attribute) {
 		return &proto.SetXAttrReply{Status: proto.FsError_FS_EPERM}, nil
 	}
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
+	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}
@@ -489,7 +489,7 @@ func (r *RpcServerImpl) SetXAttr(ctx context.Context, request *proto.SetXAttrReq
 		})
 		reply := &proto.SetXAttrReply{Status: applyOpProtoStatus(res.Status)}
 		if res.Status == fuse.OK {
-			reply.Grant = grantFor(r.arbiter, request.SessionId, request.Delegation)
+			reply.Grant = grantFor(r.arbiter, request.SessionId, id.Principal, request.Volume, request.Delegation)
 		}
 		return reply, nil
 	})
@@ -503,7 +503,7 @@ func (r *RpcServerImpl) RemoveXAttr(ctx context.Context, request *proto.RemoveXA
 	if !xattrWriteAllowed(request.Attribute) {
 		return &proto.RemoveXAttrReply{Status: proto.FsError_FS_EPERM}, nil
 	}
-	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
+	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
 	}
@@ -519,7 +519,7 @@ func (r *RpcServerImpl) RemoveXAttr(ctx context.Context, request *proto.RemoveXA
 		})
 		reply := &proto.RemoveXAttrReply{Status: applyOpProtoStatus(res.Status)}
 		if res.Status == fuse.OK {
-			reply.Grant = grantFor(r.arbiter, request.SessionId, request.Delegation)
+			reply.Grant = grantFor(r.arbiter, request.SessionId, id.Principal, request.Volume, request.Delegation)
 		}
 		return reply, nil
 	})

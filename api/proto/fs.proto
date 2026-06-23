@@ -28,6 +28,10 @@ message DelegationGrant {
   string          granted_root   = 1;
   repeated string excluded_paths = 2;
   uint64          retry_after_ms = 3;
+  // gen is the delegation generation assigned by the server. The client tags
+  // every WalOp with this gen so the server can fence superseded replays after
+  // a machine-death + handoff (Task 6). gen == 0 means "no gen" (untagged).
+  uint64          gen            = 4;
 }
 
 // RecallMsg is pushed server->client on the Recall stream: "release your

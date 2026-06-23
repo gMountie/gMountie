@@ -202,6 +202,10 @@ type DelegationGrant struct {
 	GrantedRoot   string                 `protobuf:"bytes,1,opt,name=granted_root,json=grantedRoot,proto3" json:"granted_root,omitempty"`
 	ExcludedPaths []string               `protobuf:"bytes,2,rep,name=excluded_paths,json=excludedPaths,proto3" json:"excluded_paths,omitempty"`
 	RetryAfterMs  uint64                 `protobuf:"varint,3,opt,name=retry_after_ms,json=retryAfterMs,proto3" json:"retry_after_ms,omitempty"`
+	// gen is the delegation generation assigned by the server. The client tags
+	// every WalOp with this gen so the server can fence superseded replays after
+	// a machine-death + handoff (Task 6). gen == 0 means "no gen" (untagged).
+	Gen           uint64 `protobuf:"varint,4,opt,name=gen,proto3" json:"gen,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -253,6 +257,13 @@ func (x *DelegationGrant) GetExcludedPaths() []string {
 func (x *DelegationGrant) GetRetryAfterMs() uint64 {
 	if x != nil {
 		return x.RetryAfterMs
+	}
+	return 0
+}
+
+func (x *DelegationGrant) GetGen() uint64 {
+	if x != nil {
+		return x.Gen
 	}
 	return 0
 }
@@ -3607,11 +3618,12 @@ const file_api_proto_fs_proto_rawDesc = "" +
 	"\x03ino\x18\x03 \x01(\x04R\x03ino\x12\x10\n" +
 	"\x03off\x18\x04 \x01(\x04R\x03off\"'\n" +
 	"\x11DelegationRequest\x12\x12\n" +
-	"\x04root\x18\x01 \x01(\tR\x04root\"\x81\x01\n" +
+	"\x04root\x18\x01 \x01(\tR\x04root\"\x93\x01\n" +
 	"\x0fDelegationGrant\x12!\n" +
 	"\fgranted_root\x18\x01 \x01(\tR\vgrantedRoot\x12%\n" +
 	"\x0eexcluded_paths\x18\x02 \x03(\tR\rexcludedPaths\x12$\n" +
-	"\x0eretry_after_ms\x18\x03 \x01(\x04R\fretryAfterMs\"<\n" +
+	"\x0eretry_after_ms\x18\x03 \x01(\x04R\fretryAfterMs\x12\x10\n" +
+	"\x03gen\x18\x04 \x01(\x04R\x03gen\"<\n" +
 	"\tRecallMsg\x12\x12\n" +
 	"\x04root\x18\x01 \x01(\tR\x04root\x12\x1b\n" +
 	"\trecall_id\x18\x02 \x01(\x04R\brecallId\"<\n" +

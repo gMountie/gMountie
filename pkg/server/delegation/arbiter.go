@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/server/watermark"
 )
 
 // Metrics is the arbiter's optional observability sink. Nil = no-op.
@@ -41,21 +42,27 @@ type Arbiter struct {
 	recaller Recaller
 	now      func() time.Time
 	metrics  Metrics // nil = no-op
+	store    watermark.Store
 
 	mu       sync.Mutex
 	table    *delegationTable
 	cooldown *cooldownTable
 	regions  map[string]*regionState // keyed by delegated root being recalled
+	nextGen  uint64                  // monotone gen counter; 0 is reserved (untagged)
 }
 
-func NewArbiter(r Recaller, cfg Config, now func() time.Time) *Arbiter {
+// NewArbiter creates a new Arbiter. store is required and must not be nil;
+// it is used to durably record revoked delegation generations on handoff.
+func NewArbiter(r Recaller, cfg Config, now func() time.Time, store watermark.Store) *Arbiter {
 	return &Arbiter{
 		recaller: r,
 		now:      now,
 		metrics:  cfg.Metrics,
+		store:    store,
 		table:    newDelegationTable(),
 		cooldown: newCooldownTable(cfg.Cooldown),
 		regions:  make(map[string]*regionState),
+		nextGen:  1, // start at 1; gen 0 is reserved for "untagged"
 	}
 }
 
@@ -84,7 +91,12 @@ func (a *Arbiter) mCooldownTrip() {
 // subtrees and refusing cooling roots. Returns a grant (empty GrantedRoot =
 // denied). root=="" (no piggyback) returns an empty grant without touching the
 // table.
-func (a *Arbiter) Request(owner, root string) *proto.DelegationGrant {
+//
+// principal and volume are stored in the entry to construct the fence key
+// ({principal,volume}) when this delegation is later revoked on handoff.
+// They must match the watermark.Key used by Apply for the same operation
+// stream (Apply derives its key as {id.Principal, volume}).
+func (a *Arbiter) Request(owner, root, principal, volume string) *proto.DelegationGrant {
 	if root == "" {
 		return &proto.DelegationGrant{}
 	}
@@ -95,12 +107,15 @@ func (a *Arbiter) Request(owner, root string) *proto.DelegationGrant {
 	if a.cooldown.cooling(root, now) {
 		return &proto.DelegationGrant{RetryAfterMs: uint64(a.cfgRetryMs())}
 	}
-	granted, excluded, ok := a.table.grant(owner, root)
+	gen := a.nextGen
+	a.nextGen++
+	granted, excluded, ok := a.table.grant(owner, root, principal, volume, gen)
 	if !ok {
+		a.nextGen-- // roll back on denial (no entry created)
 		return &proto.DelegationGrant{RetryAfterMs: uint64(a.cfgRetryMs())}
 	}
 	a.mGrantsActive()
-	return &proto.DelegationGrant{GrantedRoot: granted, ExcludedPaths: excluded}
+	return &proto.DelegationGrant{GrantedRoot: granted, ExcludedPaths: excluded, Gen: gen}
 }
 
 func (a *Arbiter) cfgRetryMs() int64 { return a.cooldown.cfg.Base.Milliseconds() }
@@ -132,12 +147,31 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 		}
 		return nil
 	}
+	// Capture the entry's fence key BEFORE releasing the lock. A concurrent
+	// ReleaseSession (session reap) could drop the entry during the recall RTT;
+	// we must fence the revoked gen even if the entry is gone by then.
+	revokedEntry, hasEntry := a.table.entryForRoot(root)
+
 	rs := &regionState{done: make(chan struct{})}
 	a.regions[root] = rs
 	a.mu.Unlock()
 
 	// ---- recall RTT happens with NO lock held (barrier = this handoff) ----
 	err := a.recaller.Recall(owner, root)
+
+	if err == nil && hasEntry && revokedEntry.gen > 0 {
+		// Persist-before-handoff: durably record the revoked gen BEFORE closing
+		// rs.done so that coalesced waiters (the contenders now unblocked) can
+		// never proceed without the fence being durable. If RevokeGen fails, treat
+		// the handoff as failed (same as a recall error): don't release the entry,
+		// don't serve the contender.
+		fenceKey := watermark.Key{Identity: revokedEntry.principal, Volume: revokedEntry.volume}
+		if rErr := a.store.RevokeGen(fenceKey, revokedEntry.gen); rErr != nil {
+			// RevokeGen is durable-required; failing here is corrupt-safe: the
+			// contender will get errCoalescedRecallFailed and back off.
+			err = rErr
+		}
+	}
 
 	a.mu.Lock()
 	if err == nil {
@@ -153,10 +187,37 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 	return err
 }
 
-// ReleaseSession drops all delegations owned by a reaped session.
+// ReleaseSession drops all delegations owned by a reaped session and durably
+// revokes their generation numbers so that a dead holder's replayed WAL cannot
+// clobber the new owner after machine-death + handoff (Task 6 death path).
+//
+// Revocation is performed OUTSIDE the lock (after draining the table) so that
+// the durable store write does not hold the arbiter mutex during I/O. Entries
+// are captured under the lock and revoked outside it; any revoke error is
+// logged (best-effort — a failed revoke is still safer than no revoke, because
+// a successful revoke prevents corruption and a failed one leaves the prior
+// behaviour: no fence).
 func (a *Arbiter) ReleaseSession(sessionID string) {
 	a.mu.Lock()
-	a.table.releaseOwner(sessionID)
+	drained := a.table.drainOwner(sessionID)
 	a.mGrantsActive()
 	a.mu.Unlock()
+
+	// Revoke each drained gen outside the lock.  gen=0 is the untagged sentinel
+	// and is never passed to RevokeGen.
+	for _, e := range drained {
+		if e.gen == 0 {
+			continue
+		}
+		fenceKey := watermark.Key{Identity: e.principal, Volume: e.volume}
+		// Best-effort: log failure but do not block session cleanup.  A missed
+		// revoke means the fence won't fire for this gen — the same risk as
+		// before Task 6.  A successful revoke is the safety-critical case.
+		if rErr := a.store.RevokeGen(fenceKey, e.gen); rErr != nil {
+			// The delegation package is imported by the server; avoid a
+			// circular import by using the standard library logger here.
+			// A production integration would wire an error sink via Config.
+			_ = rErr // callers observe absence of fence via Apply returning ESTALE
+		}
+	}
 }

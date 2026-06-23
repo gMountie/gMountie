@@ -77,8 +77,16 @@ func (f *fakeWatermarkStore) Advance(k watermark.Key, wm uint64) error {
 	return nil
 }
 
-func (f *fakeWatermarkStore) RevokeGen(k watermark.Key, _ uint64) error { return nil }
-func (f *fakeWatermarkStore) Close() error                               { return nil }
+func (f *fakeWatermarkStore) RevokeGen(k watermark.Key, gen uint64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r := f.records[k]
+	r.RevokedGens = append(r.RevokedGens, gen)
+	f.records[k] = r
+	return nil
+}
+
+func (f *fakeWatermarkStore) Close() error { return nil }
 
 func (f *fakeWatermarkStore) getWatermark(k watermark.Key) uint64 {
 	f.mu.Lock()
@@ -430,6 +438,173 @@ func (s *ApplySuite) TestApply_ReleaseOp_NoOp() {
 	s.Require().NotNil(stream.acked)
 	s.Equal(uint64(1), stream.acked.Watermark)
 	s.Equal(proto.FsError_FS_OK, stream.acked.Fserr)
+}
+
+// TestApply_GenFence_RevokedGenHaltsReplay verifies that a WalOp tagged with a
+// revoked delegation gen is rejected (fenced), even though its seq is above
+// the watermark (it would otherwise be applied). The ack carries FS_ESTALE and
+// the committed prefix; the fenced op itself is NOT applied (no dir on disk).
+//
+// This is the corruption-critical test for Task 6: without gen-fencing, a
+// dead holder's stale WAL replay would clobber the new owner's writes.
+func (s *ApplySuite) TestApply_GenFence_RevokedGenHaltsReplay() {
+	const vol = "vol"
+	s.bindVolume(vol)
+
+	// Pre-seed the watermark store with a revoked gen for the test principal+vol.
+	wmKey := watermark.Key{Identity: "test-user", Volume: vol}
+	// Pre-apply seq=1 to establish a committed prefix.
+	s.Require().NoError(s.wmStore.Advance(wmKey, 1))
+	// Mark gen=5 as revoked (simulates a handoff after machine death).
+	s.Require().NoError(s.wmStore.RevokeGen(wmKey, 5))
+
+	// Seed the matching directory for seq=1 (already committed).
+	s.Require().NoError(os.Mkdir(filepath.Join(s.dir, "committed"), 0o755))
+
+	ops := []*proto.WalOp{
+		// seq=2 has revoked gen=5 — must be fenced (not applied).
+		{
+			Op: &proto.WalOp_Mkdir{Mkdir: &proto.MkdirRequest{
+				Volume: vol, Caller: CreateCaller(0, 0, 0), Path: "fenced-dir",
+				Mode: 0o755, SessionId: s.sessionID, RequestId: "r-fence",
+			}},
+			Seq: 2,
+			Gen: 5, // revoked gen — must halt
+		},
+		// seq=3 would apply "safe-dir" if the fence didn't halt us first.
+		mkdirOp(vol, "safe-dir", 3, s.sessionID, "r-after"),
+	}
+	stream := newStubApplyStream(s.ctxWithSession(), ops...)
+	s.Require().NoError(s.server.Apply(stream))
+	s.Require().NotNil(stream.acked)
+
+	// Ack must carry the committed prefix (seq=1) and signal the fence point.
+	s.Equal(uint64(1), stream.acked.Watermark, "watermark must be committed prefix, not fenced seq")
+	s.Equal(uint64(2), stream.acked.FailedSeq, "FailedSeq must be the fenced op's seq")
+	s.Equal(proto.FsError_FS_ESTALE, stream.acked.Fserr,
+		"fenced op must return FS_ESTALE, not FS_OK or FS_EEXIST")
+
+	// The fenced dir must NOT have been created.
+	_, err := os.Stat(filepath.Join(s.dir, "fenced-dir"))
+	s.True(os.IsNotExist(err), "fenced-dir must not exist: fenced op must not be applied")
+
+	// Ops after the fenced op must also not have been applied.
+	_, err = os.Stat(filepath.Join(s.dir, "safe-dir"))
+	s.True(os.IsNotExist(err), "safe-dir must not exist: ops after the fence are discarded")
+}
+
+// TestApply_GenFence_NonRevokedGenAppliesNormally verifies that an op tagged
+// with a valid (non-revoked) gen is applied normally — the fence is selective.
+func (s *ApplySuite) TestApply_GenFence_NonRevokedGenAppliesNormally() {
+	const vol = "vol"
+	s.bindVolume(vol)
+
+	// Revoke gen=5, but use gen=7 (valid) in the op.
+	wmKey := watermark.Key{Identity: "test-user", Volume: vol}
+	s.Require().NoError(s.wmStore.RevokeGen(wmKey, 5))
+
+	ops := []*proto.WalOp{
+		{
+			Op: &proto.WalOp_Mkdir{Mkdir: &proto.MkdirRequest{
+				Volume: vol, Caller: CreateCaller(0, 0, 0), Path: "live-dir",
+				Mode: 0o755, SessionId: s.sessionID, RequestId: "r-live",
+			}},
+			Seq: 1,
+			Gen: 7, // valid gen, not revoked
+		},
+	}
+	stream := newStubApplyStream(s.ctxWithSession(), ops...)
+	s.Require().NoError(s.server.Apply(stream))
+	s.Require().NotNil(stream.acked)
+
+	s.Equal(uint64(1), stream.acked.Watermark)
+	s.Equal(proto.FsError_FS_OK, stream.acked.Fserr)
+
+	info, err := os.Stat(filepath.Join(s.dir, "live-dir"))
+	s.Require().NoError(err, "live-dir must exist: non-revoked gen must apply normally")
+	s.True(info.IsDir())
+}
+
+// TestApply_GenFence_Gen0NeverFenced verifies that an op with gen=0 (pre-fencing
+// client, untagged) is never fenced even when the store has revoked gens.
+func (s *ApplySuite) TestApply_GenFence_Gen0NeverFenced() {
+	const vol = "vol"
+	s.bindVolume(vol)
+
+	// Revoke gen=1 (would match a tagged op), but the op carries gen=0.
+	wmKey := watermark.Key{Identity: "test-user", Volume: vol}
+	s.Require().NoError(s.wmStore.RevokeGen(wmKey, 1))
+
+	ops := []*proto.WalOp{
+		{
+			Op: &proto.WalOp_Mkdir{Mkdir: &proto.MkdirRequest{
+				Volume: vol, Caller: CreateCaller(0, 0, 0), Path: "untagged-dir",
+				Mode: 0o755, SessionId: s.sessionID, RequestId: "r-untagged",
+			}},
+			Seq: 1,
+			Gen: 0, // untagged: gen 0 is never fenced
+		},
+	}
+	stream := newStubApplyStream(s.ctxWithSession(), ops...)
+	s.Require().NoError(s.server.Apply(stream))
+	s.Require().NotNil(stream.acked)
+
+	s.Equal(uint64(1), stream.acked.Watermark)
+	s.Equal(proto.FsError_FS_OK, stream.acked.Fserr, "gen=0 must never be fenced")
+
+	info, err := os.Stat(filepath.Join(s.dir, "untagged-dir"))
+	s.Require().NoError(err)
+	s.True(info.IsDir())
+}
+
+// TestApply_GenFence_AlreadyAckedRevokedGenSkippedByDedup verifies that an op
+// whose seq is ≤ the durable watermark is skipped by dedup BEFORE the gen
+// fence is checked — even if its gen is revoked. This prevents false-fencing of
+// already-committed ops during normal recall scenarios.
+func (s *ApplySuite) TestApply_GenFence_AlreadyAckedRevokedGenSkippedByDedup() {
+	const vol = "vol"
+	s.bindVolume(vol)
+
+	wmKey := watermark.Key{Identity: "test-user", Volume: vol}
+	// Pre-seed watermark to 2 and revoke gen=3 (the gen of the already-applied ops).
+	s.Require().NoError(s.wmStore.Advance(wmKey, 2))
+	s.Require().NoError(s.wmStore.RevokeGen(wmKey, 3))
+
+	// Pre-create dirs matching already-applied ops.
+	s.Require().NoError(os.Mkdir(filepath.Join(s.dir, "old1"), 0o755))
+	s.Require().NoError(os.Mkdir(filepath.Join(s.dir, "old2"), 0o755))
+
+	ops := []*proto.WalOp{
+		// seqs 1+2 with revoked gen=3 — dedup must skip them before the fence check.
+		{
+			Op:  mkdirOp(vol, "old1", 1, s.sessionID, "r1").Op,
+			Seq: 1, Gen: 3,
+		},
+		{
+			Op:  mkdirOp(vol, "old2", 2, s.sessionID, "r2").Op,
+			Seq: 2, Gen: 3,
+		},
+		// seq=3 with a live gen (gen=4) — must be applied.
+		{
+			Op: &proto.WalOp_Mkdir{Mkdir: &proto.MkdirRequest{
+				Volume: vol, Caller: CreateCaller(0, 0, 0), Path: "new-dir",
+				Mode: 0o755, SessionId: s.sessionID, RequestId: "r3",
+			}},
+			Seq: 3, Gen: 4,
+		},
+	}
+	stream := newStubApplyStream(s.ctxWithSession(), ops...)
+	s.Require().NoError(s.server.Apply(stream))
+	s.Require().NotNil(stream.acked)
+
+	s.Equal(uint64(3), stream.acked.Watermark,
+		"dedup must skip ≤ watermark ops (even with revoked gen); seq=3 must apply")
+	s.Equal(proto.FsError_FS_OK, stream.acked.Fserr,
+		"dedup-before-fence: revoked gen on already-acked ops must not halt the batch")
+
+	info, err := os.Stat(filepath.Join(s.dir, "new-dir"))
+	s.Require().NoError(err, "seq=3 with live gen must be applied")
+	s.True(info.IsDir())
 }
 
 // ---------------------------------------------------------------------------

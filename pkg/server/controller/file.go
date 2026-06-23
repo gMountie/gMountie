@@ -170,7 +170,7 @@ func (r *RpcFileServerImpl) Create(ctx context.Context, request *proto.CreateReq
 		reply := &proto.CreateReply{Status: fserr.FromErrno(syscall.Errno(s))}
 		if s == fuse.OK {
 			reply.Fd = sess.RegisterFile(request.Volume, request.Path, file)
-			reply.Grant = grantFor(r.arbiter, request.SessionId, request.Delegation)
+			reply.Grant = grantFor(r.arbiter, request.SessionId, id.Principal, request.Volume, request.Delegation)
 			if attr, gst := fs.GetAttr(request.Path, createContext(ctx, request.Caller)); gst.Ok() {
 				reply.Attributes = toProtoAttr(attr, &id)
 				r.emitMutatedAttr(ctx, request.Volume, request.Path, attr)
@@ -303,7 +303,7 @@ func (r *RpcFileServerImpl) Write(stream proto.RpcFile_WriteServer) error {
 
 	if applied && reply.Status == proto.FsError_FS_OK && entryPath != "" {
 		r.emitMutatedFd(stream.Context(), first.Volume, entryPath, nil)
-		reply.Grant = grantFor(r.arbiter, first.SessionId, first.Delegation)
+		reply.Grant = grantFor(r.arbiter, first.SessionId, sess.Principal(), first.Volume, first.Delegation)
 	}
 
 	return stream.SendAndClose(reply)
@@ -574,7 +574,7 @@ func (r *RpcFileServerImpl) Allocate(ctx context.Context, request *proto.Allocat
 	reply := &proto.AllocateReply{Status: fserr.FromErrno(syscall.Errno(s))}
 	if s == fuse.OK {
 		r.emitMutatedFd(ctx, request.Volume, path, request.Caller)
-		reply.Grant = grantFor(r.arbiter, request.SessionId, request.Delegation)
+		reply.Grant = grantFor(r.arbiter, request.SessionId, sess.Principal(), request.Volume, request.Delegation)
 	}
 	return reply, nil
 }
