@@ -177,7 +177,23 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 			return errors.Wrap(werr, "open wal log")
 		}
 		overlay := wal.NewOverlay()
-		coord = wal.NewCoordinator(delMgr, walLog, overlay)
+		// Wire the three flush options so Apply streams actually reach the server.
+		// applyFactory opens a fresh Apply stream per flush using the mounted
+		// volume's gRPC client.
+		// Per-op caller fidelity (passthrough/system mode) is a follow-up;
+		// squash (default) squashes all callers to one principal so a mount-level
+		// caller yields the correct watermark key.
+		mountCaller := &proto.Caller{
+			Owner: &proto.Owner{Uid: uint32(os.Getuid()), Gid: uint32(os.Getgid())},
+			Pid:   uint32(os.Getpid()),
+		}
+		coord = wal.NewCoordinator(delMgr, walLog, overlay,
+			wal.WithApplyFactory(func(ctx context.Context) (proto.RpcFs_ApplyClient, error) {
+				return m.client.Fs().Apply(ctx)
+			}),
+			wal.WithVolume(volume),
+			wal.WithCaller(mountCaller),
+		)
 
 		// SetMetrics BEFORE the coordinator can Flush or Replay (the global
 		// walMetrics is written here; subsequent flushes will read it).
