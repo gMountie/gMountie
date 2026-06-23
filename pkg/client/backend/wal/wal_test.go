@@ -19,7 +19,9 @@ package wal
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 	"go.gmountie.dev/gmountie/pkg/client/backend/delegation"
@@ -264,6 +266,85 @@ func (s *CoordinatorSuite) TestReadAccessors_PassThroughToOverlay() {
 	_, set, removed := s.coord.Xattr("sub/file.txt", "user.foo")
 	s.Assert().False(set)
 	s.Assert().False(removed)
+}
+
+// ── Test 8: StartIntervalFlusher goroutine exits on Close ─────────────────────
+
+// TestStartIntervalFlusher_ExitsOnClose verifies that the goroutine started by
+// StartIntervalFlusher exits cleanly when Close() is called. It uses a very
+// short interval to exercise the tick path, then calls Close and waits for
+// completion to assert no goroutine leak.
+func (s *CoordinatorSuite) TestStartIntervalFlusher_ExitsOnClose() {
+	mgr := delegation.NewManager(noopInvalidator{})
+	l := openTestLog(s.T())
+	coord := NewCoordinator(mgr, l, NewOverlay())
+
+	// Start with a very short interval so the goroutine has time to tick.
+	coord.StartIntervalFlusher(10 * time.Millisecond)
+
+	// Give the goroutine a couple of ticks so we are sure it is alive.
+	time.Sleep(30 * time.Millisecond)
+
+	// Close must stop the goroutine and return cleanly (no deadlock, no leak).
+	done := make(chan struct{})
+	go func() {
+		_ = coord.Close()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Clean shutdown.
+	case <-time.After(3 * time.Second):
+		s.Fail("Close() did not return within 3s — interval flusher goroutine leaked")
+	}
+}
+
+// TestClose_SafeWithoutIntervalFlusher verifies that Close() is safe even when
+// StartIntervalFlusher was never called (no goroutine to stop, flusherWg at
+// zero, stopFlusher is still idempotent).
+func (s *CoordinatorSuite) TestClose_SafeWithoutIntervalFlusher() {
+	mgr := delegation.NewManager(noopInvalidator{})
+	l := openTestLog(s.T())
+	coord := NewCoordinator(mgr, l, NewOverlay())
+
+	// Must not panic or deadlock.
+	done := make(chan struct{})
+	go func() {
+		_ = coord.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		s.Fail("Close() deadlocked when flusher was never started")
+	}
+}
+
+// TestClose_IsIdempotent verifies that calling Close() multiple times does not
+// panic (flushStopOnce + WaitGroup semantics are robust under concurrent calls).
+func (s *CoordinatorSuite) TestClose_IsIdempotent() {
+	mgr := delegation.NewManager(noopInvalidator{})
+	l := openTestLog(s.T())
+	coord := NewCoordinator(mgr, l, NewOverlay())
+	coord.StartIntervalFlusher(50 * time.Millisecond)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = coord.Close()
+		}()
+	}
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		s.Fail("multiple Close() calls deadlocked")
+	}
 }
 
 func TestCoordinatorSuite(t *testing.T) {

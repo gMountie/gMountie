@@ -76,6 +76,10 @@ type Coordinator struct {
 	// flushStop and flushStopOnce control the interval goroutine lifecycle.
 	flushStop     chan struct{}
 	flushStopOnce sync.Once
+
+	// flusherWg tracks the running interval-flush goroutine so Close can wait
+	// for it to exit before closing the log.
+	flusherWg sync.WaitGroup
 }
 
 // NewCoordinator returns a Coordinator. mgr is the delegation oracle; log and
@@ -195,8 +199,11 @@ func (c *Coordinator) Xattr(path, name string) (val []byte, set bool, removed bo
 	return c.overlay.Xattr(path, name)
 }
 
-// Close closes the underlying WAL log. The Overlay and delegation.Manager have
-// their own lifecycles and are NOT closed here.
+// Close stops the interval flusher goroutine (if running), waits for it to
+// exit, then closes the underlying WAL log. The Overlay and delegation.Manager
+// have their own lifecycles and are NOT closed here.
 func (c *Coordinator) Close() error {
+	c.stopFlusher()
+	c.flusherWg.Wait()
 	return c.log.Close()
 }

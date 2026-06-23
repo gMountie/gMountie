@@ -13,6 +13,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/backend/identity"
 	"go.gmountie.dev/gmountie/pkg/client/backend/observer"
 	"go.gmountie.dev/gmountie/pkg/client/backend/transport"
+	"go.gmountie.dev/gmountie/pkg/client/backend/wal"
 	"go.gmountie.dev/gmountie/pkg/client/config"
 	grpcclient "go.gmountie.dev/gmountie/pkg/client/grpc"
 	"go.gmountie.dev/gmountie/pkg/client/metrics"
@@ -29,6 +30,11 @@ import (
 // config.MappingModeSquash) for which the kernel may enforce permissions locally
 // via default_permissions instead of forwarding an Access RPC per check.
 const mappingModeSquash = "squash"
+
+// walFlushInterval is the period for the background WAL interval flusher.
+// It controls how often pending (delegated) writes are streamed to the server
+// when no explicit Fsync or recall-flush has triggered an earlier flush.
+const walFlushInterval = 30 * time.Second
 
 // SingleVolumeMounter is the interface for the mounter that supports a single volume
 type SingleVolumeMounter interface {
@@ -150,9 +156,31 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 	// With cache disabled the nil-oracle / no-hook / no-goroutine path is
 	// byte-for-byte unchanged.
 	var delMgr *delegation.Manager
+	var coord *wal.Coordinator
 	if m.cache.Enabled {
 		inv := &lazyInvalidator{}
 		delMgr = delegation.NewManager(inv)
+
+		// ── WAL construction ────────────────────────────────────────────────
+		// The WAL log lives under the same per-volume root as the cache so
+		// it is co-located with the cache's meta.db and chunks/.
+		walRoot := filepath.Join(m.cache.Path, volume)
+		walLog, werr := wal.Open(filepath.Join(walRoot, "wal.db"))
+		if werr != nil {
+			return errors.Wrap(werr, "open wal log")
+		}
+		overlay := wal.NewOverlay()
+		coord = wal.NewCoordinator(delMgr, walLog, overlay)
+
+		// SetMetrics BEFORE the coordinator can Flush or Replay (the global
+		// walMetrics is written here; subsequent flushes will read it).
+		if cm := m.client.Metrics(); cm != nil {
+			wal.SetMetrics(cm)
+		}
+
+		// Wire the WAL drain into the transport BEFORE constructing the transport
+		// backend (backendOpts are consumed by NewBackendClient below).
+		backendOpts = append(backendOpts, transport.WithWriteDrain(coord))
 
 		// Wire the transport hook BEFORE constructing the transport backend.
 		backendOpts = append(backendOpts, transport.WithDelegationHook(delMgr))
@@ -202,6 +230,17 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 		layers = append(layers, backendLayer{pos: posWritePath, build: func(inner backend.FileSystemBackend) backend.FileSystemBackend {
 			return delegation.NewLayer(inner, delMgr_)
 		}})
+
+		// posWAL: WAL read-your-own-writes seam (outer of the cache). Serves
+		// merged reads (base ⊕ pending overlay) for delegated paths and records
+		// metadata mutations (create/unlink/rename/…) in the log without
+		// forwarding to inner. coord.Close() → stopFlusher + log.Close() is
+		// driven by the Layer.Close() override, which is reached via
+		// releaseVolume → be.Close() cascade.
+		coord_ := coord
+		layers = append(layers, backendLayer{pos: posWAL, build: func(inner backend.FileSystemBackend) backend.FileSystemBackend {
+			return wal.NewLayer(inner, delMgr_, coord_)
+		}})
 	}
 
 	if rec := m.client.Metrics(); rec != nil {
@@ -231,14 +270,21 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 	m.mounts.Store(volume, handle)
 	m.mountPaths.Store(volume, mountPath)
 
-	// Start the recall goroutine only AFTER the FUSE mount succeeds. The
-	// goroutine requires no FUSE state of its own, but delaying until here
-	// ensures we never leak a running goroutine on mount failure (the
-	// failure-rollback defer calls releaseVolume → be.Close() → mgr.Close(),
-	// but if the goroutine was never started there is nothing to cancel). The
-	// composeBackend closures have all run by now, so inv.set has been called
-	// and OnRecall can always reach the real cache invalidator.
+	// Start the recall goroutine and WAL interval flusher only AFTER the FUSE
+	// mount succeeds. Goroutines started before this point would leak on mount
+	// failure (the failure-rollback defer calls releaseVolume → be.Close() →
+	// Layer.Close() → coord.Close() → stopFlusher, but if the goroutine was
+	// never started there is nothing to cancel). The composeBackend closures
+	// have all run by now, so inv.set has been called and OnRecall can reach
+	// the real cache invalidator.
 	if m.cache.Enabled && delMgr != nil {
+		// Wire the WAL coordinator as the recall flusher BEFORE starting the
+		// recall goroutine (which may immediately receive a recall and trigger
+		// a flush via mgr.OnRecall).
+		if coord != nil {
+			delMgr.SetRecallFlusher(coord)
+			coord.StartIntervalFlusher(walFlushInterval)
+		}
 		m.startRecallGoroutine(delMgr, volume)
 	}
 

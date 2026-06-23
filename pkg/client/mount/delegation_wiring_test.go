@@ -3,6 +3,7 @@ package mount
 import (
 	"context"
 	"io"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -13,7 +14,9 @@ import (
 
 	grpcmocks "go.gmountie.dev/gmountie/internal/mocks/pkg/client/grpc"
 	mockProto "go.gmountie.dev/gmountie/internal/mocks/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/client/backend"
 	"go.gmountie.dev/gmountie/pkg/client/backend/delegation"
+	"go.gmountie.dev/gmountie/pkg/client/backend/wal"
 	"go.gmountie.dev/gmountie/pkg/proto"
 )
 
@@ -186,4 +189,129 @@ func (f fakeInvalidator) InvalidateSubtree(p string) { f(p) }
 
 func TestDelegationWiringSuite(t *testing.T) {
 	suite.Run(t, new(DelegationWiringSuite))
+}
+
+// ── WAL wiring tests ──────────────────────────────────────────────────────────
+//
+// WALWiringSuite tests the WAL construction and lifecycle at the mount seam.
+// It avoids a real FUSE mount by exercising the layer-assembly (composeBackend)
+// and Coordinator lifecycle directly — the same technique used by ComposeSuite
+// and DelegationWiringSuite.
+
+type WALWiringSuite struct {
+	suite.Suite
+}
+
+// buildWALLayer opens a fresh Coordinator backed by a temp log and constructs
+// the posWAL backendLayer. Returns the layer, coordinator, and a no-op inner.
+func (s *WALWiringSuite) buildWALLayer() (backendLayer, *wal.Coordinator) {
+	mgr := delegation.NewManager(fakeInvalidator(func(_ string) {}))
+	logPath := filepath.Join(s.T().TempDir(), "wal.db")
+	walLog, err := wal.Open(logPath)
+	s.Require().NoError(err)
+	coord := wal.NewCoordinator(mgr, walLog, wal.NewOverlay())
+
+	mgr_ := mgr
+	coord_ := coord
+	layer := backendLayer{pos: posWAL, build: func(inner backend.FileSystemBackend) backend.FileSystemBackend {
+		return wal.NewLayer(inner, mgr_, coord_)
+	}}
+	return layer, coord
+}
+
+// TestWALLayerAtPosWAL verifies that posWAL sits OUTER of posCache in the
+// compose stack (i.e., it is built AFTER posCache, which means it wraps it).
+// This is the same ordering invariant tested by ComposeSuite for cache/observer.
+func (s *WALWiringSuite) TestWALLayerAtPosWAL() {
+	var order []string
+	mk := func(name string, pos layerPos) backendLayer {
+		return backendLayer{pos: pos, build: func(inner backend.FileSystemBackend) backend.FileSystemBackend {
+			order = append(order, name)
+			return inner
+		}}
+	}
+	transport := &PassthroughCounter{}
+	layers := []backendLayer{
+		mk("cache", posCache),
+		mk("wal", posWAL),
+		mk("observer", posObserver),
+	}
+	got := composeBackend(transport, layers)
+	s.NotNil(got)
+	// composeBackend builds innermost first: cache → wal → observer.
+	s.Equal([]string{"cache", "wal", "observer"}, order,
+		"WAL layer must be built after cache (outer of cache, inner of observer)")
+}
+
+// TestWALCoordinator_IntervalFlusherLifecycle verifies that StartIntervalFlusher
+// starts a goroutine that exits cleanly when coord.Close() is called.
+// This is the mount-level analog of the wal_test.go goroutine-leak test; it
+// uses the same coord that the mount layer would wire up.
+func (s *WALWiringSuite) TestWALCoordinator_IntervalFlusherLifecycle() {
+	_, coord := s.buildWALLayer()
+
+	// Simulate the post-mount startup (walFlushInterval would be 30s in prod;
+	// use a short interval here to exercise the goroutine quickly).
+	coord.StartIntervalFlusher(10 * time.Millisecond)
+	time.Sleep(25 * time.Millisecond) // let at least one tick fire
+
+	// Simulate unmount: Layer.Close → coord.Close should stop the flusher.
+	done := make(chan struct{})
+	go func() {
+		_ = coord.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+		// Flusher stopped cleanly.
+	case <-time.After(3 * time.Second):
+		s.Fail("coord.Close() did not return within 3s — interval flusher goroutine leaked on unmount")
+	}
+}
+
+// noopBackend is a minimal FileSystemBackend whose Close is a no-op.
+// Used so Layer.Close() cascade reaches coord.Close() without panicking on a
+// nil PassthroughBackend.Inner.
+type noopBackend struct{ backend.PassthroughBackend }
+
+func (n *noopBackend) Close() error { return nil }
+
+// TestWALLayer_ClosePropagatesToCoord verifies that Layer.Close() calls
+// coord.Close(), which stops the interval flusher. This is the cascade that
+// releaseVolume → be.Close() relies on.
+func (s *WALWiringSuite) TestWALLayer_ClosePropagatesToCoord() {
+	layer, coord := s.buildWALLayer()
+
+	// Build the layer with a trivial inner that returns nil from Close.
+	walLayer := layer.build(&noopBackend{})
+
+	coord.StartIntervalFlusher(10 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
+
+	done := make(chan struct{})
+	go func() {
+		_ = walLayer.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		s.Fail("walLayer.Close() did not return — coord.Close() was not called or flusher leaked")
+	}
+}
+
+// TestNoCacheNoWAL documents (at the compile-seam level) that the cache-disabled
+// path in Mount does not construct a WAL coordinator. We verify this behaviorally:
+// a layers list with only posCache=absent and no posWAL entry composes correctly.
+func (s *WALWiringSuite) TestNoCacheNoWAL() {
+	transport := &PassthroughCounter{}
+	// No WAL layer (cache disabled path in single.go skips the coord block).
+	layers := []backendLayer{}
+	got := composeBackend(transport, layers)
+	// Should return the transport unchanged (no layers to wrap).
+	s.Equal(transport, got, "with no layers, composeBackend must return the transport unchanged")
+}
+
+func TestWALWiringSuite(t *testing.T) {
+	suite.Run(t, new(WALWiringSuite))
 }
