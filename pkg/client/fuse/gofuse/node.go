@@ -459,7 +459,7 @@ func (n *gMountieNode) Access(ctx context.Context, mask uint32) syscall.Errno {
 // --- Getxattr ---
 
 func (n *gMountieNode) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
-	data, st := n.backend.GetXAttr(ctx, n.path(), attr)
+	data, st := n.backend.GetXAttr(ctx, n.path(), xattrNameToBackend(attr))
 	if st != proto.FsError_FS_OK {
 		return 0, fserr.ToErrno(st)
 	}
@@ -472,20 +472,28 @@ func (n *gMountieNode) Getxattr(ctx context.Context, attr string, dest []byte) (
 // --- Setxattr / Removexattr / Listxattr ---
 
 func (n *gMountieNode) Setxattr(ctx context.Context, attr string, data []byte, flags uint32) syscall.Errno {
-	return fserr.ToErrno(n.backend.SetXAttr(ctx, n.path(), attr, data, flags))
+	return fserr.ToErrno(n.backend.SetXAttr(ctx, n.path(), xattrNameToBackend(attr), data, flags))
 }
 
 func (n *gMountieNode) Removexattr(ctx context.Context, attr string) syscall.Errno {
-	return fserr.ToErrno(n.backend.RemoveXAttr(ctx, n.path(), attr))
+	return fserr.ToErrno(n.backend.RemoveXAttr(ctx, n.path(), xattrNameToBackend(attr)))
 }
 
 // Listxattr marshals names into the kernel's NUL-joined buffer format.
 // go-fuse contract: if dest is too small, return ERANGE AND the needed
 // size so the caller can re-issue with a bigger buffer.
 func (n *gMountieNode) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
-	names, st := n.backend.ListXAttr(ctx, n.path())
+	backendNames, st := n.backend.ListXAttr(ctx, n.path())
 	if st != proto.FsError_FS_OK {
 		return 0, fserr.ToErrno(st)
+	}
+	// Present backend names to the kernel under their original namespace
+	// (user.com.apple.* -> com.apple.*); a no-op off the macFUSE path. Build a
+	// fresh slice rather than mutating in place: the backend (cache layer) may
+	// retain the returned slice, and rewriting it would poison the cache.
+	names := make([]string, len(backendNames))
+	for i, name := range backendNames {
+		names[i] = xattrNameFromBackend(name)
 	}
 	sz := 0
 	for _, name := range names {
