@@ -572,6 +572,57 @@ func (_c *MockRpcFsServer_Readlink_Call) RunAndReturn(run func(context1 context.
 	return _c
 }
 
+// Recall provides a mock function for the type MockRpcFsServer
+func (_mock *MockRpcFsServer) Recall(bidiStreamingServer grpc.BidiStreamingServer[proto.RecallAck, proto.RecallMsg]) error {
+	ret := _mock.Called(bidiStreamingServer)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Recall")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(grpc.BidiStreamingServer[proto.RecallAck, proto.RecallMsg]) error); ok {
+		r0 = returnFunc(bidiStreamingServer)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockRpcFsServer_Recall_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Recall'
+type MockRpcFsServer_Recall_Call struct {
+	*mock.Call
+}
+
+// Recall is a helper method to define mock.On call
+//   - bidiStreamingServer grpc.BidiStreamingServer[proto.RecallAck, proto.RecallMsg]
+func (_e *MockRpcFsServer_Expecter) Recall(bidiStreamingServer interface{}) *MockRpcFsServer_Recall_Call {
+	return &MockRpcFsServer_Recall_Call{Call: _e.mock.On("Recall", bidiStreamingServer)}
+}
+
+func (_c *MockRpcFsServer_Recall_Call) Run(run func(bidiStreamingServer grpc.BidiStreamingServer[proto.RecallAck, proto.RecallMsg])) *MockRpcFsServer_Recall_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 grpc.BidiStreamingServer[proto.RecallAck, proto.RecallMsg]
+		if args[0] != nil {
+			arg0 = args[0].(grpc.BidiStreamingServer[proto.RecallAck, proto.RecallMsg])
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFsServer_Recall_Call) Return(err error) *MockRpcFsServer_Recall_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockRpcFsServer_Recall_Call) RunAndReturn(run func(bidiStreamingServer grpc.BidiStreamingServer[proto.RecallAck, proto.RecallMsg]) error) *MockRpcFsServer_Recall_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // RemoveXAttr provides a mock function for the type MockRpcFsServer
 func (_mock *MockRpcFsServer) RemoveXAttr(context1 context.Context, removeXAttrRequest *proto.RemoveXAttrRequest) (*proto.RemoveXAttrReply, error) {
 	ret := _mock.Called(context1, removeXAttrRequest)

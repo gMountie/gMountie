@@ -47,7 +47,7 @@ func (s *RpcFileServerTestSuite) SetupTest() {
 	s.Require().NoError(err)
 	s.sessionID = sid
 	s.bus = serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
-	s.server = NewRpcFileServer(s.fsService, s.sessionMgr, metrics.NewMetrics(), 1<<20, s.bus)
+	s.server = NewRpcFileServer(s.fsService, s.sessionMgr, metrics.NewMetrics(), 1<<20, s.bus, nil)
 }
 
 func (s *RpcFileServerTestSuite) TearDownTest() {

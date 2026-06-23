@@ -8,6 +8,7 @@ import (
 	fserr "go.gmountie.dev/gmountie/pkg/common/fserr"
 	"go.gmountie.dev/gmountie/pkg/proto"
 	serverio "go.gmountie.dev/gmountie/pkg/server/io"
+	"go.gmountie.dev/gmountie/pkg/server/delegation"
 	"go.gmountie.dev/gmountie/pkg/server/metrics"
 	"go.gmountie.dev/gmountie/pkg/server/service"
 
@@ -41,6 +42,7 @@ type RpcFileServerImpl struct {
 	metrics   *metrics.Metrics
 	streamer  *service.ReadStreamer
 	bus       serverio.EventBus
+	arbiter   *delegation.Arbiter
 	proto.UnimplementedRpcFileServer
 }
 
@@ -50,7 +52,8 @@ var _ proto.RpcFileServer = (*RpcFileServerImpl)(nil)
 // unregistered *Metrics is substituted so callers (e.g. unit tests)
 // don't need to plumb one through. frameSize bounds each ReadFrame
 // emitted by the streaming Read handler.
-func NewRpcFileServer(fsService service.VolumeService, sessions service.SessionManager, m *metrics.Metrics, frameSize int, bus serverio.EventBus) *RpcFileServerImpl {
+// arbiter may be nil for tests that do not exercise delegation.
+func NewRpcFileServer(fsService service.VolumeService, sessions service.SessionManager, m *metrics.Metrics, frameSize int, bus serverio.EventBus, arbiter *delegation.Arbiter) *RpcFileServerImpl {
 	if m == nil {
 		m = metrics.NewMetrics()
 	}
@@ -60,6 +63,7 @@ func NewRpcFileServer(fsService service.VolumeService, sessions service.SessionM
 		metrics:   m,
 		streamer:  service.NewReadStreamer(frameSize),
 		bus:       bus,
+		arbiter:   arbiter,
 	}
 }
 

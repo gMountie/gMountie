@@ -39,6 +39,17 @@ type Metrics struct {
 	SubscribeSubscribers   *prometheus.GaugeVec
 	SubscribeDroppedSlow   *prometheus.CounterVec
 
+	// Delegation metrics (Del-spec).
+	// DelegationGrantsActive is the number of currently-held delegations (grants
+	// not yet recalled or released). Gauged so sudden drops (reap storm) show up.
+	DelegationGrantsActive prometheus.Gauge
+	// DelegationRecalls counts successful recall RTTs (the holder acked before
+	// the timeout). Monotone so a recall storm shows up as a rate spike.
+	DelegationRecalls prometheus.Counter
+	// DelegationCooldownTrips counts how often a root entered cooldown after a
+	// recall. A rising rate signals write-write contention on the same subtree.
+	DelegationCooldownTrips prometheus.Counter
+
 	// ConfinementDenials counts openat2 RESOLVE_BENEATH boundary rejections
 	// (a wire path that tried to escape the volume root via .. or an out-of-tree
 	// symlink), per volume and op. These map to a plain EACCES on the wire, so
@@ -114,6 +125,18 @@ func NewMetrics() *Metrics {
 			Name: "gmountie_subscribe_dropped_slow_total",
 			Help: "Subscribe events dropped due to slow consumers per volume.",
 		}, []string{"volume"}),
+		DelegationGrantsActive: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "gmountie_delegation_grants_active",
+			Help: "Number of currently-held delegations (grants not yet recalled or released).",
+		}),
+		DelegationRecalls: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gmountie_delegation_recalls_total",
+			Help: "Count of successful recall RTTs (holder acked before timeout).",
+		}),
+		DelegationCooldownTrips: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gmountie_delegation_cooldown_trips_total",
+			Help: "Count of roots that entered cooldown after a recall (write-write contention signal).",
+		}),
 		ConfinementDenials: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gmountie_server_confinement_denials_total",
 			Help: "Count of RESOLVE_BENEATH confinement-boundary rejections (path-escape attempts), per volume and op.",
@@ -135,6 +158,7 @@ func (m *Metrics) MustRegister(r prometheus.Registerer) {
 		m.OpenFiles, m.Bytes, m.RpcErrors, m.RequestDuration, m.SessionsActive,
 		m.SessionsReaped, m.AuthFailures, m.TLSReloadFailures, m.TLSLastReloadUnixtime,
 		m.SubscribeEventsEmitted, m.SubscribeSubscribers, m.SubscribeDroppedSlow,
+		m.DelegationGrantsActive, m.DelegationRecalls, m.DelegationCooldownTrips,
 		m.ConfinementDenials, m.AuthzDenials, m.IdentityResolveFailures,
 	)
 }
@@ -147,6 +171,7 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 		m.OpenFiles, m.Bytes, m.RpcErrors, m.RequestDuration, m.SessionsActive,
 		m.SessionsReaped, m.AuthFailures, m.TLSReloadFailures, m.TLSLastReloadUnixtime,
 		m.SubscribeEventsEmitted, m.SubscribeSubscribers, m.SubscribeDroppedSlow,
+		m.DelegationGrantsActive, m.DelegationRecalls, m.DelegationCooldownTrips,
 		m.ConfinementDenials, m.AuthzDenials, m.IdentityResolveFailures,
 	}
 	for _, c := range all {
@@ -200,11 +225,17 @@ func (m *Metrics) Register(r prometheus.Registerer) error {
 					m.SessionsActive = existing
 				case prometheus.Collector(m.TLSLastReloadUnixtime):
 					m.TLSLastReloadUnixtime = existing
+				case prometheus.Collector(m.DelegationGrantsActive):
+					m.DelegationGrantsActive = existing
 				}
 			case prometheus.Counter:
 				switch c {
 				case prometheus.Collector(m.TLSReloadFailures):
 					m.TLSReloadFailures = existing
+				case prometheus.Collector(m.DelegationRecalls):
+					m.DelegationRecalls = existing
+				case prometheus.Collector(m.DelegationCooldownTrips):
+					m.DelegationCooldownTrips = existing
 				}
 			}
 		}
@@ -275,6 +306,18 @@ func (m *Metrics) SubscribeSubscribersDec(volume string) {
 func (m *Metrics) SubscribeDroppedSlowInc(volume string) {
 	m.SubscribeDroppedSlow.WithLabelValues(volume).Inc()
 }
+
+// DelegationGrantsActiveInc bumps the active-delegations gauge.
+func (m *Metrics) DelegationGrantsActiveInc() { m.DelegationGrantsActive.Inc() }
+
+// DelegationGrantsActiveDec decrements the active-delegations gauge.
+func (m *Metrics) DelegationGrantsActiveDec() { m.DelegationGrantsActive.Dec() }
+
+// DelegationRecallInc bumps the successful-recalls counter.
+func (m *Metrics) DelegationRecallInc() { m.DelegationRecalls.Inc() }
+
+// DelegationCooldownTripInc bumps the cooldown-trips counter.
+func (m *Metrics) DelegationCooldownTripInc() { m.DelegationCooldownTrips.Inc() }
 
 // ConfinementDenialInc bumps the confinement-denial counter for the given
 // volume and op (a RESOLVE_BENEATH path-escape rejection).

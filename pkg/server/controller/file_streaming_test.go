@@ -114,7 +114,7 @@ func (s *StreamingReadSuite) SetupTest() {
 	s.Require().NoError(err)
 	s.sessionID = sid
 	s.bus = serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
-	s.server = NewRpcFileServer(s.fsService, s.sessionMgr, metrics.NewMetrics(), s.frameSize, s.bus)
+	s.server = NewRpcFileServer(s.fsService, s.sessionMgr, metrics.NewMetrics(), s.frameSize, s.bus, nil)
 }
 
 func (s *StreamingReadSuite) TearDownTest() {

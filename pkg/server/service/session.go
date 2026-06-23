@@ -144,6 +144,11 @@ type SessionManagerOptions struct {
 	// Metrics is an optional sink for the active-session gauge. Nil
 	// substitutes a no-op implementation.
 	Metrics SessionMetrics
+	// OnReap, if set, is called with the session id whenever a session is
+	// removed (grace expiry, revocation ReapIf, or shutdown Stop) AFTER its
+	// fds are released. Used to drop the session's write-delegations so a dead
+	// holder does not orphan a subtree. Must be non-blocking / fast.
+	OnReap func(sessionID string)
 }
 
 // DefaultGracePeriod is how long the server retains a disconnected client's
@@ -291,6 +296,7 @@ type sessionManagerImpl struct {
 	grace                time.Duration
 	idempotencyCacheSize int
 	metrics              SessionMetrics
+	onReap               func(sessionID string)
 	wg                   sync.WaitGroup
 }
 
@@ -313,6 +319,7 @@ func NewSessionManager(opts SessionManagerOptions) SessionManager {
 		grace:                grace,
 		idempotencyCacheSize: cacheSize,
 		metrics:              m,
+		onReap:               opts.OnReap,
 	}
 }
 
@@ -466,4 +473,7 @@ func (m *sessionManagerImpl) reap(sess *sessionImpl, reason string) {
 		zap.String("principal", sess.principal),
 		zap.Int("fds_released", released),
 		zap.String("reason", reason))
+	if m.onReap != nil {
+		m.onReap(sess.id)
+	}
 }
