@@ -1,14 +1,13 @@
 # Write Delegation and Recall
 
-**Status:** Phase 1 (delegation + recall coherence layer) shipped (2026-06-23). Phase 2 (WAL + deferred close) deferred.
-**Last updated:** 2026-06-23
+**Status:** Phase 1 (delegation + recall coherence layer) shipped (2026-06-23). Phase 2 (WAL + deferred writes) shipped (2026-06-24).
+**Last updated:** 2026-06-24
 
 This document covers gMountie's write-delegation and recall system: how clients
 can hold a write-delegation over a subtree, how the server arbitrates grants and
-forces a coherent handoff on contention, and how Phase 2 (the WAL) will extend
-that machinery to batch writes across files. The access-mode lease model
-previously recorded in [rwo-wal.md](rwo-wal.md) §2 is superseded by this
-document; that doc's failure model and WAL mechanics still apply in Phase 2.
+forces a coherent handoff on contention, and how Phase 2 (the WAL) extends that
+machinery to batch writes across files. The access-mode lease model previously
+recorded in [rwo-wal.md](rwo-wal.md) §2 is superseded by this document.
 
 ---
 
@@ -116,7 +115,8 @@ A's flush, B's contending op, and the recall acknowledgment ride different
 connections; the lock is the only reliable serialization point.
 
 In Phase 1 there is no WAL flush, so the stall B observes is just the recall
-RTT plus A's cache-invalidation time — a small, bounded cost.
+RTT plus A's cache-invalidation time — a small, bounded cost. In Phase 2, the
+stall extends to include the WAL prefix flush.
 
 ---
 
@@ -208,8 +208,7 @@ delegations are dropped when a session expires.
 
 **Client — `pkg/client/backend/delegation/`:**
 
-- **Manager + delegation layer** at the reserved `posWritePath` slot in the
-  backend chain.
+- **Manager + delegation layer** at the `posWritePath` slot in the backend chain.
 - **Active-write-set tracker** — computes the LCA subtree to request, promotes
   upward as writes spread, piggybacks the request on outgoing ops via a
   `DelegationHook`.
@@ -232,50 +231,207 @@ delegations are dropped when a session expires.
 
 ---
 
-## 7. Phase 2 gates (deferred — not shipped)
+## 7. Phase 2 (shipped): WAL + write batching
 
-These items must be designed before deferral ships. None are in scope today.
+Phase 2 adds the on-disk Write-Ahead Log that converts Phase 1's provable
+isolation into a write-speed win. Under a held delegation, mutating ops defer
+into the WAL and flush in pipelined batches via a single `Apply` streaming RPC,
+collapsing the per-file `open→write→close` RTT that dominates small-file WAN
+workloads.
 
-**WAL + deferred `close()`** — the actual write-side speedup. `close()` defers
-into an on-disk WAL; flush triggers are interval/size/`fsync`/recall; WAL replay
-with watermark dedup runs on reconnect.
+### 7.1 The overlay model — WAL + pending overlay (read-your-own-writes)
 
-**Fencing by delegation generation (gate #1 — the boot-epoch hole).** PR #119's
-boot-epoch reclaim is correct today because Phase 1 does not defer. Once WAL
-replay exists, the hole opens: holder A's machine dies; grace expires; server
-hands the region to B; A reboots with a new boot epoch; #119 reclaim replays A's
-WAL; A's ops are `> watermark` (never acked) and are not deduped by the
-seq-watermark; they clobber B. Boot-epoch reclaim is the hole, not the fix.
+Two co-managed structures, kept consistent in one step on every deferred op:
 
-Fix: fence by **delegation generation**, not boot epoch. When the server revokes
-A's delegation and hands the region to B, it durably records the revoked
-delegation-gen. WAL replay must present a still-live gen; any op tagged with a
-revoked gen is rejected regardless of its seq. The gen-revocation record and the
-seq-watermark must be **one durable store** — if they diverge, A's watermark
-advancement by its previous cycle never fences A's superseded replay.
+- **WAL** (`pkg/client/backend/wal/`) — the on-disk, ordered, sequence-numbered
+  op-log per `(identity, volume)`. The **single source of truth for un-flushed
+  state.** Backed by bbolt (already a dependency via the cache persist tier).
+  Survives client-process restart.
+- **Pending overlay** — an in-memory, `memfs`-shaped tree (path→pending node,
+  **including tombstones** for deferred `unlink`/`rename`), rebuilt by scanning
+  the WAL on startup.
 
-Run an **SQL latency benchmark** for the watermark/revocation store before
-committing SQL on the hot (per-op) path.
+Reads are served as **`server-acked base ⊕ pending overlay`**. The existing
+two-tier cache accelerates the *base*; it never holds the only copy of pending
+state — un-flushed state is never only in the evictable cache (this avoids the
+dual-write / eviction hole). Byte-range reads of a partially-flushed file overlay
+pending bytes over base bytes.
 
-**Per-fd handle-layer seam** — the WAL sits at a seam inside the per-fd layer,
-described in [client-architecture.md](client-architecture.md) §9. This seam is a
-prerequisite for correct WAL placement.
+**This is correct precisely because of the delegation.** The client is provably
+alone under the subtree, so the local view (base ⊕ pending) is authoritative; no
+remote writer can change it without a recall first.
 
-**Failure model during Phase 2:**
+The WAL+overlay layer sits **outer of the cache** in the backend chain (a new
+`posWAL` slot between `posObserver` and `posCache`). The cache holds only the
+`base`; the overlay is the single source of truth for un-flushed state. The cache
+has no write-through obligation toward pending state.
 
-- `fsync`/`fdatasync` = hard barrier; ops are flushed durably before return.
-- Deferred-op failure (ENOSPC/EIO) on replay or recall-flush aborts the handoff:
-  the server must not serve the contender until the holder's flush is confirmed
-  durable.
-- Identity-bound replay: WAL ops are replayed under the holder's bound identity;
-  identity revocation discards un-replayed WAL, consistent with the session-death
-  model.
-- **Data-loss window** = machine death or a network partition that outlasts the
-  grace period (the server cannot distinguish a dead client from a partitioned
-  one). Un-`fsync`'d WAL data in that window is lost. This is identical to a
-  local filesystem losing dirty page cache on power failure, and to NFS/SMB lease
-  expiry. Target workloads (build trees, `node_modules`, scratch, checkpoints)
-  regenerate the data.
+### 7.2 Handle-layer seam
+
+Per-fd write state (`WriteCoalescer`) was lifted off the transport's
+`grpcFileHandle` into a composable per-fd **`walHandle`** at the `posWritePath`
+slot. The `walHandle` wraps the transport handle, participates in the `Unwrap()`
+walk (so the transport resolves the leaf fd), and provides a drain seam the WAL
+can target.
+
+Two complementary tiers remain:
+- **Coalescer** batches *bytes within one file*.
+- **WAL** batches *ops across files*.
+
+On the **delegated path**, the coalescer's drain target becomes "append a
+write-op to the WAL" instead of `WriteAndFlush`-to-wire; `close`/`create`/
+`rename`/`unlink`/metadata likewise defer into the WAL and update the overlay.
+On the **un-delegated path** (no active delegation, or after recall/denial), the
+coalescer drains synchronously via `WriteAndFlush` as today — the WAL activates
+only when `IsDelegated` is true.
+
+### 7.3 Sequence, generation, and replay (corruption-critical core)
+
+Three durable concepts:
+
+- **`seq`** — client-assigned, monotone per `(identity, volume)` (one seq space
+  even across two disjoint delegations on the volume). Orders the WAL; drives
+  dedup. Carried in the `WalOp` envelope.
+- **`gen`** — the server stamps a generation on each granted delegation; the
+  grant returns it. The client tags every WAL op with the gen it was deferred
+  under. This is the fence.
+- **Watermark** — server-durable per `(identity, volume)`: the highest seq
+  durably applied. Replay of any op `seq ≤ watermark` is a no-op (dedup).
+  Stored **alongside the revoked-gen set in one store** — if they diverge,
+  fencing breaks.
+
+**`WatermarkStore` interface + bbolt default (`pkg/server/watermark/`):** stores
+`{watermark, revoked_gens}` per `(identity, volume)`. The interface is injected
+via the `server.New(cfg, ...Option)` extensibility seam (`WithWatermarkStore`).
+The default impl is embedded bbolt (self-contained OSS binary; file on the
+server's local disk or the cloud's persistent volume; restart-safe). The cloud
+can inject a centralized (e.g. Postgres) impl through the same Option without
+forking; single-node is sufficient today.
+
+**Flush = a pipelined batch with one commit point.** A flush is a
+**client-streaming RPC**: `RpcFs.Apply(stream WalOp) returns (ApplyAck)`. The
+`WalOp` message is a `oneof` over the existing mutating request messages
+(Create/Write/Mkdir/Rmdir/Rename/Unlink/Symlink/SetAttr/SetXAttr/RemoveXAttr
+plus path-based WriteOp and ReleaseOp) **with `seq` and `gen` added**. The client
+fire-hoses the batch, then half-closes; the server:
+
+1. Applies each op **in seq order**, dispatching to a shared internal `applyOp`
+   that the unary handlers also call (no logic duplication).
+2. Per op: `seq ≤ watermark` → skip (dedup); `gen` revoked → reject (fenced);
+   else apply + advance the in-memory watermark.
+3. At stream end: **persist the watermark to the store, then return
+   `ApplyAck{watermark}`**.
+
+The **persist-before-ack invariant**: the client only drops WAL entries ≤ the
+*acked* watermark; the server only acks what it durably recorded. **One RTT for
+the whole batch** — the WAN win — with no per-op durable write.
+
+**Replay on reconnect:** when a session resumes, the client re-streams its WAL
+via `Apply`. Correctness and dedup come from the server's durable seq-watermark;
+the server skips ops it has already applied regardless of which seq the client
+starts from.
+
+**Error mid-batch (ordered halt):** the WAL is one ordered seq-space, so the
+server halts at first failure. `ApplyAck` carries `{committed_watermark,
+failed_seq, fserr}`. Permanent failures (ENOSPC/EACCES/EIO) cause the client to
+discard the overlay, mark the subtree EIO, and release the delegation. Transient
+(EAGAIN) → retry the batch from `committed_watermark + 1`.
+
+**Generation lifecycle + GC:** the server durably records a revoked gen in the
+`WatermarkStore` *before* serving the contender on handoff. Revoked-gens are
+bounded: a gen may be GC'd once `(identity, volume)`'s watermark passes the gen's
+max seq, or after a TTL ≥ the max plausible reconnect window.
+
+### 7.4 Recall-flush integration
+
+On `Recall{root}` the holder:
+
+1. **Flushes the contiguous WAL prefix** covering the recalled delegation via
+   `Apply` and waits for the watermark ack.
+2. Clears the overlay for that subtree and drops the delegation.
+3. Sends `RecallAck{done}`.
+
+The server's handoff barrier now means *"the holder's WAL for this region is
+durably applied"* — so when the contender is unblocked it sees the holder's
+deferred writes.
+
+**Contiguous-prefix flush:** the WAL is one ordered seq-space, and the watermark
+is a single monotone value, so a non-contiguous subset cannot be applied. Recall
+flushes the contiguous prefix up to the last op touching the recalled delegation.
+It may incidentally flush another live delegation's earlier ops (harmless —
+independent, server-bound anyway); that delegation keeps its post-prefix ops
+deferred.
+
+**Recall-flush failure fail-closed:** if the flush fails, the client does not
+send `RecallAck`. The server's recall **timeout** then expires without an ack,
+and the server fails the handoff — the contender stays blocked or gets EAGAIN,
+and the holder's subtree is poisoned EIO. This is the fail-closed path: correct
+over fast. (See Known Gaps §7.7 for the current mechanism.)
+
+### 7.5 Flush triggers
+
+| Trigger | Behavior |
+|---|---|
+| `fsync`/`fdatasync` | Hard barrier — flush the prefix covering that file, synchronous, returns the real error (the truth-point). |
+| Recall | Flush the contiguous prefix for the recalled delegation before `RecallAck` (§7.4). |
+| Size cap | WAL bytes/ops over threshold → flush; backpressure — when full, the next deferred op blocks on a drain (bounds memory; degrades toward synchronous under slow WAN; never OOMs). |
+| Interval | Periodic background flush — bounds the un-`fsync`'d loss window in wall-clock time. |
+| Release / unmount | Flush all, then release. |
+
+**Loss-window is a knob.** Interval (time) + size (bytes) bound the machine-death
+loss window, configurable like the cache TTLs. `fsync`'d data is never in the
+window.
+
+### 7.6 Loud data-loss logging (§5.1)
+
+Deferral makes data loss asynchronous and potentially silent; the **loud,
+file-naming log is the required mitigation** that makes any loss auditable and
+hand-recoverable. On any event that discards un-flushed WAL data, the client
+emits an **ERROR-level** `log.Log` that **enumerates the affected file paths**
+(not a count, the actual paths), plus the cause, the seq range, and the
+`(identity, volume)` / delegation. A `WalDataLost` metric (events counter +
+files-lost counter) accompanies the log so the loss is alertable.
+
+Events that emit this log:
+
+| Event | Logged detail |
+|---|---|
+| Permanent apply-failure (ordered halt) | The failed op's path + `fserr` + seq, and every still-deferred path after it (stuck behind the halt, discarded with the poisoned overlay) |
+| Gen-fence discard on replay | Every fenced path + the revoked gen + seq range |
+| Recall-flush failure | The recalled region's pending paths + `fserr` |
+| WAL unreadable on startup (corrupt persist tier) | The WAL file + any entries recoverable enough to name |
+
+**Honest limit — machine-death loss is server-side and region-level only.** When
+the client machine dies, its WAL dies with it; no client-side enumeration is
+possible. The server logs (ERROR) that a reaped/fenced session's region was
+handed off with un-acked WAL, but it cannot name the lost files (it never
+received them).
+
+### 7.7 Known gaps / follow-ups
+
+These are correct-by-construction in the shipped implementation but are not yet
+optimized or fully signaled:
+
+**(a) Resume-watermark optimization unwired.** The replay protocol is
+specified to resume from `watermark+1` by fetching the server's durable watermark
+on session resume. The `SetVolume` call is not wired in the mount path, so the
+client sends an empty Volume on resume — the server returns a zero watermark and
+the client replays from seq 0. The server-side dedup (`seq ≤ watermark` → skip)
+makes this **correct and data-safe**; it just re-streams more ops than necessary.
+Wiring the resume-watermark is a follow-up optimization.
+
+**(b) Per-op caller fidelity for non-squash mapping modes.** WAL ops carry a
+mount-level `Caller` (the principal that established the mount). This is correct
+for squash mode (the default — all ops map to one identity). For `passthrough` and
+`system` mapping modes, where the per-op caller matters for identity resolution,
+the WAL caller may not reflect the original caller's identity. Per-op caller
+fidelity for non-squash modes is a follow-up.
+
+**(c) `RecallAck` has no explicit Abort/Error field.** When a recall-flush fails,
+the client does not send a clean `RecallAck`; the server relies on the recall
+**timeout** to fail the handoff (fail-closed). An explicit `RecallAck{error}` or
+`RecallAbort` message would let the server fail faster and with a clearer signal.
+This is a protocol follow-up.
 
 ---
 
@@ -284,8 +440,8 @@ prerequisite for correct WAL placement.
 | Scenario | Phase 1 | Phase 2 |
 |---|---|---|
 | `fsync`/`fdatasync` | Durable before return, always | Durable before return, always |
-| Remote contention | Recall flushes → coherent, no loss | Recall flushes WAL → coherent, no loss |
-| Client process dies, machine lives | No deferred data; close already durable | Boot-epoch reclaim + gen-fence replays WAL, zero loss |
+| Remote contention | Recall flushes → coherent, no loss | Recall flushes WAL prefix → coherent, no loss |
+| Client process dies, machine lives | No deferred data; close already durable | Boot-epoch reclaim + gen-fence replays WAL from seq 0 via server-dedup → zero loss |
 | Machine death or partition > grace | No deferred data; no loss | Bounded dirty WAL window lost — same as local-FS power loss |
 
 ---
@@ -303,3 +459,6 @@ prerequisite for correct WAL placement.
   delegation machinery is proven.
 - **Mount-time negotiation.** No capability handshake. The client piggybacks
   delegation requests; a server that does not support them ignores the field.
+- **Multi-replica HA for the watermark store.** Designed-for via the
+  `WatermarkStore` interface and `WithWatermarkStore` option seam; built in the
+  cloud's Postgres impl, not the OSS default (bbolt).
