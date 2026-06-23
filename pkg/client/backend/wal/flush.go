@@ -401,17 +401,17 @@ func opToWalOp(op Op, volume string, caller *proto.Caller) *proto.WalOp {
 
 // ── interval goroutine ────────────────────────────────────────────────────────
 
-// StartIntervalFlusher starts a background goroutine that flushes the WAL on
-// every tick of a time.Ticker with period d. The goroutine exits when
-// Coordinator.Close is called (via stopFlusher closing flushStop).
+// StartIntervalFlusher starts a single background goroutine that flushes the
+// WAL on every tick of a time.Ticker with period d. The goroutine is tracked
+// by flusherWg so Coordinator.Close() can wait for it to exit (ensuring no
+// in-flight log access after log.Close).
 //
 // StartIntervalFlusher must be called at most once per Coordinator; calling it
-// after Close is a no-op (flushStop is already closed). It is the caller's
-// responsibility to call Close to stop the goroutine and avoid a leak.
+// after Close is a no-op (flushStop is already closed, the goroutine exits
+// immediately on the first select). It is the caller's responsibility to call
+// Close to stop the goroutine and avoid a leak.
 func (c *Coordinator) StartIntervalFlusher(d time.Duration) {
 	t := time.NewTicker(d)
-	// Convert time.Ticker to a channel of struct{} for runIntervalFlush.
-	tickC := make(chan struct{})
 	c.flusherWg.Add(1)
 	go func() {
 		defer c.flusherWg.Done()
@@ -420,27 +420,22 @@ func (c *Coordinator) StartIntervalFlusher(d time.Duration) {
 			select {
 			case <-c.flushStop:
 				return
-			case _, ok := <-t.C:
-				if !ok {
-					return
+			case <-t.C:
+				ops, err := c.log.Replay(0)
+				if err != nil || len(ops) == 0 {
+					continue
 				}
-				select {
-				case tickC <- struct{}{}:
-				default:
-					// Drain: a flush is in flight; skip this tick.
-				}
+				// Use a background context — the interval flush is best-effort.
+				_ = c.Flush(context.Background(), ops[len(ops)-1].Seq)
 			}
 		}
 	}()
-	go c.runIntervalFlush(c.flushStop, tickC)
 }
 
 // startIntervalFlusher starts a background goroutine that flushes the WAL
-// every interval. It exits when stop is closed. Used by the interval trigger.
-// The tickC channel carries struct{} ticks; stop signals shutdown.
+// every interval. It exits when stop is closed. Used by tests that supply a
+// custom tick source; production code uses StartIntervalFlusher(d) instead.
 func (c *Coordinator) startIntervalFlusher(interval interface{ C() <-chan struct{} }, stop <-chan struct{}) {
-	// This seam is preserved for tests that want to supply a custom tick source.
-	// Production code uses StartIntervalFlusher(d) instead.
 	c.flusherWg.Add(1)
 	go func() {
 		defer c.flusherWg.Done()
