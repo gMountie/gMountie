@@ -126,6 +126,87 @@ func (_c *MockRpcFsClient_Access_Call) RunAndReturn(run func(ctx context.Context
 	return _c
 }
 
+// Apply provides a mock function for the type MockRpcFsClient
+func (_mock *MockRpcFsClient) Apply(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[proto.WalOp, proto.ApplyAck], error) {
+	// grpc.CallOption
+	_va := make([]interface{}, len(opts))
+	for _i := range opts {
+		_va[_i] = opts[_i]
+	}
+	var _ca []interface{}
+	_ca = append(_ca, ctx)
+	_ca = append(_ca, _va...)
+	ret := _mock.Called(_ca...)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Apply")
+	}
+
+	var r0 grpc.ClientStreamingClient[proto.WalOp, proto.ApplyAck]
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, ...grpc.CallOption) (grpc.ClientStreamingClient[proto.WalOp, proto.ApplyAck], error)); ok {
+		return returnFunc(ctx, opts...)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, ...grpc.CallOption) grpc.ClientStreamingClient[proto.WalOp, proto.ApplyAck]); ok {
+		r0 = returnFunc(ctx, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(grpc.ClientStreamingClient[proto.WalOp, proto.ApplyAck])
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, ...grpc.CallOption) error); ok {
+		r1 = returnFunc(ctx, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockRpcFsClient_Apply_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Apply'
+type MockRpcFsClient_Apply_Call struct {
+	*mock.Call
+}
+
+// Apply is a helper method to define mock.On call
+//   - ctx context.Context
+//   - opts ...grpc.CallOption
+func (_e *MockRpcFsClient_Expecter) Apply(ctx interface{}, opts ...interface{}) *MockRpcFsClient_Apply_Call {
+	return &MockRpcFsClient_Apply_Call{Call: _e.mock.On("Apply",
+		append([]interface{}{ctx}, opts...)...)}
+}
+
+func (_c *MockRpcFsClient_Apply_Call) Run(run func(ctx context.Context, opts ...grpc.CallOption)) *MockRpcFsClient_Apply_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 []grpc.CallOption
+		variadicArgs := make([]grpc.CallOption, len(args)-1)
+		for i, a := range args[1:] {
+			if a != nil {
+				variadicArgs[i] = a.(grpc.CallOption)
+			}
+		}
+		arg1 = variadicArgs
+		run(
+			arg0,
+			arg1...,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRpcFsClient_Apply_Call) Return(clientStreamingClient grpc.ClientStreamingClient[proto.WalOp, proto.ApplyAck], err error) *MockRpcFsClient_Apply_Call {
+	_c.Call.Return(clientStreamingClient, err)
+	return _c
+}
+
+func (_c *MockRpcFsClient_Apply_Call) RunAndReturn(run func(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[proto.WalOp, proto.ApplyAck], error)) *MockRpcFsClient_Apply_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetAttr provides a mock function for the type MockRpcFsClient
 func (_mock *MockRpcFsClient) GetAttr(ctx context.Context, in *proto.GetAttrRequest, opts ...grpc.CallOption) (*proto.GetAttrReply, error) {
 	// grpc.CallOption
