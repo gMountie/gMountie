@@ -26,17 +26,6 @@ message OpenReply {
   FsError status = 2;
 }
 
-message CreateRequest {
-  string volume = 1;
-  Caller caller = 2;
-  string path = 3;
-  uint32 flags = 4;
-  uint32 mode = 5;
-  string session_id = 6;
-  string request_id = 7;
-  DelegationRequest delegation = 8;
-}
-
 message CreateReply {
   uint64 fd = 1;
   FsError status = 2;
