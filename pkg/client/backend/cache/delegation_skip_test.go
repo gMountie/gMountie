@@ -28,10 +28,17 @@ func (o *fakeOracle) IsDelegated(path string) bool {
 	return o.delegated[path]
 }
 
+// fakeFileHandle is a minimal backend.FileHandle used by fakeCountingInner.Open.
+type fakeFileHandle struct{ path string }
+
+func (h *fakeFileHandle) Path() string                    { return h.path }
+func (h *fakeFileHandle) Unwrap() backend.FileHandle      { return h }
+
 // fakeCountingInner is a minimal FileSystemBackend that tracks
 // GetAttrIfChanged calls per path and supports setting per-path server
 // versions. It embeds backend.PassthroughBackend with a nil Inner — the
-// only methods this fake needs to handle are Stat and GetAttrIfChanged.
+// only methods this fake needs to handle are Stat, GetAttrIfChanged,
+// Open, and ListDir.
 type fakeCountingInner struct {
 	backend.PassthroughBackend
 	mu                    sync.Mutex
@@ -71,6 +78,19 @@ func (f *fakeCountingInner) GetAttrIfChanged(_ context.Context, path string, kno
 		return nil, true, proto.FsError_FS_OK
 	}
 	return &backend.Attr{Version: sv}, false, proto.FsError_FS_OK
+}
+
+// Open returns a stub FileHandle so the cache layer can wrap it in a
+// cachedHandle. No inner call is recorded — Open is not under test here.
+func (f *fakeCountingInner) Open(_ context.Context, path string, _ uint32) (backend.FileHandle, proto.FsError) {
+	return &fakeFileHandle{path: path}, proto.FsError_FS_OK
+}
+
+// ListDir is never reached in the delegation-skip tests (the cache always
+// hits), but must satisfy the interface used by the test via PassthroughBackend
+// override so a nil-Inner panic doesn't fire on an unexpected fall-through.
+func (f *fakeCountingInner) ListDir(_ context.Context, _ string) ([]backend.DirEntryPlus, proto.FsError) {
+	return nil, proto.FsError_FS_ENOENT
 }
 
 func (f *fakeCountingInner) Close() error { return nil }
@@ -160,6 +180,66 @@ func (s *DelegationSkipSuite) TestRecallRestoresRevalidationSoNoStale() {
 		"after recall, revalidation must return fresh server version")
 	s.Equal(1, s.inner.getAttrIfChangedCalls["proj/a"],
 		"after recall, GetAttrIfChanged must be called exactly once")
+}
+
+// primeDir inserts a directory listing directly into the dir cache and also
+// primes the attrs for the directory path so the ListDir revalidation path
+// (which calls b.attr.get(p) before revalidating) has a cached version to
+// compare against GetAttrIfChanged.
+func (s *DelegationSkipSuite) primeDir(path string, version uint64) {
+	s.primeAttr(path, version)
+	s.b.dir.put(path, []backend.DirEntry{{Name: "entry"}})
+}
+
+// TestDelegatedPathSkipsListDirRevalidation verifies the ListDir fast-path gate:
+// during an UNVERIFIED window a delegated directory is served from cache without
+// calling GetAttrIfChanged, while a non-delegated directory still revalidates.
+func (s *DelegationSkipSuite) TestDelegatedPathSkipsListDirRevalidation() {
+	s.oracle.delegated["dirs/delegated"] = true
+	s.b.validity.markGlobalUnverified()
+	s.primeDir("dirs/delegated", 3)
+	s.primeDir("dirs/other", 5)
+
+	_, _ = s.b.ListDir(s.ctx, "dirs/delegated")
+	_, _ = s.b.ListDir(s.ctx, "dirs/other")
+
+	s.Equal(0, s.inner.getAttrIfChangedCalls["dirs/delegated"],
+		"delegated dir must skip GetAttrIfChanged (recall-before-change guarantee)")
+	s.Equal(1, s.inner.getAttrIfChangedCalls["dirs/other"],
+		"non-delegated dir must revalidate when unverified")
+}
+
+// TestDelegatedPathSkipsReadRevalidation verifies the (De Morgan-inverted) Read
+// fast-path gate: during an UNVERIFIED window a delegated file path skips the
+// attr revalidation that normally precedes the data-chunk lookup, while a
+// non-delegated path still revalidates. A data chunk is primed for each path so
+// the read is served from cache and never reaches the inner backend's Read.
+func (s *DelegationSkipSuite) TestDelegatedPathSkipsReadRevalidation() {
+	s.oracle.delegated["files/delegated"] = true
+	s.b.validity.markGlobalUnverified()
+
+	// Prime attrs (needed by the revalidation path inside Read).
+	s.primeAttr("files/delegated", 11)
+	s.primeAttr("files/other", 13)
+
+	// Prime chunk 0 for both paths so the read loop is satisfied from the data
+	// cache and never calls inner.Read (which would panic via PassthroughBackend).
+	chunk := []byte("hello cache")
+	s.b.data.put("files/delegated", 0, chunk)
+	s.b.data.put("files/other", 0, chunk)
+
+	// Build cachedHandles directly (same package — no Open call needed).
+	hDelegated := newCachedHandle(&fakeFileHandle{path: "files/delegated"}, "files/delegated")
+	hOther := newCachedHandle(&fakeFileHandle{path: "files/other"}, "files/other")
+
+	buf := make([]byte, len(chunk))
+	_, _ = s.b.Read(s.ctx, hDelegated, 0, buf)
+	_, _ = s.b.Read(s.ctx, hOther, 0, buf)
+
+	s.Equal(0, s.inner.getAttrIfChangedCalls["files/delegated"],
+		"delegated file must skip GetAttrIfChanged during unverified window")
+	s.Equal(1, s.inner.getAttrIfChangedCalls["files/other"],
+		"non-delegated file must revalidate when unverified")
 }
 
 func TestDelegationSkipSuite(t *testing.T) {
