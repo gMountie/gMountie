@@ -47,6 +47,15 @@ type SessionHandshake struct {
 	// so a timeout firing does not tear down an otherwise-healthy stream.
 	callTimeout time.Duration
 
+	// volume is the volume name sent in SessionResumeRequest so the server can
+	// return the correct per-(identity, volume) seq-watermark. Set via
+	// SetVolume before the first reconnect can fire.
+	volume string
+
+	// resumeWatermark holds the last watermark returned by a successful Resume
+	// reply. Exposed via ResumeWatermark() so the mount can seed coord.Replay.
+	resumeWatermark uint64
+
 	mu sync.Mutex
 }
 
@@ -55,6 +64,28 @@ func NewSessionHandshake(client proto.SessionServiceClient) *SessionHandshake {
 		client:      client,
 		callTimeout: defaultReattachCallTimeout,
 	}
+}
+
+// SetVolume records the volume name to include in SessionResumeRequest. It must
+// be called before Establish (or at least before the first reconnect fires).
+func (h *SessionHandshake) SetVolume(volume string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.volume = volume
+}
+
+// ResumeWatermark returns the server's seq-watermark from the most recent
+// successful Resume reply. Zero means no Resume has succeeded yet.
+func (h *SessionHandshake) ResumeWatermark() uint64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.resumeWatermark
+}
+
+func (h *SessionHandshake) setResumeWatermark(wm uint64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.resumeWatermark = wm
 }
 
 func (h *SessionHandshake) SessionID() string {
@@ -236,12 +267,24 @@ func (h *SessionHandshake) tryReattach() (proto.SessionService_KeepaliveClient, 
 
 	currentID := h.SessionID()
 	if currentID != "" {
-		resp, err := h.client.Resume(callCtx, &proto.SessionResumeRequest{SessionId: currentID})
+		h.mu.Lock()
+		vol := h.volume
+		h.mu.Unlock()
+		resp, err := h.client.Resume(callCtx, &proto.SessionResumeRequest{
+			SessionId: currentID,
+			Volume:    vol,
+		})
 		if err != nil {
 			return nil, errors.Wrap(err, "resume")
 		}
 		if resp.Resumed {
-			log.Log.Info("session resumed", zap.String("session_fp", common.FingerprintID(currentID)))
+			// Store the server's seq-watermark so the coordinator can seed
+			// Replay with the correct starting point (ops ≤ watermark already
+			// committed, no need to re-send them).
+			h.setResumeWatermark(resp.GetWatermark())
+			log.Log.Info("session resumed",
+				zap.String("session_fp", common.FingerprintID(currentID)),
+				zap.Uint64("resume_watermark", resp.GetWatermark()))
 			// Keepalive must use the long-lived streamCtx, not callCtx — a bounded
 			// ctx would tear the stream down when the timeout fires.
 			return h.client.Keepalive(h.streamCtx, &proto.KeepaliveRequest{SessionId: currentID})
