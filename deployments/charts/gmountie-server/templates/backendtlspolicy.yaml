@@ -1,0 +1,33 @@
+{{- if and .Values.gateway.enabled .Values.gateway.backendTLS.enabled }}
+{{- /*
+Tells the gateway to re-originate TLS to the gMountie backend (the server
+refuses cleartext on a non-loopback bind). The gateway validates the server's
+cert and sends `hostname` as SNI; over TLS the gRPC h2 stream is negotiated
+via ALPN. Standard Gateway API v1, so portable across implementations.
+*/}}
+{{- $hostname := .Values.gateway.backendTLS.hostname | default (first .Values.gateway.hostnames) }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: BackendTLSPolicy
+metadata:
+  name: {{ include "gmountie-server.fullname" . }}
+  labels:
+    {{- include "gmountie-server.labels" . | nindent 4 }}
+spec:
+  targetRefs:
+    - group: ""
+      kind: Service
+      name: {{ include "gmountie-server.fullname" . }}
+      sectionName: grpc
+  validation:
+    {{- if .Values.gateway.backendTLS.wellKnownCACertificates }}
+    wellKnownCACertificates: {{ .Values.gateway.backendTLS.wellKnownCACertificates }}
+    {{- else if .Values.gateway.backendTLS.caCertRefName }}
+    caCertificateRefs:
+      - group: ""
+        kind: ConfigMap
+        name: {{ .Values.gateway.backendTLS.caCertRefName }}
+    {{- else }}
+    {{- fail "gateway.backendTLS: set wellKnownCACertificates (e.g. System) or caCertRefName" }}
+    {{- end }}
+    hostname: {{ required "gateway.backendTLS.hostname or gateway.hostnames[0] is required" $hostname }}
+{{- end }}

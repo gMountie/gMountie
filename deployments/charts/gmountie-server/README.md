@@ -3,7 +3,7 @@
 Deploys the gMountie network-filesystem server (FUSE-over-gRPC): a
 Deployment (Recreate — the data PVC is RWO), a ConfigMap for the server
 config, a Secret for the auth credentials, a Service, and optionally a
-PVC and an Ingress.
+PVC, an Ingress, and Gateway API exposure (GRPCRoute + BackendTLSPolicy).
 
 ## Installing
 
@@ -29,12 +29,46 @@ The `config.auth` block is rendered into a chart-managed **Secret**
 container start. The default values ship a published demo credential
 (`demo`/`demo`); the chart **refuses to render** when that hash is still
 present and the install is externally exposed (`service.type`
-LoadBalancer/NodePort or `ingress.enabled`). Generate a real hash with
-`gmountie genpass`.
+LoadBalancer/NodePort, `ingress.enabled`, `gateway.enabled`, or the
+`exposedExternally` opt-in). Generate a real hash with `gmountie genpass`.
 
 To keep credentials out of Helm values entirely, pre-create a Secret
 with an `auth.yaml` key containing a top-level `auth:` block and set
 `auth.existingSecret` (see `values.yaml` for the exact shape).
+
+## Exposure
+
+Three options (use one):
+
+- **Service type** — `service.type: LoadBalancer` (or `NodePort`) for a
+  raw L4 endpoint.
+- **Ingress** — `ingress.enabled` for an nginx-style gRPC ingress.
+- **Gateway API** — `gateway.enabled` attaches the ClusterIP Service to an
+  existing Gateway via a **GRPCRoute** plus a **BackendTLSPolicy** that
+  re-encrypts to the server's own TLS cert (gMountie refuses cleartext on a
+  non-loopback bind). Set `gateway.parentRef` and `gateway.hostnames`, and
+  provide the backend cert via `config.server.tls.cert_file/key_file` (mount
+  it through `volumes`/`volumeMounts`, or let the chart issue it with
+  `gateway.certificate.enabled`).
+
+  Two things are **not** portable Gateway API and are handled separately:
+  - gMountie's long-lived server streams (session keepalive, cache Subscribe)
+    never complete, so a gateway's default per-request timeout resets them.
+    GRPCRoute v1 has no timeout field. On **Envoy Gateway**, enable
+    `gateway.envoy.backendTrafficPolicy` (renders a `BackendTrafficPolicy`
+    with `requestTimeout: 0s`). Other implementations need their own equivalent.
+  - HTTP/2 (h2) ALPN on the gateway **listener** is shared infrastructure for
+    every route on it — configure it on the Gateway itself, not from this chart.
+
+## Hardening
+
+The pod runs non-root, drops all capabilities, and uses a **read-only root
+filesystem** (`securityContext.readOnlyRootFilesystem`); HOME and the XDG base
+dirs are redirected to a writable `state` emptyDir so the default self-signed
+TLS path still works. The ServiceAccount token is **not** mounted by default
+(`serviceAccount.automount: false`) — the server never calls the Kubernetes
+API. Set `persistence.retain: true` to annotate the data PVC
+`helm.sh/resource-policy: keep` so it survives `helm uninstall`.
 
 ## Ops endpoint (metrics/health)
 

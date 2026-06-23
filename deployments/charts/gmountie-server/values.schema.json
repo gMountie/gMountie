@@ -1,0 +1,119 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "gmountie-server chart values",
+  "description": "Validated at install/upgrade/template time. Unknown keys are allowed (additionalProperties defaults true); only the structure of known keys is checked.",
+  "type": "object",
+  "required": ["image", "service", "config"],
+  "properties": {
+    "replicaCount": { "type": "integer", "minimum": 0 },
+    "image": {
+      "type": "object",
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "imagePullSecrets": { "type": "array" },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "create": { "type": "boolean" },
+        "automount": { "type": "boolean" },
+        "name": { "type": "string" }
+      }
+    },
+    "enableServiceLinks": { "type": "boolean" },
+    "terminationGracePeriodSeconds": { "type": "integer", "minimum": 0 },
+    "exposedExternally": { "type": "boolean" },
+    "service": {
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "opsPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "appProtocol": { "type": "string" }
+      }
+    },
+    "config": {
+      "type": "object",
+      "required": ["server", "volumes"],
+      "properties": {
+        "server": { "type": "object" },
+        "auth": { "type": ["object", "null"] },
+        "volumes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["name", "path"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "path": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "properties": { "existingSecret": { "type": "string" } }
+    },
+    "ingress": {
+      "type": "object",
+      "properties": { "enabled": { "type": "boolean" } }
+    },
+    "gateway": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "parentRef": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "namespace": { "type": "string" },
+            "sectionName": { "type": "string" }
+          }
+        },
+        "hostnames": { "type": "array", "items": { "type": "string" } },
+        "backendTLS": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "wellKnownCACertificates": { "type": "string" },
+            "caCertRefName": { "type": "string" },
+            "hostname": { "type": "string" }
+          }
+        },
+        "envoy": { "type": "object" },
+        "certificate": { "type": "object" }
+      },
+      "if": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] },
+      "then": {
+        "properties": {
+          "parentRef": { "properties": { "name": { "type": "string", "minLength": 1 } } },
+          "hostnames": { "minItems": 1 }
+        }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "retain": { "type": "boolean" },
+        "accessMode": { "type": "string" },
+        "size": { "type": "string" },
+        "storageClass": { "type": "string" }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    }
+  }
+}

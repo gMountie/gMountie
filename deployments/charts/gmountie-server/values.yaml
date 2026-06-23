@@ -20,7 +20,10 @@ fullnameOverride: ""
 
 serviceAccount:
   create: true
-  automount: true
+  # The server never calls the Kubernetes API, so it needs no SA token.
+  # Default off to shrink the attack surface; set true only if a sidecar or
+  # admission integration you add actually needs in-cluster API access.
+  automount: false
   annotations: {}
   name: ""
 
@@ -58,6 +61,7 @@ podSecurityContext:
 #   runAsUser: 0
 #   runAsGroup: 0
 #   allowPrivilegeEscalation: false
+#   readOnlyRootFilesystem: true
 #   capabilities:
 #     drop: [ALL]
 #     add:
@@ -77,6 +81,11 @@ securityContext:
   runAsUser: 1000
   runAsGroup: 1000
   allowPrivilegeEscalation: false
+  # The container writes only to the data PVC, the in-memory /run/gmountie
+  # (rendered config) and the `state` emptyDir (HOME/XDG, wired in
+  # deployment.yaml) — so the root filesystem can be read-only. If you add
+  # tooling that writes elsewhere, mount an emptyDir there or set this false.
+  readOnlyRootFilesystem: true
   capabilities:
     drop: [ALL]
 
@@ -157,12 +166,11 @@ auth:
   existingSecret: ""
 
 # Opt-in marker that this install is reachable from outside the cluster.
-# The chart's demo-credential refusal already triggers automatically for a
-# LoadBalancer/NodePort Service or an enabled ingress, but a ClusterIP
-# Service fronted by a Gateway-API GRPCRoute + BackendTLSPolicy (the
-# documented prod path — see service.appProtocol below) looks internal to
-# the chart and would otherwise ship the PUBLISHED demo password externally.
-# Set this true for Gateway-API / GRPCRoute installs so the refusal applies.
+# The demo-credential refusal triggers automatically for a LoadBalancer/
+# NodePort Service, an enabled ingress, or an enabled gateway (gateway.enabled).
+# Set this true only when something the chart does NOT render exposes the
+# ClusterIP Service externally — e.g. a hand-applied GRPCRoute or an external
+# reverse proxy — so the refusal still fires.
 exposedExternally: false
 
 # Cluster-internal Service. Set type: LoadBalancer (and optionally
@@ -191,8 +199,8 @@ service:
 # Unlike the ops endpoint this listener is UNAUTHENTICATED by design (it
 # serves only /metrics — the node-exporter convention), so in-cluster
 # scraping works with no credentials or TLS. Enabling it sets
-# `server.plain_metrics_addr` in the rendered config and adds a `metrics`
-# container + Service port.
+# `server.plain_metrics_addr` in the rendered config and exposes a `metrics`
+# containerPort + Service port (the same server process — not a sidecar).
 metrics:
   enabled: false
   port: 9091
@@ -238,6 +246,63 @@ ingress:
     enabled: false
     secretName: ""
 
+# Gateway API exposure (the modern alternative to the nginx `ingress` block).
+# Renders a GRPCRoute attaching the ClusterIP Service to an existing Gateway,
+# plus a BackendTLSPolicy so the gateway RE-ENCRYPTS to the server's own cert
+# (gMountie refuses cleartext on a non-loopback bind, so set
+# config.server.tls.cert_file/key_file and mount the keypair via volumes/
+# volumeMounts, or have the chart issue it with gateway.certificate below).
+#
+# Enabling this counts as external exposure, so the demo-credential refusal
+# fires automatically — no need to also set exposedExternally.
+#
+# Portable Gateway API only covers GRPCRoute + BackendTLSPolicy. Two concerns
+# are NOT portable and handled out of band:
+#   * gMountie's long-lived server streams (session keepalive, cache Subscribe)
+#     never "complete", so a gateway's default per-request timeout resets them.
+#     GRPCRoute v1 has no timeout field. For Envoy Gateway, enable
+#     gateway.envoy.backendTrafficPolicy; other implementations need their own.
+#   * HTTP/2 (h2) ALPN on the gateway LISTENER is shared infrastructure used by
+#     every route on it — configure it on the Gateway itself, never from an app
+#     chart (which must not mutate another app's listener policy).
+gateway:
+  enabled: false
+  # The existing Gateway to attach to.
+  parentRef:
+    name: ""
+    namespace: ""        # omit for same-namespace gateways
+    sectionName: https   # the listener (by name) to attach to
+  # Public hostnames clients dial (and the SNI the gateway validates upstream).
+  # The server's certificate must cover these.
+  hostnames: []
+  # TLS re-encrypt to the backend; the gateway validates the server's cert.
+  backendTLS:
+    enabled: true
+    # "System" trusts the host CA bundle (right for a public CA like Let's
+    # Encrypt). Clear it and set caCertRefName to pin a private CA ConfigMap.
+    wellKnownCACertificates: System
+    caCertRefName: ""
+    # Validation/SNI hostname; defaults to the first gateway.hostnames entry.
+    hostname: ""
+  # Envoy Gateway-specific extras (gateway.envoyproxy.io). Off by default to
+  # keep the chart implementation-agnostic; turn on if your Gateway is Envoy
+  # Gateway and you run long-lived streams (you do — see above).
+  envoy:
+    backendTrafficPolicy:
+      enabled: false
+      # 0s disables the per-request timeout that would otherwise reset the
+      # never-completing server streams every default interval.
+      requestTimeout: 0s
+  # Optionally have cert-manager issue the backend re-encrypt cert. Mount the
+  # resulting Secret via config.server.tls.cert_file/key_file + volumes.
+  certificate:
+    enabled: false
+    secretName: ""       # defaults to <fullname>-tls
+    dnsNames: []         # defaults to gateway.hostnames
+    issuerRef:
+      name: ""
+      kind: ClusterIssuer
+
 # Conservative defaults for a single-node demo. A memory limit guards the
 # node against a runaway cache; no CPU limit (CPU limits throttle rather than
 # protect). Raise these for real workloads — cache size in particular drives
@@ -278,6 +343,11 @@ persistence:
   # for the single-volume default; multi-volume topologies need
   # extra `volumes:` + `volumeMounts:` overrides.
   enabled: true
+  # When true, annotate the PVC with helm.sh/resource-policy: keep so a
+  # `helm uninstall` (or HelmRelease delete) leaves the volume and its data
+  # behind instead of deleting it. Off by default — opt in for installs whose
+  # data must survive teardown/recreate.
+  retain: false
   accessMode: ReadWriteOnce
   size: 10Gi
   # local-path matches the simple per-node provisioner most test

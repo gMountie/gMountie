@@ -98,6 +98,18 @@ Name of the Secret carrying the auth config block.
 {{- end }}
 
 {{/*
+Non-empty ("true") when this install is reachable from outside the cluster —
+via a LoadBalancer/NodePort Service, an enabled ingress, an enabled Gateway
+route, or the explicit exposedExternally opt-in. Drives the demo-credential
+refusal so a chart-rendered external entrypoint can't ship the demo password.
+*/}}
+{{- define "gmountie-server.exposedExternally" -}}
+{{- if or (eq .Values.service.type "LoadBalancer") (eq .Values.service.type "NodePort") .Values.ingress.enabled .Values.gateway.enabled .Values.exposedExternally -}}
+true
+{{- end -}}
+{{- end }}
+
+{{/*
 The PUBLISHED argon2id hash of the demo password ("demo") that values.yaml
 ships. Installs that expose the server externally must not keep it.
 */}}

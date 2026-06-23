@@ -1,7 +1,17 @@
 gMountie server is running.
 
 1. Get the gRPC endpoint:
-{{- if eq .Values.service.type "LoadBalancer" }}
+{{- if .Values.gateway.enabled }}
+
+   # Exposed via Gateway API (TLS on :443, gateway re-encrypts to the server):
+   {{- range .Values.gateway.hostnames }}
+   #   gmountie://{{ . }}:443
+   {{- end }}
+   {{- if not .Values.gateway.hostnames }}
+   # (no gateway.hostnames set — clients connect on the Gateway's address)
+   {{- end }}
+
+{{- else if eq .Values.service.type "LoadBalancer" }}
 
    export GMOUNTIE_IP=$(kubectl -n {{ .Release.Namespace }} get svc {{ include "gmountie-server.fullname" . }} \
      -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
@@ -22,21 +32,21 @@ gMountie server is running.
 
 {{- end }}
 
-2. Mount from any FUSE-capable client:
+2. Mount from a FUSE-capable Linux client (endpoint from step 1):
 
-   gmountie mount /your/mountpoint \
-     --server <endpoint> \
+   gmountie mount -s <host:port> -n {{ (index .Values.config.volumes 0).name }} \
 {{- if .Values.auth.existingSecret }}
-     --auth-type <type from your auth Secret> \
-     --username <user from your auth Secret> \
-{{- else }}
-     --auth-type {{ .Values.config.auth.type }} \
-{{- if eq .Values.config.auth.type "basic" }}
-     --username {{ (index .Values.config.auth.users 0).username }} \
-     --password '<the password whose hash is in values.yaml>' \
+     -u <user from your auth Secret> \
+     # (set -t <auth-type> if not basic; password via $GMOUNTIE_AUTH_PASSWORD)
+{{- else if eq .Values.config.auth.type "basic" }}
+     -u {{ (index .Values.config.auth.users 0).username }} \
+     # password via $GMOUNTIE_AUTH_PASSWORD or the interactive prompt
 {{- end }}
-{{- end }}
-     --volume {{ (index .Values.config.volumes 0).name }}
+     /your/mountpoint
+
+   # Or save the connection as a reusable profile
+   # (~/.config/gmountie/profiles/<name>.yaml) and mount with:
+   #   gmountie mount -P <name> -n {{ (index .Values.config.volumes 0).name }} /your/mountpoint
 
 3. Health + metrics (ops HTTP endpoint):
 {{- if include "gmountie-server.opsExposed" . }}

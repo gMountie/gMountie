@@ -1,0 +1,35 @@
+{{- if .Values.gateway.enabled }}
+{{- /*
+gMountie speaks gRPC (HTTP/2), so it's a GRPCRoute. Attaches the ClusterIP
+Service to an existing Gateway listener; the gateway terminates the public
+TLS and (with the BackendTLSPolicy below) re-encrypts upstream to the server.
+*/}}
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: {{ include "gmountie-server.fullname" . }}
+  labels:
+    {{- include "gmountie-server.labels" . | nindent 4 }}
+spec:
+  {{- with .Values.gateway.hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ required "gateway.parentRef.name is required when gateway.enabled" .Values.gateway.parentRef.name }}
+      {{- with .Values.gateway.parentRef.namespace }}
+      namespace: {{ . }}
+      {{- end }}
+      {{- with .Values.gateway.parentRef.sectionName }}
+      sectionName: {{ . }}
+      {{- end }}
+  rules:
+    - backendRefs:
+        - group: ""
+          kind: Service
+          name: {{ include "gmountie-server.fullname" . }}
+          port: {{ .Values.service.port }}
+          weight: 1
+{{- end }}

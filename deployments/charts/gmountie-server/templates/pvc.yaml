@@ -3,9 +3,15 @@ kind: PersistentVolumeClaim
 apiVersion: v1
 metadata:
   name: {{ template "gmountie-server.fullname" . }}-data
-{{- with .Values.persistence.annotations  }}
+{{- if or .Values.persistence.retain .Values.persistence.annotations }}
   annotations:
+{{- if .Values.persistence.retain }}
+    # Survive `helm uninstall` / HelmRelease delete (persistence.retain).
+    helm.sh/resource-policy: keep
+{{- end }}
+{{- with .Values.persistence.annotations }}
 {{ toYaml . | indent 4 }}
+{{- end }}
 {{- end }}
   labels:
     {{- include "gmountie-server.labels" . | nindent 4 }}
