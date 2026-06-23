@@ -23,6 +23,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/common/passhash"
 	"go.gmountie.dev/gmountie/pkg/server/config"
 	"go.gmountie.dev/gmountie/pkg/server/controller"
+	"go.gmountie.dev/gmountie/pkg/server/delegation"
 	"go.gmountie.dev/gmountie/pkg/server/grpc"
 	"go.gmountie.dev/gmountie/pkg/server/io"
 	"go.gmountie.dev/gmountie/pkg/server/metrics"
@@ -49,6 +50,13 @@ type AppContext struct {
 	// session Create so clients can distinguish a true restart (new epoch)
 	// from a same-process session reap (same epoch).
 	BootEpoch string
+	// Delegation is the write-delegation arbiter. Nil in configurations that
+	// do not enable delegated writes (today: always non-nil after
+	// NewServerAppContext).
+	Delegation *delegation.Arbiter
+	// Recalls is the per-session Recall stream registry used by the Arbiter
+	// to push recall messages and correlate acks.
+	Recalls *delegation.RecallRegistry
 }
 
 // NewServerAppContext creates a new ServerContext.
@@ -68,10 +76,18 @@ func NewServerAppContext(cfg *config.Config) (*AppContext, error) {
 		return nil, errors.Wrap(err, "build volume service")
 	}
 	authService := service.NewAuthServiceFromConfig(cfg.Auth)
+
+	// Construct the delegation registry + arbiter before the SessionManager so
+	// the arbiter.ReleaseSession hook can be wired as OnReap.
+	recalls := delegation.NewRecallRegistry(cfg.Server.Session.GracePeriod)
+	arbiter := delegation.NewArbiter(recalls, delegation.Config{
+		Cooldown: delegation.CooldownConfigDefault(),
+	}, time.Now)
 	sessionMgr := service.NewSessionManager(service.SessionManagerOptions{
 		Metrics:              m,
 		GracePeriod:          cfg.Server.Session.GracePeriod,
 		IdempotencyCacheSize: cfg.Server.Session.IdempotencyCacheSize,
+		OnReap:               arbiter.ReleaseSession,
 	})
 	bus := io.NewLocalEventBus(io.EventBusOptions{
 		BufferSize:        cfg.Server.SubscribeBufferSize,
@@ -90,6 +106,8 @@ func NewServerAppContext(cfg *config.Config) (*AppContext, error) {
 		Bus:            bus,
 		Revocation:     revocation,
 		BootEpoch:      bootEpoch,
+		Delegation:     arbiter,
+		Recalls:        recalls,
 	}, nil
 }
 
@@ -116,8 +134,8 @@ func revokedSerialsFromConfig(cfg *config.Config) []string {
 // GetGrpcServices returns the gRPC services.
 func (c *AppContext) GetGrpcServices() []grpc.ServiceRegistrar {
 	return []grpc.ServiceRegistrar{
-		controller.NewGrpcServer(c.VolumeService, c.SessionManager, c.Bus, c.Metrics),
-		controller.NewRpcFileServer(c.VolumeService, c.SessionManager, c.Metrics, c.Config.Server.FrameSizeBytes, c.Bus),
+		controller.NewGrpcServer(c.VolumeService, c.SessionManager, c.Bus, c.Metrics, c.Delegation, c.Recalls),
+		controller.NewRpcFileServer(c.VolumeService, c.SessionManager, c.Metrics, c.Config.Server.FrameSizeBytes, c.Bus, c.Delegation),
 		controller.NewVolumeService(c.VolumeService),
 		controller.NewSessionController(c.SessionManager, c.VolumeService, c.BootEpoch),
 		controller.NewVersionController(c.Config.Server.FrameSizeBytes),

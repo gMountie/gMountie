@@ -115,7 +115,7 @@ func (s *StreamingWriteSuite) SetupTest() {
 	s.Require().NoError(err)
 	s.sessionID = sid
 	s.bus = serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
-	s.server = NewRpcFileServer(s.fsService, s.sessionMgr, metrics.NewMetrics(), 1<<20, s.bus)
+	s.server = NewRpcFileServer(s.fsService, s.sessionMgr, metrics.NewMetrics(), 1<<20, s.bus, nil)
 }
 
 func (s *StreamingWriteSuite) TearDownTest() {
@@ -327,7 +327,7 @@ func (s *StreamingWriteSuite) TestWrite_ContinuationFrameHeaderMismatchRejected(
 // stubs are ABSENT: the strict mocks fail on any unexpected call.
 func (s *StreamingWriteSuite) TestWrite_NoSubscribers_SkipsVersionStatAndEmit() {
 	spy := &spyBus{EventBus: s.bus}
-	server := NewRpcFileServer(s.fsService, s.sessionMgr, metrics.NewMetrics(), 1<<20, spy)
+	server := NewRpcFileServer(s.fsService, s.sessionMgr, metrics.NewMetrics(), 1<<20, spy, nil)
 
 	mockFile := new(nodefs2.MockFile)
 	writer := &recordingWriter{status: fuse.OK}

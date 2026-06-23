@@ -2,6 +2,16 @@ package delegation
 
 import "time"
 
+// CooldownConfigDefault returns the production-default cooldown parameters:
+// Base 1 s, Max 60 s, Cap 4096 tracked roots.
+func CooldownConfigDefault() cooldownConfig {
+	return cooldownConfig{
+		Base: time.Second,
+		Max:  60 * time.Second,
+		Cap:  4096,
+	}
+}
+
 type cooldownConfig struct {
 	Base time.Duration // first cooldown window
 	Max  time.Duration // cap on the window

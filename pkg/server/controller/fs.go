@@ -9,6 +9,7 @@ import (
 	fserr "go.gmountie.dev/gmountie/pkg/common/fserr"
 	"go.gmountie.dev/gmountie/pkg/proto"
 	serverio "go.gmountie.dev/gmountie/pkg/server/io"
+	"go.gmountie.dev/gmountie/pkg/server/delegation"
 	"go.gmountie.dev/gmountie/pkg/server/metrics"
 	"go.gmountie.dev/gmountie/pkg/server/service"
 
@@ -24,6 +25,8 @@ type RpcServerImpl struct {
 	sessions  service.SessionManager
 	bus       serverio.EventBus
 	metrics   *metrics.Metrics
+	arbiter   *delegation.Arbiter
+	recalls   *delegation.RecallRegistry
 	proto.UnimplementedRpcFsServer
 }
 
@@ -32,12 +35,15 @@ var _ proto.RpcFsServer = (*RpcServerImpl)(nil)
 
 // NewGrpcServer creates a new gRPC server.
 // m may be nil; subscribe metrics are no-ops when unset.
-func NewGrpcServer(fsService service.VolumeService, sessions service.SessionManager, bus serverio.EventBus, m *metrics.Metrics) *RpcServerImpl {
+// arbiter and recalls may be nil for tests that do not exercise delegation.
+func NewGrpcServer(fsService service.VolumeService, sessions service.SessionManager, bus serverio.EventBus, m *metrics.Metrics, arbiter *delegation.Arbiter, recalls *delegation.RecallRegistry) *RpcServerImpl {
 	return &RpcServerImpl{
 		fsService: fsService,
 		sessions:  sessions,
 		bus:       bus,
 		metrics:   m,
+		arbiter:   arbiter,
+		recalls:   recalls,
 	}
 }
 
