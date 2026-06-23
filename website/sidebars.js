@@ -65,6 +65,7 @@ const sidebars = {
         'design/server-side-copy-and-fs-ops',
         'design/operations-and-packaging',
         'design/rwo-wal',
+        'design/delegation-recall',
       ],
     },
   ],
