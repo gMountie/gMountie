@@ -86,6 +86,16 @@ func (f *fakeWatermarkStore) RevokeGen(k watermark.Key, gen uint64) error {
 	return nil
 }
 
+func (f *fakeWatermarkStore) NextGen(k watermark.Key) (uint64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r := f.records[k]
+	r.GenHi++
+	gen := r.GenHi
+	f.records[k] = r
+	return gen, nil
+}
+
 func (f *fakeWatermarkStore) Close() error { return nil }
 
 func (f *fakeWatermarkStore) getWatermark(k watermark.Key) uint64 {

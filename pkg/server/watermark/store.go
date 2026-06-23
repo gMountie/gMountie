@@ -11,6 +11,12 @@ type Key struct{ Identity, Volume string }
 type Record struct {
 	Watermark   uint64
 	RevokedGens []uint64
+	// GenHi is the highest delegation generation ever issued for this key.
+	// NextGen atomically increments it and returns the new value, guaranteeing
+	// that gens are never reused across server restarts.  Zero means no gen has
+	// been issued yet; NextGen returns 1 on the first call.  Old records that
+	// pre-date this field decode to GenHi=0 and are handled correctly.
+	GenHi uint64
 }
 
 type Store interface {
@@ -21,5 +27,10 @@ type Store interface {
 	// RevokeGen records gen as revoked, durable (fsync) before return — the
 	// persist-before-handoff invariant.
 	RevokeGen(k Key, gen uint64) error
+	// NextGen atomically increments GenHi for k and returns the new value,
+	// durable (fsync) before return.  The returned gen is guaranteed strictly
+	// greater than any gen ever issued for k, across server restarts.
+	// gen=0 is never returned (GenHi starts at 0, first call returns 1).
+	NextGen(k Key) (uint64, error)
 	Close() error
 }

@@ -4,8 +4,11 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
+
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/server/watermark"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 )
 
 // Metrics is the arbiter's optional observability sink. Nil = no-op.
@@ -48,7 +51,6 @@ type Arbiter struct {
 	table    *delegationTable
 	cooldown *cooldownTable
 	regions  map[string]*regionState // keyed by delegated root being recalled
-	nextGen  uint64                  // monotone gen counter; 0 is reserved (untagged)
 }
 
 // NewArbiter creates a new Arbiter. store is required and must not be nil;
@@ -62,7 +64,6 @@ func NewArbiter(r Recaller, cfg Config, now func() time.Time, store watermark.St
 		table:    newDelegationTable(),
 		cooldown: newCooldownTable(cfg.Cooldown),
 		regions:  make(map[string]*regionState),
-		nextGen:  1, // start at 1; gen 0 is reserved for "untagged"
 	}
 }
 
@@ -107,11 +108,20 @@ func (a *Arbiter) Request(owner, root, principal, volume string) *proto.Delegati
 	if a.cooldown.cooling(root, now) {
 		return &proto.DelegationGrant{RetryAfterMs: uint64(a.cfgRetryMs())}
 	}
-	gen := a.nextGen
-	a.nextGen++
+	// Allocate a durable per-(identity,volume) gen BEFORE inserting into the
+	// table.  NextGen is a durable fsync under the lock, which is acceptable
+	// because grants already serialize on a.mu.  On NextGen failure we deny
+	// (return RetryAfterMs) — never grant with gen=0, which is the "untagged /
+	// never fenced" sentinel and would reopen the false-fence hole.
+	fenceKey := watermark.Key{Identity: principal, Volume: volume}
+	gen, genErr := a.store.NextGen(fenceKey)
+	if genErr != nil {
+		return &proto.DelegationGrant{RetryAfterMs: uint64(a.cfgRetryMs())}
+	}
 	granted, excluded, ok := a.table.grant(owner, root, principal, volume, gen)
 	if !ok {
-		a.nextGen-- // roll back on denial (no entry created)
+		// Denial: the gen slot was consumed but no entry was created — gen gaps
+		// are harmless; do NOT decrement (no in-memory counter to roll back).
 		return &proto.DelegationGrant{RetryAfterMs: uint64(a.cfgRetryMs())}
 	}
 	a.mGrantsActive()
@@ -210,14 +220,17 @@ func (a *Arbiter) ReleaseSession(sessionID string) {
 			continue
 		}
 		fenceKey := watermark.Key{Identity: e.principal, Volume: e.volume}
-		// Best-effort: log failure but do not block session cleanup.  A missed
-		// revoke means the fence won't fire for this gen — the same risk as
-		// before Task 6.  A successful revoke is the safety-critical case.
+		// Best-effort: a failed revoke means the fence won't fire for this gen
+		// (same risk as before Task 6).  Log loudly so the operator can
+		// investigate — a silent missed revoke is invisible data-loss risk.
 		if rErr := a.store.RevokeGen(fenceKey, e.gen); rErr != nil {
-			// The delegation package is imported by the server; avoid a
-			// circular import by using the standard library logger here.
-			// A production integration would wire an error sink via Config.
-			_ = rErr // callers observe absence of fence via Apply returning ESTALE
+			log.Log.Error("delegation gen revoke failed on session reap; fence may not fire",
+				zap.Error(rErr),
+				zap.String("identity", e.principal),
+				zap.String("volume", e.volume),
+				zap.Uint64("gen", e.gen),
+				zap.String("session", sessionID),
+			)
 		}
 	}
 }
