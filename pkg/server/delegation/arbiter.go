@@ -22,6 +22,15 @@ type Config struct {
 	Metrics  Metrics // nil = no observability
 }
 
+// errCoalescedRecallFailed is returned by a coalesced OnMutation waiter when
+// the in-flight leader recall failed and the root is still foreign-owned.
+// arbitrateContention maps any non-nil error to FS_EAGAIN.
+type errCoalescedStr string
+
+func (e errCoalescedStr) Error() string { return string(e) }
+
+const errCoalescedRecallFailed errCoalescedStr = "delegation: coalesced recall failed; root still foreign-owned"
+
 // regionState tracks an in-flight recall so concurrent contenders coalesce
 // onto one recall instead of stampeding the holder.
 type regionState struct {
@@ -112,7 +121,16 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 		done := rs.done
 		a.mu.Unlock()
 		<-done
-		return nil // the in-flight recall already freed (or cooled) the root
+		// Re-check: if the leader's recall FAILED the root is still foreign-owned.
+		// Return an error so the contender maps it to FS_EAGAIN, consistent with
+		// what the leader returns on failure.
+		a.mu.Lock()
+		stillOwner, _, stillOwned := a.table.ownerOf(path)
+		a.mu.Unlock()
+		if stillOwned && stillOwner != contender {
+			return errCoalescedRecallFailed
+		}
+		return nil
 	}
 	rs := &regionState{done: make(chan struct{})}
 	a.regions[root] = rs

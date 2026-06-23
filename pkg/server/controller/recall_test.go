@@ -11,6 +11,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/proto"
 	serverio "go.gmountie.dev/gmountie/pkg/server/io"
 	"go.gmountie.dev/gmountie/pkg/server/delegation"
+	"go.gmountie.dev/gmountie/pkg/server/principal"
 	"go.gmountie.dev/gmountie/pkg/server/service"
 
 	"github.com/stretchr/testify/suite"
@@ -88,7 +89,7 @@ func TestRecallStreamSuite(t *testing.T) {
 
 // newRecallServer builds an RpcServerImpl with a real RecallRegistry and a
 // stub bus.
-func (s *RecallStreamSuite) newRecallServer() (*RpcServerImpl, *delegation.RecallRegistry) {
+func (s *RecallStreamSuite) newRecallServer() (*RpcServerImpl, *delegation.RecallRegistry, service.SessionManager) {
 	bus := serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
 	s.T().Cleanup(func() { bus.Close() })
 	reg := delegation.NewRecallRegistry(2 * time.Second)
@@ -97,7 +98,7 @@ func (s *RecallStreamSuite) newRecallServer() (*RpcServerImpl, *delegation.Recal
 		Cooldown: delegation.CooldownConfigDefault(),
 	}, time.Now)
 	srv := NewGrpcServer(nil, sessionMgr, bus, nil, arbiter, reg)
-	return srv, reg
+	return srv, reg, sessionMgr
 }
 
 // ctxWithSession builds a context that carries a session_id in gRPC incoming
@@ -111,7 +112,7 @@ func ctxWithSession(ctx context.Context, sessionID string) context.Context {
 // TestRecall_NoSession returns Unauthenticated when the stream context has no
 // session_id.
 func (s *RecallStreamSuite) TestRecall_NoSession() {
-	srv, _ := s.newRecallServer()
+	srv, _, _ := s.newRecallServer()
 	stream := newStubRecallStream(context.Background())
 	err := srv.Recall(stream)
 	s.Require().Error(err)
@@ -125,10 +126,13 @@ func (s *RecallStreamSuite) TestRecall_NoSession() {
 //   - When the stream context is cancelled (simulating disconnect), Recall()
 //     returns and the registry can no longer send.
 func (s *RecallStreamSuite) TestRecall_RegistersAndDeregisters() {
-	srv, reg := s.newRecallServer()
+	srv, reg, sessionMgr := s.newRecallServer()
 
 	streamCtx, cancelStream := context.WithCancel(context.Background())
-	sessionID := "session-abc"
+
+	// Create a REAL session (empty principal → ownership check is a no-op).
+	sessionID, err := sessionMgr.Create("", "")
+	s.Require().NoError(err)
 
 	// Use a dynamically-fed ack channel: when the registry pushes a RecallMsg
 	// via stream.Send, a watcher goroutine injects the matching RecallAck back
@@ -199,12 +203,15 @@ func (s *RecallStreamSuite) TestRecall_RegistersAndDeregisters() {
 // RecallAck{RecallId: 1} into the stub recv channel → controller forwards it
 // to registry.Ack(sessionID, 1) → registry.Recall() unblocks with nil error.
 func (s *RecallStreamSuite) TestRecall_AckForwardsToRegistry() {
-	srv, reg := s.newRecallServer()
+	srv, reg, sessionMgr := s.newRecallServer()
 
 	streamCtx, cancelStream := context.WithCancel(context.Background())
 	defer cancelStream()
 
-	sessionID := "session-ack"
+	// Create a REAL session (empty principal → ownership check is a no-op).
+	sessionID, err := sessionMgr.Create("", "")
+	s.Require().NoError(err)
+
 	ackQ := make(chan *proto.RecallAck, 4)
 	stream := newStubRecallStream(ctxWithSession(streamCtx, sessionID))
 	// Redirect acks so the test can inject them dynamically.
@@ -231,4 +238,80 @@ func (s *RecallStreamSuite) TestRecall_AckForwardsToRegistry() {
 	case <-time.After(3 * time.Second):
 		s.FailNow("registry.Recall did not complete after ack was injected")
 	}
+}
+
+// TestRecall_SessionOwnershipEnforced verifies that a Recall stream opened with
+// a session_id whose ctx principal does NOT match the session owner is rejected
+// (resolveSession returns PermissionDenied) and the stream is never registered.
+// This is the C2 security fix: prevents principal B from hijacking A's recall
+// stream by opening it with A's session_id.
+func (s *RecallStreamSuite) TestRecall_SessionOwnershipEnforced() {
+	srv, reg, sessionMgr := s.newRecallServer()
+
+	// Create a session owned by "alice".
+	aliceSessionID, err := sessionMgr.Create("alice", "")
+	s.Require().NoError(err)
+
+	// Build a stream context carrying alice's session_id but with principal "bob".
+	streamCtx := principal.WithPrincipal(
+		ctxWithSession(context.Background(), aliceSessionID),
+		"bob",
+	)
+
+	// Bob tries to open a Recall stream under alice's session_id.
+	stream := newStubRecallStream(streamCtx)
+	recallErr := srv.Recall(stream)
+
+	// Must be rejected with PermissionDenied.
+	s.Require().Error(recallErr)
+	st, ok := status.FromError(recallErr)
+	s.Require().True(ok)
+	s.Equal(codes.PermissionDenied, st.Code(), "foreign principal must not register under another session")
+
+	// Confirm the registry never got a registration: sending a recall to
+	// aliceSessionID must fail immediately (no stream registered).
+	regErr := reg.Recall(aliceSessionID, "some-root")
+	s.Error(regErr, "registry must have no registration for alice's session after the rejected stream")
+
+	// Positive control: alice herself can open the stream.
+	aliceAckQ := make(chan *proto.RecallAck, 4)
+	aliceCtx, cancelAlice := context.WithCancel(
+		principal.WithPrincipal(ctxWithSession(context.Background(), aliceSessionID), "alice"),
+	)
+	defer cancelAlice()
+	aliceStream := newStubRecallStream(aliceCtx)
+	aliceStream.recvCh = aliceAckQ
+	controllerDone := make(chan error, 1)
+	go func() { controllerDone <- srv.Recall(aliceStream) }()
+
+	// Auto-ack watcher: as soon as the controller pushes a RecallMsg, inject the
+	// matching ack so the registry.Recall call can complete.
+	go func() {
+		for {
+			aliceStream.mu.Lock()
+			n := len(aliceStream.sent)
+			aliceStream.mu.Unlock()
+			if n > 0 {
+				aliceStream.mu.Lock()
+				msg := aliceStream.sent[n-1]
+				aliceStream.mu.Unlock()
+				aliceAckQ <- &proto.RecallAck{RecallId: msg.RecallId}
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+
+	// Give controller a moment to register, then fire the recall.
+	time.Sleep(30 * time.Millisecond)
+	recallDone := make(chan error, 1)
+	go func() { recallDone <- reg.Recall(aliceSessionID, "alice-root") }()
+	select {
+	case rerr := <-recallDone:
+		s.NoError(rerr, "alice's legitimate recall stream must work")
+	case <-time.After(3 * time.Second):
+		s.FailNow("alice's recall did not complete in time")
+	}
+	cancelAlice()
+	<-controllerDone
 }

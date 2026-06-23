@@ -82,6 +82,24 @@ func (cs *clientStack) Rename(ctx context.Context, old, newp string) proto.FsErr
 	return cs.be.Rename(ctx, old, newp)
 }
 
+// WriteAndFlushInto opens path for writing, writes data, then flushes —
+// producing exactly one WriteAndFlush RPC on the server (the small-write+flush
+// path). Returns the flush status. The file must already exist on the server.
+func (cs *clientStack) WriteAndFlushInto(ctx context.Context, path string, data []byte) proto.FsError {
+	// O_WRONLY = 1; required so the server accepts a write on the fd.
+	fh, st := cs.be.Open(ctx, path, 1 /* O_WRONLY */)
+	if st != proto.FsError_FS_OK {
+		return st
+	}
+	if _, wst := cs.be.Write(ctx, fh, 0, data); wst != proto.FsError_FS_OK {
+		_ = cs.be.Release(ctx, fh)
+		return wst
+	}
+	fst := cs.be.Flush(ctx, fh)
+	_ = cs.be.Release(ctx, fh)
+	return fst
+}
+
 // Close tears down the stack.
 func (cs *clientStack) Close() {
 	cs.cancelRecall()
@@ -389,6 +407,49 @@ func (s *DelegationCoherenceSuite) TestThrashCooldown() {
 		return g.GetGrantedRoot() == "" && g.GetRetryAfterMs() > 0
 	}, 2*time.Second, 10*time.Millisecond,
 		"arbiter must deny re-grant for 'thrash' while in cooldown (empty GrantedRoot, RetryAfterMs>0)")
+}
+
+// ─── Scenario 5: WRITEANDFFLUSH TRIGGERS RECALL (C1 guard) ──────────────────
+// Client A holds delegation on "waf". Client B opens a pre-existing file
+// under "waf", writes into it, then flushes — the Flush coalesces the write
+// into a WriteAndFlush RPC. The server arbitrateContention call inside the
+// WriteAndFlush handler must recall A. Assert: A.IsDelegated("waf") becomes
+// false (the recall stream fired), and B's flush eventually succeeds (after
+// the recall completes and the arbitration allows the write through).
+//
+// This guards the C1 fix: before the fix, WriteAndFlush skipped
+// arbitrateContention entirely, so A's grant was never recalled.
+
+func (s *DelegationCoherenceSuite) TestWriteAndFlushTriggersRecall() {
+	r := s.Require()
+
+	// Create backing dirs and a file that B will write into.
+	r.NoError(os.MkdirAll(s.srcDir+"/waf", 0o755))
+	r.NoError(os.WriteFile(s.srcDir+"/waf/f", []byte("initial"), 0o644))
+	defer os.RemoveAll(s.srcDir + "/waf")
+
+	csA := newStack(s.T(), s.tc, "user", "pass", s.volName)
+	defer csA.Close()
+	csB := newStack(s.T(), s.tc, "user", "pass", s.volName)
+	defer csB.Close()
+
+	// A acquires delegation for "waf" via Mkdir (arbitrateContention on Create
+	// runs inside the acquireGrant loop, but the delegation is for "waf" itself).
+	s.acquireGrant(csA, "waf", 5*time.Second)
+	r.True(csA.mgr.IsDelegated("waf"), "A must hold grant for 'waf' before B contends")
+
+	// B writes into waf/f via the Write+Flush path (→ WriteAndFlush RPC).
+	// On the first attempt the recall stream for A may not yet be registered;
+	// retry until the Flush returns FS_OK (arbitration allowed it through).
+	r.Eventually(func() bool {
+		st := csB.WriteAndFlushInto(bg(), "waf/f", []byte("updated"))
+		return st == proto.FsError_FS_OK
+	}, 5*time.Second, 50*time.Millisecond, "B WriteAndFlush must succeed after A is recalled")
+
+	// A's delegation must have been recalled by the server.
+	r.Eventually(func() bool {
+		return !csA.mgr.IsDelegated("waf")
+	}, 5*time.Second, 50*time.Millisecond, "A must lose delegation for 'waf' after B's WriteAndFlush")
 }
 
 // ─── entry point ────────────────────────────────────────────────────────────

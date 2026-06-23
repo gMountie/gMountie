@@ -14,18 +14,29 @@ import (
 // The stream lifecycle mirrors Subscribe: the controller registers on entry,
 // reads in a loop, and deregisters on exit (EOF/cancel). The defer ensures
 // deregistration even if the send-path inside RecallRegistry errors.
+//
+// Security: the session is resolved via resolveSession (same ownership-enforcing
+// helper used by all other handlers) before any registration occurs. This
+// prevents a foreign principal from opening a Recall stream under another
+// principal's session_id and receiving or acking their recalls.
 func (r *RpcServerImpl) Recall(stream proto.RpcFs_RecallServer) error {
 	sessionID := sessionIDFromContext(stream.Context())
 	if sessionID == "" {
 		return status.Error(codes.Unauthenticated, "recall: no session")
 	}
-	release := r.recalls.Register(sessionID, stream.Send)
+	// Ownership check: reject if the stream's authenticated principal does not
+	// own the session (prevents cert-CN=bob from hijacking alice's recall stream).
+	sess, err := resolveSession(stream.Context(), r.sessions, sessionID)
+	if err != nil {
+		return err
+	}
+	release := r.recalls.Register(sess.ID(), stream.Send)
 	defer release()
 	for {
 		ack, err := stream.Recv()
 		if err != nil {
 			return err // EOF / cancel -> defer release() deregisters
 		}
-		r.recalls.Ack(sessionID, ack.RecallId)
+		r.recalls.Ack(sess.ID(), ack.RecallId)
 	}
 }

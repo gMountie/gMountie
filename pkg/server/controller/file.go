@@ -513,6 +513,12 @@ func (r *RpcFileServerImpl) WriteAndFlush(ctx context.Context, req *proto.WriteA
 		}
 		// Held for the whole write+flush+stat — released when the closure returns.
 		defer entry.ReleaseRef()
+		// Arbitrate before writing: a foreign delegation covering entry.Path requires a
+		// recall; if it fails the contender gets FS_EAGAIN and must retry with a fresh
+		// request_id. Same pattern as Write/Allocate.
+		if st := arbitrateContention(r.arbiter, req.SessionId, entry.Path); st != proto.FsError_FS_OK {
+			return &proto.WriteAndFlushReply{Status: st}, nil
+		}
 		// Resolved after the fd↔volume check so a foreign volume can't be probed
 		// with someone else's fd (SEC-1), and only on actual execution — never on
 		// a cache-hit replay.
@@ -608,6 +614,15 @@ func (r *RpcFileServerImpl) CopyFileRange(ctx context.Context, request *proto.Co
 			return &proto.CopyFileRangeReply{Status: proto.FsError_FS_EBADF}, nil
 		}
 		defer dstEntry.ReleaseRef()
+		// Arbitrate on the DESTINATION path: that is the one being written.
+		// Same pattern as Write/Allocate — short-circuit on recall failure.
+		dstPath := dstEntry.Path
+		if dstPath == "" {
+			dstPath = request.PathOut
+		}
+		if st := arbitrateContention(r.arbiter, request.SessionId, dstPath); st != proto.FsError_FS_OK {
+			return &proto.CopyFileRangeReply{Status: st}, nil
+		}
 		copied, st := serverio.CopyFileRange(srcEntry.File, dstEntry.File, request.OffIn, request.OffOut, request.Length)
 		if st == fuse.OK && copied > 0 {
 			path := dstEntry.Path
