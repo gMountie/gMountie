@@ -177,7 +177,7 @@ func (s *FlushSuite) TestFlush_OrderedHalt_OnLossCalledAndPrefixTruncated() {
 
 	var lostOps []Op
 	var lostErr proto.FsError
-	s.coord.onLoss = func(ops []Op, fserr proto.FsError) {
+	s.coord.onLoss = func(_ string, ops []Op, fserr proto.FsError) {
 		lostOps = ops
 		lostErr = fserr
 	}

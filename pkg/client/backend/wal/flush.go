@@ -77,7 +77,7 @@ func WithApplyFactory(f func(ctx context.Context) (proto.RpcFs_ApplyClient, erro
 
 // WithOnLoss sets the hook called when ops are permanently lost after an ordered
 // halt. Task 13 wires this to loud logging.
-func WithOnLoss(fn func(lostOps []Op, fe proto.FsError)) Option {
+func WithOnLoss(fn func(reason string, lostOps []Op, fe proto.FsError)) Option {
 	return func(c *Coordinator) {
 		c.onLoss = fn
 	}
@@ -156,12 +156,13 @@ func (c *Coordinator) Flush(ctx context.Context, throughSeq uint64) error {
 	}
 
 	ack, err := c.applyOps(ctx, pending)
-	return c.processAck(ack, pending, err)
+	return c.processAck("apply-failure", ack, pending, err)
 }
 
 // processAck handles the ApplyAck and transport error from applyOps.
-// It must be called while holding flushMu.
-func (c *Coordinator) processAck(ack *proto.ApplyAck, sent []Op, transportErr error) error {
+// reason is the loss reason label passed to onLoss (e.g. "apply-failure",
+// "gen-fenced", "recall-flush-failure"). It must be called while holding flushMu.
+func (c *Coordinator) processAck(reason string, ack *proto.ApplyAck, sent []Op, transportErr error) error {
 	if transportErr != nil {
 		return transportErr
 	}
@@ -206,7 +207,7 @@ func (c *Coordinator) processAck(ack *proto.ApplyAck, sent []Op, transportErr er
 
 	// Invoke the loss hook before returning the error.
 	if c.onLoss != nil {
-		c.onLoss(lostOps, ack.GetFserr())
+		c.onLoss(reason, lostOps, ack.GetFserr())
 	}
 
 	return errors.Errorf("wal: Apply ordered halt at seq %d: %v", failedSeq, ack.GetFserr())
@@ -249,7 +250,7 @@ func (c *Coordinator) Replay(ctx context.Context, resumeWatermark uint64) error 
 	defer c.flushMu.Unlock()
 
 	ack, applyErr := c.applyOps(ctx, ops)
-	return c.processAck(ack, ops, applyErr)
+	return c.processAck("gen-fenced", ack, ops, applyErr)
 }
 
 // ── Op → WalOp conversion ─────────────────────────────────────────────────────
