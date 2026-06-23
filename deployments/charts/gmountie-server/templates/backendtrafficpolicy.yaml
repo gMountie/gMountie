@@ -1,0 +1,23 @@
+{{- if and .Values.gateway.enabled .Values.gateway.envoy.backendTrafficPolicy.enabled }}
+{{- /*
+ENVOY GATEWAY-SPECIFIC (gateway.envoyproxy.io), opt-in. gMountie's long-lived
+server-streaming RPCs (session keepalive, cache Subscribe) never complete a
+response, so Envoy's default 15s per-request timeout resets them (RST_STREAM)
+and clients churn reconnecting. requestTimeout: 0s removes that ceiling.
+GRPCRoute v1 has no portable timeout field, so this lives in an Envoy policy.
+*/}}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: {{ include "gmountie-server.fullname" . }}
+  labels:
+    {{- include "gmountie-server.labels" . | nindent 4 }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: GRPCRoute
+      name: {{ include "gmountie-server.fullname" . }}
+  timeout:
+    http:
+      requestTimeout: {{ .Values.gateway.envoy.backendTrafficPolicy.requestTimeout | quote }}
+{{- end }}

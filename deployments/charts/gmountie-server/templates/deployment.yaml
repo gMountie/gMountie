@@ -58,14 +58,36 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            # Point HOME + every XDG base dir at the writable `state` emptyDir
+            # so the server can run with readOnlyRootFilesystem. The only
+            # framework writes outside the data PVC and /run/gmountie are the
+            # self-signed cert generated on the DEFAULT TLS path (xdg state)
+            # and, absent --config, a first-run config — both land here. With a
+            # mounted cert_file/key_file (any real deploy) nothing is written.
+            - name: HOME
+              value: /var/lib/gmountie
+            - name: XDG_STATE_HOME
+              value: /var/lib/gmountie/state
+            - name: XDG_CONFIG_HOME
+              value: /var/lib/gmountie/config
+            - name: XDG_CACHE_HOME
+              value: /var/lib/gmountie/cache
+            - name: XDG_DATA_HOME
+              value: /var/lib/gmountie/data
           # Assemble the effective config at start: the ConfigMap carries
           # everything but `auth`; the auth Secret carries the credentials.
-          # Both have distinct top-level YAML keys, so concatenation yields
-          # a valid single config file (the server reads exactly one).
+          # They have distinct top-level YAML keys, so concatenating them is a
+          # valid single config file — but ONLY with a newline between them.
+          # configmap.yaml renders config.yaml WITHOUT a trailing newline, so
+          # an explicit `echo` separator is required; without it the auth block
+          # glues onto the last config line (`  path: /dataauth:`) and the
+          # server dies with "yaml: line N: mapping values are not allowed".
           command: ["/bin/sh", "-ec"]
           args:
             - >-
-              cat /etc/gmountie/base/config.yaml /etc/gmountie/auth/auth.yaml
+              { cat /etc/gmountie/base/config.yaml; echo;
+              cat /etc/gmountie/auth/auth.yaml; }
               > /run/gmountie/config.yaml &&
               exec /opt/gmountie/gmountie serve --config /run/gmountie/config.yaml
           ports:
@@ -106,6 +128,9 @@ spec:
               readOnly: true
             - name: rendered-config
               mountPath: /run/gmountie
+            - name: state
+              # Writable HOME / XDG base so the container can run read-only-root.
+              mountPath: /var/lib/gmountie
             {{- if .Values.persistence.enabled }}
             - name: data
               # Mount the PVC at the FIRST volume's configured path.
@@ -126,6 +151,8 @@ spec:
         - name: rendered-config
           emptyDir:
             medium: Memory
+        - name: state
+          emptyDir: {}
         {{- if .Values.persistence.enabled }}
         - name: data
           persistentVolumeClaim:

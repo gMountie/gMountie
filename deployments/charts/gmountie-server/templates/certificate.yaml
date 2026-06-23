@@ -1,0 +1,26 @@
+{{- if and .Values.gateway.enabled .Values.gateway.certificate.enabled }}
+{{- /*
+Optional cert-manager Certificate for the backend re-encrypt cert the server
+serves on its TLS port. Mount the resulting Secret via
+config.server.tls.cert_file/key_file + volumes/volumeMounts. Requires
+cert-manager and a (Cluster)Issuer.
+*/}}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "gmountie-server.fullname" . }}
+  labels:
+    {{- include "gmountie-server.labels" . | nindent 4 }}
+spec:
+  secretName: {{ .Values.gateway.certificate.secretName | default (printf "%s-tls" (include "gmountie-server.fullname" .)) }}
+  dnsNames:
+    {{- $dnsNames := .Values.gateway.certificate.dnsNames | default .Values.gateway.hostnames }}
+    {{- with $dnsNames }}
+    {{- toYaml . | nindent 4 }}
+    {{- else }}
+    {{- fail "gateway.certificate.dnsNames or gateway.hostnames is required when gateway.certificate.enabled" }}
+    {{- end }}
+  issuerRef:
+    name: {{ required "gateway.certificate.issuerRef.name is required when gateway.certificate.enabled" .Values.gateway.certificate.issuerRef.name }}
+    kind: {{ .Values.gateway.certificate.issuerRef.kind }}
+{{- end }}
