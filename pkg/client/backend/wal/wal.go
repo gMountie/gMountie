@@ -23,6 +23,7 @@ package wal
 
 import (
 	"context"
+	stderrors "errors"
 	"sync"
 	"sync/atomic"
 
@@ -199,11 +200,43 @@ func (c *Coordinator) Xattr(path, name string) (val []byte, set bool, removed bo
 	return c.overlay.Xattr(path, name)
 }
 
-// Close stops the interval flusher goroutine (if running), waits for it to
-// exit, then closes the underlying WAL log. The Overlay and delegation.Manager
-// have their own lifecycles and are NOT closed here.
+// Close stops the interval flusher goroutine (if running), performs a final
+// synchronous flush of all pending WAL ops, then closes the underlying WAL log.
+//
+// Ordering: stopFlusher → flusherWg.Wait → final Flush (checked) → log.Close.
+// Stopping the interval goroutine first prevents a race where both the goroutine
+// and the final flush attempt concurrent Apply streams.
+//
+// Flush failure modes have different semantics:
+//   - Ordered halt (server ENOENT/EPERM etc.): processAck fires onLoss (loud
+//     ERROR log + WalDataLost metric) before returning the error. The log tail
+//     is truncated — ops are permanently gone. The joined error signals an
+//     unclean unmount.
+//   - Transport failure (server unreachable): onLoss does NOT fire and the log
+//     is NOT truncated — ops remain durably in wal.db for next-mount replay
+//     (CRIT-2). The joined error still signals an unclean unmount so callers
+//     can log or surface it.
+//
+// If applyFactory is nil (coordinator built without flush options — should not
+// happen after the single.go wiring is correct, but guarded defensively), the
+// final flush is skipped to avoid a "no Apply factory" error that would mask the
+// real empty-factory bug; the log is still closed cleanly.
+//
+// The Overlay and delegation.Manager have their own lifecycles and are NOT closed
+// here.
 func (c *Coordinator) Close() error {
 	c.stopFlusher()
 	c.flusherWg.Wait()
-	return c.log.Close()
+
+	var flushErr error
+	if c.cfg.applyFactory != nil {
+		ops, err := c.log.Replay(0)
+		if err == nil && len(ops) > 0 {
+			maxSeq := ops[len(ops)-1].Seq
+			flushErr = c.Flush(context.Background(), maxSeq)
+		}
+	}
+
+	closeErr := c.log.Close()
+	return stderrors.Join(flushErr, closeErr)
 }
