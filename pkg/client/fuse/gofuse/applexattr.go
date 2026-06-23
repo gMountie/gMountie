@@ -45,3 +45,32 @@ func appleXattrFromBackend(name string) string {
 	}
 	return name
 }
+
+// macOS <sys/xattr.h> defines different SETXATTR flag bits than Linux, and adds
+// several Linux has no notion of. macFUSE forwards the macOS values verbatim, so
+// they must be translated before reaching the Linux server's unix.Setxattr —
+// otherwise an unknown bit (e.g. Finder's XATTR_NODEFAULT 0x10, sent on the
+// setattrlist(ATTR_CMN_FNDRINFO) FinderInfo write) is rejected with EINVAL,
+// which surfaces in Finder as the opaque "error code -50" on every copy.
+const (
+	macXattrCreate  = 0x0002 // macOS XATTR_CREATE  (Linux: 0x1)
+	macXattrReplace = 0x0004 // macOS XATTR_REPLACE (Linux: 0x2)
+	// macOS-only bits with no Linux meaning: XATTR_NOFOLLOW 0x1,
+	// XATTR_NOSECURITY 0x8, XATTR_NODEFAULT 0x10, XATTR_SHOWCOMPRESSION 0x20.
+	linuxXattrCreate  = 0x1 // unix.XATTR_CREATE
+	linuxXattrReplace = 0x2 // unix.XATTR_REPLACE
+)
+
+// appleXattrFlagsToBackend translates macOS SETXATTR flags to the Linux flag set
+// the server's unix.Setxattr understands: only XATTR_CREATE / XATTR_REPLACE
+// carry over (with their differing values), and macOS-only bits are dropped.
+func appleXattrFlagsToBackend(flags uint32) uint32 {
+	var out uint32
+	if flags&macXattrCreate != 0 {
+		out |= linuxXattrCreate
+	}
+	if flags&macXattrReplace != 0 {
+		out |= linuxXattrReplace
+	}
+	return out
+}

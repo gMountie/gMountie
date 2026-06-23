@@ -9,3 +9,7 @@ package gofuse
 
 func xattrNameToBackend(name string) string   { return appleXattrToBackend(name) }
 func xattrNameFromBackend(name string) string { return appleXattrFromBackend(name) }
+
+// xattrFlagsToBackend translates macOS SETXATTR flags to Linux ones (the macOS
+// values differ and macFUSE adds bits the Linux server rejects with EINVAL).
+func xattrFlagsToBackend(flags uint32) uint32 { return appleXattrFlagsToBackend(flags) }
