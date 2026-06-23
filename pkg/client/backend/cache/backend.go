@@ -174,6 +174,13 @@ func (a *subscribeBackendAdapter) invalidateXAttr(p string) {
 func (a *subscribeBackendAdapter) putNegative(p string)       { a.b.attr.putNegative(p) }
 func (a *subscribeBackendAdapter) invalidateSubtree(p string) { a.b.invalidateSubtree(p) }
 
+// InvalidateSubtree is the exported entry point for the delegation.CacheInvalidator
+// interface. It delegates to the private invalidateSubtree so the delegation
+// Manager can call it without access to the unexported type. The exported method
+// is defined here so the delegation package does not need to import cache (which
+// would create a cycle — cache already imports the delegation oracle interface).
+func (b *cachedBackend) InvalidateSubtree(path string) { b.invalidateSubtree(path) }
+
 // invalidateSubtree drops every cached entry for path and all its descendants
 // across all sub-caches. A single directory rename or recursive delete moves or
 // removes a whole subtree in one op; per-key invalidation leaves descendant

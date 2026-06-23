@@ -53,6 +53,12 @@ func (s *SingleVolumeMounterTestSuite) SetupTest() {
 	mockFsClient.EXPECT().GetAttr(mock.Anything, mock.Anything, mock.Anything).Return(&proto.GetAttrReply{
 		Status: proto.FsError_FS_ENOSYS,
 	}, nil).Maybe()
+	// Recall is opened by the delegation recall goroutine when cache is enabled.
+	// Return a non-nil error so the goroutine backs off immediately and the test
+	// completes without needing a real stream. The context cancel on Unmount
+	// exits the loop.
+	mockFsClient.EXPECT().Recall(mock.Anything, mock.Anything).
+		Return(nil, errors.New("test: recall not available")).Maybe()
 	// Mount path negotiates the FUSE frame ceiling via Version.Get; return
 	// the default frame size so the configured MaxWriteBytes is preserved.
 	mockVersionClient.EXPECT().Get(mock.Anything, mock.Anything).Return(&proto.VersionReply{
