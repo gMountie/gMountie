@@ -17,6 +17,16 @@ import (
 	"google.golang.org/grpc"
 )
 
+// DelegationOracle is consulted by the cache's revalidation fast-path. When a
+// path is delegated, the holder is guaranteed a recall before any remote change
+// can occur, so the cache may serve cached attrs without a GetAttrIfChanged RTT.
+// Declare this interface in the cache package (not in the delegation package) to
+// avoid an import cycle — *delegation.Manager satisfies it structurally at the
+// wiring site in single.go.
+type DelegationOracle interface {
+	IsDelegated(path string) bool
+}
+
 // cachedBackend decorates an inner FileSystemBackend with three
 // sub-caches sharing one accountant. Construct via NewCachedBackend;
 // implements backend.FileSystemBackend.
@@ -43,6 +53,11 @@ type cachedBackend struct {
 	validity   *validityTracker
 	subscriber *subscribeConsumer
 	subCancel  context.CancelFunc
+	// oracle is the optional delegation oracle. When non-nil, cached attrs for a
+	// delegated path are served without a GetAttrIfChanged RTT — the delegation
+	// guarantee (recall-before-change) makes revalidation redundant. Nil oracle
+	// preserves the existing behavior exactly.
+	oracle DelegationOracle
 	// rec is the injected metrics sink. NewCachedBackend defaults a nil rec to
 	// metrics.NopRecorder{}, so it is never nil and the emission sites (and the
 	// sub-components it's threaded into) never have to nil-check.
@@ -69,8 +84,9 @@ type invalidationSource interface {
 // nil for memory-only operation. client and volume are used to start the
 // Subscribe-based invalidation goroutine; pass nil client to disable it. rec is
 // the metrics sink; a nil rec is replaced with metrics.NopRecorder{} so the
-// cache and its sub-components never nil-check the recorder.
-func NewCachedBackend(inner backend.FileSystemBackend, cfg Config, p *persist.Persist, client invalidationSource, volume string, rec metrics.Recorder) backend.FileSystemBackend {
+// cache and its sub-components never nil-check the recorder. oracle is the
+// optional delegation oracle; pass nil to disable delegation-aware skipping.
+func NewCachedBackend(inner backend.FileSystemBackend, cfg Config, p *persist.Persist, client invalidationSource, volume string, rec metrics.Recorder, oracle DelegationOracle) backend.FileSystemBackend {
 	if rec == nil {
 		rec = metrics.NopRecorder{}
 	}
@@ -87,6 +103,7 @@ func NewCachedBackend(inner backend.FileSystemBackend, cfg Config, p *persist.Pe
 		statfs:             newStatfsCache(cfg.StatFsTTL, nil),
 		access:             newAccessCache(cfg.AttrTTL, nil),
 		validity:           newValidityTracker(),
+		oracle:             oracle,
 		persist:            p,
 		rec:                rec,
 	}
@@ -236,8 +253,12 @@ func (b *cachedBackend) cachedAttrLookup(
 	if !hit {
 		return fromInner()
 	}
-	// Fast path: globally verified or this path already revalidated this epoch.
-	if b.validity.globalState() == stateVerified || b.validity.isPathVerified(key) {
+	// Fast path: globally verified, this path already revalidated this epoch, or
+	// the path is currently delegated (recall-before-change guarantee makes a
+	// GetAttrIfChanged RTT redundant until the delegation is dropped).
+	if b.validity.globalState() == stateVerified ||
+		b.validity.isPathVerified(key) ||
+		(b.oracle != nil && b.oracle.IsDelegated(key)) {
 		if pos {
 			return cached, proto.FsError_FS_OK
 		}
@@ -305,8 +326,11 @@ func (b *cachedBackend) lookupFromInner(ctx context.Context, parent, name, full 
 func (b *cachedBackend) ListDir(ctx context.Context, p string) ([]backend.DirEntryPlus, proto.FsError) {
 	if entries, hit := b.dir.get(p); hit {
 		// Gate on validity: revalidate the directory's own attr to check for
-		// freshness. Use the dir path as the revalidation key.
-		if b.validity.globalState() == stateVerified || b.validity.isPathVerified(p) {
+		// freshness. Use the dir path as the revalidation key. A delegated path
+		// skips revalidation for the same reason as cachedAttrLookup.
+		if b.validity.globalState() == stateVerified ||
+			b.validity.isPathVerified(p) ||
+			(b.oracle != nil && b.oracle.IsDelegated(p)) {
 			return plusFromEntries(entries), proto.FsError_FS_OK
 		}
 		// Run revalidation on the directory itself.
@@ -403,10 +427,13 @@ func (b *cachedBackend) Read(ctx context.Context, fh backend.FileHandle, off int
 	if !ok {
 		return b.Inner.Read(ctx, fh, off, dest)
 	}
-	// Gate data reads on validity: if unverified, revalidate the file's attr
-	// first. A version change invalidates data chunks so the miss path below
-	// will refetch from inner.
-	if b.validity.globalState() != stateVerified && !b.validity.isPathVerified(ch.path) {
+	// Gate data reads on validity: if unverified (and neither the path has been
+	// revalidated this epoch nor a delegation grants skip authority), revalidate
+	// the file's attr first. A version change invalidates data chunks so the
+	// miss path below will refetch from inner.
+	if b.validity.globalState() != stateVerified &&
+		!b.validity.isPathVerified(ch.path) &&
+		!(b.oracle != nil && b.oracle.IsDelegated(ch.path)) {
 		cached, _, _ := b.attr.get(ch.path)
 		knownVersion := uint64(0)
 		if cached != nil {

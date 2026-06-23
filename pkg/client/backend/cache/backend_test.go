@@ -32,7 +32,7 @@ func (s *CachedBackendTestSuite) SetupTest() {
 		AttrTTL:        5 * time.Second,
 		DirTTL:         5 * time.Second,
 		NegativeTTL:    2 * time.Second,
-	}, nil, nil, "", nil).(*cachedBackend)
+	}, nil, nil, "", nil, nil).(*cachedBackend)
 	// Mark the tracker as globally verified so the existing invalidation-table
 	// tests exercise pure cache hit/miss semantics without triggering the
 	// validity-gating path. Tests that specifically target gating
@@ -852,7 +852,7 @@ func newUnverifiedBackend(t *testing.T, inner *iomocks.MockFileSystemBackend) *c
 		AttrTTL:          time.Hour,
 		DirTTL:           time.Hour,
 		NegativeTTL:      time.Minute,
-	}, nil, nil, "", nil).(*cachedBackend)
+	}, nil, nil, "", nil, nil).(*cachedBackend)
 	return cb
 }
 
@@ -1062,7 +1062,7 @@ func newXAttrBackend(t *testing.T, inner *iomocks.MockFileSystemBackend) *cached
 		ChunkSizeBytes: 1024,
 		AttrTTL:        time.Hour,
 		XAttrTTL:       time.Hour,
-	}, nil, nil, "", nil).(*cachedBackend)
+	}, nil, nil, "", nil, nil).(*cachedBackend)
 	cb.validity.markGlobalVerified()
 	return cb
 }
@@ -1118,7 +1118,7 @@ func (s *CachedBackendTestSuite) TestRenameInvalidatesDescendantsAcrossDiskTier(
 	s.Require().NoError(err)
 	inner := iomocks.NewMockFileSystemBackend(s.T())
 	inner.EXPECT().Close().Return(nil).Maybe()
-	be := NewCachedBackend(inner, Config{AttrTTL: time.Hour, DirTTL: time.Hour, ChunkSizeBytes: 1024}, p, nil, "", nil).(*cachedBackend)
+	be := NewCachedBackend(inner, Config{AttrTTL: time.Hour, DirTTL: time.Hour, ChunkSizeBytes: 1024}, p, nil, "", nil, nil).(*cachedBackend)
 	defer be.Close()
 	be.validity.markGlobalVerified()
 
@@ -1201,7 +1201,7 @@ func (s *CachedBackendTestSuite) TestAttrMissRecordsViaInjectedRecorder() {
 		ChunkSizeBytes: 1024,
 		AttrTTL:        5 * time.Second,
 		NegativeTTL:    2 * time.Second,
-	}, nil, nil, "", rec)
+	}, nil, nil, "", rec, nil)
 
 	a, st := cb.Stat(context.Background(), "/x")
 	s.Require().Equal(proto.FsError_FS_OK, st)

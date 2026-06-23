@@ -66,7 +66,7 @@ func (s *ContractSuite) TestCacheOverMemfs() {
 			StatFsTTL:        time.Minute,
 		}
 		// client=nil + SubscribeEnabled=false => no subscriber goroutine.
-		return cache.NewCachedBackend(memfs.New(), cfg, p, nil, "", metrics.NopRecorder{})
+		return cache.NewCachedBackend(memfs.New(), cfg, p, nil, "", metrics.NopRecorder{}, nil)
 	})
 }
 

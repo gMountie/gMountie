@@ -134,7 +134,7 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 			rec = cm
 		}
 		layers = append(layers, backendLayer{pos: posCache, build: func(inner backend.FileSystemBackend) backend.FileSystemBackend {
-			return cache.NewCachedBackend(inner, cacheCfg, p, client.Fs(), volume, rec)
+			return cache.NewCachedBackend(inner, cacheCfg, p, client.Fs(), volume, rec, nil)
 		}})
 	}
 
