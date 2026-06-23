@@ -42,6 +42,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -55,6 +58,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/proto"
 	serverapp "go.gmountie.dev/gmountie/pkg/server"
 	"go.gmountie.dev/gmountie/pkg/server/watermark"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 	"go.gmountie.dev/gmountie/test/e2e/utils"
 )
 
@@ -546,11 +550,21 @@ func (s *WalE2ESuite) TestReplayDedup() {
 	// server's watermark ≥ 1 after the first apply, seq=1 is deduplicated.
 	//
 	// Note: the server-side watermark is keyed on (identity, volume). The identity
-	// for our basic-auth session is "user". Dedup triggers when seq ≤ stored wm.
+	// for squash mode is "" (passthrough resolves caller nil → Identity{} →
+	// Principal=""); dedup triggers when incoming seq ≤ stored watermark.
 	replayErr := replayCoord.Replay(bg(), 0)
-	// Replay either silently succeeds (all seqs deduplicated) or returns nil
-	// (no ordered-halt = no loss). An EEXIST would surface as an ordered-halt error.
+	// Replay must succeed without error: all seqs are deduplicated (no ordered-halt,
+	// no data loss). An EEXIST from a re-applied Mkdir would surface as FS_EEXIST
+	// → ordered-halt → non-OK FsError return.
 	r.NoError(replayErr, "Replay must not return an error when ops are deduplicated")
+
+	// UNAMBIGUOUS DEDUP PROOF: the server-side watermark must not have advanced
+	// during the replay. seq ≤ stored watermark ⇒ the server skipped the op entirely
+	// without executing it. Combined with replayErr==nil (no halt) this proves the
+	// coordinator's dedup path fired, not a silent ignore of an EEXIST.
+	wmAfterReplay := wm.watermarkFor(wmKey)
+	r.Equal(wmAfterFirst, wmAfterReplay,
+		"server watermark must not advance on replay of already-committed seqs (dedup proof)")
 
 	// Directory must still exist exactly once (no double-apply artifacts).
 	entries, readErr := os.ReadDir(srcSub)
@@ -566,40 +580,36 @@ func (s *WalE2ESuite) TestReplayDedup() {
 
 // ─── Scenario 5: Loss logging ─────────────────────────────────────────────────
 // Force a server Apply ordered-halt (OpWrite to a non-existent path → ENOENT).
-// Assert: the onLoss hook fires, enumerating ALL lost file paths, and the
-// WalDataLost metric increments. We use WithOnLoss to capture the event
-// without mutating the global log.Log pointer (which would race with server
-// goroutines that read it concurrently).
+// Assert: the DEFAULT onLoss hook (logDataLost) fires — no WithOnLoss override —
+// incrementing the WalDataLost metric via wal.SetMetrics and emitting an ERROR
+// log via log.Log with a "lost_paths" field enumerating every lost file path.
 
 func (s *WalE2ESuite) TestLossLogging() {
 	r := s.Require()
 
-	tc, _, _, volName := s.newScenarioCtx()
-	_ = tc // server is running; we just need a connected client
+	// ── Install zap observer BEFORE the server starts ──────────────────────────
+	// The observer captures ERROR entries from log.Log regardless of which
+	// goroutine emits them. We must set log.Log before any goroutines start and
+	// restore it AFTER all goroutines stop. t.Cleanup uses LIFO ordering, so we
+	// register the restore NOW (first → runs last), then call newScenarioCtx
+	// (second → tc.Close() runs first, stopping server goroutines before restore).
+	observerCore, observed := observer.New(zapcore.ErrorLevel)
+	origLog := log.Log
+	log.Log = zap.New(observerCore)
+	s.T().Cleanup(func() { log.Log = origLog }) // runs LAST (LIFO)
 
-	// Capture loss events via WithOnLoss.
-	type lossEvent struct {
-		reason  string
-		ops     []wal.Op
-		fserr   proto.FsError
-	}
-	var (
-		lossmu     sync.Mutex
-		lossEvents []lossEvent
-	)
-	onLoss := func(reason string, lostOps []wal.Op, fe proto.FsError) {
-		lossmu.Lock()
-		lossEvents = append(lossEvents, lossEvent{reason: reason, ops: lostOps, fserr: fe})
-		lossmu.Unlock()
-	}
-
-	// Wire a fresh metrics instance and set it on the package so logDataLost
-	// increments it. Do this BEFORE building the coordinator (before the default
-	// hook would be installed). Since we use WithOnLoss, logDataLost is NOT
-	// called — but we prove the metric path by calling it explicitly in onLoss.
+	// ── Wire a fresh metrics instance via wal.SetMetrics ───────────────────────
+	// logDataLost increments walMetrics when non-nil. We inject a fresh registry
+	// so counters are isolated. LIFO: restore runs after coordinator.Close() (defer).
 	m := clientmetrics.NewMetrics()
+	wal.SetMetrics(m)
+	s.T().Cleanup(func() { wal.SetMetrics(nil) }) // runs LAST (LIFO)
 
-	// Build a coordinator with our capturing hook.
+	// ── Start server (registers tc.Close() Cleanup: runs FIRST via LIFO) ───────
+	tc, _, _, volName := s.newScenarioCtx()
+	_ = tc
+
+	// ── Build coordinator WITHOUT WithOnLoss — default hook = logDataLost ──────
 	walLog, err := wal.Open(filepath.Join(s.T().TempDir(), "loss.db"))
 	r.NoError(err)
 
@@ -614,28 +624,13 @@ func (s *WalE2ESuite) TestLossLogging() {
 			return cl.Fs().Apply(ctx)
 		}),
 		wal.WithVolume(volName),
-		wal.WithOnLoss(func(reason string, lostOps []wal.Op, fe proto.FsError) {
-			// Call our capturing closure.
-			onLoss(reason, lostOps, fe)
-			// Also increment the metric to prove the hook wires the metric path.
-			m.WalDataLostEventInc(reason)
-			paths := make([]string, len(lostOps))
-			for i, op := range lostOps {
-				paths[i] = op.Path
-			}
-			seen := make(map[string]struct{}, len(paths))
-			for _, p := range paths {
-				seen[p] = struct{}{}
-			}
-			m.WalDataLostFilesAdd(reason, len(seen))
-		}),
+		// No WithOnLoss — the coordinator installs defaultOnLoss → logDataLost.
 	)
 	defer lossCoord.Close()
 
-	// Write ops for paths that do NOT exist on the server.
-	// OpWrite to a non-existent path → Open(O_WRONLY without O_CREAT) →
-	// ENOENT → ordered-halt at seq=1 → onLoss fires.
-	// Paths that do NOT exist on the server (no directory created for them).
+	// ── Write ops for paths that do NOT exist on the server ────────────────────
+	// OpWrite to a non-existent path → server Open(O_WRONLY, no O_CREAT) →
+	// ENOENT → ordered-halt at seq=1 → logDataLost fires via onLoss.
 	lostPath1 := "ghost1.bin"
 	lostPath2 := "ghost2.bin"
 	r.NoError(lossCoord.RecordOp(wal.Op{
@@ -651,33 +646,40 @@ func (s *WalE2ESuite) TestLossLogging() {
 		Data:   []byte("phantom bytes 2"),
 	}))
 
-	// Flush → server ordered-halt → onLoss fires.
+	// ── Flush → server ordered-halt → default hook fires ───────────────────────
 	fsyncFerr := lossCoord.Fsync(bg())
 	r.NotEqual(proto.FsError_FS_OK, fsyncFerr, "Fsync must return FS_EIO on ordered-halt")
 
-	// Loss hook must have fired with at least one event.
-	lossmu.Lock()
-	capturedEvents := lossEvents
-	lossmu.Unlock()
-	r.Len(capturedEvents, 1, "exactly one loss event must be captured")
-
-	event := capturedEvents[0]
-	r.Equal("apply-failure", event.reason, "loss reason must be apply-failure")
-	r.NotEmpty(event.ops, "loss event must enumerate the lost ops")
-
-	// The lost ops must include both ghost paths.
-	var capturedPaths []string
-	for _, op := range event.ops {
-		capturedPaths = append(capturedPaths, op.Path)
-	}
-	r.Contains(capturedPaths, lostPath1, "lostPath1 must appear in lost ops")
-	r.Contains(capturedPaths, lostPath2, "lostPath2 must appear in lost ops")
-
-	// WalDataLost metric must have been incremented inside the hook.
+	// ── Assert WalDataLost metric incremented by logDataLost ───────────────────
+	// logDataLost calls walMetrics.WalDataLostEventInc("apply-failure") (+1 event)
+	// and walMetrics.WalDataLostFilesAdd("apply-failure", distinctPaths) (+2 files).
 	eventsVal := testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "events"))
-	r.Equal(1.0, eventsVal, "WalDataLost events must be 1")
+	r.Equal(1.0, eventsVal, "WalDataLost events must be 1 (default hook increments once per halt)")
 	filesVal := testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "files"))
-	r.Equal(2.0, filesVal, "WalDataLost files must equal the number of distinct lost paths")
+	r.Equal(2.0, filesVal, "WalDataLost files must equal distinct lost-path count (2)")
+
+	// ── Assert ERROR log emitted by logDataLost enumerates both ghost paths ─────
+	// Filter by message so other server ERROR logs don't interfere.
+	lossEntries := observed.FilterMessage("WAL data loss: un-flushed ops discarded without reaching the server")
+	r.Len(lossEntries.All(), 1, "exactly one WAL data-loss ERROR log must be emitted by logDataLost")
+
+	entry := lossEntries.All()[0]
+	r.Equal(zapcore.ErrorLevel, entry.Level, "loss log must be at ERROR level")
+
+	// zap.Strings("lost_paths") is encoded by zapcore.MapObjectEncoder as
+	// []interface{} (each element is a string). Extract and assert both ghost paths.
+	rawPaths, ok := entry.ContextMap()["lost_paths"]
+	r.True(ok, "log entry must contain a 'lost_paths' field")
+	ifacePaths, ok := rawPaths.([]interface{})
+	r.True(ok, "lost_paths must be a []interface{} (zap.Strings encoding)")
+	var loggedPaths []string
+	for _, v := range ifacePaths {
+		str, isStr := v.(string)
+		r.True(isStr, "each element of lost_paths must be a string")
+		loggedPaths = append(loggedPaths, str)
+	}
+	r.Contains(loggedPaths, lostPath1, "lost_paths must include ghost1.bin")
+	r.Contains(loggedPaths, lostPath2, "lost_paths must include ghost2.bin")
 }
 
 // ─── test entry-point ─────────────────────────────────────────────────────────
