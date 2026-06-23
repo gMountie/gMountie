@@ -8,6 +8,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/server/principal"
 	"go.gmountie.dev/gmountie/pkg/server/service"
+	"go.gmountie.dev/gmountie/pkg/server/watermark"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"go.uber.org/zap"
@@ -25,13 +26,14 @@ type SessionController struct {
 	sessions  service.SessionManager
 	volSvc    service.VolumeService
 	bootEpoch string
+	wmStore   watermark.Store
 	proto.UnimplementedSessionServiceServer
 }
 
 var _ proto.SessionServiceServer = (*SessionController)(nil)
 
-func NewSessionController(mgr service.SessionManager, volSvc service.VolumeService, bootEpoch string) *SessionController {
-	return &SessionController{sessions: mgr, volSvc: volSvc, bootEpoch: bootEpoch}
+func NewSessionController(mgr service.SessionManager, volSvc service.VolumeService, bootEpoch string, wmStore watermark.Store) *SessionController {
+	return &SessionController{sessions: mgr, volSvc: volSvc, bootEpoch: bootEpoch, wmStore: wmStore}
 }
 
 func (c *SessionController) Register(server *grpc.Server) {
@@ -63,11 +65,15 @@ func (c *SessionController) Resume(ctx context.Context, req *proto.SessionResume
 	// owned by no one (already reaped) — let Resume report resumed=false so the
 	// client falls back to Create. No-op for basic-auth (principal is derived
 	// from the session); binds mTLS (cert CN is independent of the session_id).
+	// Hoist the principal so we can look up the (principal, volume) watermark
+	// after sessions.Resume (the session may be gone by then for unknown IDs).
+	var sessIdentity string
 	if sess, err := c.sessions.Get(req.SessionId); err == nil {
 		ctxP, _ := principal.FromContext(ctx)
 		if sess.Principal() != "" && ctxP != sess.Principal() {
 			return nil, status.Error(codes.PermissionDenied, "session does not belong to the caller")
 		}
+		sessIdentity = sess.Principal()
 	}
 	resumed, err := c.sessions.Resume(req.SessionId)
 	if err != nil {
@@ -76,7 +82,19 @@ func (c *SessionController) Resume(ctx context.Context, req *proto.SessionResume
 	log.Log.Info("session resume requested",
 		zap.String("session_fp", common.FingerprintID(req.SessionId)),
 		zap.Bool("resumed", resumed))
-	return &proto.SessionResumeReply{Resumed: resumed}, nil
+
+	// Populate the (identity, volume) seq-watermark so the reconnecting client
+	// knows where to start WAL replay. Skip the lookup when volume is empty
+	// (older callers that don't send a volume) — return 0 cleanly.
+	var wm uint64
+	if req.Volume != "" && sessIdentity != "" && c.wmStore != nil {
+		rec, err := c.wmStore.Get(watermark.Key{Identity: sessIdentity, Volume: req.Volume})
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "watermark lookup failed: %v", err)
+		}
+		wm = rec.Watermark
+	}
+	return &proto.SessionResumeReply{Resumed: resumed, Watermark: wm}, nil
 }
 
 func (c *SessionController) WhoAmI(ctx context.Context, req *proto.WhoAmIRequest) (*proto.Identity, error) {

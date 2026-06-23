@@ -57,7 +57,7 @@ func (s *FactoryTestSuite) SetupSuite() {
 
 	srv := grpc.NewServer(grpc.Creds(creds))
 	sessMgr := service.NewSessionManager(service.SessionManagerOptions{})
-	proto.RegisterSessionServiceServer(srv, controller.NewSessionController(sessMgr, nil, "test-epoch"))
+	proto.RegisterSessionServiceServer(srv, controller.NewSessionController(sessMgr, nil, "test-epoch", nil))
 
 	go func() {
 		_ = srv.Serve(lis)
@@ -290,7 +290,7 @@ func (s *FactoryTestSuite) TestKeepalive_DetectsDeadConnectionWithinTimeoutBudge
 		}),
 	)
 	sessMgr := service.NewSessionManager(service.SessionManagerOptions{})
-	proto.RegisterSessionServiceServer(srv, controller.NewSessionController(sessMgr, nil, "test-epoch"))
+	proto.RegisterSessionServiceServer(srv, controller.NewSessionController(sessMgr, nil, "test-epoch", nil))
 	go func() { _ = srv.Serve(lis) }()
 	defer func() {
 		// Wake any parked silentConn.Read first, then stop the server so
