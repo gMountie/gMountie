@@ -30,6 +30,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/server/ops"
 	"go.gmountie.dev/gmountie/pkg/server/service"
 	servertls "go.gmountie.dev/gmountie/pkg/server/tls"
+	"go.gmountie.dev/gmountie/pkg/server/watermark"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
 )
 
@@ -57,10 +58,39 @@ type AppContext struct {
 	// Recalls is the per-session Recall stream registry used by the Arbiter
 	// to push recall messages and correlate acks.
 	Recalls *delegation.RecallRegistry
+	// Watermark is the durable store for WAL replay seq-watermarks and
+	// revoked delegation-generation sets, per (identity, volume). OSS default
+	// is an embedded bbolt at $XDG_STATE_HOME/gmountie/watermark.db; the
+	// cloud overrides it with a centralized impl via WithWatermarkStore.
+	Watermark watermark.Store
 }
 
-// NewServerAppContext creates a new ServerContext.
-func NewServerAppContext(cfg *config.Config) (*AppContext, error) {
+// appContextOptions holds functional option state for NewServerAppContext.
+type appContextOptions struct {
+	watermarkStore watermark.Store
+}
+
+// AppContextOption is a functional option for NewServerAppContext.
+type AppContextOption func(*appContextOptions)
+
+// WithWatermarkStore overrides the default embedded bbolt watermark store with
+// the provided implementation. The cloud passes a centralized store here so
+// that WAL watermarks are shared across server replicas.
+func WithWatermarkStore(s watermark.Store) AppContextOption {
+	return func(o *appContextOptions) {
+		o.watermarkStore = s
+	}
+}
+
+// NewServerAppContext creates a new ServerContext. Callers may pass
+// AppContextOption values to override defaults; existing call sites that pass
+// no options are unaffected (variadic zero-value behaviour).
+func NewServerAppContext(cfg *config.Config, opts ...AppContextOption) (*AppContext, error) {
+	o := &appContextOptions{}
+	for _, opt := range opts {
+		opt(o)
+	}
+
 	m := metrics.NewMetrics()
 	// Register against the default registerer so the existing /metrics
 	// scrape handler picks them up. Register (not MustRegister)
@@ -98,6 +128,21 @@ func NewServerAppContext(cfg *config.Config) (*AppContext, error) {
 	revocation := service.NewRevocationStore()
 	revocation.Set(revokedSerialsFromConfig(cfg))
 	bootEpoch := uuid.NewString()
+
+	// Resolve the watermark store: use the injected impl if provided, otherwise
+	// open the default embedded bbolt at $XDG_STATE_HOME/gmountie/watermark.db.
+	wmStore := o.watermarkStore
+	if wmStore == nil {
+		wmPath := resolveWatermarkPath()
+		if err := os.MkdirAll(filepath.Dir(wmPath), 0o755); err != nil {
+			return nil, errors.Wrap(err, "ensure watermark dir")
+		}
+		wmStore, err = watermark.OpenBBolt(wmPath)
+		if err != nil {
+			return nil, errors.Wrap(err, "open watermark store")
+		}
+	}
+
 	return &AppContext{
 		Config:         cfg,
 		VolumeService:  volumeService,
@@ -109,6 +154,7 @@ func NewServerAppContext(cfg *config.Config) (*AppContext, error) {
 		BootEpoch:      bootEpoch,
 		Delegation:     arbiter,
 		Recalls:        recalls,
+		Watermark:      wmStore,
 	}, nil
 }
 
@@ -354,6 +400,9 @@ func Start(ctx context.Context, cfg *config.Config) error {
 				log.Log.Warn("session manager stop returned error", zap.Error(err))
 			}
 			appCtx.Bus.Close()
+			if err := appCtx.Watermark.Close(); err != nil {
+				log.Log.Warn("watermark store close returned error", zap.Error(err))
+			}
 			stopHTTP("ops", opsServer)
 			stopHTTP("metrics", metricsServer)
 			log.Log.Info("server shut down gracefully")
@@ -367,6 +416,9 @@ func Start(ctx context.Context, cfg *config.Config) error {
 			}
 			sessCancel()
 			appCtx.Bus.Close()
+			if err := appCtx.Watermark.Close(); err != nil {
+				log.Log.Warn("watermark store close returned error", zap.Error(err))
+			}
 			stopHTTP("ops", opsServer)
 			stopHTTP("metrics", metricsServer)
 			return errors.New("shutdown deadline exceeded")
@@ -383,6 +435,13 @@ func resolveCertPaths(cfg config.TLSConfig) (certPath, keyPath string) {
 	}
 	base := filepath.Join(xdg.StateHome, "gmountie")
 	return filepath.Join(base, "server.crt"), filepath.Join(base, "server.key")
+}
+
+// resolveWatermarkPath returns the default bbolt path for the watermark store.
+// Pure resolution — no I/O. Mirrors resolveCertPaths: same base dir, different
+// file. The caller is responsible for MkdirAll before opening.
+func resolveWatermarkPath() string {
+	return filepath.Join(xdg.StateHome, "gmountie", "watermark.db")
 }
 
 // minTLSVersion maps a "1.2" / "1.3" string to the tls.Version* constant. The
