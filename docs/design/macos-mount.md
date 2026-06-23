@@ -80,51 +80,40 @@ Mount options are provider-specific:
   `iosize=N` (passed via `MountOptions.MaxWrite` on go-fuse; `-o iosize=N` on
   cgofuse). FUSE-T takes `max_write=N` via cgofuse.
 
-## Finder copies and macOS xattrs (auto_xattr)
+## Finder copies and macOS xattrs (SETXATTR flag translation)
 
-**Problem.** macOS Finder stamps FinderInfo on *every* copy via
-`setattrlist(ATTR_CMN_FNDRINFO)` (even when the source has no FinderInfo). On the
-macFUSE 5.x kext that call returns **EINVAL** — the kext rejects it *locally*,
-without ever issuing a FUSE op to us — which Finder surfaces as the opaque
+**Symptom.** A Finder drag-drop copy into a macFUSE volume fails with the opaque
 **"The operation can't be completed because an unexpected error occurred
-(error code -50)"**. A *direct* `setxattr(com.apple.FinderInfo)` works (we
-implement xattrs end-to-end), so it is specifically the kext's
-`setattrlist → FinderInfo` bridge that does not engage for go-fuse-backed mounts.
-Confirmed by `fs_usage` on a real Finder copy: `open(O_CREAT) → setattrlist [22]`
-on the destination, then abort before any write. `cp`/`ditto` are unaffected
-(they don't call `setattrlist(FNDRINFO)`). This is a long-standing,
-well-documented macFUSE class of issue, **not** a gMountie bug, and it reproduces
-identically on macFUSE 5.2.0 (stable) and 5.3.2 (dev) — so it is not a dev-build
-regression.
+(error code -50)"**, while `cp`/`ditto` from a terminal succeed. macOS Finder
+stamps FinderInfo on *every* copy via `setattrlist(ATTR_CMN_FNDRINFO)` (even when
+the source has none); `cp`/`ditto` don't.
 
-**Backend matrix** (`setattrlist(ATTR_CMN_FNDRINFO)` on each):
-macFUSE-kext = EINVAL, macFUSE-fskit = EPERM, **FUSE-T/fskit = OK**.
+**Root cause (a gMountie bug, found via go-fuse op-level debug).** macFUSE
+*does* forward that as a `SETXATTR "com.apple.FinderInfo"` to us — and gMountie
+returned **EINVAL**. macOS `<sys/xattr.h>` flag values differ from Linux's, and
+macOS adds bits Linux has none of: Finder's FinderInfo write carries
+**`XATTR_NODEFAULT` (0x10)**. gMountie was passing the macOS flags straight to
+the server's `unix.Setxattr`, where `0x10` is an invalid flag → EINVAL → Finder
+-50. (The earlier RPC log hid this: the errno rides in the SetXAttr *reply body*,
+not the gRPC status.)
 
-**Fix shipped: the `auto_xattr` mount option, default on (`fuse.auto_xattr: true`).**
-With `auto_xattr`, macFUSE stores *all* macOS xattrs — including FinderInfo via
-`setattrlist` — in `._` AppleDouble sidecar files at the kernel layer, so Finder
-copies succeed (validated end-to-end with a real Finder drag-drop). This is what
-mainstream macFUSE filesystems (e.g. bindfs) do. It replaces the previously
-unconditional `noappledouble`; the two conflict (`auto_xattr` needs the `._`
-store `noappledouble` denies).
+**Fix.** Translate macOS SETXATTR flags to Linux on the darwin client before the
+wire call (`gofuse/applexattr.go`, `appleXattrFlagsToBackend`): map
+`XATTR_CREATE 0x2→0x1` and `XATTR_REPLACE 0x4→0x2`, drop the macOS-only bits
+(`NOFOLLOW`/`NOSECURITY`/`NODEFAULT`/`SHOWCOMPRESSION`). darwin-only, like the
+`com.apple.*` name remap. With this, Finder copies succeed on the **clean**
+`noappledouble` path — `setattrlist(FNDRINFO)` returns 0, FinderInfo
+round-trips **server-side**, and there are **no `._` files** (validated
+end-to-end with a real Finder copy). No go-fuse change is needed.
 
-**This is suboptimal, and deliberately tracked as such:**
-- `._` sidecars reappear on the volume (the clutter `noappledouble` suppressed),
-  and the xattrs become **kernel-local `._` files, not real server-side xattrs** —
-  so the `com.apple.*` → `user.com.apple.*` wire remap is bypassed on this path,
-  and the metadata is not visible cross-platform.
-- Opt out with **`fuse.auto_xattr: false`** to mount `noappledouble` instead
-  (clean, server-side xattrs via the remap) — but Finder copies then fail with
-  -50. Good for headless/CLI or cross-platform use.
-- **FUSE-T/fskit** already gives the clean behaviour (Finder works, native FSKit,
-  server-side xattrs, no `._`), at the cost of slower metadata over WAN.
-
-**Cleaner fix (follow-up, not done here).** The right long-term fix is to make
-the **go-fuse darwin layer advertise FinderInfo/extended-attribute support** so
-the kext routes `setattrlist(FNDRINFO)` to our (working) `setxattr` handler —
-Finder copies *and* server-side xattrs, no `._`. That is upstream go-fuse work
-(its darwin layer is community-maintained; the maintainer has no Mac), so it is
-tracked separately rather than blocking this option.
+**`fuse.auto_xattr` (default false).** An opt-in to mount `auto_xattr` instead of
+`noappledouble`, making macFUSE store all xattrs in `._` AppleDouble files at the
+kernel layer (the bindfs approach). Only useful for interop with tools that read
+`._` files; it brings `._`/.DS_Store clutter and makes xattrs kernel-local rather
+than server-side, so it is **not** the default — the flag translation makes the
+clean path work without it. (`auto_xattr` and `noappledouble` conflict; the
+toggle picks one.) **FUSE-T/fskit** is another clean Finder-working path, at the
+cost of slower metadata over WAN.
 
 ## FUSE-T backend: NFS vs FSKit
 

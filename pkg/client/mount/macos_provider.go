@@ -113,11 +113,13 @@ func adapterForProvider(p fuseProvider) adapterKind {
 // names it. go-fuse on darwin is only ever the macFUSE path.
 //
 // The last option toggles macOS xattr handling (see config.DefaultFUSEAutoXAttr):
-//   - autoXattr true (default): "auto_xattr" — macFUSE stores xattrs/FinderInfo
-//     in ._ AppleDouble files, so Finder copies work (Finder's
-//     setattrlist(ATTR_CMN_FNDRINFO) would otherwise EINVAL → "error -50").
-//   - autoXattr false: "noappledouble" — suppresses ._*/.DS_Store chatter and
-//     routes xattrs server-side, but Finder copies that set FinderInfo fail.
+//   - autoXattr false (default): "noappledouble" — suppresses ._*/.DS_Store
+//     chatter and routes xattrs server-side. Finder copies work here because
+//     the client translates macOS SETXATTR flags to Linux ones (see
+//     gofuse/applexattr.go); without that, Finder's FinderInfo write carries
+//     XATTR_NODEFAULT and the server rejects it with EINVAL → "error -50".
+//   - autoXattr true: "auto_xattr" — macFUSE stores all xattrs in ._ AppleDouble
+//     files at the kernel layer (bindfs-style), for ._-reading interop only.
 func goFuseMacFUSEOptions(volume string, autoXattr bool) []string {
 	appleXattr := "noappledouble"
 	if autoXattr {

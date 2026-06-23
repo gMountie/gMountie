@@ -7,3 +7,7 @@ package gofuse
 
 func xattrNameToBackend(name string) string   { return name }
 func xattrNameFromBackend(name string) string { return name }
+
+// xattrFlagsToBackend is identity off darwin: Linux FUSE already delivers Linux
+// SETXATTR flag values.
+func xattrFlagsToBackend(flags uint32) uint32 { return flags }

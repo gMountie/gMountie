@@ -472,7 +472,7 @@ func (n *gMountieNode) Getxattr(ctx context.Context, attr string, dest []byte) (
 // --- Setxattr / Removexattr / Listxattr ---
 
 func (n *gMountieNode) Setxattr(ctx context.Context, attr string, data []byte, flags uint32) syscall.Errno {
-	return fserr.ToErrno(n.backend.SetXAttr(ctx, n.path(), xattrNameToBackend(attr), data, flags))
+	return fserr.ToErrno(n.backend.SetXAttr(ctx, n.path(), xattrNameToBackend(attr), data, xattrFlagsToBackend(flags)))
 }
 
 func (n *gMountieNode) Removexattr(ctx context.Context, attr string) syscall.Errno {

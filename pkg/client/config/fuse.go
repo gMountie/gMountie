@@ -81,25 +81,20 @@ const (
 	// no loss of privilege-stripping. Older kernels that do not support the
 	// cap simply ignore it. Opt out with fuse.handle_kill_priv: false.
 	DefaultFUSEHandleKillPriv = true
-	// DefaultFUSEAutoXAttr mounts macFUSE with the `auto_xattr` option by
-	// default, so macFUSE stores macOS extended attributes (FinderInfo,
-	// quarantine, resource forks) in `._` AppleDouble sidecar files at the
-	// kernel layer. This is what makes Finder copies work: Finder stamps
-	// FinderInfo on every copy via setattrlist(ATTR_CMN_FNDRINFO), which the
-	// macFUSE 5.x kext rejects with EINVAL — surfacing as Finder "error -50" —
-	// unless it has a `._` store to fall back on. Setting fuse.auto_xattr:
-	// false mounts `noappledouble` instead (no `._`/.DS_Store clutter; xattrs
-	// go server-side through the com.apple.* remap) but then Finder copies
-	// that set FinderInfo fail.
+	// DefaultFUSEAutoXAttr is false: macFUSE mounts with `noappledouble` (no
+	// `._`/.DS_Store clutter) and macOS xattrs go server-side through the
+	// com.apple.* remap. Finder copies work on this clean path because the
+	// client translates macOS SETXATTR flags to Linux ones — the FinderInfo
+	// write Finder issues via setattrlist(ATTR_CMN_FNDRINFO) carries
+	// XATTR_NODEFAULT (0x10), which the Linux server's setxattr would otherwise
+	// reject with EINVAL (Finder "error code -50"); see gofuse/applexattr.go.
 	//
-	// SUBOPTIMAL by design: the `._` sidecars are kernel-local, not stored as
-	// real server-side xattrs. The cleaner fix — advertising FinderInfo
-	// support so the kext routes setattrlist to our (working) setxattr handler
-	// — is upstream go-fuse work (its darwin layer is community-maintained and
-	// the maintainer has no Mac). FUSE-T/fskit already gives the clean
-	// behaviour. See docs/design/macos-mount.md. macFUSE (go-fuse) path only;
-	// ignored on FUSE-T and Linux.
-	DefaultFUSEAutoXAttr = true
+	// Set fuse.auto_xattr: true to instead have macFUSE store all xattrs in
+	// `._` AppleDouble sidecar files at the kernel layer (the bindfs approach):
+	// useful only for interop with tools that read `._` files, at the cost of
+	// `._`/.DS_Store clutter and kernel-local (not server-side) xattrs.
+	// macFUSE (go-fuse) path only; ignored on FUSE-T and Linux.
+	DefaultFUSEAutoXAttr = false
 )
 
 // FUSEConfig holds the FUSE-kernel-side tuning knobs surfaced through
@@ -166,12 +161,12 @@ type FUSEConfig struct {
 	// to NFS; "fskit" forces it (macOS 15+ with the FskitSrvModule extension
 	// installed and enabled, else the mount fails clearly).
 	FuseTBackend string `validate:"omitempty,oneof=auto nfs fskit" mapstructure:"fuset_backend"`
-	// AutoXAttr toggles the macFUSE `auto_xattr` mount option (default true).
-	// True: macFUSE stores macOS xattrs/FinderInfo in `._` AppleDouble files so
-	// Finder copies work. False: mount `noappledouble` (clean, server-side
-	// xattrs) at the cost of Finder copies failing on FinderInfo with -50.
-	// macFUSE (go-fuse) only; ignored on FUSE-T and Linux. See
-	// DefaultFUSEAutoXAttr for the full rationale and tradeoff.
+	// AutoXAttr toggles the macFUSE `auto_xattr` mount option (default false).
+	// False (default): mount `noappledouble` — clean, server-side xattrs; Finder
+	// copies work via the SETXATTR-flag translation. True: macFUSE stores all
+	// xattrs in `._` AppleDouble files (bindfs-style), for `._`-reading interop
+	// at the cost of clutter. macFUSE (go-fuse) only; ignored on FUSE-T and
+	// Linux. See DefaultFUSEAutoXAttr.
 	AutoXAttr bool `mapstructure:"auto_xattr"`
 }
 
