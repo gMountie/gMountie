@@ -91,7 +91,7 @@ func (s *DelegationHandlerSuite) SetupTest() {
 	}, time.Now)
 
 	bus := serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
-	s.srv = NewGrpcServer(s.fsService, s.sessionMgr, bus, nil, s.arbiter, nil)
+	s.srv = NewGrpcServer(s.fsService, s.sessionMgr, bus, nil, s.arbiter, nil, nil)
 }
 
 func (s *DelegationHandlerSuite) TearDownTest() {

@@ -12,6 +12,7 @@ import (
 	serverio "go.gmountie.dev/gmountie/pkg/server/io"
 	"go.gmountie.dev/gmountie/pkg/server/metrics"
 	"go.gmountie.dev/gmountie/pkg/server/service"
+	"go.gmountie.dev/gmountie/pkg/server/watermark"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
@@ -27,6 +28,7 @@ type RpcServerImpl struct {
 	metrics   *metrics.Metrics
 	arbiter   *delegation.Arbiter
 	recalls   *delegation.RecallRegistry
+	watermark watermark.Store
 	proto.UnimplementedRpcFsServer
 }
 
@@ -36,7 +38,9 @@ var _ proto.RpcFsServer = (*RpcServerImpl)(nil)
 // NewGrpcServer creates a new gRPC server.
 // m may be nil; subscribe metrics are no-ops when unset.
 // arbiter and recalls may be nil for tests that do not exercise delegation.
-func NewGrpcServer(fsService service.VolumeService, sessions service.SessionManager, bus serverio.EventBus, m *metrics.Metrics, arbiter *delegation.Arbiter, recalls *delegation.RecallRegistry) *RpcServerImpl {
+// wm may be nil for tests that do not exercise the Apply streaming handler;
+// calls to Apply will panic if wm is nil and Apply is invoked.
+func NewGrpcServer(fsService service.VolumeService, sessions service.SessionManager, bus serverio.EventBus, m *metrics.Metrics, arbiter *delegation.Arbiter, recalls *delegation.RecallRegistry, wm watermark.Store) *RpcServerImpl {
 	return &RpcServerImpl{
 		fsService: fsService,
 		sessions:  sessions,
@@ -44,6 +48,7 @@ func NewGrpcServer(fsService service.VolumeService, sessions service.SessionMana
 		metrics:   m,
 		arbiter:   arbiter,
 		recalls:   recalls,
+		watermark: wm,
 	}
 }
 

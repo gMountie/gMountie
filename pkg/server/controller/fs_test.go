@@ -42,7 +42,7 @@ func (s *RpcServerTestSuite) SetupTest() {
 	s.Require().NoError(err)
 	s.sessionID = sid
 	s.bus = serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
-	s.server = NewGrpcServer(s.fsService, s.sessionMgr, s.bus, nil, nil, nil)
+	s.server = NewGrpcServer(s.fsService, s.sessionMgr, s.bus, nil, nil, nil, nil)
 }
 
 func (s *RpcServerTestSuite) TearDownTest() {
@@ -1010,7 +1010,7 @@ func (b *spyBus) EmitRename(volume, oldPath, newPath string, newVersion uint64, 
 // must not emit on the bus.
 func (s *RpcServerTestSuite) TestSetXAttr_NoSubscribers_SkipsStatAndEmit() {
 	spy := &spyBus{EventBus: s.bus}
-	server := NewGrpcServer(s.fsService, s.sessionMgr, spy, nil, nil, nil)
+	server := NewGrpcServer(s.fsService, s.sessionMgr, spy, nil, nil, nil, nil)
 
 	mockFs := new(pathfs2.MockFileSystem)
 	s.fsService.On("BindIdentity", mock.Anything, "testVolume", mock.Anything).Return(mockFs, service.Identity{}, nil)
