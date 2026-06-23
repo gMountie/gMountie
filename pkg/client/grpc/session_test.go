@@ -169,7 +169,7 @@ func (s *SessionHandshakeTestSuite) TestKeepaliveStreamErrorTriggersResume() {
 	// session id is unchanged.
 	s.sessionClient.EXPECT().Resume(mock.Anything, mock.MatchedBy(func(req *proto.SessionResumeRequest) bool {
 		return req.SessionId == "abc-123"
-	})).Return(&proto.SessionResumeReply{Resumed: true}, nil).Once()
+	})).Return(&proto.SessionResumeReply{Resumed: true, Watermark: 0}, nil).Once()
 
 	// First Keepalive (Establish) → stream1; second (recover) → stream2.
 	reopened := make(chan struct{})
@@ -327,7 +327,7 @@ func (s *SessionHandshakeTestSuite) TestHealthyTransitions() {
 		return req.SessionId == "hlt-1"
 	})).RunAndReturn(func(_ context.Context, _ *proto.SessionResumeRequest, _ ...grpc.CallOption) (*proto.SessionResumeReply, error) {
 		<-releaseResume
-		return &proto.SessionResumeReply{Resumed: true}, nil
+		return &proto.SessionResumeReply{Resumed: true, Watermark: 0}, nil
 	}).Once()
 
 	// First Keepalive → stream1; second (after recovery) → stream2.
@@ -380,6 +380,69 @@ func (s *SessionHandshakeTestSuite) TestHealthyTransitions() {
 	s.Require().NoError(handshake.Close())
 	s.Require().Eventually(func() bool { return !handshake.isRunning() }, time.Second, 5*time.Millisecond)
 	s.Assert().False(handshake.IsHealthy(), "IsHealthy must be false after Close")
+}
+
+// TestResumeSendsVolumeAndStoresWatermark verifies that tryReattach:
+//   - includes the Volume field set via SetVolume in the SessionResumeRequest, and
+//   - stores resp.Watermark so ResumeWatermark() returns it.
+//
+// This is the CRIT-2 Part B fix: the server returns the correct per-(identity,
+// volume) seq-watermark only when the Volume field is present.
+func (s *SessionHandshakeTestSuite) TestResumeSendsVolumeAndStoresWatermark() {
+	const wantVolume = "testvol"
+	const wantWatermark = uint64(42)
+
+	s.sessionClient.EXPECT().Create(mock.Anything, mock.Anything).
+		Return(&proto.SessionCreateReply{SessionId: "sess-vol"}, nil).Once()
+
+	// First stream breaks on demand.
+	release := make(chan struct{})
+	stream1 := newGatedErrorKeepaliveStream(s.T(), release, status.Error(codes.Unavailable, "transient"))
+	// Second stream parks until Close.
+	stream2, bind2 := newParkingKeepaliveStream(s.T())
+
+	// Assert: Volume field is sent in the Resume request.
+	// Assert: Watermark from the reply is captured.
+	var capturedVolume string
+	reopened := make(chan struct{})
+	s.sessionClient.EXPECT().Resume(mock.Anything, mock.MatchedBy(func(req *proto.SessionResumeRequest) bool {
+		return req.SessionId == "sess-vol"
+	})).RunAndReturn(func(_ context.Context, req *proto.SessionResumeRequest, _ ...grpc.CallOption) (*proto.SessionResumeReply, error) {
+		capturedVolume = req.Volume
+		return &proto.SessionResumeReply{Resumed: true, Watermark: wantWatermark}, nil
+	}).Once()
+
+	s.sessionClient.EXPECT().Keepalive(mock.Anything, mock.Anything).
+		Return(stream1, nil).Once()
+	s.sessionClient.EXPECT().Keepalive(mock.Anything, mock.Anything).
+		RunAndReturn(func(ctx context.Context, _ *proto.KeepaliveRequest, _ ...grpc.CallOption) (proto.SessionService_KeepaliveClient, error) {
+			bind2(ctx)
+			close(reopened)
+			return stream2, nil
+		}).Once()
+
+	handshake := NewSessionHandshake(s.sessionClient)
+	handshake.SetVolume(wantVolume) // wire volume before any reconnect
+
+	s.Require().NoError(handshake.Establish(context.Background()))
+	s.Assert().Equal(uint64(0), handshake.ResumeWatermark(), "watermark must be zero before any Resume")
+
+	close(release) // let stream1 break → Resume → store watermark → reopen
+	select {
+	case <-reopened:
+	case <-time.After(2 * time.Second):
+		s.FailNow("recovery did not reopen the Keepalive stream")
+	}
+
+	s.Assert().Equal(wantVolume, capturedVolume,
+		"Resume request must include the volume set via SetVolume")
+	s.Require().Eventually(func() bool {
+		return handshake.ResumeWatermark() == wantWatermark
+	}, time.Second, time.Millisecond,
+		"ResumeWatermark must return the watermark from the Resume reply")
+
+	s.Require().NoError(handshake.Close())
+	s.Require().Eventually(func() bool { return !handshake.isRunning() }, time.Second, 5*time.Millisecond)
 }
 
 func TestSessionHandshakeTestSuite(t *testing.T) {
