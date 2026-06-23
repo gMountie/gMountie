@@ -30,9 +30,13 @@ import (
 
 	grpcclient "go.gmountie.dev/gmountie/pkg/client/grpc"
 	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 type CoalesceCharacterizationSuite struct {
@@ -102,26 +106,17 @@ func (s *CoalesceCharacterizationSuite) TestCharacterization_BigWriteDrainsPendi
 	//   1. streaming Write for the pending "ab"@0 (drain)
 	//   2. streaming Write for the big payload@2
 	bigPayload := []byte("bigbigbi") // exactly 8 bytes
-	var streamCallOrder []string
 
 	drainStub := newBackendWriteStreamStub(s.T(),
 		&proto.WriteReply{Written: 2, Status: proto.FsError_FS_OK}, nil)
 	drainStub.EXPECT().Send(mock.MatchedBy(func(f *proto.WriteFrame) bool {
-		if string(f.Data) == "ab" && f.Offset == 0 {
-			streamCallOrder = append(streamCallOrder, "drain")
-			return true
-		}
-		return false
+		return string(f.Data) == "ab" && f.Offset == 0
 	})).RunAndReturn(drainStub.send).Maybe()
 
 	bigStub := newBackendWriteStreamStub(s.T(),
 		&proto.WriteReply{Written: 8, Status: proto.FsError_FS_OK}, nil)
 	bigStub.EXPECT().Send(mock.MatchedBy(func(f *proto.WriteFrame) bool {
-		if string(f.Data) == string(bigPayload) && f.Offset == 2 {
-			streamCallOrder = append(streamCallOrder, "big")
-			return true
-		}
-		return false
+		return string(f.Data) == string(bigPayload) && f.Offset == 2
 	})).RunAndReturn(bigStub.send).Maybe()
 
 	// First Write() call opens the drain stream; second opens the big stream.
@@ -203,6 +198,78 @@ func (s *CoalesceCharacterizationSuite) TestCharacterization_StickyWriteErrSurfa
 	// takeWriteErr should return FS_OK.
 	s.Assert().Equal(proto.FsError_FS_OK, h.takeWriteErr(),
 		"sticky write-back error must be cleared after Release")
+}
+
+// TestCharacterization_ReleaseConsumesAndLogsStickyWriteErr pins the second
+// half of behaviour 4 WITHOUT a Flush in between: Release ITSELF must consume
+// and log the sticky error when no prior Flush has cleared it.
+//
+// The critical hole in the sibling test above is that Flush calls takeWriteErr
+// (clearing the sticky error) BEFORE Release runs, so by the time Release's
+// sticky-error block executes the error is already gone. That test's final
+// takeWriteErr()==OK assertion passes trivially regardless of what Release does.
+// A 9b refactor that silently drops Release's takeWriteErr block would still pass
+// the sibling — but it FAILS this test.
+//
+// Gate: we install a zaptest/observer core over log.Log so we can assert the
+// exact Error log entry that Release emits when it consumes the sticky error
+// (backend_grpc.go Release body). Deleting Release's takeWriteErr block removes
+// that log.Log.Error call, which causes Len==0 and fails the Require below.
+func (s *CoalesceCharacterizationSuite) TestCharacterization_ReleaseConsumesAndLogsStickyWriteErr() {
+	// Install a zaptest/observer core over the package logger so we can assert
+	// the error log that Release emits on a consumed sticky write-back error.
+	// Restore in Cleanup so the swap never leaks to sibling tests.
+	observerCore, observed := observer.New(zapcore.ErrorLevel)
+	origLog := log.Log
+	log.Log = zap.New(observerCore)
+	s.T().Cleanup(func() { log.Log = origLog })
+
+	h := s.newHandle(grpcclient.PerFileConfig{WriteCoalesceBytes: 4})
+
+	// First small write "ab"@0 — buffers below threshold, no RPC.
+	_, st1 := s.backend.Write(context.Background(), h, 0, []byte("ab"))
+	s.Require().Equal(proto.FsError_FS_OK, st1)
+
+	// Second contiguous write "cd"@2 fills the 4-byte buffer (== threshold)
+	// causing the coalescer to hand back the batch. The streaming Write RPC
+	// fails with ENOSPC → recordWriteErr sets the sticky error. Write returns
+	// ENOSPC immediately; the coalescer is now empty (batch was cleared by Append).
+	failStub := newBackendWriteStreamStub(s.T(),
+		&proto.WriteReply{Written: 0, Status: proto.FsError_FS_ENOSPC}, nil)
+	s.fileClient.EXPECT().Write(mock.Anything, mock.Anything).Return(failStub, nil).Once()
+
+	_, st2 := s.backend.Write(context.Background(), h, 2, []byte("cd"))
+	s.Require().Equal(proto.FsError_FS_ENOSPC, st2,
+		"failed batch flush must surface to the caller immediately")
+
+	// Call Release DIRECTLY — no Flush — so the sticky error is still live
+	// when Release's takeWriteErr block runs. Nothing between the Write and
+	// Release touches the sticky state: the structure of this test ensures
+	// only Release can consume it.
+	s.fileClient.EXPECT().Release(mock.Anything,
+		mock.MatchedBy(func(r *proto.ReleaseRequest) bool {
+			return r.Volume == "testVolume" && r.Fd == 1
+		}),
+		mock.Anything,
+	).Return(&proto.ReleaseReply{}, nil).Once()
+
+	relSt := s.backend.Release(context.Background(), h)
+	s.Assert().Equal(proto.FsError_FS_OK, relSt,
+		"Release must return OK even when a sticky write-back error was pending")
+
+	// Assert the observable produced by Release's sticky-error consumption:
+	// exactly one Error log entry with the expected message and path field.
+	// If Release's takeWriteErr block is removed, this entry is never emitted
+	// and the Require fails → the gate is real.
+	entries := observed.FilterMessageSnippet("sticky write-back error on Release").All()
+	s.Require().Len(entries, 1,
+		"Release must emit exactly one Error log entry for the consumed sticky write-back error")
+	s.Assert().Equal("/test/path", entries[0].ContextMap()["path"],
+		"the log entry must carry the handle's file path")
+
+	// The sticky state must be cleared by Release: takeWriteErr now returns OK.
+	s.Assert().Equal(proto.FsError_FS_OK, h.takeWriteErr(),
+		"sticky write-back error must be cleared after Release consumes it")
 }
 
 func TestCoalesceCharacterizationSuite(t *testing.T) {
