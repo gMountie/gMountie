@@ -32,6 +32,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/pkg/errors"
 	"go.gmountie.dev/gmountie/pkg/client/backend"
@@ -232,6 +233,24 @@ func (c *Coordinator) Fsync(ctx context.Context) proto.FsError {
 	return proto.FsError_FS_OK
 }
 
+// FlushForRecall implements delegation.RecallFlusher. It flushes all pending
+// WAL ops to the server before the recall handoff completes, ensuring the
+// contender sees the holder's deferred writes. root identifies the recalled
+// subtree (logged for observability); the flush covers the entire pending prefix
+// (a correct superset of root).
+//
+// FlushForRecall blocks until the ops are durably acked by the server (or until
+// ctx is cancelled). On permanent failure the onLoss hook has already fired;
+// the returned error prevents the recall from completing the clean handoff.
+func (c *Coordinator) FlushForRecall(ctx context.Context, root string) error {
+	ops, err := c.log.Replay(0)
+	if err != nil || len(ops) == 0 {
+		return nil
+	}
+	maxSeq := ops[len(ops)-1].Seq
+	return c.Flush(ctx, maxSeq)
+}
+
 // ── Replay ────────────────────────────────────────────────────────────────────
 
 // Replay is called on reconnect: it fetches all ops with seq > resumeWatermark
@@ -382,12 +401,51 @@ func opToWalOp(op Op, volume string, caller *proto.Caller) *proto.WalOp {
 
 // ── interval goroutine ────────────────────────────────────────────────────────
 
+// StartIntervalFlusher starts a background goroutine that flushes the WAL on
+// every tick of a time.Ticker with period d. The goroutine exits when
+// Coordinator.Close is called (via stopFlusher closing flushStop).
+//
+// StartIntervalFlusher must be called at most once per Coordinator; calling it
+// after Close is a no-op (flushStop is already closed). It is the caller's
+// responsibility to call Close to stop the goroutine and avoid a leak.
+func (c *Coordinator) StartIntervalFlusher(d time.Duration) {
+	t := time.NewTicker(d)
+	// Convert time.Ticker to a channel of struct{} for runIntervalFlush.
+	tickC := make(chan struct{})
+	c.flusherWg.Add(1)
+	go func() {
+		defer c.flusherWg.Done()
+		defer t.Stop()
+		for {
+			select {
+			case <-c.flushStop:
+				return
+			case _, ok := <-t.C:
+				if !ok {
+					return
+				}
+				select {
+				case tickC <- struct{}{}:
+				default:
+					// Drain: a flush is in flight; skip this tick.
+				}
+			}
+		}
+	}()
+	go c.runIntervalFlush(c.flushStop, tickC)
+}
+
 // startIntervalFlusher starts a background goroutine that flushes the WAL
 // every interval. It exits when stop is closed. Used by the interval trigger.
+// The tickC channel carries struct{} ticks; stop signals shutdown.
 func (c *Coordinator) startIntervalFlusher(interval interface{ C() <-chan struct{} }, stop <-chan struct{}) {
-	// This is a placeholder seam — the caller passes a ticker-like object.
-	// The actual implementation uses time.NewTicker; factored separately for
-	// testability. Wired by the mount layer (Task 12).
+	// This seam is preserved for tests that want to supply a custom tick source.
+	// Production code uses StartIntervalFlusher(d) instead.
+	c.flusherWg.Add(1)
+	go func() {
+		defer c.flusherWg.Done()
+		c.runIntervalFlush(stop, interval.C())
+	}()
 }
 
 // stopFlusher is called by Close to stop the interval goroutine.

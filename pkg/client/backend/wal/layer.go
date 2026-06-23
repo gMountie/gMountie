@@ -402,6 +402,20 @@ func (l *Layer) mergedStat(ctx context.Context, path string) (*backend.Attr, pro
 	return &merged, proto.FsError_FS_OK
 }
 
+// ── lifecycle ─────────────────────────────────────────────────────────────────
+
+// Close stops the interval flusher and closes the WAL log, then closes the
+// inner backend. The Overlay and delegation.Manager have their own lifecycles
+// and are NOT closed here.
+func (l *Layer) Close() error {
+	coordErr := l.coord.Close()
+	innerErr := l.Inner.Close()
+	if coordErr != nil {
+		return coordErr
+	}
+	return innerErr
+}
+
 // ── path helpers ──────────────────────────────────────────────────────────────
 
 // joinPath mirrors memfs / cache conventions: root parent "" means no prefix.
