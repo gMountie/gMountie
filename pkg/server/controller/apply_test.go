@@ -617,6 +617,28 @@ func (s *ApplySuite) TestApply_GenFence_AlreadyAckedRevokedGenSkippedByDedup() {
 	s.True(info.IsDir())
 }
 
+// TestApply_NilWatermarkStore verifies that when r.watermark is nil, Apply
+// returns an Internal error gracefully instead of panicking at a nil-deref.
+func (s *ApplySuite) TestApply_NilWatermarkStore() {
+	const vol = "vol"
+	s.bindVolume(vol)
+
+	// Create a server with nil watermark store (testing scenario).
+	serverNoWM := NewGrpcServer(s.fsService, s.sessionMgr, s.bus, nil, nil, nil, nil)
+
+	ops := []*proto.WalOp{
+		mkdirOp(vol, "test", 1, s.sessionID, "r1"),
+	}
+	stream := newStubApplyStream(s.ctxWithSession(), ops...)
+	err := serverNoWM.Apply(stream)
+
+	s.Require().Error(err)
+	st, ok := status.FromError(err)
+	s.Require().True(ok)
+	s.Equal(codes.Internal, st.Code())
+	s.Contains(st.Message(), "watermark store not configured")
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

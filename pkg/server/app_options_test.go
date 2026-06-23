@@ -63,6 +63,8 @@ func (s *AppOptionsSuite) TestWithWatermarkStoreOverridesDefault() {
 // TestDefaultWatermarkStoreIsBBolt verifies that when no option is passed a
 // non-nil (bbolt) store is opened.
 func (s *AppOptionsSuite) TestDefaultWatermarkStoreIsBBolt() {
+	// Redirect XDG_STATE_HOME to a temp dir to avoid polluting ~/.local/state.
+	s.T().Setenv("XDG_STATE_HOME", s.T().TempDir())
 	appCtx, err := NewServerAppContext(testConfig(s.T()))
 	s.Require().NoError(err)
 	s.NotNil(appCtx.Watermark)
