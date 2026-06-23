@@ -1,0 +1,466 @@
+package wal
+
+// flush_test.go — TDD tests for WAL flush triggers and Apply streaming (Task 11).
+//
+// Test coverage:
+//   1. applyOps streams WalOps in ascending seq order and returns the ApplyAck.
+//   2. Flush(throughSeq) sends ops [watermark+1..throughSeq], truncates the acked
+//      prefix [..ack.Watermark], clears overlay, and advances local watermark.
+//   3. Ordered halt: ack.FailedSeq > 0 → truncates committed prefix [..ack.Watermark],
+//      calls onLoss with the remaining ops and ack.Fserr; watermark advances to ack.Watermark.
+//   4. Fsync flushes synchronously (blocks until done) and returns the ApplyAck error.
+//   5. Size-cap triggers a background flush and the capped path unblocks after drain.
+//   6. Replay: streams all ops with seq > resume watermark via Apply.
+//   7. Op→WalOp conversion: all 10 op kinds round-trip through opToWalOp.
+
+import (
+	"context"
+	"errors"
+	"io"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/suite"
+	"go.gmountie.dev/gmountie/pkg/client/backend/delegation"
+	"go.gmountie.dev/gmountie/pkg/proto"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
+)
+
+// ── fake Apply stream ─────────────────────────────────────────────────────────
+
+// fakeApplyStream implements grpc.ClientStreamingClient[proto.WalOp, proto.ApplyAck].
+// It records sent WalOps and returns a scripted ApplyAck.
+type fakeApplyStream struct {
+	mu      sync.Mutex
+	sent    []*proto.WalOp
+	ack     *proto.ApplyAck
+	sendErr error // if non-nil, Send returns this error
+	closed  bool
+}
+
+func (f *fakeApplyStream) Send(op *proto.WalOp) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.sendErr != nil {
+		return f.sendErr
+	}
+	f.sent = append(f.sent, op)
+	return nil
+}
+
+func (f *fakeApplyStream) CloseAndRecv() (*proto.ApplyAck, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closed = true
+	if f.ack == nil {
+		return &proto.ApplyAck{}, nil
+	}
+	return f.ack, nil
+}
+
+func (f *fakeApplyStream) Header() (metadata.MD, error) { return nil, nil }
+func (f *fakeApplyStream) Trailer() metadata.MD         { return nil }
+func (f *fakeApplyStream) CloseSend() error             { return nil }
+func (f *fakeApplyStream) Context() context.Context     { return context.Background() }
+func (f *fakeApplyStream) SendMsg(m any) error          { return nil }
+func (f *fakeApplyStream) RecvMsg(m any) error          { return io.EOF }
+
+// ── suite helpers ─────────────────────────────────────────────────────────────
+
+type FlushSuite struct {
+	suite.Suite
+	mgr     *delegation.Manager
+	log     *BboltLog
+	overlay *Overlay
+	coord   *Coordinator
+	stream  *fakeApplyStream
+}
+
+func (s *FlushSuite) SetupTest() {
+	s.mgr = delegation.NewManager(noopInvalidator{})
+	s.log = openTestLog(s.T())
+	s.overlay = NewOverlay()
+	s.stream = &fakeApplyStream{ack: &proto.ApplyAck{}}
+	s.coord = NewCoordinator(s.mgr, s.log, s.overlay,
+		WithApplyFactory(func(ctx context.Context) (proto.RpcFs_ApplyClient, error) {
+			return s.stream, nil
+		}),
+		WithVolume("vol1"),
+	)
+}
+
+// appendOp is a helper that records an op to both log and overlay.
+func (s *FlushSuite) appendOp(kind OpKind, path string) uint64 {
+	op := Op{Kind: kind, Path: path}
+	seq, err := s.log.Append(op)
+	s.Require().NoError(err)
+	op.Seq = seq
+	s.overlay.Apply(op)
+	return seq
+}
+
+// ── Test 1: applyOps streams ops in seq order ─────────────────────────────────
+
+func (s *FlushSuite) TestApplyOps_StreamsInSeqOrder() {
+	s.stream.ack = &proto.ApplyAck{Watermark: 3}
+
+	ops := []Op{
+		{Seq: 1, Kind: OpMkdir, Path: "a"},
+		{Seq: 2, Kind: OpCreate, Path: "a/b.txt"},
+		{Seq: 3, Kind: OpWrite, Path: "a/b.txt", Offset: 0, Data: []byte("hello")},
+	}
+
+	ack, err := s.coord.applyOps(context.Background(), ops)
+	s.Require().NoError(err)
+	s.Require().NotNil(ack)
+	s.Equal(uint64(3), ack.Watermark)
+
+	s.stream.mu.Lock()
+	sent := s.stream.sent
+	s.stream.mu.Unlock()
+
+	s.Require().Len(sent, 3)
+	s.Equal(uint64(1), sent[0].Seq)
+	s.Equal(uint64(2), sent[1].Seq)
+	s.Equal(uint64(3), sent[2].Seq)
+
+	// Volume must be set in the first op's inner request.
+	create, ok := sent[1].Op.(*proto.WalOp_Create)
+	s.Require().True(ok)
+	s.Equal("vol1", create.Create.Volume)
+}
+
+// ── Test 2: Flush truncates the acked prefix and clears overlay ───────────────
+
+func (s *FlushSuite) TestFlush_TruncatesAckedPrefixAndClearsOverlay() {
+	seq1 := s.appendOp(OpMkdir, "dir1")
+	seq2 := s.appendOp(OpCreate, "dir1/file.txt")
+	seq3 := s.appendOp(OpWrite, "dir1/file.txt")
+
+	s.stream.ack = &proto.ApplyAck{Watermark: seq3}
+
+	err := s.coord.Flush(context.Background(), seq3)
+	s.Require().NoError(err)
+
+	// All ops truncated.
+	remaining, rerr := s.log.Replay(0)
+	s.Require().NoError(rerr)
+	s.Empty(remaining, "log must be empty after full-ack flush")
+
+	// Overlay cleared.
+	s.False(s.coord.Has("dir1"), "overlay must be cleared after flush")
+	s.False(s.coord.Has("dir1/file.txt"), "overlay must be cleared after flush")
+
+	// Watermark advanced.
+	_ = seq1
+	_ = seq2
+	s.Equal(seq3, s.coord.watermark.Load(), "local watermark must advance to ack.Watermark")
+}
+
+// ── Test 3: Ordered halt ──────────────────────────────────────────────────────
+
+func (s *FlushSuite) TestFlush_OrderedHalt_OnLossCalledAndPrefixTruncated() {
+	seq1 := s.appendOp(OpMkdir, "dir")
+	seq2 := s.appendOp(OpCreate, "dir/f.txt")
+	seq3 := s.appendOp(OpWrite, "dir/f.txt")
+
+	// Server acks seq1, fails at seq2, seq3 is lost.
+	s.stream.ack = &proto.ApplyAck{
+		Watermark: seq1,
+		FailedSeq: seq2,
+		Fserr:     proto.FsError_FS_EPERM,
+	}
+
+	var lostOps []Op
+	var lostErr proto.FsError
+	s.coord.onLoss = func(ops []Op, fserr proto.FsError) {
+		lostOps = ops
+		lostErr = fserr
+	}
+
+	err := s.coord.Flush(context.Background(), seq3)
+	// Flush returns error when there is a loss.
+	s.Require().Error(err)
+
+	// Committed prefix truncated.
+	remaining, rerr := s.log.Replay(0)
+	s.Require().NoError(rerr)
+	s.Empty(remaining, "log must be fully truncated after ordered halt")
+
+	// onLoss called with the ops at/after FailedSeq.
+	s.Require().Len(lostOps, 2, "onLoss must receive ops at/after FailedSeq")
+	s.Equal(seq2, lostOps[0].Seq)
+	s.Equal(seq3, lostOps[1].Seq)
+	s.Equal(proto.FsError_FS_EPERM, lostErr)
+
+	// Watermark advanced to the committed prefix only.
+	s.Equal(seq1, s.coord.watermark.Load())
+}
+
+// ── Test 4: Fsync flushes synchronously ──────────────────────────────────────
+
+func (s *FlushSuite) TestFsync_FlushesBlockinglyAndReturnsError() {
+	seq1 := s.appendOp(OpWrite, "data.bin")
+
+	// Successful ack.
+	s.stream.ack = &proto.ApplyAck{Watermark: seq1}
+
+	ferr := s.coord.Fsync(context.Background())
+	s.Equal(proto.FsError_FS_OK, ferr, "Fsync must return FS_OK on success")
+
+	remaining, err := s.log.Replay(0)
+	s.Require().NoError(err)
+	s.Empty(remaining, "log must be empty after Fsync-triggered flush")
+}
+
+func (s *FlushSuite) TestFsync_ReturnsErrorOnApplyFailure() {
+	s.appendOp(OpWrite, "data.bin")
+
+	// Simulate transport error from CloseAndRecv.
+	s.stream.sendErr = errors.New("transport error")
+
+	ferr := s.coord.Fsync(context.Background())
+	s.NotEqual(proto.FsError_FS_OK, ferr, "Fsync must propagate failure as FsError")
+}
+
+// ── Test 5: Size-cap triggers flush and blocks until drain ───────────────────
+
+func (s *FlushSuite) TestSizeCap_BlocksNewOpsUntilFlush() {
+	// Configure a very small cap (1 op).
+	coord := NewCoordinator(s.mgr, openTestLog(s.T()), NewOverlay(),
+		WithApplyFactory(func(ctx context.Context) (proto.RpcFs_ApplyClient, error) {
+			return s.stream, nil
+		}),
+		WithVolume("vol-cap"),
+		WithCapOps(1),
+	)
+	t := s.T()
+
+	// Grant a delegation so ops go to the WAL.
+	s.mgr.Apply(&proto.DelegationGrant{GrantedRoot: "dir"})
+
+	// Append one op to fill the cap.
+	op1 := Op{Kind: OpMkdir, Path: "dir/a"}
+	_, err := coord.log.Append(op1)
+	s.Require().NoError(err)
+	coord.overlay.Apply(op1)
+
+	// Now set the ack so flush will succeed.
+	s.stream.ack = &proto.ApplyAck{Watermark: 1}
+
+	// A second RecordOp must block briefly then succeed once the cap allows it.
+	// We test by running RecordOp in a goroutine and asserting it completes in time.
+	done := make(chan error, 1)
+	go func() {
+		done <- coord.RecordOp(Op{Kind: OpCreate, Path: "dir/b.txt"})
+	}()
+
+	select {
+	case err := <-done:
+		_ = t
+		s.Require().NoError(err, "RecordOp should eventually succeed after a size-cap flush")
+	case <-time.After(3 * time.Second):
+		s.Fail("RecordOp blocked indefinitely — size-cap flush did not drain")
+	}
+}
+
+// ── Test 6: Replay streams ops > resume watermark ────────────────────────────
+
+func (s *FlushSuite) TestReplay_StreamsOpsAboveResumeWatermark() {
+	// Pre-seed the log with 3 ops.
+	seq1, _ := s.log.Append(Op{Kind: OpMkdir, Path: "a"})
+	seq2, _ := s.log.Append(Op{Kind: OpCreate, Path: "a/b"})
+	seq3, _ := s.log.Append(Op{Kind: OpWrite, Path: "a/b"})
+
+	// Resume watermark = seq1 → only seq2 and seq3 should be replayed.
+	s.stream.ack = &proto.ApplyAck{Watermark: seq3}
+	err := s.coord.Replay(context.Background(), seq1)
+	s.Require().NoError(err)
+
+	s.stream.mu.Lock()
+	sent := s.stream.sent
+	s.stream.mu.Unlock()
+
+	s.Require().Len(sent, 2, "Replay must send ops with seq > resume watermark")
+	s.Equal(seq2, sent[0].Seq)
+	s.Equal(seq3, sent[1].Seq)
+}
+
+// ── Test 7: Op→WalOp conversion for all 10 kinds ─────────────────────────────
+
+func (s *FlushSuite) TestOpToWalOp_AllKinds() {
+	volume := "v"
+	caller := (*proto.Caller)(nil)
+
+	cases := []struct {
+		name string
+		op   Op
+		check func(walOp *proto.WalOp)
+	}{
+		{
+			name: "OpWrite",
+			op:   Op{Seq: 1, Kind: OpWrite, Path: "a/b.txt", Offset: 8, Data: []byte("data")},
+			check: func(w *proto.WalOp) {
+				v, ok := w.Op.(*proto.WalOp_Write)
+				s.Require().True(ok)
+				s.Equal("a/b.txt", v.Write.Path)
+				s.Equal(int64(8), v.Write.Offset)
+				s.Equal([]byte("data"), v.Write.Data)
+				s.Equal(volume, v.Write.Volume)
+			},
+		},
+		{
+			name: "OpCreate",
+			op:   Op{Seq: 2, Kind: OpCreate, Path: "c.txt", Flags: 0o2, Mode: 0o100644},
+			check: func(w *proto.WalOp) {
+				v, ok := w.Op.(*proto.WalOp_Create)
+				s.Require().True(ok)
+				s.Equal("c.txt", v.Create.Path)
+				s.Equal(uint32(0o100644), v.Create.Mode)
+				s.Equal(volume, v.Create.Volume)
+			},
+		},
+		{
+			name: "OpMkdir",
+			op:   Op{Seq: 3, Kind: OpMkdir, Path: "d", Mode: 0o40755},
+			check: func(w *proto.WalOp) {
+				v, ok := w.Op.(*proto.WalOp_Mkdir)
+				s.Require().True(ok)
+				s.Equal("d", v.Mkdir.Path)
+				s.Equal(uint32(0o40755), v.Mkdir.Mode)
+				s.Equal(volume, v.Mkdir.Volume)
+			},
+		},
+		{
+			name: "OpUnlink",
+			op:   Op{Seq: 4, Kind: OpUnlink, Path: "e.txt"},
+			check: func(w *proto.WalOp) {
+				v, ok := w.Op.(*proto.WalOp_Unlink)
+				s.Require().True(ok)
+				s.Equal("e.txt", v.Unlink.Path)
+				s.Equal(volume, v.Unlink.Volume)
+			},
+		},
+		{
+			name: "OpRmdir",
+			op:   Op{Seq: 5, Kind: OpRmdir, Path: "f"},
+			check: func(w *proto.WalOp) {
+				v, ok := w.Op.(*proto.WalOp_Rmdir)
+				s.Require().True(ok)
+				s.Equal("f", v.Rmdir.Path)
+				s.Equal(volume, v.Rmdir.Volume)
+			},
+		},
+		{
+			name: "OpRename",
+			op:   Op{Seq: 6, Kind: OpRename, Path: "old/x", NewPath: "new/x"},
+			check: func(w *proto.WalOp) {
+				v, ok := w.Op.(*proto.WalOp_Rename)
+				s.Require().True(ok)
+				s.Equal("old/x", v.Rename.OldName)
+				s.Equal("new/x", v.Rename.NewName)
+				s.Equal(volume, v.Rename.Volume)
+			},
+		},
+		{
+			name: "OpSymlink",
+			op:   Op{Seq: 7, Kind: OpSymlink, Path: "link", Data: []byte("/target")},
+			check: func(w *proto.WalOp) {
+				v, ok := w.Op.(*proto.WalOp_Symlink)
+				s.Require().True(ok)
+				s.Equal("link", v.Symlink.LinkPath)
+				s.Equal("/target", v.Symlink.Target)
+				s.Equal(volume, v.Symlink.Volume)
+			},
+		},
+		{
+			name: "OpSetAttr",
+			op: Op{
+				Seq:       8,
+				Kind:      OpSetAttr,
+				Path:      "g.txt",
+				Valid:      0x3,
+				Mode:      0o644,
+				UID:       1000,
+				GID:       1000,
+				AtimeSec:  123,
+				AtimeNsec: 456,
+				MtimeSec:  789,
+				MtimeNsec: 101,
+			},
+			check: func(w *proto.WalOp) {
+				v, ok := w.Op.(*proto.WalOp_SetAttr)
+				s.Require().True(ok)
+				s.Equal("g.txt", v.SetAttr.Path)
+				s.Equal(uint32(0x3), v.SetAttr.Valid)
+				s.Equal(uint32(0o644), v.SetAttr.Mode)
+				s.Equal(volume, v.SetAttr.Volume)
+				s.Require().NotNil(v.SetAttr.Atime)
+				s.Equal(uint64(123), v.SetAttr.Atime.Sec)
+				s.Equal(uint32(456), v.SetAttr.Atime.Nsec)
+				s.Require().NotNil(v.SetAttr.Mtime)
+				s.Equal(uint64(789), v.SetAttr.Mtime.Sec)
+				s.Equal(uint32(101), v.SetAttr.Mtime.Nsec)
+			},
+		},
+		{
+			name: "OpSetXAttr",
+			op:   Op{Seq: 9, Kind: OpSetXAttr, Path: "h.txt", XattrName: "user.k", XattrValue: []byte("v"), XattrFlags: 1},
+			check: func(w *proto.WalOp) {
+				v, ok := w.Op.(*proto.WalOp_SetXattr)
+				s.Require().True(ok)
+				s.Equal("h.txt", v.SetXattr.Path)
+				s.Equal("user.k", v.SetXattr.Attribute)
+				s.Equal([]byte("v"), v.SetXattr.Data)
+				s.Equal(uint32(1), v.SetXattr.Flags)
+				s.Equal(volume, v.SetXattr.Volume)
+			},
+		},
+		{
+			name: "OpRemoveXAttr",
+			op:   Op{Seq: 10, Kind: OpRemoveXAttr, Path: "i.txt", XattrName: "user.k"},
+			check: func(w *proto.WalOp) {
+				v, ok := w.Op.(*proto.WalOp_RemoveXattr)
+				s.Require().True(ok)
+				s.Equal("i.txt", v.RemoveXattr.Path)
+				s.Equal("user.k", v.RemoveXattr.Attribute)
+				s.Equal(volume, v.RemoveXattr.Volume)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			walOp := opToWalOp(tc.op, volume, caller)
+			s.Require().NotNil(walOp)
+			s.Equal(tc.op.Seq, walOp.Seq)
+			s.Equal(tc.op.Gen, walOp.Gen)
+			tc.check(walOp)
+		})
+	}
+}
+
+// ── helper to create a Coordinator with a temp log ──────────────────────────
+
+func openFlushTestLog(t *testing.T) *BboltLog {
+	t.Helper()
+	l, err := Open(filepath.Join(t.TempDir(), "flush_wal.db"))
+	if err != nil {
+		t.Fatalf("open wal: %v", err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	return l
+}
+
+func TestFlushSuite(t *testing.T) {
+	suite.Run(t, new(FlushSuite))
+}
+
+// Compile-time assertion: fakeApplyStream must satisfy the streaming interface.
+var _ proto.RpcFs_ApplyClient = (*fakeApplyStream)(nil)
+
+// Silence unused import of grpc (used only through the interface).
+var _ = grpc.CallOption(nil)
