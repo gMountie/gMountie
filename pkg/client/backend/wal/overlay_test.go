@@ -51,7 +51,52 @@ func (s *OverlaySuite) renameOp(oldPath, newPath string) wal.Op {
 }
 
 func (s *OverlaySuite) setAttrOp(path string, mode uint32) wal.Op {
-	return wal.Op{Kind: wal.OpSetAttr, Path: path, Mode: mode, Flags: backend.FATTR_MODE}
+	return wal.Op{Kind: wal.OpSetAttr, Path: path, Mode: mode, Valid: backend.FATTR_MODE}
+}
+
+func (s *OverlaySuite) setAttrUIDGIDOp(path string, uid, gid uint32) wal.Op {
+	return wal.Op{
+		Kind:  wal.OpSetAttr,
+		Path:  path,
+		UID:   uid,
+		GID:   gid,
+		Valid: backend.FATTR_UID | backend.FATTR_GID,
+	}
+}
+
+func (s *OverlaySuite) setAttrSizeOp(path string, size uint64) wal.Op {
+	return wal.Op{
+		Kind:  wal.OpSetAttr,
+		Path:  path,
+		Size:  size,
+		Valid: backend.FATTR_SIZE,
+	}
+}
+
+func (s *OverlaySuite) setAttrTimesOp(path string, atimeSec, mtimeSec int64, atimeNsec, mtimeNsec uint32) wal.Op {
+	return wal.Op{
+		Kind:      wal.OpSetAttr,
+		Path:      path,
+		AtimeSec:  atimeSec,
+		AtimeNsec: atimeNsec,
+		MtimeSec:  mtimeSec,
+		MtimeNsec: mtimeNsec,
+		Valid:     backend.FATTR_ATIME | backend.FATTR_MTIME,
+	}
+}
+
+func (s *OverlaySuite) setXAttrOp(path, name string, value []byte, flags uint32) wal.Op {
+	return wal.Op{
+		Kind:       wal.OpSetXAttr,
+		Path:       path,
+		XattrName:  name,
+		XattrValue: value,
+		XattrFlags: flags,
+	}
+}
+
+func (s *OverlaySuite) removeXAttrOp(path, name string) wal.Op {
+	return wal.Op{Kind: wal.OpRemoveXAttr, Path: path, XattrName: name}
 }
 
 func dirEntry(name string, mode uint32) backend.DirEntryPlus {
@@ -66,9 +111,10 @@ func (s *OverlaySuite) TestCreateStatSeesPendingFile() {
 	ov := s.newOverlay()
 	ov.Apply(s.createOp("docs/readme.txt", 0o100644))
 
-	attr, ok, tomb := ov.Stat("docs/readme.txt")
+	attr, ok, tomb, baseDelta, _ := ov.Stat("docs/readme.txt")
 	s.True(ok, "Stat should find the pending file")
 	s.False(tomb, "should not be tombstoned")
+	s.False(baseDelta, "fresh create is not a base-delta")
 	s.NotNil(attr)
 	s.Equal(uint32(0o100644), attr.Mode)
 }
@@ -77,15 +123,16 @@ func (s *OverlaySuite) TestMkdirStatSeesPendingDir() {
 	ov := s.newOverlay()
 	ov.Apply(s.mkdirOp("newdir", 0o40755))
 
-	attr, ok, tomb := ov.Stat("newdir")
+	attr, ok, tomb, baseDelta, _ := ov.Stat("newdir")
 	s.True(ok)
 	s.False(tomb)
+	s.False(baseDelta, "fresh mkdir is not a base-delta")
 	s.NotNil(attr)
 }
 
 func (s *OverlaySuite) TestStatAbsentReturnsNotOk() {
 	ov := s.newOverlay()
-	_, ok, _ := ov.Stat("nonexistent")
+	_, ok, _, _, _ := ov.Stat("nonexistent")
 	s.False(ok)
 }
 
@@ -150,7 +197,7 @@ func (s *OverlaySuite) TestUnlinkSetsTombstone() {
 	ov.Apply(s.createOp("file.txt", 0o100644))
 	ov.Apply(s.unlinkOp("file.txt"))
 
-	_, ok, tomb := ov.Stat("file.txt")
+	_, ok, tomb, _, _ := ov.Stat("file.txt")
 	s.True(ok, "Has should still see the entry (tombstone IS a pending state)")
 	s.True(tomb, "should be tombstoned")
 }
@@ -160,7 +207,7 @@ func (s *OverlaySuite) TestRmdirSetsTombstone() {
 	ov.Apply(s.mkdirOp("emptydir", 0o40755))
 	ov.Apply(s.rmdirOp("emptydir"))
 
-	_, ok, tomb := ov.Stat("emptydir")
+	_, ok, tomb, _, _ := ov.Stat("emptydir")
 	s.True(ok)
 	s.True(tomb)
 }
@@ -172,7 +219,7 @@ func (s *OverlaySuite) TestTombstoneResurrection() {
 	ov.Apply(s.unlinkOp("file.txt"))
 	ov.Apply(s.createOp("file.txt", 0o100644))
 
-	_, ok, tomb := ov.Stat("file.txt")
+	_, ok, tomb, _, _ := ov.Stat("file.txt")
 	s.True(ok)
 	s.False(tomb, "recreated file must not be tombstoned")
 }
@@ -182,7 +229,7 @@ func (s *OverlaySuite) TestTombstoneOnlyFromBaseUnlink() {
 	ov := s.newOverlay()
 	ov.Apply(s.unlinkOp("base-only-file.txt"))
 
-	_, ok, tomb := ov.Stat("base-only-file.txt")
+	_, ok, tomb, _, _ := ov.Stat("base-only-file.txt")
 	s.True(ok, "tombstone for a base-only file is still pending state")
 	s.True(tomb)
 }
@@ -267,13 +314,13 @@ func (s *OverlaySuite) TestRenameMovesNodeAndTombstonesOld() {
 	ov.Apply(s.renameOp("old.txt", "new.txt"))
 
 	// new path is accessible
-	attr, ok, tomb := ov.Stat("new.txt")
+	attr, ok, tomb, _, _ := ov.Stat("new.txt")
 	s.True(ok)
 	s.False(tomb)
 	s.NotNil(attr)
 
 	// old path is tombstoned
-	_, ok, tomb = ov.Stat("old.txt")
+	_, ok, tomb, _, _ = ov.Stat("old.txt")
 	s.True(ok, "old path has a tombstone, which is pending state")
 	s.True(tomb, "old path should be tombstoned after rename")
 }
@@ -283,7 +330,7 @@ func (s *OverlaySuite) TestRenameOfBaseOnlyPathTombstonesOld() {
 	ov := s.newOverlay()
 	ov.Apply(s.renameOp("base/old.txt", "base/new.txt"))
 
-	_, ok, tomb := ov.Stat("base/old.txt")
+	_, ok, tomb, _, _ := ov.Stat("base/old.txt")
 	s.True(ok)
 	s.True(tomb)
 
@@ -299,12 +346,12 @@ func (s *OverlaySuite) TestRenameSubtreeMovesPendingChildren() {
 	ov.Apply(s.renameOp("dir", "newdir"))
 
 	// Children should appear under newdir.
-	_, ok, tomb := ov.Stat("newdir/file.txt")
+	_, ok, tomb, _, _ := ov.Stat("newdir/file.txt")
 	s.True(ok)
 	s.False(tomb)
 
 	// Old children should be tombstoned.
-	_, ok, tomb = ov.Stat("dir/file.txt")
+	_, ok, tomb, _, _ = ov.Stat("dir/file.txt")
 	s.True(ok)
 	s.True(tomb)
 }
@@ -330,7 +377,7 @@ func (s *OverlaySuite) TestPathsEnumeratesAllPendingIncludingTombstones() {
 	ov := s.newOverlay()
 	ov.Apply(s.createOp("a.txt", 0o100644))
 	ov.Apply(s.mkdirOp("b", 0o40755))
-	ov.Apply(s.unlinkOp("c.txt"))     // tombstone only
+	ov.Apply(s.unlinkOp("c.txt"))                     // tombstone only
 	ov.Apply(s.writeOp("d.txt", 0, []byte("x"))) // write without prior create
 
 	paths := ov.Paths()
@@ -396,9 +443,10 @@ func (s *OverlaySuite) TestSetAttrUpdatesPendingNode() {
 	ov.Apply(s.createOp("file.txt", 0o100644))
 	ov.Apply(s.setAttrOp("file.txt", 0o100600))
 
-	attr, ok, tomb := ov.Stat("file.txt")
+	attr, ok, tomb, baseDelta, _ := ov.Stat("file.txt")
 	s.True(ok)
 	s.False(tomb)
+	s.False(baseDelta, "setattr on a pending-created file is NOT a base-delta")
 	s.Equal(uint32(0o100600), attr.Mode)
 }
 
@@ -408,6 +456,228 @@ func (s *OverlaySuite) TestSetAttrOnBaseOnlyPathCreatesEntry() {
 	ov.Apply(s.setAttrOp("basefile.txt", 0o100600))
 
 	s.True(ov.Has("basefile.txt"))
+}
+
+// ── SetAttr extended fields (UID/GID/SIZE/times) ─────────────────────────────
+
+func (s *OverlaySuite) TestSetAttrUIDGIDOnCreatedFile() {
+	ov := s.newOverlay()
+	ov.Apply(s.createOp("file.txt", 0o100644))
+	ov.Apply(s.setAttrUIDGIDOp("file.txt", 1000, 2000))
+
+	attr, ok, tomb, baseDelta, valid := ov.Stat("file.txt")
+	s.True(ok)
+	s.False(tomb)
+	s.False(baseDelta, "created file stays non-base-delta after setattr")
+	s.Equal(uint32(1000), attr.Uid)
+	s.Equal(uint32(2000), attr.Gid)
+	// valid is meaningful only for base-delta nodes; for full-create it may still be set
+	_ = valid
+}
+
+func (s *OverlaySuite) TestSetAttrSizeTruncatesData() {
+	ov := s.newOverlay()
+	ov.Apply(s.createOp("file.txt", 0o100644))
+	// Write 10 bytes, then truncate to 5.
+	ov.Apply(s.writeOp("file.txt", 0, []byte("0123456789")))
+	ov.Apply(s.setAttrSizeOp("file.txt", 5))
+
+	attr, ok, _, _, valid := ov.Stat("file.txt")
+	s.True(ok)
+	s.Equal(uint64(5), attr.Size)
+	s.NotZero(valid & backend.FATTR_SIZE)
+
+	// ReadMerge on a base of 10 bytes should see the truncation — the pending
+	// data slice was cut to 5 bytes.
+	base := []byte("XXXXXXXXXX") // 10 bytes base
+	out := ov.ReadMerge("file.txt", 0, base)
+	// The overlaid bytes are only 0-5; bytes [5,10) come from base.
+	s.Equal([]byte("01234"), out[:5])
+}
+
+func (s *OverlaySuite) TestSetAttrSizeExtendsData() {
+	ov := s.newOverlay()
+	ov.Apply(s.createOp("file.txt", 0o100644))
+	ov.Apply(s.writeOp("file.txt", 0, []byte("hello")))
+	ov.Apply(s.setAttrSizeOp("file.txt", 10))
+
+	attr, ok, _, _, valid := ov.Stat("file.txt")
+	s.True(ok)
+	s.Equal(uint64(10), attr.Size)
+	s.NotZero(valid & backend.FATTR_SIZE)
+}
+
+func (s *OverlaySuite) TestSetAttrTimesRoundTrip() {
+	ov := s.newOverlay()
+	ov.Apply(s.createOp("file.txt", 0o100644))
+	ov.Apply(s.setAttrTimesOp("file.txt", 1000, 2000, 500, 750))
+
+	attr, ok, _, _, valid := ov.Stat("file.txt")
+	s.True(ok)
+	s.Equal(uint64(1000), attr.Atime)
+	s.Equal(uint32(500), attr.Atimensec)
+	s.Equal(uint64(2000), attr.Mtime)
+	s.Equal(uint32(750), attr.Mtimensec)
+	s.NotZero(valid & backend.FATTR_ATIME)
+	s.NotZero(valid & backend.FATTR_MTIME)
+}
+
+// ── base-delta model ──────────────────────────────────────────────────────────
+
+// TestBaseDeltaSetAttrModeOnly: SetAttr (chmod) on a path the overlay did NOT
+// create → baseDelta=true, valid has only FATTR_MODE set, type bits NOT
+// fabricated (mode field carries only the perm bits merged with zero type).
+func (s *OverlaySuite) TestBaseDeltaSetAttrModeOnly() {
+	ov := s.newOverlay()
+	// Path only exists in base — no prior Create/Mkdir in overlay.
+	ov.Apply(s.setAttrOp("basefile.txt", 0o100600))
+
+	attr, ok, tomb, baseDelta, valid := ov.Stat("basefile.txt")
+	s.True(ok)
+	s.False(tomb)
+	s.True(baseDelta, "setattr on a base-only path must be a base-delta")
+	s.NotNil(attr)
+	// Only FATTR_MODE should be set — uid/gid/size/times were not touched.
+	s.Equal(uint32(backend.FATTR_MODE), valid, "only FATTR_MODE should be set")
+	// The mode field carries only the perm bits — type bits are zero because
+	// the delta has no type information (Task 10 supplies the base type bits).
+	// setAttrOp uses Mode=0o100600; applySetAttr strips S_IFMT: 0o100600 & 0o7777 = 0o600.
+	s.Equal(uint32(0o600), attr.Mode, "perm bits only, no type bits in base-delta mode")
+}
+
+// TestBaseDeltaUIDGID: SetAttr with UID+GID on a base-only path → baseDelta=true,
+// valid=FATTR_UID|FATTR_GID, uid and gid carry the correct values.
+func (s *OverlaySuite) TestBaseDeltaUIDGID() {
+	ov := s.newOverlay()
+	ov.Apply(s.setAttrUIDGIDOp("basefile.txt", 500, 600))
+
+	attr, ok, _, baseDelta, valid := ov.Stat("basefile.txt")
+	s.True(ok)
+	s.True(baseDelta)
+	s.Equal(uint32(backend.FATTR_UID|backend.FATTR_GID), valid)
+	s.Equal(uint32(500), attr.Uid)
+	s.Equal(uint32(600), attr.Gid)
+}
+
+// TestBaseDeltaWriteNoFATTR_SIZE: a plain write on a base-delta node must NOT
+// set FATTR_SIZE in valid. The final size determination belongs to the caller
+// (max(base.Size, overlay.attr.Size)).
+func (s *OverlaySuite) TestBaseDeltaWriteNoFATTR_SIZE() {
+	ov := s.newOverlay()
+	// No prior Create — this is a write onto a base-only path.
+	ov.Apply(s.writeOp("basefile.txt", 10, []byte("hello")))
+
+	_, ok, _, baseDelta, valid := ov.Stat("basefile.txt")
+	s.True(ok)
+	s.True(baseDelta, "write on base-only path must be a base-delta")
+	s.Zero(valid&backend.FATTR_SIZE, "plain write must NOT set FATTR_SIZE in valid")
+}
+
+// TestBaseDeltaReadMergeOverlaysBytes: base-delta write → ReadMerge correctly
+// overlays the pending bytes over a base slice.
+func (s *OverlaySuite) TestBaseDeltaReadMergeOverlaysBytes() {
+	ov := s.newOverlay()
+	ov.Apply(s.writeOp("basefile.txt", 5, []byte("XYZ")))
+
+	base := []byte("0123456789")
+	out := ov.ReadMerge("basefile.txt", 0, base)
+	s.Equal([]byte("01234XYZ89"), out)
+}
+
+// TestBaseDeltaOnlyCreatedNodeIsNotBaseDelta: a path created by this overlay
+// must never be a base-delta, even after writes or setattr.
+func (s *OverlaySuite) TestBaseDeltaOnlyCreatedNodeIsNotBaseDelta() {
+	ov := s.newOverlay()
+	ov.Apply(s.createOp("created.txt", 0o100644))
+	ov.Apply(s.writeOp("created.txt", 0, []byte("data")))
+	ov.Apply(s.setAttrOp("created.txt", 0o100600))
+
+	_, ok, _, baseDelta, _ := ov.Stat("created.txt")
+	s.True(ok)
+	s.False(baseDelta, "created file must never become a base-delta")
+}
+
+// ── xattr ─────────────────────────────────────────────────────────────────────
+
+func (s *OverlaySuite) TestSetXAttrOnCreatedFile() {
+	ov := s.newOverlay()
+	ov.Apply(s.createOp("file.txt", 0o100644))
+	ov.Apply(s.setXAttrOp("file.txt", "user.color", []byte("red"), 0))
+
+	val, set, removed := ov.Xattr("file.txt", "user.color")
+	s.True(set, "xattr must be set")
+	s.False(removed)
+	s.Equal([]byte("red"), val)
+}
+
+func (s *OverlaySuite) TestRemoveXAttrOnCreatedFile() {
+	ov := s.newOverlay()
+	ov.Apply(s.createOp("file.txt", 0o100644))
+	ov.Apply(s.setXAttrOp("file.txt", "user.color", []byte("red"), 0))
+	ov.Apply(s.removeXAttrOp("file.txt", "user.color"))
+
+	val, set, removed := ov.Xattr("file.txt", "user.color")
+	s.False(set, "removed xattr must not appear as set")
+	s.True(removed, "xattr removal must be recorded")
+	s.Nil(val)
+}
+
+func (s *OverlaySuite) TestRemoveXAttrOnBaseOnlyFile() {
+	// RemoveXAttr on a base-only path: the overlay must record a tombstone so
+	// the caller does NOT fall through to base.
+	ov := s.newOverlay()
+	ov.Apply(s.removeXAttrOp("basefile.txt", "user.tag"))
+
+	val, set, removed := ov.Xattr("basefile.txt", "user.tag")
+	s.False(set)
+	s.True(removed, "xattr removal on base-only path must be recorded as tombstone")
+	s.Nil(val)
+}
+
+func (s *OverlaySuite) TestSetXAttrAfterRemoveResurrects() {
+	// SetXAttr after RemoveXAttr should clear the tombstone and set the value.
+	ov := s.newOverlay()
+	ov.Apply(s.createOp("file.txt", 0o100644))
+	ov.Apply(s.removeXAttrOp("file.txt", "user.x"))
+	ov.Apply(s.setXAttrOp("file.txt", "user.x", []byte("new"), 0))
+
+	val, set, removed := ov.Xattr("file.txt", "user.x")
+	s.True(set, "resurrected xattr must be set")
+	s.False(removed)
+	s.Equal([]byte("new"), val)
+}
+
+func (s *OverlaySuite) TestXattrAbsentReturnsNoPendingState() {
+	ov := s.newOverlay()
+	ov.Apply(s.createOp("file.txt", 0o100644))
+
+	val, set, removed := ov.Xattr("file.txt", "user.nonexistent")
+	s.False(set)
+	s.False(removed)
+	s.Nil(val)
+}
+
+func (s *OverlaySuite) TestXattrOnAbsentPathReturnsNoPendingState() {
+	ov := s.newOverlay()
+	val, set, removed := ov.Xattr("not-in-overlay.txt", "user.x")
+	s.False(set)
+	s.False(removed)
+	s.Nil(val)
+}
+
+func (s *OverlaySuite) TestSetXAttrBaseDeltaCreatesEntry() {
+	// SetXAttr on a base-only path creates a base-delta node.
+	ov := s.newOverlay()
+	ov.Apply(s.setXAttrOp("basefile.txt", "user.k", []byte("v"), 0))
+
+	_, ok, _, baseDelta, _ := ov.Stat("basefile.txt")
+	s.True(ok)
+	s.True(baseDelta)
+
+	val, set, removed := ov.Xattr("basefile.txt", "user.k")
+	s.True(set)
+	s.False(removed)
+	s.Equal([]byte("v"), val)
 }
 
 // ── concurrency (race detector) ───────────────────────────────────────────────

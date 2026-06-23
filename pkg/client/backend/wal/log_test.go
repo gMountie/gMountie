@@ -204,3 +204,128 @@ func (s *LogSuite) TestPrefixReturnsLESeqs() {
 	all := l.Prefix(100)
 	s.Len(all, 5)
 }
+
+// TestOpRoundTripSetAttrFields verifies that the new SetAttr fields (UID, GID,
+// Size, AtimeSec/Nsec, MtimeSec/Nsec, Valid) survive an Append/Replay cycle.
+func (s *LogSuite) TestOpRoundTripSetAttrFields() {
+	l := s.open()
+	defer l.Close()
+
+	op := wal.Op{
+		Kind:      wal.OpSetAttr,
+		Path:      "/chown",
+		Mode:      0o100755,
+		Valid:     0b00111111, // all 6 FATTR bits
+		UID:       1001,
+		GID:       2002,
+		Size:      4096,
+		AtimeSec:  1000000,
+		AtimeNsec: 123456789,
+		MtimeSec:  2000000,
+		MtimeNsec: 987654321,
+	}
+	_, err := l.Append(op)
+	s.Require().NoError(err)
+
+	replayed, err := l.Replay(0)
+	s.Require().NoError(err)
+	s.Require().Len(replayed, 1)
+
+	r := replayed[0]
+	s.Equal(wal.OpSetAttr, r.Kind)
+	s.Equal("/chown", r.Path)
+	s.Equal(uint32(0o100755), r.Mode)
+	s.Equal(uint32(0b00111111), r.Valid)
+	s.Equal(uint32(1001), r.UID)
+	s.Equal(uint32(2002), r.GID)
+	s.Equal(uint64(4096), r.Size)
+	s.Equal(int64(1000000), r.AtimeSec)
+	s.Equal(uint32(123456789), r.AtimeNsec)
+	s.Equal(int64(2000000), r.MtimeSec)
+	s.Equal(uint32(987654321), r.MtimeNsec)
+}
+
+// TestOpRoundTripSetXAttr verifies that XattrName/XattrValue/XattrFlags survive
+// an Append/Replay cycle for OpSetXAttr.
+func (s *LogSuite) TestOpRoundTripSetXAttr() {
+	l := s.open()
+	defer l.Close()
+
+	op := wal.Op{
+		Kind:       wal.OpSetXAttr,
+		Path:       "/f",
+		XattrName:  "user.color",
+		XattrValue: []byte("blue"),
+		XattrFlags: 2,
+	}
+	_, err := l.Append(op)
+	s.Require().NoError(err)
+
+	replayed, err := l.Replay(0)
+	s.Require().NoError(err)
+	s.Require().Len(replayed, 1)
+
+	r := replayed[0]
+	s.Equal(wal.OpSetXAttr, r.Kind)
+	s.Equal("/f", r.Path)
+	s.Equal("user.color", r.XattrName)
+	s.Equal([]byte("blue"), r.XattrValue)
+	s.Equal(uint32(2), r.XattrFlags)
+}
+
+// TestOpRoundTripRemoveXAttr verifies that OpRemoveXAttr survives Append/Replay.
+func (s *LogSuite) TestOpRoundTripRemoveXAttr() {
+	l := s.open()
+	defer l.Close()
+
+	op := wal.Op{
+		Kind:      wal.OpRemoveXAttr,
+		Path:      "/f",
+		XattrName: "user.tag",
+	}
+	_, err := l.Append(op)
+	s.Require().NoError(err)
+
+	replayed, err := l.Replay(0)
+	s.Require().NoError(err)
+	s.Require().Len(replayed, 1)
+
+	r := replayed[0]
+	s.Equal(wal.OpRemoveXAttr, r.Kind)
+	s.Equal("/f", r.Path)
+	s.Equal("user.tag", r.XattrName)
+	s.Nil(r.XattrValue)
+}
+
+// TestFlagsNotClobberedByValid verifies that Op.Flags (open-flags for OpCreate)
+// and Op.Valid (FATTR_* mask for OpSetAttr) are independent fields and both
+// survive a round-trip.
+func (s *LogSuite) TestFlagsNotClobberedByValid() {
+	l := s.open()
+	defer l.Close()
+
+	// OpCreate with open-flags in Flags
+	createOp := wal.Op{Kind: wal.OpCreate, Path: "/f", Mode: 0o100644, Flags: 0o102}
+	_, err := l.Append(createOp)
+	s.Require().NoError(err)
+
+	// OpSetAttr with FATTR_* mask in Valid
+	setAttrOp := wal.Op{
+		Kind:  wal.OpSetAttr,
+		Path:  "/f",
+		Mode:  0o100755,
+		Valid: 0b000001, // FATTR_MODE
+		UID:   0,
+	}
+	_, err = l.Append(setAttrOp)
+	s.Require().NoError(err)
+
+	replayed, err := l.Replay(0)
+	s.Require().NoError(err)
+	s.Require().Len(replayed, 2)
+
+	s.Equal(uint32(0o102), replayed[0].Flags, "Flags must survive round-trip")
+	s.Equal(uint32(0), replayed[0].Valid, "Valid must be zero for create op")
+	s.Equal(uint32(0b000001), replayed[1].Valid, "Valid must survive round-trip")
+	s.Equal(uint32(0), replayed[1].Flags, "Flags must be zero for setattr op")
+}
