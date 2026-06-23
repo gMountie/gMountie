@@ -682,6 +682,189 @@ func (s *WalE2ESuite) TestLossLogging() {
 	r.Contains(loggedPaths, lostPath2, "lost_paths must include ghost2.bin")
 }
 
+// ─── Scenario 6: Unmount flush — data reaches server on coord.Close() ────────
+// Proves (a) the apply-factory/volume/caller options are wired as production
+// single.go does it, and (b) coord.Close() flushes pending ops instead of
+// silently discarding them.  The coordinator is built with the same options
+// single.go uses: a real Apply factory from a bufconn RpcFsClient, WithVolume,
+// and WithCaller carrying the mounting process's own uid/gid/pid.
+
+func (s *WalE2ESuite) TestUnmountFlush_DataReachesServer() {
+	r := s.Require()
+	ctx := bg()
+
+	tc, _, srcDir, volName := s.newScenarioCtx()
+	srcSub := filepath.Join(srcDir, "unmount")
+	r.NoError(os.Mkdir(srcSub, 0o755))
+
+	cl, err := tc.NewClientAs("user", "pass")
+	r.NoError(err)
+	defer cl.Close()
+
+	walPath := filepath.Join(s.T().TempDir(), "wal.db")
+	walLog, err := wal.Open(walPath)
+	r.NoError(err)
+
+	overlay := wal.NewOverlay()
+	inv := &trackingInvalidator{}
+	mgr := clientdelegation.NewManager(inv)
+
+	// Build coordinator with SAME options as single.go: factory from real client,
+	// volume name, and mount-level caller (uid/gid/pid of this process).
+	mountCaller := &proto.Caller{
+		Owner: &proto.Owner{Uid: uint32(os.Getuid()), Gid: uint32(os.Getgid())},
+		Pid:   uint32(os.Getpid()),
+	}
+	coord := wal.NewCoordinator(mgr, walLog, overlay,
+		wal.WithApplyFactory(func(ctx context.Context) (proto.RpcFs_ApplyClient, error) {
+			return cl.Fs().Apply(ctx)
+		}),
+		wal.WithVolume(volName),
+		wal.WithCaller(mountCaller),
+	)
+
+	transportBe := transport.NewBackendClient(cl, volName,
+		transport.WithDelegationHook(mgr),
+		transport.WithWriteDrain(coord),
+	)
+	delegationBe := clientdelegation.NewLayer(transportBe, mgr)
+	walBe := wal.NewLayer(delegationBe, mgr, coord)
+
+	mgr.SetRecallFlusher(coord)
+
+	// Acquire delegation for the "unmount" subtree.
+	cs := &walClientStack{
+		cl:    cl,
+		mgr:   mgr,
+		inv:   inv,
+		coord: coord,
+		be:    walBe,
+	}
+	acquireGrant(s.T(), cs, "unmount", 5*time.Second)
+	r.True(mgr.IsDelegated("unmount"))
+
+	// Create + write a file — deferred in the WAL (not yet on server).
+	fh, _, fst := walBe.Create(ctx, "unmount", "close-flush.txt", uint32(os.O_RDWR|os.O_CREATE), 0o644)
+	r.Equal(proto.FsError_FS_OK, fst, "Create must succeed on delegated path")
+	want := []byte("data flushed on unmount")
+	_, wst := walBe.Write(ctx, fh, 0, want)
+	r.Equal(proto.FsError_FS_OK, wst)
+	_ = walBe.Release(ctx, fh)
+
+	// Server must NOT have the file yet.
+	_, statErr := os.Stat(filepath.Join(srcSub, "close-flush.txt"))
+	r.True(os.IsNotExist(statErr), "server must not have the file before Close")
+
+	// coord.Close() simulates unmount: must flush pending ops to the server.
+	r.NoError(coord.Close(), "coord.Close() must succeed (data reaches server)")
+
+	// Server now has the file — flush happened on Close, not discarded.
+	serverBytes, readErr := os.ReadFile(filepath.Join(srcSub, "close-flush.txt"))
+	r.NoError(readErr, "server must have the file after coord.Close()")
+	r.Equal(want, serverBytes, "server bytes must match what was written before Close")
+
+	// Second Close is a safe no-op (log already closed, no panic).
+	_ = coord.Close()
+}
+
+// ─── Scenario 7: Flush failure on Close fires the §5.1 loud loss log ─────────
+// Force a server ordered-halt during coord.Close(): write ops for paths that
+// do not exist on the server (ENOENT → ordered-halt). Assert:
+//   - coord.Close() returns a non-nil error (not silent).
+//   - The §5.1 logDataLost hook fires: WalDataLost events == 1, ERROR log
+//     emitted with lost_paths.
+//   - events == 1 proves Close did not double-flush (which would produce events==2).
+
+func (s *WalE2ESuite) TestCloseFlushFailure_LoudLossLog() {
+	r := s.Require()
+
+	// Install zap observer BEFORE server starts; restore AFTER all goroutines
+	// stop (LIFO t.Cleanup: restore runs last, tc.Close() runs first).
+	observerCore, observed := observer.New(zapcore.ErrorLevel)
+	origLog := log.Log
+	log.Log = zap.New(observerCore)
+	s.T().Cleanup(func() { log.Log = origLog })
+
+	// Wire a fresh metrics instance; restore after (LIFO).
+	m := clientmetrics.NewMetrics()
+	wal.SetMetrics(m)
+	s.T().Cleanup(func() { wal.SetMetrics(nil) })
+
+	// Start server (tc.Close() registered as first Cleanup → runs before log/metrics restore).
+	tc, _, _, volName := s.newScenarioCtx()
+	_ = tc
+
+	cl, err := tc.NewClientAs("user", "pass")
+	r.NoError(err)
+	defer cl.Close()
+
+	walLog, err := wal.Open(filepath.Join(s.T().TempDir(), "close-loss.db"))
+	r.NoError(err)
+
+	overlay := wal.NewOverlay()
+	lossMgr := clientdelegation.NewManager(&trackingInvalidator{})
+	mountCaller := &proto.Caller{
+		Owner: &proto.Owner{Uid: uint32(os.Getuid()), Gid: uint32(os.Getgid())},
+		Pid:   uint32(os.Getpid()),
+	}
+
+	// Build coordinator with production-equivalent options; default onLoss = logDataLost.
+	lossCoord := wal.NewCoordinator(lossMgr, walLog, overlay,
+		wal.WithApplyFactory(func(ctx context.Context) (proto.RpcFs_ApplyClient, error) {
+			return cl.Fs().Apply(ctx)
+		}),
+		wal.WithVolume(volName),
+		wal.WithCaller(mountCaller),
+		// No WithOnLoss — coordinator installs defaultOnLoss → logDataLost.
+	)
+
+	// Record ops for paths that do NOT exist on the server: OpWrite with no
+	// preceding Create → server ENOENT → ordered-halt at seq=1.
+	r.NoError(lossCoord.RecordOp(wal.Op{
+		Kind:   wal.OpWrite,
+		Path:   "ghost-close1.bin",
+		Offset: 0,
+		Data:   []byte("phantom bytes on close 1"),
+	}))
+	r.NoError(lossCoord.RecordOp(wal.Op{
+		Kind:   wal.OpWrite,
+		Path:   "ghost-close2.bin",
+		Offset: 0,
+		Data:   []byte("phantom bytes on close 2"),
+	}))
+
+	// coord.Close() must trigger the final flush → ordered-halt → onLoss fires.
+	closeErr := lossCoord.Close()
+	r.Error(closeErr, "Close must return non-nil error when flush fails (not silent)")
+
+	// WalDataLost must be incremented by logDataLost (default hook).
+	eventsVal := testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "events"))
+	r.Equal(1.0, eventsVal, "WalDataLost events must be exactly 1 (not 0=silent, not 2=double-flush)")
+	filesVal := testutil.ToFloat64(m.WalDataLost.WithLabelValues("apply-failure", "files"))
+	r.Equal(2.0, filesVal, "WalDataLost files must equal distinct lost-path count (2)")
+
+	// ERROR log must enumerate both ghost paths.
+	lossEntries := observed.FilterMessage("WAL data loss: un-flushed ops discarded without reaching the server")
+	r.Len(lossEntries.All(), 1, "exactly one WAL data-loss ERROR log must be emitted")
+	entry := lossEntries.All()[0]
+	r.Equal(zapcore.ErrorLevel, entry.Level)
+	rawPaths, ok := entry.ContextMap()["lost_paths"]
+	r.True(ok, "log entry must contain a 'lost_paths' field")
+	ifacePaths, ok := rawPaths.([]interface{})
+	r.True(ok, "lost_paths must be a []interface{} (zap.Strings encoding)")
+	var loggedPaths []string
+	for _, v := range ifacePaths {
+		str, isStr := v.(string)
+		r.True(isStr, "each element of lost_paths must be a string")
+		loggedPaths = append(loggedPaths, str)
+	}
+	r.Contains(loggedPaths, "ghost-close1.bin")
+	r.Contains(loggedPaths, "ghost-close2.bin")
+
+	// Second Close is safe no-op (log already closed).
+	_ = lossCoord.Close()
+}
+
 // ─── test entry-point ─────────────────────────────────────────────────────────
 
 func TestWalE2ESuite(t *testing.T) {
