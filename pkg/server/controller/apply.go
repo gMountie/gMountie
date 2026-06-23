@@ -70,6 +70,11 @@ func (r *RpcServerImpl) Apply(stream proto.RpcFs_ApplyServer) error {
 		return err
 	}
 
+	// Watermark store is required for Apply to persist committed progress.
+	if r.watermark == nil {
+		return status.Error(codes.Internal, "watermark store not configured")
+	}
+
 	// committed tracks the highest seq successfully applied in this stream.
 	// It is initialised to the store watermark once the first op is received
 	// (and the (identity,volume) key is known). Before the first op it is 0,
