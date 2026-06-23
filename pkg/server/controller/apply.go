@@ -30,10 +30,10 @@ package controller
 //     checked yet. Task 6 will add the RevokedGens check against store.Get()
 //     after the watermark load.
 //
-// Create and WriteOp are path-based (no client fd): the server opens/writes/
-// closes a transient handle internally, using nodefs.File.Flush then Release.
-// These two ops also emit cache-invalidation events (same policy as the
-// unary Create handler).
+// Create, WriteOp, and all path ops are path-based (no client fd): the server
+// opens/writes/closes a transient handle internally, using nodefs.File.Flush
+// then Release. All three emit cache-invalidation events so subscribers see
+// the updated content when deferred writes land (same policy as unary handlers).
 //
 // ReleaseOp is a no-op marker today: it advances the watermark but has no
 // filesystem side effect. The create/write ops already carry all the bytes;
@@ -185,7 +185,7 @@ func (r *RpcServerImpl) applyWalOp(
 		return r.applyCreate(ctx, fs, id, volume, v.Create)
 
 	case *proto.WalOp_Write:
-		return applyWrite(ctx, fs, v.Write)
+		return r.applyWrite(ctx, fs, id, volume, v.Write)
 
 	case *proto.WalOp_Release:
 		// ReleaseOp is a no-op marker: the bytes were already written by
@@ -311,11 +311,16 @@ func (r *RpcServerImpl) applyCreate(
 // The open flag is O_WRONLY (syscall.O_WRONLY = 1). No O_TRUNC: WAL writes
 // are positioned and the Create op already set the file to zero length.
 //
-// Cache-invalidation is NOT emitted here: the Apply batch is a flush of
-// deferred ops, and the subscriber set is informed by the preceding
-// real-time RPCs (or a subsequent explicit invalidation). Emitting here
-// would be redundant and would fire at replay time, which is incorrect.
-func applyWrite(ctx context.Context, fs pathfs.FileSystem, req *proto.WriteOp) fuse.Status {
+// A cache-invalidation event is emitted after a successful write (same policy
+// as applyCreate and applyPathOp): any subscriber holding the file read-only
+// must see the updated content when deferred writes land.
+func (r *RpcServerImpl) applyWrite(
+	ctx context.Context,
+	fs pathfs.FileSystem,
+	id *service.Identity,
+	volume string,
+	req *proto.WriteOp,
+) fuse.Status {
 	fctx := createContext(ctx, req.Caller)
 	file, st := fs.Open(req.Path, syscall.O_WRONLY, fctx)
 	if st != fuse.OK {
@@ -333,6 +338,14 @@ func applyWrite(ctx context.Context, fs pathfs.FileSystem, req *proto.WriteOp) f
 	if int(n) != len(req.Data) {
 		// Short write — treat as EIO; the caller will retry the whole batch.
 		return fuse.EIO
+	}
+
+	// Emit cache-invalidation so subscribers see the updated content.
+	if attr, gst := fs.GetAttr(req.Path, fctx); gst.Ok() {
+		r.emitMutatedAttr(ctx, volume, req.Path, attr)
+		_ = toProtoAttr(attr, id)
+	} else {
+		r.emitMutatedAttr(ctx, volume, req.Path, nil)
 	}
 	return fuse.OK
 }

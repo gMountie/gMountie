@@ -279,6 +279,50 @@ func (s *ApplySuite) TestApply_Dedup_SkipsAlreadyApplied() {
 	s.True(info.IsDir())
 }
 
+// TestApply_Dedup_ReplayIdempotent is the canonical double-apply test:
+// the same batch is submitted twice. The first Apply creates three dirs and
+// advances the store watermark to 3. The second Apply receives the same ops
+// (seqs 1-3); dedup must skip them all (seq ≤ stored watermark 3). The dirs
+// must exist exactly once (no EEXIST), ack.Watermark must still equal 3, and
+// ack.Fserr must be FS_OK.
+//
+// This tests the round-trip property: a watermark written by Apply is
+// read back as the dedup threshold on a subsequent Apply — preventing
+// double-application of non-idempotent ops across process restarts.
+func (s *ApplySuite) TestApply_Dedup_ReplayIdempotent() {
+	const vol = "vol"
+	s.bindVolume(vol)
+
+	ops := []*proto.WalOp{
+		mkdirOp(vol, "rep1", 1, s.sessionID, "r1"),
+		mkdirOp(vol, "rep2", 2, s.sessionID, "r2"),
+		mkdirOp(vol, "rep3", 3, s.sessionID, "r3"),
+	}
+
+	// First Apply — all three ops are new.
+	stream1 := newStubApplyStream(s.ctxWithSession(), ops...)
+	s.Require().NoError(s.server.Apply(stream1))
+	s.Require().NotNil(stream1.acked)
+	s.Equal(uint64(3), stream1.acked.Watermark, "first Apply: watermark must be 3")
+	s.Equal(proto.FsError_FS_OK, stream1.acked.Fserr)
+
+	// Second Apply — same ops. All seqs ≤ stored watermark(3) → dedup skips.
+	stream2 := newStubApplyStream(s.ctxWithSession(), ops...)
+	s.Require().NoError(s.server.Apply(stream2))
+	s.Require().NotNil(stream2.acked)
+	s.Equal(uint64(3), stream2.acked.Watermark,
+		"second Apply: dedup must skip all ops; watermark stays at 3")
+	s.Equal(proto.FsError_FS_OK, stream2.acked.Fserr,
+		"second Apply must not surface EEXIST: dedup prevents re-creation")
+
+	// Dirs must exist exactly once on disk.
+	for _, name := range []string{"rep1", "rep2", "rep3"} {
+		info, err := os.Stat(filepath.Join(s.dir, name))
+		s.Require().NoError(err, "dir %q must exist after double-apply", name)
+		s.True(info.IsDir())
+	}
+}
+
 // TestApply_PersistBeforeAck: the store's persisted watermark equals
 // ack.Watermark after Apply returns — Advance was called before SendAndClose.
 func (s *ApplySuite) TestApply_PersistBeforeAck() {
