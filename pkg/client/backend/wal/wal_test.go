@@ -189,7 +189,32 @@ func (s *CoordinatorSuite) TestRecordOp_AppendsToLogAndAppliesOverlay() {
 	s.Assert().Equal(uint32(0o40755), attr.Mode)
 }
 
-// ── Test 5: Drain propagates wireFlush error for non-delegated path ──────────
+// ── Test 5: RecordOp with log failure skips Apply ────────────────────────────
+
+func (s *CoordinatorSuite) TestRecordOpLogFailureSkipsApply() {
+	// Close the log to force Append to fail on the next RecordOp.
+	err := s.log.Close()
+	s.Require().NoError(err)
+
+	op := Op{
+		Kind: OpMkdir,
+		Path: "faildir",
+		Mode: 0o40755,
+	}
+
+	// RecordOp should fail on log Append.
+	err = s.coord.RecordOp(op)
+	s.Require().Error(err, "RecordOp must return an error when Append fails")
+
+	// The crucial durability invariant: overlay must NOT have the op
+	// (Apply was skipped because Append failed).
+	s.Assert().False(s.overlay.Has("faildir"), "overlay must NOT have the directory after log failure")
+
+	// Verify overlay is still empty (no ops recorded).
+	s.Assert().False(s.overlay.Has("faildir"))
+}
+
+// ── Test 6: Drain propagates wireFlush error for non-delegated path ──────────
 
 func (s *CoordinatorSuite) TestDrain_NonDelegatedPath_PropagatesWireError() {
 	path := "file.dat"
@@ -201,7 +226,7 @@ func (s *CoordinatorSuite) TestDrain_NonDelegatedPath_PropagatesWireError() {
 	s.Assert().Equal(proto.FsError_FS_ENOSPC, st, "non-delegated Drain must propagate wire error")
 }
 
-// ── Test 6: Read accessors pass through to Overlay ───────────────────────────
+// ── Test 7: Read accessors pass through to Overlay ───────────────────────────
 
 func (s *CoordinatorSuite) TestReadAccessors_PassThroughToOverlay() {
 	// Apply a write via RecordOp so the overlay has data.
