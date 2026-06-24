@@ -103,6 +103,7 @@
       "properties": {
         "enabled": { "type": "boolean" },
         "retain": { "type": "boolean" },
+        "subPath": { "type": "string" },
         "accessMode": { "type": "string" },
         "size": { "type": "string" },
         "storageClass": { "type": "string" }
