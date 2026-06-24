@@ -1,6 +1,7 @@
 package delegation
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -8,6 +9,13 @@ import (
 	"github.com/pkg/errors"
 	"go.gmountie.dev/gmountie/pkg/proto"
 )
+
+// ErrNoStream is returned by RecallRegistry.Recall when the owner session has no
+// registered recall stream (it disconnected or never opened one). The arbiter
+// treats this specifically (see OnMutation): an unreachable holder is handed off
+// on contention — its delegation gen is fenced and the contender proceeds —
+// rather than blocking the contender until the grace-period reap.
+var ErrNoStream = errors.New("recall: no recall stream for session")
 
 // Recaller is the arbiter's view of the recall transport.
 type Recaller interface {
@@ -79,7 +87,7 @@ func (r *RecallRegistry) Recall(ownerSession, root string) error {
 	slot := r.streams[ownerSession]
 	if slot == nil {
 		r.mu.Unlock()
-		return errors.Errorf("recall: no stream for session %s", ownerSession)
+		return fmt.Errorf("%w %s", ErrNoStream, ownerSession)
 	}
 	r.inflight[id] = p
 	r.mu.Unlock()

@@ -1,6 +1,7 @@
 package delegation
 
 import (
+	"errors"
 	"sync"
 	"time"
 
@@ -51,49 +52,20 @@ type Arbiter struct {
 	table    *delegationTable
 	cooldown *cooldownTable
 	regions  map[string]*regionState // keyed by delegated root being recalled
-	// pendingRevoke holds delegation entries drained from the table when a
-	// session's recall stream closed (DeferRevokeOnStreamClose) but whose gens
-	// have NOT yet been revoked. The gen-revoke is deferred to the grace-period
-	// reap (ReleaseSession) so a transient recall-stream blip cannot fence a
-	// still-live holder's un-flushed WAL. Keyed by session ID.
-	pendingRevoke map[string][]entry
 }
 
 // NewArbiter creates a new Arbiter. store is required and must not be nil;
 // it is used to durably record revoked delegation generations on handoff.
 func NewArbiter(r Recaller, cfg Config, now func() time.Time, store watermark.Store) *Arbiter {
 	return &Arbiter{
-		recaller:      r,
-		now:           now,
-		metrics:       cfg.Metrics,
-		store:         store,
-		table:         newDelegationTable(),
-		cooldown:      newCooldownTable(cfg.Cooldown),
-		regions:       make(map[string]*regionState),
-		pendingRevoke: make(map[string][]entry),
+		recaller: r,
+		now:      now,
+		metrics:  cfg.Metrics,
+		store:    store,
+		table:    newDelegationTable(),
+		cooldown: newCooldownTable(cfg.Cooldown),
+		regions:  make(map[string]*regionState),
 	}
-}
-
-// DeferRevokeOnStreamClose releases a session's delegations from the table the
-// instant its recall stream closes, so a contender is never blocked by a holder
-// that can no longer be recalled ("recall: no stream for session …"). This is
-// the lifecycle fix for the orphaned-delegation window between a recall-stream
-// close and the grace-period reap.
-//
-// The gen-revoke (WAL fence) is DEFERRED to the reap (ReleaseSession), NOT done
-// here: a transient recall-stream blip (the client's recall goroutine
-// reconnects within ~1s) must not fence the holder's still-valid un-flushed
-// WAL. A resumed session simply re-acquires its delegation via the normal
-// piggyback path; its deferred gens are revoked harmlessly at its eventual reap
-// (which only fires for a truly-dead session, after its final flush).
-func (a *Arbiter) DeferRevokeOnStreamClose(sessionID string) {
-	a.mu.Lock()
-	drained := a.table.drainOwner(sessionID)
-	if len(drained) > 0 {
-		a.pendingRevoke[sessionID] = append(a.pendingRevoke[sessionID], drained...)
-	}
-	a.mGrantsActive()
-	a.mu.Unlock()
 }
 
 // mGrantsActive emits the current delegation count; nil-guarded.
@@ -198,22 +170,45 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 	// ---- recall RTT happens with NO lock held (barrier = this handoff) ----
 	err := a.recaller.Recall(owner, root)
 
-	if err == nil && hasEntry && revokedEntry.gen > 0 {
-		// Persist-before-handoff: durably record the revoked gen BEFORE closing
-		// rs.done so that coalesced waiters (the contenders now unblocked) can
-		// never proceed without the fence being durable. If RevokeGen fails, treat
-		// the handoff as failed (same as a recall error): don't release the entry,
-		// don't serve the contender.
+	// A no-stream recall means the holder's recall channel is gone (it
+	// disconnected / never opened one). It cannot honour the recall, so we treat
+	// contention against it as a CONTENDED HANDOFF: fence the holder's gen —
+	// exactly as a delivered recall does on success — so the unreachable holder's
+	// un-flushed WAL can never clobber the contender if it resurrects and
+	// replays. Skipping the undeliverable RPC is the only difference from a
+	// normal handoff. Any OTHER recall error (timeout, send failure) stays
+	// fail-closed: no release, no revoke, the contender backs off (EAGAIN).
+	//
+	// This is the corruption-safe replacement for releasing the entry on
+	// recall-stream close without revoking: there, a crashed holder could
+	// resurrect within grace and replay its un-revoked gen over the contender.
+	// Here the gen is fenced at the moment of handoff, before the contender
+	// proceeds. A no-CONTENTION blip never reaches here, so it never revokes (no
+	// spurious loss); only an actual contended handoff fences the holder.
+	handoff := err == nil || errors.Is(err, ErrNoStream)
+	if errors.Is(err, ErrNoStream) {
+		log.Log.Warn("delegation: holder unreachable on contention; fencing its gen and handing off (its un-flushed WAL is discarded on replay)",
+			zap.String("owner", owner),
+			zap.String("root", root),
+			zap.String("contender", contender),
+		)
+		err = nil // a successful contended handoff: the contender proceeds
+	}
+
+	if handoff && hasEntry && revokedEntry.gen > 0 {
+		// Persist-before-handoff: durably record the revoked gen BEFORE releasing
+		// the table + closing rs.done, so coalesced waiters (the contenders now
+		// unblocked) can never proceed before the fence is durable. If RevokeGen
+		// fails, fail the handoff closed: keep the entry, return the error.
 		fenceKey := watermark.Key{Identity: revokedEntry.principal, Volume: revokedEntry.volume, Epoch: revokedEntry.epoch}
 		if rErr := a.store.RevokeGen(fenceKey, revokedEntry.gen); rErr != nil {
-			// RevokeGen is durable-required; failing here is corrupt-safe: the
-			// contender will get errCoalescedRecallFailed and back off.
 			err = rErr
+			handoff = false
 		}
 	}
 
 	a.mu.Lock()
-	if err == nil {
+	if handoff {
 		a.table.release(root)
 		a.cooldown.trip(root, a.now())
 		a.mRecall()
@@ -239,13 +234,6 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 func (a *Arbiter) ReleaseSession(sessionID string) {
 	a.mu.Lock()
 	drained := a.table.drainOwner(sessionID)
-	// Include any gens deferred earlier by DeferRevokeOnStreamClose: the recall
-	// stream closed (entry already removed from the table) but the gen-revoke
-	// was held until this reap confirmed the session is truly dead.
-	if pending := a.pendingRevoke[sessionID]; len(pending) > 0 {
-		drained = append(drained, pending...)
-		delete(a.pendingRevoke, sessionID)
-	}
 	a.mGrantsActive()
 	a.mu.Unlock()
 
