@@ -88,6 +88,12 @@ func contains(a, b string) bool {
 // IsDelegated returns true iff at least one held grant covers path and no
 // excluded sub-path covers path.
 func (m *Manager) IsDelegated(path string) bool {
+	// Nil-receiver safe: a nil *Manager (WAL disabled → no delegation) means
+	// "nothing is delegated". Defends against a typed-nil oracle reaching the
+	// cache's delegation-aware fast path without panicking.
+	if m == nil {
+		return false
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, g := range m.grants {

@@ -40,6 +40,17 @@ type ManagerSuite struct{ suite.Suite }
 
 func TestManagerSuite(t *testing.T) { suite.Run(t, new(ManagerSuite)) }
 
+// TestIsDelegated_NilReceiver: a nil *Manager must report nothing delegated,
+// never panic. With WAL disabled the cache receives a nil delegation oracle; a
+// typed-nil reaching IsDelegated previously crashed the FUSE loop ("transport
+// endpoint not connected"). The nil-receiver guard makes it safe.
+func (s *ManagerSuite) TestIsDelegated_NilReceiver() {
+	var m *Manager // nil
+	s.NotPanics(func() {
+		s.False(m.IsDelegated("anything/x"))
+	})
+}
+
 func (s *ManagerSuite) TestApplyThenIsDelegated() {
 	m := NewManager(&fakeInv{})
 	defer m.Close()
