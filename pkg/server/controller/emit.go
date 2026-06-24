@@ -6,9 +6,11 @@ import (
 	"go.gmountie.dev/gmountie/pkg/proto"
 	serverio "go.gmountie.dev/gmountie/pkg/server/io"
 	"go.gmountie.dev/gmountie/pkg/server/service"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
+	"go.uber.org/zap"
 )
 
 // Cache-invalidation emission helpers.
@@ -90,6 +92,18 @@ func (r *RpcServerImpl) statAttrsAndEmit(ctx context.Context, fs pathfs.FileSyst
 		r.emitMutatedAttr(ctx, volume, path, attr)
 		return toProtoAttr(attr, id)
 	}
+	// The mutation succeeded but the trailing stat failed: we return nil attrs
+	// (partial-success contract) and the client falls back to a fresh Stat. This
+	// is invisible without a log — and when the fallback Stat ALSO fails the user
+	// sees an EIO on a just-created path. Log loudly so the errno is diagnosable.
+	log.Log.Warn("post-op stat failed after successful mutation; returning nil attrs (client will fall back to Stat)",
+		zap.String("path", path),
+		zap.String("volume", volume),
+		zap.String("fuse_status", gst.String()),
+		zap.Int("errno", int(gst)),
+		zap.Uint32("caller_uid", fctx.Owner.Uid),
+		zap.Uint32("caller_gid", fctx.Owner.Gid),
+	)
 	r.emitMutatedAttr(ctx, volume, path, nil)
 	return nil
 }

@@ -38,6 +38,9 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/backend"
 	"go.gmountie.dev/gmountie/pkg/common/fsconv"
 	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
+
+	"go.uber.org/zap"
 )
 
 // flushConfig holds the options that enable flush behaviour. All fields are
@@ -108,6 +111,7 @@ func (c *Coordinator) applyOps(ctx context.Context, ops []Op) (*proto.ApplyAck, 
 
 	stream, err := c.cfg.applyFactory(ctx)
 	if err != nil {
+		log.Log.Warn("wal applyOps: failed to open Apply stream", zap.Error(err))
 		return nil, errors.Wrap(err, "wal: open Apply stream")
 	}
 
@@ -126,8 +130,12 @@ func (c *Coordinator) applyOps(ctx context.Context, ops []Op) (*proto.ApplyAck, 
 
 	ack, err := stream.CloseAndRecv()
 	if err != nil {
+		log.Log.Warn("wal applyOps: Apply CloseAndRecv failed", zap.Error(err))
 		return nil, errors.Wrap(err, "wal: Apply CloseAndRecv")
 	}
+	log.Log.Debug("wal applyOps: ApplyAck received",
+		zap.Uint64("watermark", ack.GetWatermark()), zap.Uint64("failed_seq", ack.GetFailedSeq()),
+		zap.String("fserr", ack.GetFserr().String()))
 	return ack, nil
 }
 
@@ -157,6 +165,8 @@ func (c *Coordinator) Flush(ctx context.Context, throughSeq uint64) error {
 		return nil
 	}
 
+	log.Log.Debug("wal Flush: streaming pending ops via Apply",
+		zap.Uint64("through_seq", throughSeq), zap.Uint64("watermark", wm), zap.Int("pending", len(pending)))
 	ack, err := c.applyOps(ctx, pending)
 	return c.processAck("apply-failure", ack, pending, err)
 }
@@ -166,6 +176,12 @@ func (c *Coordinator) Flush(ctx context.Context, throughSeq uint64) error {
 // "gen-fenced", "recall-flush-failure"). It must be called while holding flushMu.
 func (c *Coordinator) processAck(reason string, ack *proto.ApplyAck, sent []Op, transportErr error) error {
 	if transportErr != nil {
+		// Transport-level failure: the ops are NOT discarded (they stay in the
+		// WAL for the next flush/retry), so this is not a data-loss event — but
+		// it was previously silent. Log it so a persistently-failing flush is
+		// visible instead of looking like nothing is happening.
+		log.Log.Warn("wal flush: Apply failed at transport level; ops retained in WAL for retry",
+			zap.String("reason", reason), zap.Int("ops", len(sent)), zap.Error(transportErr))
 		return transportErr
 	}
 	if ack == nil {
@@ -426,9 +442,14 @@ func (c *Coordinator) StartIntervalFlusher(d time.Duration) {
 				return
 			case <-t.C:
 				ops, err := c.log.Replay(0)
-				if err != nil || len(ops) == 0 {
+				if err != nil {
+					log.Log.Warn("wal interval flusher: log.Replay failed", zap.Error(err))
 					continue
 				}
+				if len(ops) == 0 {
+					continue
+				}
+				log.Log.Debug("wal interval flusher: tick", zap.Int("ops_in_log", len(ops)), zap.Uint64("max_seq", ops[len(ops)-1].Seq))
 				// Use a background context — the interval flush is best-effort.
 				_ = c.Flush(context.Background(), ops[len(ops)-1].Seq)
 			}

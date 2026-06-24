@@ -2,6 +2,7 @@ package wal_test
 
 import (
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -10,6 +11,29 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/backend"
 	"go.gmountie.dev/gmountie/pkg/client/backend/wal"
 )
+
+// TestApplyMkdir_SetsDirTypeBit / TestApplyCreate_SetsRegTypeBit pin the bug
+// where a deferred mkdir/create kept a mode with no S_IFMT type bit. Real FUSE
+// passes bare permission bits (e.g. 0o755) with no type, so the overlay attr
+// looked like a regular file and the kernel rejected the deferred mkdir with
+// EIO ("cannot create directory: Input/output error").
+func (s *OverlaySuite) TestApplyMkdir_SetsDirTypeBit() {
+	ov := s.newOverlay()
+	ov.Apply(s.mkdirOp("d", 0o755)) // bare perms, no S_IFDIR — as the kernel passes
+	attr, ok, _, _, _ := ov.Stat("d")
+	s.Require().True(ok)
+	s.Equal(uint32(syscall.S_IFDIR), attr.Mode&uint32(syscall.S_IFMT), "deferred mkdir must carry S_IFDIR")
+	s.Equal(uint32(0o755), attr.Mode&0o7777, "perms preserved")
+}
+
+func (s *OverlaySuite) TestApplyCreate_SetsRegTypeBit() {
+	ov := s.newOverlay()
+	ov.Apply(s.createOp("f", 0o644)) // bare perms, no S_IFREG
+	attr, ok, _, _, _ := ov.Stat("f")
+	s.Require().True(ok)
+	s.Equal(uint32(syscall.S_IFREG), attr.Mode&uint32(syscall.S_IFMT), "deferred create must carry S_IFREG")
+	s.Equal(uint32(0o644), attr.Mode&0o7777, "perms preserved")
+}
 
 // OverlaySuite exercises the Overlay's merge logic exhaustively.
 type OverlaySuite struct {
