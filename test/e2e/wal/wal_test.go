@@ -497,85 +497,37 @@ func (s *WalE2ESuite) TestReplayDedup() {
 
 	cs := newWALStack(s.T(), tc, "user", "pass", volName)
 	defer cs.Close()
-
-	// Acquire delegation and create a directory via the WAL.
 	acquireGrant(s.T(), cs, "dedup", 5*time.Second)
-	_, mst := cs.be.Mkdir(bg(), "dedup/replay-dir", 0o755)
-	r.Equal(proto.FsError_FS_OK, mst, "Mkdir must succeed")
 
-	// Flush to the server (first apply — watermark advances to N).
-	r.Equal(proto.FsError_FS_OK, cs.coord.Fsync(bg()), "first Fsync must succeed")
-
-	// Server must have the directory.
-	_, statErr := os.Stat(filepath.Join(srcSub, "replay-dir"))
-	r.NoError(statErr, "dedup/replay-dir must exist after first flush")
-
-	// Record the server-side watermark AFTER first apply.
-	// The passthrough volume resolves caller nil → Identity{} → Principal="",
-	// so the watermark key uses an empty Identity string.
-	wmKey := watermark.Key{Identity: "", Volume: volName}
-	wmAfterFirst := wm.watermarkFor(wmKey)
-	r.Positive(wmAfterFirst, "server watermark must advance after first flush")
-
-	// Build a SECOND WAL log at a different path and append the same operations
-	// (fresh seqs, but the server's watermark is already past them when we pass
-	// resumeWatermark=0 and the server sees seq ≤ wmAfterFirst).
+	// Dedup is EPOCH-SCOPED (bug #2 fix): the server keys its seq-watermark by
+	// (identity, volume, wal-epoch). A reconnecting client replays from the SAME
+	// wal.db (same epoch), so already-acked seqs (≤ the stored watermark for that
+	// epoch) are deduplicated — this is the retry-after-lost-ack path. (A *fresh*
+	// wal.db mints a NEW epoch and is deliberately NOT dedup-skipped; that's the
+	// silent-data-loss fix, covered by the controller unit test.)
 	//
-	// Dedup proof: the ops contain a Mkdir for a path that already exists.
-	// If the server re-applies them it would EEXIST; dedup means it skips silently.
-	replayLog, err := wal.Open(filepath.Join(s.T().TempDir(), "replay.db"))
-	r.NoError(err, "open replay WAL")
-	defer replayLog.Close()
+	// Simulate "the server already committed seqs ≤ W for THIS client's epoch" by
+	// seeding the watermark under the client's own key, then replay an op whose
+	// seq is ≤ W and prove it is skipped (not re-applied). passthrough resolves
+	// caller nil → Identity{} → Principal="", so Identity is "".
+	epoch := cs.coord.Epoch()
+	r.NotEmpty(epoch, "client must mint a wal-epoch")
+	wmKey := watermark.Key{Identity: "", Volume: volName, Epoch: epoch}
+	const seeded uint64 = 5
+	r.NoError(wm.Advance(wmKey, seeded), "seed server watermark for the client's epoch")
 
-	// Append the same ops that were already applied — fresh seqs (1, 2, ...).
-	replayOverlay := wal.NewOverlay()
-	replayMgr := clientdelegation.NewManager(&trackingInvalidator{})
-	replayCoord := wal.NewCoordinator(replayMgr, replayLog, replayOverlay,
-		wal.WithApplyFactory(func(ctx context.Context) (proto.RpcFs_ApplyClient, error) {
-			return cs.cl.Fs().Apply(ctx)
-		}),
-		wal.WithVolume(volName),
-	)
-	defer replayCoord.Close()
+	// Record an op (seq ≤ seeded watermark) WITHOUT flushing, then replay it. A
+	// Mkdir of a NEW path makes re-apply observable: if the op were NOT deduped
+	// the directory would appear; deduped ⇒ the server skips it entirely.
+	r.NoError(cs.coord.RecordOp(wal.Op{Kind: wal.OpMkdir, Path: "dedup/skipme", Mode: 0o755}))
 
-	// Re-record the same Mkdir op.
-	r.NoError(replayCoord.RecordOp(wal.Op{
-		Kind: wal.OpMkdir,
-		Path: "dedup/replay-dir",
-		Mode: 0o755,
-	}))
+	r.NoError(cs.coord.Replay(bg(), 0), "Replay must not error when seqs are deduplicated")
 
-	// Replay from watermark=0 → server sees seq=1, but its current watermark is
-	// wmAfterFirst (which is the seq that was applied the first time). Since the
-	// server's watermark ≥ 1 after the first apply, seq=1 is deduplicated.
-	//
-	// Note: the server-side watermark is keyed on (identity, volume). The identity
-	// for squash mode is "" (passthrough resolves caller nil → Identity{} →
-	// Principal=""); dedup triggers when incoming seq ≤ stored watermark.
-	replayErr := replayCoord.Replay(bg(), 0)
-	// Replay must succeed without error: all seqs are deduplicated (no ordered-halt,
-	// no data loss). An EEXIST from a re-applied Mkdir would surface as FS_EEXIST
-	// → ordered-halt → non-OK FsError return.
-	r.NoError(replayErr, "Replay must not return an error when ops are deduplicated")
-
-	// UNAMBIGUOUS DEDUP PROOF: the server-side watermark must not have advanced
-	// during the replay. seq ≤ stored watermark ⇒ the server skipped the op entirely
-	// without executing it. Combined with replayErr==nil (no halt) this proves the
-	// coordinator's dedup path fired, not a silent ignore of an EEXIST.
-	wmAfterReplay := wm.watermarkFor(wmKey)
-	r.Equal(wmAfterFirst, wmAfterReplay,
-		"server watermark must not advance on replay of already-committed seqs (dedup proof)")
-
-	// Directory must still exist exactly once (no double-apply artifacts).
-	entries, readErr := os.ReadDir(srcSub)
-	r.NoError(readErr, "dedup/ must be readable")
-	var replayDirs int
-	for _, e := range entries {
-		if e.Name() == "replay-dir" {
-			replayDirs++
-		}
-	}
-	r.Equal(1, replayDirs, "replay-dir must exist exactly once (no double-apply)")
+	// Dedup proof: the op (seq ≤ watermark, same epoch) was skipped — the
+	// directory was never created and the watermark did not advance.
+	_, statErr := os.Stat(filepath.Join(srcSub, "skipme"))
+	r.True(os.IsNotExist(statErr), "deduped Mkdir must NOT be applied (dir absent)")
+	r.Equal(seeded, wm.watermarkFor(wmKey), "watermark must not advance on a deduped replay")
 }
 
 // ─── Scenario 5: Loss logging ─────────────────────────────────────────────────
