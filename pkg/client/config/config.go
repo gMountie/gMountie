@@ -30,6 +30,10 @@ type Config struct {
 	// adds an in-memory cache layer; Sub-spec C adds persistence (Path,
 	// DiskMaxBytes) and flips the default to enabled.
 	Cache *CacheConfig `validate:"required" yaml:"cache,omitempty"`
+	// WAL gates the client-side write-ahead-log / delegation feature.
+	// Defaults to disabled — WAL is opt-in for testing until it is
+	// production-stable; releases default to the synchronous write path.
+	WAL *WALConfig `validate:"required" yaml:"wal,omitempty"`
 	// Renew is the optional client-certificate refresher configuration.
 	// Absent → disabled (static certs, exactly as before).
 	Renew *RenewConfig `yaml:"renew,omitempty"`
@@ -198,6 +202,15 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	})
 	if cfg, err := NewCacheConfig(cacheSub); err == nil {
 		result.Cache = cfg
+	} else {
+		return nil, err
+	}
+
+	// Parse wal config (defaults to disabled if absent). mirrorEnvToSub wires
+	// the GMOUNTIE_WAL_ENABLED env override into the sub-tree.
+	walSub := mirrorEnvToSub(v, "wal", []string{"enabled"})
+	if cfg, err := NewWALConfig(walSub); err == nil {
+		result.WAL = cfg
 	} else {
 		return nil, err
 	}

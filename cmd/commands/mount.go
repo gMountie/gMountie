@@ -363,7 +363,7 @@ func runMount(t *mountTarget) error {
 	}(c)
 
 	// Create mounter
-	mounter := mount.NewSingleVolumeMounter(c, t.cfg.FUSE, *t.cfg.Cache, t.rawIDs)
+	mounter := mount.NewSingleVolumeMounter(c, t.cfg.FUSE, *t.cfg.Cache, *t.cfg.WAL, t.rawIDs)
 	defer func(mounter mount.SingleVolumeMounter) {
 		err := mounter.Close()
 		if err != nil {

@@ -32,7 +32,7 @@ func (s *SingleVolumeMounterTestSuite) SetupTest() {
 	// observability; nil is valid (persist turns it into a no-op). Optional so
 	// cache-disabled paths don't require it.
 	s.client.EXPECT().Metrics().Return(nil).Maybe()
-	s.mounter = NewSingleVolumeMounter(s.client, defaultTestFUSEConfig(), defaultTestCacheConfig(), false)
+	s.mounter = NewSingleVolumeMounter(s.client, defaultTestFUSEConfig(), defaultTestCacheConfig(), defaultTestWALConfig(), false)
 
 	var err error
 	s.tempDir, err = os.MkdirTemp("", "gmountie-test-*")
@@ -181,7 +181,7 @@ func (s *SingleVolumeMounterTestSuite) TestMountFailsWithLockedCacheDir() {
 		DirTTL:         time.Second,
 		NegativeTTL:    time.Second,
 	}
-	m := NewSingleVolumeMounter(s.client, defaultTestFUSEConfig(), cacheCfg, false)
+	m := NewSingleVolumeMounter(s.client, defaultTestFUSEConfig(), cacheCfg, walEnabledTestConfig(), false)
 	err = m.Mount(volume, s.T().TempDir())
 	s.Require().Error(err)
 	s.Assert().ErrorIs(err, persist.ErrCacheLocked)
@@ -205,7 +205,7 @@ func (s *SingleVolumeMounterTestSuite) TestMountFailureReleasesStateAndAllowsRet
 		DirTTL:         time.Second,
 		NegativeTTL:    time.Second,
 	}
-	m := NewSingleVolumeMounter(s.client, defaultTestFUSEConfig(), cacheCfg, false)
+	m := NewSingleVolumeMounter(s.client, defaultTestFUSEConfig(), cacheCfg, walEnabledTestConfig(), false)
 	defer func() { s.Require().NoError(m.Close()) }()
 
 	// First attempt: nonexistent mountpoint → gofs.Mount fails after the

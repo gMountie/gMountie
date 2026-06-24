@@ -17,6 +17,20 @@ func defaultTestCacheConfig() config.CacheConfig {
 	}
 }
 
+// defaultTestWALConfig returns a disabled WALConfig for use in mount-layer
+// tests. Enabled=false keeps the WAL/delegation machinery out of the compose
+// stack (the production default), so cache-enabled tests exercise the
+// synchronous cache→transport path without overlay/delegation/flusher.
+func defaultTestWALConfig() config.WALConfig {
+	return config.WALConfig{Enabled: false}
+}
+
+// walEnabledTestConfig returns an enabled WALConfig for tests that need to
+// exercise the WAL/delegation construction path.
+func walEnabledTestConfig() config.WALConfig {
+	return config.WALConfig{Enabled: true}
+}
+
 // defaultTestFUSEConfig returns a FUSEConfig populated with all defaults
 // for use in mount-layer tests. Constructing it explicitly (rather than
 // relying on zero values) ensures new fields are exercised at their

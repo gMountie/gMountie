@@ -120,7 +120,7 @@ mount:
 		}
 	}()
 
-	mounter := mount.NewSingleVolumeMounter(c, cfg.FUSE, *cfg.Cache, false)
+	mounter := mount.NewSingleVolumeMounter(c, cfg.FUSE, *cfg.Cache, *cfg.WAL, false)
 	defer func() {
 		if closeErr := mounter.Close(); closeErr != nil {
 			s.T().Logf("mounter Close: %v", closeErr)

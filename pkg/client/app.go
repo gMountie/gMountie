@@ -17,16 +17,16 @@ type AppContext struct {
 	SingleVolumeMounter mount.SingleVolumeMounter
 }
 
-// NewAppContext creates a new AppContext. fuseCfg and cacheCfg must be
-// non-nil — the client config layer always populates them (defaults
-// applied when the user's YAML omits the block).
-func NewAppContext(client grpc.Client, fuseCfg *config.FUSEConfig, cacheCfg *config.CacheConfig) *AppContext {
+// NewAppContext creates a new AppContext. fuseCfg, cacheCfg and walCfg
+// must be non-nil — the client config layer always populates them
+// (defaults applied when the user's YAML omits the block).
+func NewAppContext(client grpc.Client, fuseCfg *config.FUSEConfig, cacheCfg *config.CacheConfig, walCfg *config.WALConfig) *AppContext {
 	log.Log.Info("creating app context")
 	return &AppContext{
 		client: client,
 		// rawIDs=false: the programmatic mount path keeps id rewriting on;
 		// raw_ids is a CLI opt-out (cmd/commands/mount.go) for now.
-		SingleVolumeMounter: mount.NewSingleVolumeMounter(client, fuseCfg, *cacheCfg, false),
+		SingleVolumeMounter: mount.NewSingleVolumeMounter(client, fuseCfg, *cacheCfg, *walCfg, false),
 		VolumeService:       service.NewVolumeService(client),
 	}
 }
