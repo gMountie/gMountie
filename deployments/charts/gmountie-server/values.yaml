@@ -337,6 +337,31 @@ tolerations: []
 #             topologyKey: kubernetes.io/hostname
 affinity: {}
 
+# Optional durable storage for the server STATE dir ($XDG_STATE_HOME), which
+# holds the Phase-2 WAL watermark store (watermark.db: the durable replay-dedup
+# seq-watermark + revoked delegation generations) plus the self-signed TLS
+# fallback. Default is an ephemeral emptyDir.
+#
+# Enable this for a server running with WAL write-delegation: if watermark.db is
+# lost across a pod restart, the server re-applies already-acked WAL ops (silent
+# corruption) and drops the delegation gen-fence.
+#
+# RWO / SINGLE-REPLICA only (this chart runs a Deployment). A multi-replica / HA
+# deployment must NOT share one RWO PVC — it needs an external watermark store
+# instead (see the WithWatermarkStore server option seam).
+statePersistence:
+  enabled: false
+  # Use a pre-created claim instead of letting the chart create one. When set,
+  # size/storageClass/accessMode/retain below are ignored.
+  existingClaim: ""
+  size: 1Gi
+  accessMode: ReadWriteOnce
+  # storageClass: "" → cluster default; "-" → "" (explicitly no class).
+  storageClass: ""
+  # Survive `helm uninstall` / HelmRelease delete (helm.sh/resource-policy: keep).
+  retain: false
+  annotations: {}
+
 persistence:
   # When true, a PVC of `size` is created with `storageClass` and
   # mounted at the FIRST entry in config.volumes[].path. Sufficient

@@ -1,0 +1,35 @@
+{{- if and .Values.statePersistence.enabled (not .Values.statePersistence.existingClaim) }}
+# Durable storage for the server STATE dir ($XDG_STATE_HOME), which holds the
+# Phase-2 WAL watermark store (watermark.db). Separate from the data PVC
+# (persistence.*) so volume data and server WAL state have independent lifecycles.
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: {{ template "gmountie-server.fullname" . }}-state
+{{- if or .Values.statePersistence.retain .Values.statePersistence.annotations }}
+  annotations:
+{{- if .Values.statePersistence.retain }}
+    # Survive `helm uninstall` / HelmRelease delete (statePersistence.retain) —
+    # keep watermark.db so dedup/gen-fence state isn't lost on teardown+recreate.
+    helm.sh/resource-policy: keep
+{{- end }}
+{{- with .Values.statePersistence.annotations }}
+{{ toYaml . | indent 4 }}
+{{- end }}
+{{- end }}
+  labels:
+    {{- include "gmountie-server.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.statePersistence.accessMode | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.statePersistence.size | quote }}
+{{- if .Values.statePersistence.storageClass }}
+{{- if (eq "-" .Values.statePersistence.storageClass) }}
+  storageClassName: ""
+{{- else }}
+  storageClassName: "{{ .Values.statePersistence.storageClass }}"
+{{- end }}
+{{- end }}
+{{- end }}
