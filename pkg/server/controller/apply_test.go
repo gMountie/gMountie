@@ -481,9 +481,9 @@ func (s *ApplySuite) TestApply_OrderedHalt_FailingOp() {
 	// (A duplicate mkdir of an existing dir is a BENIGN no-op that is skipped, not
 	// halted — see TestApply_DuplicateMkdir_SkipsEEXIST.)
 	ops := []*proto.WalOp{
-		mkdirOp(vol, "alpha", 1, s.sessionID, "r1"),               // succeeds
+		mkdirOp(vol, "alpha", 1, s.sessionID, "r1"),                // succeeds
 		mkdirOp(vol, "no-such-parent/child", 2, s.sessionID, "r2"), // ENOENT → genuine halt
-		mkdirOp(vol, "gamma", 3, s.sessionID, "r3"),               // must NOT be applied
+		mkdirOp(vol, "gamma", 3, s.sessionID, "r3"),                // must NOT be applied
 	}
 	stream := newStubApplyStream(s.ctxWithSession(), ops...)
 	// Apply returns nil on in-band failure; the error is in the ack.
