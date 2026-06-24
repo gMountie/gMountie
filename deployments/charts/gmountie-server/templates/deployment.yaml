@@ -157,7 +157,14 @@ spec:
           emptyDir:
             medium: Memory
         - name: state
+        {{- if .Values.statePersistence.enabled }}
+          # Durable WAL state dir ($XDG_STATE_HOME holds watermark.db). RWO /
+          # single-replica — see statePersistence in values.yaml.
+          persistentVolumeClaim:
+            claimName: {{ .Values.statePersistence.existingClaim | default (printf "%s-state" (include "gmountie-server.fullname" .)) }}
+        {{- else }}
           emptyDir: {}
+        {{- end }}
         {{- if .Values.persistence.enabled }}
         - name: data
           persistentVolumeClaim:
