@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	bolt "go.etcd.io/bbolt"
 )
@@ -80,14 +81,22 @@ var (
 	bucketOps  = []byte("ops")
 	bucketMeta = []byte("meta")
 	keyHiSeq   = []byte("hi_seq")
+	keyEpoch   = []byte("wal_epoch")
 )
 
 // BboltLog is a bbolt-backed WAL Log. Open creates or reopens one.
 // BboltLog is safe for concurrent use; bbolt's single-writer serialization
 // guarantees gap-free monotone seqs without an additional mutex.
 type BboltLog struct {
-	db *bolt.DB
+	db    *bolt.DB
+	epoch string // stable per-wal.db UUID, minted on first Open
 }
+
+// Epoch returns the stable per-wal.db UUID minted on first Open. The client
+// stamps it on every WalOp and DelegationRequest so the server namespaces the
+// dedup watermark and the revoked-gen fence per epoch — a fresh wal.db gets a
+// fresh epoch and is never dedup-skipped against a prior epoch's watermark.
+func (l *BboltLog) Epoch() string { return l.epoch }
 
 // Open opens (or creates) a bbolt-backed WAL log at the given path.
 // The database is opened WITHOUT NoSync so that every db.Update commits
@@ -97,17 +106,29 @@ func Open(path string) (*BboltLog, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "open wal bbolt")
 	}
+	var epoch string
 	if err := db.Update(func(tx *bolt.Tx) error {
 		if _, e := tx.CreateBucketIfNotExists(bucketOps); e != nil {
 			return e
 		}
-		_, e := tx.CreateBucketIfNotExists(bucketMeta)
-		return e
+		mb, e := tx.CreateBucketIfNotExists(bucketMeta)
+		if e != nil {
+			return e
+		}
+		// Mint a stable per-wal.db epoch on first open; reuse it forever after.
+		// A fresh wal.db (new path / wiped cache) gets a fresh epoch so its seq
+		// space never collides with a prior epoch's server-side watermark.
+		if v := mb.Get(keyEpoch); len(v) > 0 {
+			epoch = string(v)
+			return nil
+		}
+		epoch = uuid.NewString()
+		return mb.Put(keyEpoch, []byte(epoch))
 	}); err != nil {
 		_ = db.Close()
 		return nil, errors.Wrap(err, "create wal buckets")
 	}
-	return &BboltLog{db: db}, nil
+	return &BboltLog{db: db, epoch: epoch}, nil
 }
 
 // Append assigns the next monotone seq to op, persists it durably, and

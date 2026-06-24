@@ -15,6 +15,10 @@ type DelegationHook interface {
 	// delegation for. Stamped on every mutating RPC as
 	// DelegationRequest.Root.
 	RequestedRoot() string
+	// WalEpoch returns the client wal.db epoch, stamped on every
+	// DelegationRequest as DelegationRequest.WalEpoch so the server keys the
+	// delegation gen + dedup watermark per (identity, volume, wal-epoch).
+	WalEpoch() string
 	// Apply is called with the server's DelegationGrant on every successful
 	// mutating reply that carries one. Never called with a nil grant.
 	Apply(*proto.DelegationGrant)
@@ -35,7 +39,7 @@ func (b *BackendClient) delegationReq() *proto.DelegationRequest {
 	if b.delegation == nil {
 		return nil
 	}
-	return &proto.DelegationRequest{Root: b.delegation.RequestedRoot()}
+	return &proto.DelegationRequest{Root: b.delegation.RequestedRoot(), WalEpoch: b.delegation.WalEpoch()}
 }
 
 // applyGrant delivers the server's grant to the hook, if both the hook and the

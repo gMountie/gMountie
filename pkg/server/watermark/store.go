@@ -6,7 +6,13 @@
 // cloud injects a centralized impl via the server option seam.
 package watermark
 
-type Key struct{ Identity, Volume string }
+// Key namespaces a Record. Epoch is the client's per-wal.db UUID: dedup
+// watermark, GenHi and RevokedGens are all per (Identity, Volume, Epoch), so a
+// fresh client wal.db (cache wipe / reinstall) or a concurrent squash-shared
+// client gets its own seq/gen namespace and is never dedup-skipped against an
+// already-applied seq from another epoch. Epoch == "" is a pre-epoch/untagged
+// client (back-compat) and shares the legacy unnamespaced record.
+type Key struct{ Identity, Volume, Epoch string }
 
 type Record struct {
 	Watermark   uint64

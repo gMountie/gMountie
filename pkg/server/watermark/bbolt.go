@@ -34,10 +34,17 @@ func OpenBBolt(path string) (Store, error) {
 }
 
 func keyBytes(k Key) []byte {
-	b := make([]byte, len(k.Identity)+1+len(k.Volume))
+	// identity\x00volume\x00epoch — NUL separators are safe because none of the
+	// three components can contain a NUL byte. epoch="" keeps the legacy
+	// (pre-epoch) record distinct from any real epoch via the trailing separator.
+	b := make([]byte, len(k.Identity)+1+len(k.Volume)+1+len(k.Epoch))
 	n := copy(b, k.Identity)
 	b[n] = 0x00
-	copy(b[n+1:], k.Volume)
+	n++
+	n += copy(b[n:], k.Volume)
+	b[n] = 0x00
+	n++
+	copy(b[n:], k.Epoch)
 	return b
 }
 

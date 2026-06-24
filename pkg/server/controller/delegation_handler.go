@@ -27,12 +27,14 @@ func arbitrateContention(arb *delegation.Arbiter, sessionID, path string) proto.
 // grantFor evaluates a piggybacked delegation request (nil-safe).
 // Returns nil when arb is nil or the request carries no root.
 //
-// principal and volume must match the watermark.Key that Apply derives for the
-// same (identity, volume) stream — only then does a revoked gen fence the right
-// replay. Both come from the handler's BindIdentity result.
+// principal, volume and wal_epoch must match the watermark.Key that Apply
+// derives for the same (identity, volume, epoch) stream — only then does a
+// revoked gen fence the right replay. principal/volume come from the handler's
+// BindIdentity result; wal_epoch is carried on the DelegationRequest from the
+// client's wal.db.
 func grantFor(arb *delegation.Arbiter, sessionID, principal, volume string, req *proto.DelegationRequest) *proto.DelegationGrant {
 	if arb == nil || req.GetRoot() == "" {
 		return nil
 	}
-	return arb.Request(sessionID, req.GetRoot(), principal, volume)
+	return arb.Request(sessionID, req.GetRoot(), principal, volume, req.GetWalEpoch())
 }

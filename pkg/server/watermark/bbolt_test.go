@@ -49,6 +49,45 @@ func (s *StoreSuite) TestRevokeGenPersists() {
 	s.Require().NoError(st2.Close())
 }
 
+// TestEpochNamespacesRecords pins the bug-#2 fix: keys differing only by Epoch
+// are fully independent records, so a fresh client wal.db (new epoch) never
+// inherits a prior epoch's watermark/revoked-gens (which would dedup-skip its
+// ops or wrongly fence it).
+func (s *StoreSuite) TestEpochNamespacesRecords() {
+	st := s.open()
+	defer func() { s.Require().NoError(st.Close()) }()
+	e1 := Key{Identity: "alice", Volume: "vol", Epoch: "ep1"}
+	e2 := Key{Identity: "alice", Volume: "vol", Epoch: "ep2"}
+	legacy := Key{Identity: "alice", Volume: "vol"} // Epoch == ""
+
+	s.Require().NoError(st.Advance(e1, 100))
+	s.Require().NoError(st.RevokeGen(e1, 7))
+
+	// e2 (different epoch) is an independent, empty record.
+	r2, err := st.Get(e2)
+	s.Require().NoError(err)
+	s.Zero(r2.Watermark, "fresh epoch must not inherit another epoch's watermark")
+	s.Empty(r2.RevokedGens, "fresh epoch must not inherit another epoch's revoked gens")
+
+	// The legacy (epoch="") key is also independent of ep1.
+	rl, err := st.Get(legacy)
+	s.Require().NoError(err)
+	s.Zero(rl.Watermark)
+
+	// ep1 retains its own state, and NextGen is per-epoch.
+	r1, err := st.Get(e1)
+	s.Require().NoError(err)
+	s.Equal(uint64(100), r1.Watermark)
+	s.Contains(r1.RevokedGens, uint64(7))
+
+	g1, err := st.NextGen(e1)
+	s.Require().NoError(err)
+	g2, err := st.NextGen(e2)
+	s.Require().NoError(err)
+	s.Equal(uint64(1), g2, "each epoch has its own gen counter starting at 1")
+	s.NotZero(g1)
+}
+
 func (s *StoreSuite) TestGetMissingIsZeroRecord() {
 	st := s.open()
 	defer func() { s.Require().NoError(st.Close()) }()

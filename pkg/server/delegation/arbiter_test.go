@@ -83,6 +83,14 @@ func (f *fakeStore) revokedGensCopy() []uint64 {
 	return out
 }
 
+func (f *fakeStore) revokedKeysCopy() []watermark.Key {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]watermark.Key, len(f.revokedKeys))
+	copy(out, f.revokedKeys)
+	return out
+}
+
 type ArbiterSuite struct {
 	suite.Suite
 	clock time.Time
@@ -106,7 +114,7 @@ func (s *ArbiterSuite) newArbiterWithStore(r Recaller, st watermark.Store) *Arbi
 func (s *ArbiterSuite) TestGrantThenForeignMutationRecalls() {
 	fr := &fakeRecaller{}
 	a := s.newArbiter(fr)
-	g := a.Request("sessA", "proj", "userA", "vol")
+	g := a.Request("sessA", "proj", "userA", "vol", "")
 	s.Equal("proj", g.GrantedRoot)
 
 	// B mutates inside A's subtree -> A recalled, A's grant dropped.
@@ -129,7 +137,7 @@ func (s *ArbiterSuite) TestDeferRevokeOnStreamClose_ReleasesTableDefersRevoke() 
 	st := newFakeStore()
 	a := s.newArbiterWithStore(fr, st)
 
-	g := a.Request("sessA", "proj", "userA", "vol")
+	g := a.Request("sessA", "proj", "userA", "vol", "")
 	s.Require().Equal("proj", g.GrantedRoot)
 	s.Require().NotZero(g.Gen)
 
@@ -150,10 +158,29 @@ func (s *ArbiterSuite) TestDeferRevokeOnStreamClose_ReleasesTableDefersRevoke() 
 	s.Require().Contains(st.revokedGensCopy(), g.Gen, "deferred gen must be revoked at reap")
 }
 
+// TestRequestEpochKeysFence pins that the delegation gen + revoke fence are
+// keyed by the client's wal-epoch (bug #2): a grant requested under epoch
+// "ep-A" must revoke under (identity, volume, ep-A), so the fence lands in the
+// same namespace the client's Apply stream uses.
+func (s *ArbiterSuite) TestRequestEpochKeysFence() {
+	fr := &fakeRecaller{}
+	st := newFakeStore()
+	a := s.newArbiterWithStore(fr, st)
+
+	a.Request("sessA", "proj", "alice", "vol", "ep-A")
+
+	// Foreign contender forces a handoff -> RevokeGen with the entry's epoch.
+	s.Require().NoError(a.OnMutation("sessB", "proj/file"))
+	keys := st.revokedKeysCopy()
+	s.Require().Len(keys, 1)
+	s.Equal(watermark.Key{Identity: "alice", Volume: "vol", Epoch: "ep-A"}, keys[0],
+		"revoke fence key must carry the requesting client's wal-epoch")
+}
+
 func (s *ArbiterSuite) TestSelfMutationNeverRecalls() {
 	fr := &fakeRecaller{}
 	a := s.newArbiter(fr)
-	a.Request("sessA", "proj", "userA", "vol")
+	a.Request("sessA", "proj", "userA", "vol", "")
 	s.Require().NoError(a.OnMutation("sessA", "proj/file")) // own subtree
 	s.Empty(fr.calls)
 }
@@ -161,10 +188,10 @@ func (s *ArbiterSuite) TestSelfMutationNeverRecalls() {
 func (s *ArbiterSuite) TestCooldownBlocksImmediateRegrant() {
 	fr := &fakeRecaller{}
 	a := s.newArbiter(fr)
-	a.Request("sessA", "proj", "userA", "vol")
+	a.Request("sessA", "proj", "userA", "vol", "")
 	s.Require().NoError(a.OnMutation("sessB", "proj/file")) // recall + trip cooldown on "proj"
 	// A re-requests immediately -> denied (cooling).
-	g := a.Request("sessA", "proj", "userA", "vol")
+	g := a.Request("sessA", "proj", "userA", "vol", "")
 	s.Empty(g.GrantedRoot)
 	s.Positive(g.RetryAfterMs)
 }
@@ -172,19 +199,19 @@ func (s *ArbiterSuite) TestCooldownBlocksImmediateRegrant() {
 func (s *ArbiterSuite) TestReleaseSessionFreesSubtree() {
 	fr := &fakeRecaller{}
 	a := s.newArbiter(fr)
-	a.Request("sessA", "proj", "userA", "vol")
+	a.Request("sessA", "proj", "userA", "vol", "")
 	a.ReleaseSession("sessA")
 	// No owner now -> B's mutation recalls nothing; B can take it.
 	s.Require().NoError(a.OnMutation("sessB", "proj/x"))
 	s.Empty(fr.calls)
-	g := a.Request("sessB", "proj", "userB", "vol")
+	g := a.Request("sessB", "proj", "userB", "vol", "")
 	s.Equal("proj", g.GrantedRoot)
 }
 
 func (s *ArbiterSuite) TestRecallFailurePropagates() {
 	fr := &fakeRecaller{failOn: map[string]bool{"sessA": true}}
 	a := s.newArbiter(fr)
-	a.Request("sessA", "proj", "userA", "vol")
+	a.Request("sessA", "proj", "userA", "vol", "")
 	s.Error(a.OnMutation("sessB", "proj/file")) // handler maps to FS_EAGAIN
 }
 
@@ -209,7 +236,7 @@ func (s *ArbiterSuite) TestMetricsWiredOnGrantAndRecall() {
 	}, s.now, newFakeStore())
 
 	// Grant to sessA: should emit GrantsActiveSet(1).
-	g := a.Request("sessA", "proj", "userA", "vol")
+	g := a.Request("sessA", "proj", "userA", "vol", "")
 	s.Equal("proj", g.GrantedRoot)
 	s.Equal([]int{1}, fm.grantsActive, "grant must emit GrantsActiveSet(1)")
 
@@ -230,7 +257,7 @@ func (s *ArbiterSuite) TestMetricsReleaseSession() {
 		Metrics:  fm,
 	}, s.now, newFakeStore())
 
-	a.Request("sessA", "proj", "userA", "vol")
+	a.Request("sessA", "proj", "userA", "vol", "")
 	fm.grantsActive = nil // reset after grant observation
 	a.ReleaseSession("sessA")
 	s.Equal([]int{0}, fm.grantsActive, "ReleaseSession must emit GrantsActiveSet(0)")
@@ -239,7 +266,7 @@ func (s *ArbiterSuite) TestMetricsReleaseSession() {
 func (s *ArbiterSuite) TestConcurrentContendersCoalesce() {
 	fr := &fakeRecaller{block: make(chan struct{})}
 	a := s.newArbiter(fr)
-	a.Request("sessA", "proj", "userA", "vol")
+	a.Request("sessA", "proj", "userA", "vol", "")
 
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
@@ -287,7 +314,7 @@ func (s *ArbiterSuite) TestConcurrentContendersCoalesceFailure() {
 		block:  block,
 	}
 	a := s.newArbiter(fr)
-	a.Request("sessA", "proj", "userA", "vol")
+	a.Request("sessA", "proj", "userA", "vol", "")
 
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
@@ -339,11 +366,11 @@ func (s *ArbiterSuite) TestReleaseSessionRevokesHeldGens() {
 	a := s.newArbiterWithStore(fr, st)
 
 	// sessA holds two delegations with distinct gens on distinct volumes.
-	g1 := a.Request("sessA", "dir1", "alice", "vol1")
+	g1 := a.Request("sessA", "dir1", "alice", "vol1", "")
 	s.Require().NotEmpty(g1.GrantedRoot)
 	gen1 := g1.Gen
 
-	g2 := a.Request("sessA", "dir2", "alice", "vol2")
+	g2 := a.Request("sessA", "dir2", "alice", "vol2", "")
 	s.Require().NotEmpty(g2.GrantedRoot)
 	gen2 := g2.Gen
 
@@ -382,11 +409,11 @@ func (s *ArbiterSuite) TestGenMonotoneAndReturnedInGrant() {
 	fr := &fakeRecaller{}
 	a := s.newArbiter(fr)
 
-	g1 := a.Request("sessA", "dir1", "userA", "vol")
+	g1 := a.Request("sessA", "dir1", "userA", "vol", "")
 	s.Require().NotEmpty(g1.GrantedRoot)
 	s.Positive(g1.Gen, "gen must be > 0 (0 is reserved for untagged)")
 
-	g2 := a.Request("sessA", "dir2", "userA", "vol")
+	g2 := a.Request("sessA", "dir2", "userA", "vol", "")
 	s.Require().NotEmpty(g2.GrantedRoot)
 	s.Greater(g2.Gen, g1.Gen, "gen must be strictly monotone per grant")
 }
@@ -400,12 +427,12 @@ func (s *ArbiterSuite) TestGenDeniedGrantDoesNotAdvanceCounter() {
 	a := s.newArbiter(fr)
 
 	// Grant and recall to trip the cooldown on "proj".
-	a.Request("sessA", "proj", "userA", "vol")
+	a.Request("sessA", "proj", "userA", "vol", "")
 	s.Require().NoError(a.OnMutation("sessB", "proj/x")) // recall + trip cooldown
 
 	// Request while cooling — must be denied, gen must not advance (cooldown
 	// check fires before NextGen is called, so GenHi for userA/vol stays at 1).
-	denied := a.Request("sessA", "proj", "userA", "vol")
+	denied := a.Request("sessA", "proj", "userA", "vol", "")
 	s.Empty(denied.GrantedRoot, "must be denied while cooling")
 	s.Equal(uint64(0), denied.Gen, "denied grant must carry gen 0")
 
@@ -413,7 +440,7 @@ func (s *ArbiterSuite) TestGenDeniedGrantDoesNotAdvanceCounter() {
 	// sequential with the first (no gap from the denied attempt).
 	// Use the same principal+volume so we stay on the same per-key counter.
 	s.clock = s.clock.Add(time.Hour)
-	g2 := a.Request("sessB", "proj", "userA", "vol")
+	g2 := a.Request("sessB", "proj", "userA", "vol", "")
 	s.Require().NotEmpty(g2.GrantedRoot)
 	s.Equal(uint64(2), g2.Gen, "second successful grant must be gen 2 (denied didn't consume a slot)")
 }
@@ -427,7 +454,7 @@ func (s *ArbiterSuite) TestHandoffRevokesGenBeforeContenderProceeds() {
 	st := newFakeStore()
 	a := s.newArbiterWithStore(fr, st)
 
-	g := a.Request("sessA", "proj", "userA", "myvol")
+	g := a.Request("sessA", "proj", "userA", "myvol", "")
 	s.Require().NotEmpty(g.GrantedRoot)
 	revokedGen := g.Gen
 
@@ -468,7 +495,7 @@ func (s *ArbiterSuite) TestHandoffRevokesGenWithCorrectFenceKey() {
 	const principal = "alice"
 	const volume = "data"
 
-	a.Request("sess-alice", "subtree", principal, volume)
+	a.Request("sess-alice", "subtree", principal, volume, "")
 	s.Require().NoError(a.OnMutation("sess-bob", "subtree/x"))
 
 	s.Require().Len(st.revokedKeys, 1)
@@ -518,12 +545,12 @@ func (s *ArbiterSuite) TestArbiterUsesDurableGens() {
 	a := s.newArbiterWithStore(fr, st)
 
 	// First grant after "restart" must be gen 6 (> 5), not gen 1.
-	g := a.Request("sessA", "dir1", "userA", "vol")
+	g := a.Request("sessA", "dir1", "userA", "vol", "")
 	s.Require().NotEmpty(g.GrantedRoot)
 	s.Equal(uint64(6), g.Gen, "post-restart gen must continue above prior GenHi (no reset to 1)")
 
 	// Second grant on the same key must be gen 7.
-	g2 := a.Request("sessA", "dir2", "userA", "vol")
+	g2 := a.Request("sessA", "dir2", "userA", "vol", "")
 	s.Require().NotEmpty(g2.GrantedRoot)
 	s.Equal(uint64(7), g2.Gen, "subsequent grants must be strictly increasing")
 }
@@ -539,7 +566,7 @@ func (s *ArbiterSuite) TestDeathPathRevokeGenErrorIsLogged() {
 	st := &erroringRevokeStore{inner: newFakeStore()}
 	a := s.newArbiterWithStore(fr, st)
 
-	g := a.Request("sessA", "dir1", "userA", "vol")
+	g := a.Request("sessA", "dir1", "userA", "vol", "")
 	s.Require().NotEmpty(g.GrantedRoot)
 
 	// ReleaseSession must not panic and must complete; the gen will fail to

@@ -176,6 +176,13 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 		if werr != nil {
 			return errors.Wrap(werr, "open wal log")
 		}
+		// Hand the wal.db's stable epoch to the delegation Manager so every
+		// piggybacked DelegationRequest carries it — the server keys the
+		// delegation gen + dedup watermark per (identity, volume, wal-epoch),
+		// matching the epoch stamped on each WalOp at flush time. A fresh wal.db
+		// (cache wipe / reinstall) thus gets its own server-side seq namespace
+		// and is never dedup-skipped against a prior epoch's watermark.
+		delMgr.SetWalEpoch(walLog.Epoch())
 		overlay := wal.NewOverlay()
 		// Wire the three flush options so Apply streams actually reach the server.
 		// applyFactory opens a fresh Apply stream per flush using the mounted

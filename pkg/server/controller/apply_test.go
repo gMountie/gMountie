@@ -297,6 +297,48 @@ func (s *ApplySuite) TestApply_Dedup_SkipsAlreadyApplied() {
 	s.True(info.IsDir())
 }
 
+// TestApply_Epoch_FreshEpochNotDedupSkipped is the bug-#2 regression: a fresh
+// client wal.db (new wal-epoch) sends low seqs while a PRIOR epoch's watermark
+// is high. Without per-epoch keying these ops (seq ≤ the old watermark) would
+// all be dedup-skipped and silently discarded. With the epoch in the key the
+// fresh epoch has its own seq namespace and every op applies.
+func (s *ApplySuite) TestApply_Epoch_FreshEpochNotDedupSkipped() {
+	const vol = "vol"
+	s.bindVolume(vol)
+
+	// A prior epoch accumulated a high watermark (dead client / wiped wal.db).
+	s.Require().NoError(s.wmStore.Advance(
+		watermark.Key{Identity: "test-user", Volume: vol, Epoch: "old"}, 1000))
+
+	// Fresh client (new epoch) replays low seqs.
+	ops := []*proto.WalOp{
+		mkdirOp(vol, "fresh1", 1, s.sessionID, "r1"),
+		mkdirOp(vol, "fresh2", 2, s.sessionID, "r2"),
+		mkdirOp(vol, "fresh3", 3, s.sessionID, "r3"),
+	}
+	for _, op := range ops {
+		op.WalEpoch = "new"
+	}
+	stream := newStubApplyStream(s.ctxWithSession(), ops...)
+	s.Require().NoError(s.server.Apply(stream))
+	s.Require().NotNil(stream.acked)
+	s.Equal(proto.FsError_FS_OK, stream.acked.Fserr)
+	s.Equal(uint64(3), stream.acked.Watermark)
+
+	// All three applied — NOT dedup-skipped against the "old" epoch's watermark.
+	for _, name := range []string{"fresh1", "fresh2", "fresh3"} {
+		info, err := os.Stat(filepath.Join(s.dir, name))
+		s.Require().NoError(err, name+" must apply under the fresh epoch (not dedup-skipped)")
+		s.True(info.IsDir())
+	}
+
+	// Each epoch keeps an independent watermark.
+	s.Equal(uint64(3), s.wmStore.getWatermark(
+		watermark.Key{Identity: "test-user", Volume: vol, Epoch: "new"}))
+	s.Equal(uint64(1000), s.wmStore.getWatermark(
+		watermark.Key{Identity: "test-user", Volume: vol, Epoch: "old"}))
+}
+
 // TestApply_Dedup_ReplayIdempotent is the canonical double-apply test:
 // the same batch is submitted twice. The first Apply creates three dirs and
 // advances the store watermark to 3. The second Apply receives the same ops
