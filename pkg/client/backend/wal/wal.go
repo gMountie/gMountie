@@ -190,6 +190,13 @@ func (c *Coordinator) Has(path string) bool {
 	return c.overlay.Has(path)
 }
 
+// Epoch returns the durable WAL-epoch (minted in wal.db at creation) that
+// stamps this coordinator's WalOps and DelegationRequests, so the server keys
+// its dedup watermark + gen-fence by (identity, volume, epoch).
+func (c *Coordinator) Epoch() string {
+	return c.log.Epoch()
+}
+
 // ListMerge produces a merged directory listing for dirPath, overlaying pending
 // overlay state over base entries. See Overlay.ListMerge for the full contract.
 func (c *Coordinator) ListMerge(dirPath string, base []backend.DirEntryPlus) []backend.DirEntryPlus {
