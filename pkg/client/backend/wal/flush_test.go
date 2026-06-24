@@ -40,6 +40,7 @@ type fakeApplyStream struct {
 	ack     *proto.ApplyAck
 	sendErr error // if non-nil, Send returns this error
 	closed  bool
+	gate    chan struct{} // if non-nil, CloseAndRecv blocks on it (in-flight Apply)
 }
 
 func (f *fakeApplyStream) Send(op *proto.WalOp) error {
@@ -53,6 +54,12 @@ func (f *fakeApplyStream) Send(op *proto.WalOp) error {
 }
 
 func (f *fakeApplyStream) CloseAndRecv() (*proto.ApplyAck, error) {
+	f.mu.Lock()
+	gate := f.gate
+	f.mu.Unlock()
+	if gate != nil {
+		<-gate // simulate a slow in-flight Apply RPC until the test releases it
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.closed = true
@@ -159,6 +166,72 @@ func (s *FlushSuite) TestFlush_TruncatesAckedPrefixAndClearsOverlay() {
 	_ = seq1
 	_ = seq2
 	s.Equal(seq3, s.coord.watermark.Load(), "local watermark must advance to ack.Watermark")
+}
+
+// TestFlush_PreservesInFlightWritesAboveThroughSeq proves the flush clears ONLY
+// the flushed prefix (seq ≤ throughSeq) and PRESERVES ops recorded during the
+// in-flight Apply (seq > throughSeq). Before the fix processAck cleared the
+// ENTIRE overlay (DropSubtree("")), wiping these in-flight writes before they
+// were on the server → read-your-own-writes ENOENT (the npm-install failure).
+func (s *FlushSuite) TestFlush_PreservesInFlightWritesAboveThroughSeq() {
+	// Ops 1..3 are the batch this flush sends (throughSeq=through). Ops 4..5
+	// stand in for writes recorded DURING the in-flight Apply (seq > through).
+	s.appendOp(OpMkdir, "pkg")
+	s.appendOp(OpCreate, "pkg/flushed.txt")
+	through := s.appendOp(OpWrite, "pkg/flushed.txt")
+	s.appendOp(OpCreate, "pkg/inflight1.txt")
+	s.appendOp(OpCreate, "pkg/inflight2.txt")
+
+	s.stream.ack = &proto.ApplyAck{Watermark: through}
+	s.Require().NoError(s.coord.Flush(context.Background(), through))
+
+	// Flushed prefix dropped from the overlay.
+	s.False(s.coord.Has("pkg/flushed.txt"), "flushed op must be cleared from overlay")
+	// In-flight writes (seq > throughSeq) MUST survive — not yet on the server,
+	// so the overlay is the only place read-your-own-writes can serve them.
+	s.True(s.coord.Has("pkg/inflight1.txt"), "in-flight write must NOT be wiped by the flush")
+	s.True(s.coord.Has("pkg/inflight2.txt"), "in-flight write must NOT be wiped by the flush")
+
+	// Log keeps only the survivors (seq > throughSeq), in order.
+	remaining, rerr := s.log.Replay(0)
+	s.Require().NoError(rerr)
+	s.Require().Len(remaining, 2)
+	s.Equal("pkg/inflight1.txt", remaining[0].Path)
+	s.Equal("pkg/inflight2.txt", remaining[1].Path)
+
+	s.Equal(through, s.coord.watermark.Load())
+}
+
+// TestFlush_ConcurrentInFlightWriteSurvives is the faithful repro: an op is
+// recorded WHILE the flush's Apply RPC is in flight (blocked on the gate), then
+// the flush completes. The concurrent write (seq > throughSeq) must survive the
+// flush's overlay rebuild. Run under -race to exercise recordMu vs commitFlushed.
+func (s *FlushSuite) TestFlush_ConcurrentInFlightWriteSurvives() {
+	s.appendOp(OpMkdir, "pkg")
+	through := s.appendOp(OpCreate, "pkg/flushed.txt")
+	s.stream.ack = &proto.ApplyAck{Watermark: through}
+
+	gate := make(chan struct{})
+	s.stream.mu.Lock()
+	s.stream.gate = gate
+	s.stream.mu.Unlock()
+
+	flushDone := make(chan error, 1)
+	go func() { flushDone <- s.coord.Flush(context.Background(), through) }()
+
+	// Record an op while the Apply is blocked in flight (seq > throughSeq).
+	s.Require().NoError(s.coord.RecordOp(Op{Kind: OpCreate, Path: "pkg/inflight.txt"}))
+
+	close(gate) // release the in-flight Apply → processAck → commitFlushed
+	select {
+	case err := <-flushDone:
+		s.Require().NoError(err)
+	case <-time.After(5 * time.Second):
+		s.Fail("Flush did not complete — possible deadlock between recordMu and commitFlushed")
+	}
+
+	s.False(s.coord.Has("pkg/flushed.txt"), "flushed op must be cleared")
+	s.True(s.coord.Has("pkg/inflight.txt"), "write recorded during the in-flight Apply must survive")
 }
 
 // ── Test 3: Ordered halt ──────────────────────────────────────────────────────

@@ -191,22 +191,21 @@ func (c *Coordinator) processAck(reason string, ack *proto.ApplyAck, sent []Op, 
 	committed := ack.GetWatermark()
 	failedSeq := ack.GetFailedSeq()
 
-	// Truncate the committed prefix [..committed].
-	if committed > 0 {
-		_ = c.log.Truncate(committed)
-	}
-
 	if failedSeq == 0 {
-		// Full success: clear the entire overlay and advance watermark.
-		c.overlay.DropSubtree("")
+		// Full success: drop the flushed prefix (seq ≤ committed) from the log
+		// and rebuild the overlay from the SURVIVORS (seq > committed) — the ops
+		// recorded during the in-flight Apply. Clearing the whole overlay here
+		// (the old DropSubtree("")) wiped those in-flight writes before they were
+		// on the server → read-your-own-writes ENOENT (the npm-install failure).
+		c.commitFlushed(committed)
 		c.watermark.Store(committed)
 		// Signal backpressure waiters.
 		c.capCond.Broadcast()
 		return nil
 	}
 
-	// Ordered halt: partition sent ops.
-	// committed ops were successfully applied; ops at/after failedSeq are lost.
+	// Ordered halt: ops at/after failedSeq are lost (discarded, not re-sent).
+	// committed ops were successfully applied.
 	var lostOps []Op
 	for _, op := range sent {
 		if op.Seq >= failedSeq {
@@ -214,12 +213,13 @@ func (c *Coordinator) processAck(reason string, ack *proto.ApplyAck, sent []Op, 
 		}
 	}
 
-	// Truncate and clear the lost tail too — we must not re-send poisoned ops.
+	// Drop the entire sent prefix (≤ lastSeq: committed ops + the poisoned lost
+	// tail) and rebuild the overlay from the survivors (seq > lastSeq) so
+	// concurrent in-flight writes are preserved; never re-send poisoned ops.
 	if len(sent) > 0 {
 		lastSeq := sent[len(sent)-1].Seq
-		_ = c.log.Truncate(lastSeq)
+		c.commitFlushed(lastSeq)
 	}
-	c.overlay.DropSubtree("")
 	c.watermark.Store(committed)
 	c.capCond.Broadcast()
 

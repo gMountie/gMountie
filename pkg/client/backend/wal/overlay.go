@@ -289,7 +289,12 @@ func tombNode() *overlayNode {
 func (ov *Overlay) Apply(op Op) {
 	ov.mu.Lock()
 	defer ov.mu.Unlock()
+	ov.applyLocked(op)
+}
 
+// applyLocked is the body of Apply; the caller must hold ov.mu. Shared by Apply
+// and Reset so the two can never diverge.
+func (ov *Overlay) applyLocked(op Op) {
 	switch op.Kind {
 	case OpCreate:
 		ov.applyCreate(op)
@@ -309,6 +314,22 @@ func (ov *Overlay) Apply(op Op) {
 		ov.applySetXAttr(op)
 	case OpRemoveXAttr:
 		ov.applyRemoveXAttr(op)
+	}
+}
+
+// Reset atomically replaces the overlay contents with exactly the state
+// produced by applying ops in order. The whole clear+rebuild happens under a
+// single ov.mu write-lock, so a concurrent reader never observes a partially
+// rebuilt overlay (all-or-nothing). Used by the flush path to drop the flushed
+// prefix while preserving ops recorded during the in-flight Apply (which remain
+// in the post-truncate log and are passed here as the surviving ops).
+func (ov *Overlay) Reset(ops []Op) {
+	ov.mu.Lock()
+	defer ov.mu.Unlock()
+	ov.nodes = make(map[string]*overlayNode, len(ops))
+	ov.nextIno = 1
+	for _, op := range ops {
+		ov.applyLocked(op)
 	}
 }
 
