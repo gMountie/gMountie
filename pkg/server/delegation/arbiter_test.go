@@ -1,6 +1,7 @@
 package delegation
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -11,20 +12,25 @@ import (
 )
 
 type fakeRecaller struct {
-	mu     sync.Mutex
-	calls  []string // "owner:root"
-	failOn map[string]bool
-	block  chan struct{} // if non-nil, Recall blocks on this channel after recording the call
+	mu         sync.Mutex
+	calls      []string // "owner:root"
+	failOn     map[string]bool
+	noStreamOn map[string]bool // owners whose recall returns ErrNoStream (unreachable holder)
+	block      chan struct{}   // if non-nil, Recall blocks on this channel after recording the call
 }
 
 func (f *fakeRecaller) Recall(owner, root string) error {
 	f.mu.Lock()
 	f.calls = append(f.calls, owner+":"+root)
 	fail := f.failOn[owner]
+	noStream := f.noStreamOn[owner]
 	ch := f.block
 	f.mu.Unlock()
 	if ch != nil {
 		<-ch // wait without holding the mutex
+	}
+	if noStream {
+		return fmt.Errorf("%w %s", ErrNoStream, owner)
 	}
 	if fail {
 		return assertErr
@@ -127,35 +133,77 @@ func (s *ArbiterSuite) TestGrantThenForeignMutationRecalls() {
 	s.Empty(fr.calls)
 }
 
-// TestDeferRevokeOnStreamClose pins the recall-orphan lifecycle fix: when a
-// holder's recall stream closes, its delegation is released from the table
-// immediately (so a contender is never blocked by "recall: no stream for
-// session …"), but the gen-revoke is DEFERRED to the grace-period reap so a
-// transient recall-stream blip cannot fence the holder's still-valid WAL.
-func (s *ArbiterSuite) TestDeferRevokeOnStreamClose_ReleasesTableDefersRevoke() {
-	fr := &fakeRecaller{}
+// TestNoStreamRecallFencesAndHandsOff pins the corruption-safe contended
+// handoff: when the holder's recall stream is gone (ErrNoStream), a contender
+// takes over — the holder's gen is fenced (so its un-flushed WAL can never
+// clobber the contender if it resurrects and replays) and the contender
+// proceeds. This replaces the unsafe "release on stream close, defer revoke"
+// approach, where a crashed holder could resurrect within grace and clobber.
+func (s *ArbiterSuite) TestNoStreamRecallFencesAndHandsOff() {
+	fr := &fakeRecaller{noStreamOn: map[string]bool{"sessA": true}}
 	st := newFakeStore()
 	a := s.newArbiterWithStore(fr, st)
 
-	g := a.Request("sessA", "proj", "userA", "vol", "")
-	s.Require().Equal("proj", g.GrantedRoot)
+	g := a.Request("sessA", "proj", "alice", "vol", "ep-A")
 	s.Require().NotZero(g.Gen)
 
-	// The holder's recall stream closes.
-	a.DeferRevokeOnStreamClose("sessA")
+	// Contender B mutates A's subtree; A is unreachable (no recall stream).
+	s.Require().NoError(a.OnMutation("sessB", "proj/file"),
+		"contender must proceed when the holder is unreachable")
 
-	// A contender in the orphaned subtree is NOT blocked: the table entry was
-	// released, so ownerOf finds nothing and no (doomed) recall is attempted.
-	fr.calls = nil
-	s.Require().NoError(a.OnMutation("sessB", "proj/file"))
-	s.Empty(fr.calls, "released delegation must not trigger a failing recall")
+	// Corruption prevention: A's gen MUST be fenced, under A's epoch fence key.
+	s.Require().Contains(st.revokedGensCopy(), g.Gen,
+		"unreachable holder's gen must be revoked on contended handoff")
+	s.Require().Contains(st.revokedKeysCopy(),
+		watermark.Key{Identity: "alice", Volume: "vol", Epoch: "ep-A"},
+		"revoke must use the holder's epoch fence key")
 
-	// The gen is NOT revoked yet — a transient blip must not fence valid WAL.
-	s.Empty(st.revokedGensCopy(), "gen must not be revoked on stream close")
+	// The root is now free for the contender.
+	_, _, owned := a.table.ownerOf("proj/file")
+	s.False(owned, "root must be free after handoff")
+}
 
-	// The grace-period reap finally revokes the deferred gen (dead holder fence).
-	a.ReleaseSession("sessA")
-	s.Require().Contains(st.revokedGensCopy(), g.Gen, "deferred gen must be revoked at reap")
+// TestNonNoStreamRecallErrorStaysFailClosed: a generic recall error (timeout,
+// send failure) is NOT a handoff — the entry stays, the gen is NOT revoked, and
+// the contender backs off (EAGAIN). Only an unreachable holder (ErrNoStream)
+// triggers the fence-and-hand-off path.
+func (s *ArbiterSuite) TestNonNoStreamRecallErrorStaysFailClosed() {
+	fr := &fakeRecaller{failOn: map[string]bool{"sessA": true}}
+	st := newFakeStore()
+	a := s.newArbiterWithStore(fr, st)
+
+	g := a.Request("sessA", "proj", "alice", "vol", "ep-A")
+	s.Require().NotZero(g.Gen)
+
+	s.Require().Error(a.OnMutation("sessB", "proj/file"),
+		"a generic recall failure must fail closed")
+	s.Empty(st.revokedGensCopy(), "no revoke on a non-ErrNoStream recall failure")
+	owner, _, owned := a.table.ownerOf("proj/file")
+	s.True(owned, "entry must remain after a fail-closed recall")
+	s.Equal("sessA", owner)
+}
+
+// TestNoStreamHandoffCoalescedContendersProceed: contenders coalescing on a
+// no-stream handoff all proceed without error (the leader fences + releases;
+// waiters re-check ownerOf → free).
+func (s *ArbiterSuite) TestNoStreamHandoffCoalescedContendersProceed() {
+	block := make(chan struct{})
+	fr := &fakeRecaller{noStreamOn: map[string]bool{"sessA": true}, block: block}
+	st := newFakeStore()
+	a := s.newArbiterWithStore(fr, st)
+	a.Request("sessA", "proj", "alice", "vol", "ep-A")
+
+	leaderErr := make(chan error, 1)
+	go func() { leaderErr <- a.OnMutation("sessB", "proj/file") }()
+	// Wait until the leader is in-flight inside Recall (region registered).
+	s.Require().Eventually(func() bool { return fr.callCount() == 1 }, time.Second, 2*time.Millisecond)
+
+	coalescedErr := make(chan error, 1)
+	go func() { coalescedErr <- a.OnMutation("sessC", "proj/other") }()
+
+	close(block) // let the no-stream recall complete → fence + handoff
+	s.Require().NoError(<-leaderErr, "leader must proceed on no-stream handoff")
+	s.Require().NoError(<-coalescedErr, "coalesced contender must proceed after handoff")
 }
 
 // TestRequestEpochKeysFence pins that the delegation gen + revoke fence are
