@@ -355,3 +355,14 @@ persistence:
   # cluster (e.g. rook-ceph-block, rbd-standard-ssd).
   storageClass: local-path
   annotations: {}
+  # Serve a SUBDIRECTORY of the PVC as the volume root instead of the
+  # filesystem root, via the data volumeMount's subPath. Block-backed
+  # filesystems (ext4/xfs on rook-ceph-block, RBD, EBS, …) put a `lost+found`
+  # directory at their root, which then shows up inside the mounted volume and
+  # clutters clients (macOS Finder in particular). Pointing the mount at a
+  # subdir keeps lost+found at the (unmounted) filesystem root, out of view.
+  # Empty (default) serves the PVC root — fine for dir-backed provisioners like
+  # local-path that have no lost+found. NOTE: changing this on an EXISTING PVC
+  # re-roots the volume at a fresh empty subdir; data at the old root becomes
+  # invisible (not lost — just not served).
+  subPath: ""

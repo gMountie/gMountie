@@ -70,6 +70,13 @@ TLS path still works. The ServiceAccount token is **not** mounted by default
 API. Set `persistence.retain: true` to annotate the data PVC
 `helm.sh/resource-policy: keep` so it survives `helm uninstall`.
 
+On block-backed storage (ext4/xfs on RBD, rook-ceph-block, EBS, …) the
+filesystem root carries a `lost+found` directory that would otherwise appear
+inside the mounted volume (and clutter clients such as macOS Finder). Set
+`persistence.subPath` to serve a subdirectory of the PVC instead — `lost+found`
+stays at the unmounted filesystem root, out of view. Leave it empty for
+directory-backed provisioners like local-path that have no `lost+found`.
+
 ## Ops endpoint (metrics/health)
 
 `server.ops.addr` defaults to loopback: reachable with

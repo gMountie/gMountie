@@ -137,6 +137,11 @@ spec:
               # Multi-volume setups should turn persistence.enabled off
               # and wire .Values.volumes / .Values.volumeMounts directly.
               mountPath: {{ (index .Values.config.volumes 0).path }}
+              {{- with .Values.persistence.subPath }}
+              # Serve a subdir so the filesystem-root lost+found stays out of
+              # the mounted volume (kubelet auto-creates the subdir).
+              subPath: {{ . }}
+              {{- end }}
             {{- end }}
             {{- with .Values.volumeMounts }}
               {{- toYaml . | nindent 12 }}
