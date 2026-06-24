@@ -31,7 +31,16 @@ func (r *RpcServerImpl) Recall(stream proto.RpcFs_RecallServer) error {
 		return err
 	}
 	release := r.recalls.Register(sess.ID(), stream.Send)
-	defer release()
+	// On stream close, deregister the send-fn AND release this session's
+	// delegations from the arbiter table so a contender is never blocked by a
+	// holder that can no longer be recalled. The gen-revoke is deferred to the
+	// grace-period reap (a transient blip must not fence still-valid WAL).
+	defer func() {
+		release()
+		if r.arbiter != nil {
+			r.arbiter.DeferRevokeOnStreamClose(sess.ID())
+		}
+	}()
 	for {
 		ack, err := stream.Recv()
 		if err != nil {

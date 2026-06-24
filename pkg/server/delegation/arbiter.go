@@ -51,6 +51,12 @@ type Arbiter struct {
 	table    *delegationTable
 	cooldown *cooldownTable
 	regions  map[string]*regionState // keyed by delegated root being recalled
+	// pendingRevoke holds delegation entries drained from the table when a
+	// session's recall stream closed (DeferRevokeOnStreamClose) but whose gens
+	// have NOT yet been revoked. The gen-revoke is deferred to the grace-period
+	// reap (ReleaseSession) so a transient recall-stream blip cannot fence a
+	// still-live holder's un-flushed WAL. Keyed by session ID.
+	pendingRevoke map[string][]entry
 }
 
 // NewArbiter creates a new Arbiter. store is required and must not be nil;
@@ -61,10 +67,33 @@ func NewArbiter(r Recaller, cfg Config, now func() time.Time, store watermark.St
 		now:      now,
 		metrics:  cfg.Metrics,
 		store:    store,
-		table:    newDelegationTable(),
-		cooldown: newCooldownTable(cfg.Cooldown),
-		regions:  make(map[string]*regionState),
+		table:         newDelegationTable(),
+		cooldown:      newCooldownTable(cfg.Cooldown),
+		regions:       make(map[string]*regionState),
+		pendingRevoke: make(map[string][]entry),
 	}
+}
+
+// DeferRevokeOnStreamClose releases a session's delegations from the table the
+// instant its recall stream closes, so a contender is never blocked by a holder
+// that can no longer be recalled ("recall: no stream for session …"). This is
+// the lifecycle fix for the orphaned-delegation window between a recall-stream
+// close and the grace-period reap.
+//
+// The gen-revoke (WAL fence) is DEFERRED to the reap (ReleaseSession), NOT done
+// here: a transient recall-stream blip (the client's recall goroutine
+// reconnects within ~1s) must not fence the holder's still-valid un-flushed
+// WAL. A resumed session simply re-acquires its delegation via the normal
+// piggyback path; its deferred gens are revoked harmlessly at its eventual reap
+// (which only fires for a truly-dead session, after its final flush).
+func (a *Arbiter) DeferRevokeOnStreamClose(sessionID string) {
+	a.mu.Lock()
+	drained := a.table.drainOwner(sessionID)
+	if len(drained) > 0 {
+		a.pendingRevoke[sessionID] = append(a.pendingRevoke[sessionID], drained...)
+	}
+	a.mGrantsActive()
+	a.mu.Unlock()
 }
 
 // mGrantsActive emits the current delegation count; nil-guarded.
@@ -210,6 +239,13 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 func (a *Arbiter) ReleaseSession(sessionID string) {
 	a.mu.Lock()
 	drained := a.table.drainOwner(sessionID)
+	// Include any gens deferred earlier by DeferRevokeOnStreamClose: the recall
+	// stream closed (entry already removed from the table) but the gen-revoke
+	// was held until this reap confirmed the session is truly dead.
+	if pending := a.pendingRevoke[sessionID]; len(pending) > 0 {
+		drained = append(drained, pending...)
+		delete(a.pendingRevoke, sessionID)
+	}
 	a.mGrantsActive()
 	a.mu.Unlock()
 
