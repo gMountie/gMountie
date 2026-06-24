@@ -13,7 +13,7 @@ func TestTableSuite(t *testing.T) { suite.Run(t, new(TableSuite)) }
 // testGrant is a helper that calls grant with placeholder principal/volume/gen
 // so table-only tests stay readable.
 func testGrant(t *delegationTable, owner, root string) (string, []string, bool) {
-	return t.grant(owner, root, "user-"+owner, "vol", 0)
+	return t.grant(owner, root, "user-"+owner, "vol", "", 0)
 }
 
 func (s *TableSuite) TestGrantDisjointSucceeds() {
@@ -116,7 +116,7 @@ func (s *TableSuite) TestVolumeRootContainsEverything() {
 // on handoff).
 func (s *TableSuite) TestEntryForRootReturnsGenAndKey() {
 	tbl := newDelegationTable()
-	_, _, ok := tbl.grant("sessA", "proj", "alice", "myvol", 7)
+	_, _, ok := tbl.grant("sessA", "proj", "alice", "myvol", "", 7)
 	s.Require().True(ok)
 
 	e, found := tbl.entryForRoot("proj")

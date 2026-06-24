@@ -470,7 +470,7 @@ func (s *FlushSuite) TestOpToWalOp_AllKinds() {
 
 	for _, tc := range cases {
 		s.Run(tc.name, func() {
-			walOp := opToWalOp(tc.op, volume, caller)
+			walOp := opToWalOp(tc.op, volume, caller, "")
 			s.Require().NotNil(walOp)
 			s.Equal(tc.op.Seq, walOp.Seq)
 			s.Equal(tc.op.Gen, walOp.Gen)

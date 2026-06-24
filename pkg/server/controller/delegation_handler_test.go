@@ -110,7 +110,7 @@ func (s *DelegationHandlerSuite) ctxFor(sid string) context.Context {
 // Mkdir under "d" must trigger a recall of sessA's delegation.
 func (s *DelegationHandlerSuite) TestForeignMkdirRecallsHolder() {
 	// sessA holds a delegation on "d" (granted via piggybacked request).
-	s.arbiter.Request(s.sidA, "d", "userA", s.vol)
+	s.arbiter.Request(s.sidA, "d", "userA", s.vol, "")
 
 	// Wire the filesystem mock.
 	mockFs := new(pathfsmock.MockFileSystem)

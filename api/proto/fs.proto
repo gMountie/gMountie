@@ -17,6 +17,13 @@ message DirEntry {
 // recall-on-contention regardless).
 message DelegationRequest {
   string root = 1;
+  // wal_epoch is the client's per-wal.db identity (a UUID minted when the
+  // client's WAL is created, stable for its lifetime). The server keys the
+  // delegation generation, the dedup watermark, and the revoked-gen fence by
+  // (identity, volume, wal_epoch) so a fresh wal.db (cache wipe / reinstall) or
+  // a concurrent squash-shared client gets its own seq/gen namespace and is
+  // never dedup-skipped against another epoch's already-applied seqs.
+  string wal_epoch = 2;
 }
 
 // DelegationGrant is piggybacked on a mutating reply. granted_root may be
@@ -417,6 +424,11 @@ message WalOp {
   }
   uint64 seq = 20;
   uint64 gen = 21;
+  // wal_epoch namespaces seq/gen per client wal.db (see DelegationRequest).
+  // The server keys the dedup watermark and the revoked-gen fence by
+  // (identity, volume, wal_epoch); a fresh epoch never collides with another
+  // epoch's already-applied seqs.
+  string wal_epoch = 22;
 }
 
 // ApplyAck is the single terminal reply to the Apply client-streaming RPC.

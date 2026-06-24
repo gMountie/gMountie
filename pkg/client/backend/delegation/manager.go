@@ -42,13 +42,31 @@ type grantState struct {
 //
 // Concurrency: all exported methods are safe for concurrent use.
 type Manager struct {
-	inv     CacheInvalidator
-	ws      *writeSet
-	mu      sync.RWMutex
-	grants  map[string]grantState // keyed by grantedRoot
-	cancel  context.CancelFunc    // cancels the recall goroutine; set via SetCancel
-	flusher RecallFlusher         // optional; wired in Task 14 via SetRecallFlusher
-	once    sync.Once
+	inv      CacheInvalidator
+	ws       *writeSet
+	mu       sync.RWMutex
+	grants   map[string]grantState // keyed by grantedRoot
+	cancel   context.CancelFunc    // cancels the recall goroutine; set via SetCancel
+	flusher  RecallFlusher         // optional; wired in Task 14 via SetRecallFlusher
+	once     sync.Once
+	walEpoch string // client wal.db epoch (mu-guarded); stamped on DelegationRequests
+}
+
+// SetWalEpoch records the client wal.db's stable epoch. Called once at mount
+// (after the WAL log opens, before any mutating RPC). Stamped on every
+// DelegationRequest via WalEpoch() so the server keys the delegation gen +
+// dedup watermark per (identity, volume, wal-epoch).
+func (m *Manager) SetWalEpoch(epoch string) {
+	m.mu.Lock()
+	m.walEpoch = epoch
+	m.mu.Unlock()
+}
+
+// WalEpoch returns the client wal.db epoch to piggyback on DelegationRequests.
+func (m *Manager) WalEpoch() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.walEpoch
 }
 
 // NewManager constructs a Manager. inv is called with the recalled subtree root

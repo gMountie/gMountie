@@ -20,9 +20,10 @@ func contains(a, b string) bool {
 type entry struct {
 	owner     string // session ID (for self-access/absorption/ReleaseSession)
 	root      string
-	principal string // identity principal (for fence key = {principal,volume})
-	volume    string // volume name (for fence key = {principal,volume})
-	gen       uint64 // delegation generation (monotone per Arbiter; 0 = untagged)
+	principal string // identity principal (for fence key = {principal,volume,epoch})
+	volume    string // volume name (for fence key = {principal,volume,epoch})
+	epoch     string // client wal-epoch (namespaces gen/fence per wal.db)
+	gen       uint64 // delegation generation (monotone per {principal,volume,epoch}; 0 = untagged)
 }
 
 // delegationTable is the containment index. Not safe for concurrent use; the
@@ -58,7 +59,7 @@ func (t *delegationTable) ownerOf(path string) (owner, root string, ok bool) {
 //
 // principal and volume are stored in the entry for fence-key construction on
 // handoff (Task 6); they are NOT used for table containment logic.
-func (t *delegationTable) grant(owner, root, principal, volume string, gen uint64) (granted string, excluded []string, ok bool) {
+func (t *delegationTable) grant(owner, root, principal, volume, epoch string, gen uint64) (granted string, excluded []string, ok bool) {
 	var kept []entry
 	for _, e := range t.entries {
 		switch {
@@ -76,7 +77,7 @@ func (t *delegationTable) grant(owner, root, principal, volume string, gen uint6
 			kept = append(kept, e)
 		}
 	}
-	kept = append(kept, entry{owner: owner, root: root, principal: principal, volume: volume, gen: gen})
+	kept = append(kept, entry{owner: owner, root: root, principal: principal, volume: volume, epoch: epoch, gen: gen})
 	t.entries = kept
 	sort.Strings(excluded)
 	return root, excluded, true

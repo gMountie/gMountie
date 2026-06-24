@@ -129,7 +129,11 @@ func (r *RpcServerImpl) Apply(stream proto.RpcFs_ApplyServer) error {
 			if bindErr != nil {
 				return bindErr
 			}
-			wmKey = watermark.Key{Identity: id.Principal, Volume: vol}
+			// Namespace the dedup watermark + revoked-gen fence by the client's
+			// wal-epoch (carried on every WalOp): a fresh wal.db gets its own seq
+			// space and is never dedup-skipped against a prior epoch's watermark.
+			// All ops in one Apply stream share one epoch (one client wal.db).
+			wmKey = watermark.Key{Identity: id.Principal, Volume: vol, Epoch: op.GetWalEpoch()}
 
 			// Load the durable watermark once. committed starts at the
 			// persisted value so Advance at EOF is always monotone (a

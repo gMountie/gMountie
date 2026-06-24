@@ -23,11 +23,13 @@ type fakeDelegationHook struct {
 	mu     sync.Mutex
 	grants []*proto.DelegationGrant
 	root   string
+	epoch  string
 }
 
 func newFakeHook(root string) *fakeDelegationHook { return &fakeDelegationHook{root: root} }
 
 func (f *fakeDelegationHook) RequestedRoot() string { return f.root }
+func (f *fakeDelegationHook) WalEpoch() string      { return f.epoch }
 
 func (f *fakeDelegationHook) Apply(g *proto.DelegationGrant) {
 	f.mu.Lock()

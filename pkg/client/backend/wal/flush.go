@@ -116,7 +116,7 @@ func (c *Coordinator) applyOps(ctx context.Context, ops []Op) (*proto.ApplyAck, 
 	}
 
 	for _, op := range ops {
-		walOp := opToWalOp(op, c.cfg.volume, c.cfg.caller)
+		walOp := opToWalOp(op, c.cfg.volume, c.cfg.caller, c.log.Epoch())
 		if serr := stream.Send(walOp); serr != nil {
 			if errors.Is(serr, io.EOF) {
 				// Server closed the stream early — CloseAndRecv carries the real ack.
@@ -301,8 +301,8 @@ func (c *Coordinator) Replay(ctx context.Context, resumeWatermark uint64) error 
 // The Seq and Gen fields on WalOp carry the durable sequence and delegation gen.
 // RequestId is derived deterministically from Seq (hex string) so re-sent ops
 // carry the same id and pass server-side idempotency guards.
-func opToWalOp(op Op, volume string, caller *proto.Caller) *proto.WalOp {
-	w := &proto.WalOp{Seq: op.Seq, Gen: op.Gen}
+func opToWalOp(op Op, volume string, caller *proto.Caller, walEpoch string) *proto.WalOp {
+	w := &proto.WalOp{Seq: op.Seq, Gen: op.Gen, WalEpoch: walEpoch}
 
 	switch op.Kind {
 	case OpWrite:

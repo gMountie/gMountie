@@ -126,7 +126,7 @@ func (a *Arbiter) mCooldownTrip() {
 // ({principal,volume}) when this delegation is later revoked on handoff.
 // They must match the watermark.Key used by Apply for the same operation
 // stream (Apply derives its key as {id.Principal, volume}).
-func (a *Arbiter) Request(owner, root, principal, volume string) *proto.DelegationGrant {
+func (a *Arbiter) Request(owner, root, principal, volume, epoch string) *proto.DelegationGrant {
 	if root == "" {
 		return &proto.DelegationGrant{}
 	}
@@ -142,12 +142,12 @@ func (a *Arbiter) Request(owner, root, principal, volume string) *proto.Delegati
 	// because grants already serialize on a.mu.  On NextGen failure we deny
 	// (return RetryAfterMs) — never grant with gen=0, which is the "untagged /
 	// never fenced" sentinel and would reopen the false-fence hole.
-	fenceKey := watermark.Key{Identity: principal, Volume: volume}
+	fenceKey := watermark.Key{Identity: principal, Volume: volume, Epoch: epoch}
 	gen, genErr := a.store.NextGen(fenceKey)
 	if genErr != nil {
 		return &proto.DelegationGrant{RetryAfterMs: uint64(a.cfgRetryMs())}
 	}
-	granted, excluded, ok := a.table.grant(owner, root, principal, volume, gen)
+	granted, excluded, ok := a.table.grant(owner, root, principal, volume, epoch, gen)
 	if !ok {
 		// Denial: the gen slot was consumed but no entry was created — gen gaps
 		// are harmless; do NOT decrement (no in-memory counter to roll back).
@@ -204,7 +204,7 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 		// never proceed without the fence being durable. If RevokeGen fails, treat
 		// the handoff as failed (same as a recall error): don't release the entry,
 		// don't serve the contender.
-		fenceKey := watermark.Key{Identity: revokedEntry.principal, Volume: revokedEntry.volume}
+		fenceKey := watermark.Key{Identity: revokedEntry.principal, Volume: revokedEntry.volume, Epoch: revokedEntry.epoch}
 		if rErr := a.store.RevokeGen(fenceKey, revokedEntry.gen); rErr != nil {
 			// RevokeGen is durable-required; failing here is corrupt-safe: the
 			// contender will get errCoalescedRecallFailed and back off.
@@ -255,7 +255,7 @@ func (a *Arbiter) ReleaseSession(sessionID string) {
 		if e.gen == 0 {
 			continue
 		}
-		fenceKey := watermark.Key{Identity: e.principal, Volume: e.volume}
+		fenceKey := watermark.Key{Identity: e.principal, Volume: e.volume, Epoch: e.epoch}
 		// Best-effort: a failed revoke means the fence won't fire for this gen
 		// (same risk as before Task 6).  Log loudly so the operator can
 		// investigate — a silent missed revoke is invisible data-loss risk.

@@ -149,8 +149,15 @@ func (x *DirEntry) GetOff() uint64 {
 // relative path. Empty/absent = no request (the op is still arbitrated for
 // recall-on-contention regardless).
 type DelegationRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Root          string                 `protobuf:"bytes,1,opt,name=root,proto3" json:"root,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Root  string                 `protobuf:"bytes,1,opt,name=root,proto3" json:"root,omitempty"`
+	// wal_epoch is the client's per-wal.db identity (a UUID minted when the
+	// client's WAL is created, stable for its lifetime). The server keys the
+	// delegation generation, the dedup watermark, and the revoked-gen fence by
+	// (identity, volume, wal_epoch) so a fresh wal.db (cache wipe / reinstall) or
+	// a concurrent squash-shared client gets its own seq/gen namespace and is
+	// never dedup-skipped against another epoch's already-applied seqs.
+	WalEpoch      string `protobuf:"bytes,2,opt,name=wal_epoch,json=walEpoch,proto3" json:"wal_epoch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -188,6 +195,13 @@ func (*DelegationRequest) Descriptor() ([]byte, []int) {
 func (x *DelegationRequest) GetRoot() string {
 	if x != nil {
 		return x.Root
+	}
+	return ""
+}
+
+func (x *DelegationRequest) GetWalEpoch() string {
+	if x != nil {
+		return x.WalEpoch
 	}
 	return ""
 }
@@ -3317,9 +3331,14 @@ type WalOp struct {
 	//	*WalOp_SetXattr
 	//	*WalOp_RemoveXattr
 	//	*WalOp_Release
-	Op            isWalOp_Op `protobuf_oneof:"op"`
-	Seq           uint64     `protobuf:"varint,20,opt,name=seq,proto3" json:"seq,omitempty"`
-	Gen           uint64     `protobuf:"varint,21,opt,name=gen,proto3" json:"gen,omitempty"`
+	Op  isWalOp_Op `protobuf_oneof:"op"`
+	Seq uint64     `protobuf:"varint,20,opt,name=seq,proto3" json:"seq,omitempty"`
+	Gen uint64     `protobuf:"varint,21,opt,name=gen,proto3" json:"gen,omitempty"`
+	// wal_epoch namespaces seq/gen per client wal.db (see DelegationRequest).
+	// The server keys the dedup watermark and the revoked-gen fence by
+	// (identity, volume, wal_epoch); a fresh epoch never collides with another
+	// epoch's already-applied seqs.
+	WalEpoch      string `protobuf:"bytes,22,opt,name=wal_epoch,json=walEpoch,proto3" json:"wal_epoch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3474,6 +3493,13 @@ func (x *WalOp) GetGen() uint64 {
 	return 0
 }
 
+func (x *WalOp) GetWalEpoch() string {
+	if x != nil {
+		return x.WalEpoch
+	}
+	return ""
+}
+
 type isWalOp_Op interface {
 	isWalOp_Op()
 }
@@ -3616,9 +3642,10 @@ const file_api_proto_fs_proto_rawDesc = "" +
 	"\x04mode\x18\x01 \x01(\rR\x04mode\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x10\n" +
 	"\x03ino\x18\x03 \x01(\x04R\x03ino\x12\x10\n" +
-	"\x03off\x18\x04 \x01(\x04R\x03off\"'\n" +
+	"\x03off\x18\x04 \x01(\x04R\x03off\"D\n" +
 	"\x11DelegationRequest\x12\x12\n" +
-	"\x04root\x18\x01 \x01(\tR\x04root\"\x93\x01\n" +
+	"\x04root\x18\x01 \x01(\tR\x04root\x12\x1b\n" +
+	"\twal_epoch\x18\x02 \x01(\tR\bwalEpoch\"\x93\x01\n" +
 	"\x0fDelegationGrant\x12!\n" +
 	"\fgranted_root\x18\x01 \x01(\tR\vgrantedRoot\x12%\n" +
 	"\x0eexcluded_paths\x18\x02 \x03(\tR\rexcludedPaths\x12$\n" +
@@ -3913,7 +3940,7 @@ const file_api_proto_fs_proto_rawDesc = "" +
 	"\x06caller\x18\x02 \x01(\v2\x10.gmountie.CallerR\x06caller\x12\x12\n" +
 	"\x04path\x18\x03 \x01(\tR\x04path\x12\x1d\n" +
 	"\n" +
-	"request_id\x18\x04 \x01(\tR\trequestId\"\xf0\x04\n" +
+	"request_id\x18\x04 \x01(\tR\trequestId\"\x8d\x05\n" +
 	"\x05WalOp\x121\n" +
 	"\x06create\x18\x01 \x01(\v2\x17.gmountie.CreateRequestH\x00R\x06create\x12)\n" +
 	"\x05write\x18\x02 \x01(\v2\x11.gmountie.WriteOpH\x00R\x05write\x12.\n" +
@@ -3928,7 +3955,8 @@ const file_api_proto_fs_proto_rawDesc = "" +
 	" \x01(\v2\x1c.gmountie.RemoveXAttrRequestH\x00R\vremoveXattr\x12/\n" +
 	"\arelease\x18\v \x01(\v2\x13.gmountie.ReleaseOpH\x00R\arelease\x12\x10\n" +
 	"\x03seq\x18\x14 \x01(\x04R\x03seq\x12\x10\n" +
-	"\x03gen\x18\x15 \x01(\x04R\x03genB\x04\n" +
+	"\x03gen\x18\x15 \x01(\x04R\x03gen\x12\x1b\n" +
+	"\twal_epoch\x18\x16 \x01(\tR\bwalEpochB\x04\n" +
 	"\x02op\"p\n" +
 	"\bApplyAck\x12\x1c\n" +
 	"\twatermark\x18\x01 \x01(\x04R\twatermark\x12\x1d\n" +
