@@ -119,6 +119,37 @@ func (s *ArbiterSuite) TestGrantThenForeignMutationRecalls() {
 	s.Empty(fr.calls)
 }
 
+// TestDeferRevokeOnStreamClose pins the recall-orphan lifecycle fix: when a
+// holder's recall stream closes, its delegation is released from the table
+// immediately (so a contender is never blocked by "recall: no stream for
+// session …"), but the gen-revoke is DEFERRED to the grace-period reap so a
+// transient recall-stream blip cannot fence the holder's still-valid WAL.
+func (s *ArbiterSuite) TestDeferRevokeOnStreamClose_ReleasesTableDefersRevoke() {
+	fr := &fakeRecaller{}
+	st := newFakeStore()
+	a := s.newArbiterWithStore(fr, st)
+
+	g := a.Request("sessA", "proj", "userA", "vol")
+	s.Require().Equal("proj", g.GrantedRoot)
+	s.Require().NotZero(g.Gen)
+
+	// The holder's recall stream closes.
+	a.DeferRevokeOnStreamClose("sessA")
+
+	// A contender in the orphaned subtree is NOT blocked: the table entry was
+	// released, so ownerOf finds nothing and no (doomed) recall is attempted.
+	fr.calls = nil
+	s.Require().NoError(a.OnMutation("sessB", "proj/file"))
+	s.Empty(fr.calls, "released delegation must not trigger a failing recall")
+
+	// The gen is NOT revoked yet — a transient blip must not fence valid WAL.
+	s.Empty(st.revokedGensCopy(), "gen must not be revoked on stream close")
+
+	// The grace-period reap finally revokes the deferred gen (dead holder fence).
+	a.ReleaseSession("sessA")
+	s.Require().Contains(st.revokedGensCopy(), g.Gen, "deferred gen must be revoked at reap")
+}
+
 func (s *ArbiterSuite) TestSelfMutationNeverRecalls() {
 	fr := &fakeRecaller{}
 	a := s.newArbiter(fr)
