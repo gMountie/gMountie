@@ -66,6 +66,9 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/backend"
 	"go.gmountie.dev/gmountie/pkg/client/backend/delegation"
 	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
+
+	"go.uber.org/zap"
 )
 
 // syntheticHandle is a minimal FileHandle for overlay-only files (e.g., a
@@ -310,10 +313,12 @@ func (l *Layer) Mkdir(ctx context.Context, path string, mode uint32) (*backend.A
 	if l.mgr.IsDelegated(path) {
 		op := Op{Kind: OpMkdir, Path: path, Mode: mode}
 		if err := l.coord.RecordOp(op); err != nil {
+			log.Log.Warn("wal: deferred Mkdir RecordOp failed -> EIO", zap.String("path", path), zap.Error(err))
 			return nil, proto.FsError_FS_EIO
 		}
 		attr, ok, _, _, _ := l.coord.Stat(path)
 		if !ok {
+			log.Log.Warn("wal: deferred Mkdir overlay Stat !ok -> EIO", zap.String("path", path))
 			return nil, proto.FsError_FS_EIO
 		}
 		return attr, proto.FsError_FS_OK

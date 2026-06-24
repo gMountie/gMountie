@@ -313,20 +313,27 @@ func (ov *Overlay) Apply(op Op) {
 }
 
 func (ov *Overlay) applyCreate(op Op) {
-	mode := op.Mode
-	if mode == 0 {
-		mode = 0o100644
+	// The kernel passes Create a bare permission mode (no S_IFMT type bit), so
+	// force S_IFREG — otherwise the overlay attr looks like a typeless node and
+	// the kernel/cache mis-handles a read-your-own-writes Create.
+	perm := op.Mode & 0o7777
+	if perm == 0 {
+		perm = 0o644
 	}
-	n := ov.newFileNode(mode)
+	n := ov.newFileNode(syscall.S_IFREG | perm)
 	ov.nodes[op.Path] = n
 }
 
 func (ov *Overlay) applyMkdir(op Op) {
-	mode := op.Mode
-	if mode == 0 {
-		mode = 0o40755
+	// The kernel passes Mkdir a bare permission mode (no S_IFMT type bit). Force
+	// S_IFDIR so the deferred directory's overlay attr is typed correctly —
+	// without it the kernel rejects the read-your-own-writes mkdir as a
+	// non-directory ("cannot create directory: Input/output error").
+	perm := op.Mode & 0o7777
+	if perm == 0 {
+		perm = 0o755
 	}
-	n := ov.newDirNode(mode)
+	n := ov.newDirNode(syscall.S_IFDIR | perm)
 	ov.nodes[op.Path] = n
 }
 
