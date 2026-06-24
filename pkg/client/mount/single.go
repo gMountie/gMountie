@@ -275,8 +275,19 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 		// Capture inv for use in the closure below (can't close over local err).
 		inv_ := inv
 		delMgr_ := delMgr
+		// Pass a TRUE-nil oracle when WAL is off. With WAL disabled delMgr is a
+		// (*delegation.Manager)(nil); handing that typed nil straight to the
+		// DelegationOracle interface parameter would produce a NON-nil interface
+		// (typed-nil) that passes the cache's `oracle != nil` guards yet panics
+		// when called (cachedAttrLookup → Manager.IsDelegated derefs a nil
+		// receiver → FUSE loop dies → "transport endpoint not connected").
+		// Assigning through a nil check keeps the interface itself nil.
+		var oracle cache.DelegationOracle
+		if delMgr_ != nil {
+			oracle = delMgr_
+		}
 		layers = append(layers, backendLayer{pos: posCache, build: func(inner backend.FileSystemBackend) backend.FileSystemBackend {
-			cb := cache.NewCachedBackend(inner, cacheCfg, p, client.Fs(), volume, rec, delMgr_)
+			cb := cache.NewCachedBackend(inner, cacheCfg, p, client.Fs(), volume, rec, oracle)
 			// Wire the forward-ref adapter: after this point OnRecall can reach the real cache.
 			if ci, ok := cb.(delegation.CacheInvalidator); ok {
 				inv_.set(ci)
