@@ -53,6 +53,9 @@ type SingleVolumeMounterImpl struct {
 	client grpcclient.Client
 	fuse   *config.FUSEConfig
 	cache  config.CacheConfig
+	// wal gates the WAL/delegation feature. Defaults to disabled; the
+	// WAL machinery is only built when both the cache and wal.Enabled are on.
+	wal config.WALConfig
 	// rawIDs disables WhoAmI-based UID/GID rewriting when true.
 	rawIDs bool
 	mounts *xsync.MapOf[string, mountHandle]
@@ -67,14 +70,17 @@ type SingleVolumeMounterImpl struct {
 // NewSingleVolumeMounter creates a new SingleVolumeMounterImpl. fuseCfg
 // must be non-nil; the client config layer guarantees this by treating
 // FUSE as a required block with defaults. cacheCfg is consumed by value
-// and only applied when cacheCfg.Enabled is true. rawIDs disables
-// WhoAmI-based UID/GID rewriting (pass true for backup/admin use-cases
-// that need to preserve server-side ownership as-is).
-func NewSingleVolumeMounter(client grpcclient.Client, fuseCfg *config.FUSEConfig, cacheCfg config.CacheConfig, rawIDs bool) SingleVolumeMounter {
+// and only applied when cacheCfg.Enabled is true. walCfg gates the
+// WAL/delegation feature; it is only honoured when the cache is also
+// enabled (WAL rides on the cache). rawIDs disables WhoAmI-based UID/GID
+// rewriting (pass true for backup/admin use-cases that need to preserve
+// server-side ownership as-is).
+func NewSingleVolumeMounter(client grpcclient.Client, fuseCfg *config.FUSEConfig, cacheCfg config.CacheConfig, walCfg config.WALConfig, rawIDs bool) SingleVolumeMounter {
 	return &SingleVolumeMounterImpl{
 		client:     client,
 		fuse:       fuseCfg,
 		cache:      cacheCfg,
+		wal:        walCfg,
 		rawIDs:     rawIDs,
 		mounts:     xsync.NewMapOf[string, mountHandle](),
 		mountPaths: xsync.NewMapOf[string, string](),
@@ -150,85 +156,95 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 
 	var layers []backendLayer
 
-	// --- Delegation wiring (only when cache is enabled) ---
-	// Delegation rides on the cache: the Manager's IsDelegated oracle is
-	// threaded into the cache so delegated paths skip revalidation, and
-	// the transport hook piggybacks requests/grants on mutating RPCs.
-	// With cache disabled the nil-oracle / no-hook / no-goroutine path is
-	// byte-for-byte unchanged.
+	// --- Delegation / WAL wiring (only when cache AND wal.enabled are on) ---
+	// WAL rides on the cache: the Manager's IsDelegated oracle is threaded
+	// into the cache so delegated paths skip revalidation, and the transport
+	// hook piggybacks delegation requests/grants on mutating RPCs.
+	//
+	// WAL is gated behind wal.enabled (default false) because the deferred-
+	// write / overlay / flush / delegation machinery is not yet production-
+	// stable. When walEnabled is false the client builds NONE of it: no
+	// overlay, no coordinator, no flusher, no delegation hook, and it never
+	// requests a delegation — so writes go straight through the cache to the
+	// transport synchronously and the server never delegates. The cache layer
+	// (posCache) is still built when the cache is enabled; it receives a nil
+	// delegation oracle, which preserves the pre-delegation behaviour.
+	walEnabled := m.cache.Enabled && m.wal.Enabled
 	var delMgr *delegation.Manager
 	var coord *wal.Coordinator
 	if m.cache.Enabled {
 		inv := &lazyInvalidator{}
-		delMgr = delegation.NewManager(inv)
+		if walEnabled {
+			delMgr = delegation.NewManager(inv)
 
-		// ── WAL construction ────────────────────────────────────────────────
-		// The WAL log lives under the same per-volume root as the cache so
-		// it is co-located with the cache's meta.db and chunks/.
-		walRoot := filepath.Join(m.cache.Path, volume)
-		// persist.Open (below) calls os.MkdirAll on this root, but the WAL
-		// bolt.Open runs first — create the directory proactively so it
-		// doesn't fail with ENOENT on the first mount of a new volume.
-		if err := os.MkdirAll(walRoot, 0o700); err != nil {
-			return errors.Wrap(err, "create wal root")
-		}
-		walLog, werr := wal.Open(filepath.Join(walRoot, "wal.db"))
-		if werr != nil {
-			return errors.Wrap(werr, "open wal log")
-		}
-		// Hand the wal.db's stable epoch to the delegation Manager so every
-		// piggybacked DelegationRequest carries it — the server keys the
-		// delegation gen + dedup watermark per (identity, volume, wal-epoch),
-		// matching the epoch stamped on each WalOp at flush time. A fresh wal.db
-		// (cache wipe / reinstall) thus gets its own server-side seq namespace
-		// and is never dedup-skipped against a prior epoch's watermark.
-		delMgr.SetWalEpoch(walLog.Epoch())
-		overlay := wal.NewOverlay()
-		// Wire the three flush options so Apply streams actually reach the server.
-		// applyFactory opens a fresh Apply stream per flush using the mounted
-		// volume's gRPC client.
-		// Per-op caller fidelity (passthrough/system mode) is a follow-up;
-		// squash (default) squashes all callers to one principal so a mount-level
-		// caller yields the correct watermark key.
-		mountCaller := &proto.Caller{
-			Owner: &proto.Owner{Uid: uint32(os.Getuid()), Gid: uint32(os.Getgid())},
-			Pid:   uint32(os.Getpid()),
-		}
-		coord = wal.NewCoordinator(delMgr, walLog, overlay,
-			wal.WithApplyFactory(func(ctx context.Context) (proto.RpcFs_ApplyClient, error) {
-				return m.client.Fs().Apply(ctx)
-			}),
-			wal.WithVolume(volume),
-			wal.WithCaller(mountCaller),
-		)
+			// ── WAL construction ────────────────────────────────────────────────
+			// The WAL log lives under the same per-volume root as the cache so
+			// it is co-located with the cache's meta.db and chunks/.
+			walRoot := filepath.Join(m.cache.Path, volume)
+			// persist.Open (below) calls os.MkdirAll on this root, but the WAL
+			// bolt.Open runs first — create the directory proactively so it
+			// doesn't fail with ENOENT on the first mount of a new volume.
+			if err := os.MkdirAll(walRoot, 0o700); err != nil {
+				return errors.Wrap(err, "create wal root")
+			}
+			walLog, werr := wal.Open(filepath.Join(walRoot, "wal.db"))
+			if werr != nil {
+				return errors.Wrap(werr, "open wal log")
+			}
+			// Hand the wal.db's stable epoch to the delegation Manager so every
+			// piggybacked DelegationRequest carries it — the server keys the
+			// delegation gen + dedup watermark per (identity, volume, wal-epoch),
+			// matching the epoch stamped on each WalOp at flush time. A fresh wal.db
+			// (cache wipe / reinstall) thus gets its own server-side seq namespace
+			// and is never dedup-skipped against a prior epoch's watermark.
+			delMgr.SetWalEpoch(walLog.Epoch())
+			overlay := wal.NewOverlay()
+			// Wire the three flush options so Apply streams actually reach the server.
+			// applyFactory opens a fresh Apply stream per flush using the mounted
+			// volume's gRPC client.
+			// Per-op caller fidelity (passthrough/system mode) is a follow-up;
+			// squash (default) squashes all callers to one principal so a mount-level
+			// caller yields the correct watermark key.
+			mountCaller := &proto.Caller{
+				Owner: &proto.Owner{Uid: uint32(os.Getuid()), Gid: uint32(os.Getgid())},
+				Pid:   uint32(os.Getpid()),
+			}
+			coord = wal.NewCoordinator(delMgr, walLog, overlay,
+				wal.WithApplyFactory(func(ctx context.Context) (proto.RpcFs_ApplyClient, error) {
+					return m.client.Fs().Apply(ctx)
+				}),
+				wal.WithVolume(volume),
+				wal.WithCaller(mountCaller),
+			)
 
-		// SetMetrics BEFORE the coordinator can Flush or Replay (the global
-		// walMetrics is written here; subsequent flushes will read it).
-		if cm := m.client.Metrics(); cm != nil {
-			wal.SetMetrics(cm)
+			// SetMetrics BEFORE the coordinator can Flush or Replay (the global
+			// walMetrics is written here; subsequent flushes will read it).
+			if cm := m.client.Metrics(); cm != nil {
+				wal.SetMetrics(cm)
+			}
+
+			// Dead-process recovery (CRIT-2): if a previous mount of this volume left
+			// un-acked ops in wal.db, apply them to the in-memory overlay now so RYOW
+			// is correct for any delegation grants re-acquired during this mount.
+			// This runs synchronously before FUSE starts serving so no reads can
+			// arrive before the overlay is populated.
+			//
+			// A persistent-replay of the ops to the server happens asynchronously once
+			// FUSE is live; see the startup replay goroutine started after establishMount.
+			if err := coord.RebuildOverlay(); err != nil {
+				// RebuildOverlay already fired onLoss("wal-unreadable"); surface the
+				// error to the caller so the mount is rejected rather than silently
+				// operating with a broken overlay.
+				return errors.Wrap(err, "wal: startup overlay rebuild")
+			}
+
+			// Wire the WAL drain into the transport BEFORE constructing the transport
+			// backend (backendOpts are consumed by NewBackendClient below).
+			backendOpts = append(backendOpts, transport.WithWriteDrain(coord))
+
+			// Wire the transport hook BEFORE constructing the transport backend.
+			backendOpts = append(backendOpts, transport.WithDelegationHook(delMgr))
 		}
-
-		// Dead-process recovery (CRIT-2): if a previous mount of this volume left
-		// un-acked ops in wal.db, apply them to the in-memory overlay now so RYOW
-		// is correct for any delegation grants re-acquired during this mount.
-		// This runs synchronously before FUSE starts serving so no reads can
-		// arrive before the overlay is populated.
-		//
-		// A persistent-replay of the ops to the server happens asynchronously once
-		// FUSE is live; see the startup replay goroutine started after establishMount.
-		if err := coord.RebuildOverlay(); err != nil {
-			// RebuildOverlay already fired onLoss("wal-unreadable"); surface the
-			// error to the caller so the mount is rejected rather than silently
-			// operating with a broken overlay.
-			return errors.Wrap(err, "wal: startup overlay rebuild")
-		}
-
-		// Wire the WAL drain into the transport BEFORE constructing the transport
-		// backend (backendOpts are consumed by NewBackendClient below).
-		backendOpts = append(backendOpts, transport.WithWriteDrain(coord))
-
-		// Wire the transport hook BEFORE constructing the transport backend.
-		backendOpts = append(backendOpts, transport.WithDelegationHook(delMgr))
 
 		// Build the cache layer. NewCachedBackend returns backend.FileSystemBackend
 		// but the concrete type is *cachedBackend which satisfies
@@ -270,22 +286,28 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 			return cb
 		}})
 
-		// posWritePath: records every mutating op path into the Manager's write-set
-		// so the Manager can compute an LCA delegation root to piggyback on RPCs.
-		layers = append(layers, backendLayer{pos: posWritePath, build: func(inner backend.FileSystemBackend) backend.FileSystemBackend {
-			return delegation.NewLayer(inner, delMgr_)
-		}})
+		// The WAL/delegation read+write layers (posWritePath, posWAL) are only
+		// composed when wal.enabled is on. When off, delMgr/coord are nil and
+		// the compose stack is identity → observer → cache → transport with
+		// synchronous writes — no overlay, no delegation, no recall flusher.
+		if walEnabled {
+			// posWritePath: records every mutating op path into the Manager's write-set
+			// so the Manager can compute an LCA delegation root to piggyback on RPCs.
+			layers = append(layers, backendLayer{pos: posWritePath, build: func(inner backend.FileSystemBackend) backend.FileSystemBackend {
+				return delegation.NewLayer(inner, delMgr_)
+			}})
 
-		// posWAL: WAL read-your-own-writes seam (outer of the cache). Serves
-		// merged reads (base ⊕ pending overlay) for delegated paths and records
-		// metadata mutations (create/unlink/rename/…) in the log without
-		// forwarding to inner. coord.Close() → stopFlusher + log.Close() is
-		// driven by the Layer.Close() override, which is reached via
-		// releaseVolume → be.Close() cascade.
-		coord_ := coord
-		layers = append(layers, backendLayer{pos: posWAL, build: func(inner backend.FileSystemBackend) backend.FileSystemBackend {
-			return wal.NewLayer(inner, delMgr_, coord_)
-		}})
+			// posWAL: WAL read-your-own-writes seam (outer of the cache). Serves
+			// merged reads (base ⊕ pending overlay) for delegated paths and records
+			// metadata mutations (create/unlink/rename/…) in the log without
+			// forwarding to inner. coord.Close() → stopFlusher + log.Close() is
+			// driven by the Layer.Close() override, which is reached via
+			// releaseVolume → be.Close() cascade.
+			coord_ := coord
+			layers = append(layers, backendLayer{pos: posWAL, build: func(inner backend.FileSystemBackend) backend.FileSystemBackend {
+				return wal.NewLayer(inner, delMgr_, coord_)
+			}})
+		}
 	}
 
 	if rec := m.client.Metrics(); rec != nil {
@@ -322,7 +344,7 @@ func (m *SingleVolumeMounterImpl) Mount(volume, mountPath string) (err error) {
 	// never started there is nothing to cancel). The composeBackend closures
 	// have all run by now, so inv.set has been called and OnRecall can reach
 	// the real cache invalidator.
-	if m.cache.Enabled && delMgr != nil {
+	if walEnabled && delMgr != nil {
 		// Wire the WAL coordinator as the recall flusher BEFORE starting the
 		// recall goroutine (which may immediately receive a recall and trigger
 		// a flush via mgr.OnRecall).

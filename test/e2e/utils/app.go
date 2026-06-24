@@ -668,7 +668,10 @@ func NewAppTestingContext(options ...TestOptions) (*AppTestingContext, error) {
 		return nil, err
 	}
 	appCtx.client = c
-	appCtx.clientCtx = client.NewAppContext(c, appCtx.fuseCfg, appCtx.cacheCfg)
+	// WAL/delegation defaults to disabled for the harness-mounted client; the
+	// dedicated WAL e2e suites build their backend stack directly (newWALStack),
+	// not through this mounter.
+	appCtx.clientCtx = client.NewAppContext(c, appCtx.fuseCfg, appCtx.cacheCfg, &clientConfig.WALConfig{Enabled: false})
 	return appCtx, nil
 }
 
@@ -858,7 +861,7 @@ func (c *AppTestingContext) NewSiblingClient(cacheCfg *clientConfig.CacheConfig)
 		_ = siblingClient.Close()
 		return nil, errors.Wrap(err, "sibling client session handshake failed")
 	}
-	return client.NewAppContext(siblingClient, c.fuseCfg, cacheCfg), nil
+	return client.NewAppContext(siblingClient, c.fuseCfg, cacheCfg, &clientConfig.WALConfig{Enabled: false}), nil
 }
 
 // NewClientAs builds a raw gRPC client that authenticates as the named
