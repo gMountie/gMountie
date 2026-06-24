@@ -63,10 +63,10 @@ type Arbiter struct {
 // it is used to durably record revoked delegation generations on handoff.
 func NewArbiter(r Recaller, cfg Config, now func() time.Time, store watermark.Store) *Arbiter {
 	return &Arbiter{
-		recaller: r,
-		now:      now,
-		metrics:  cfg.Metrics,
-		store:    store,
+		recaller:      r,
+		now:           now,
+		metrics:       cfg.Metrics,
+		store:         store,
 		table:         newDelegationTable(),
 		cooldown:      newCooldownTable(cfg.Cooldown),
 		regions:       make(map[string]*regionState),
