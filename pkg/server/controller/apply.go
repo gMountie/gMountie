@@ -54,6 +54,9 @@ import (
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/server/service"
 	"go.gmountie.dev/gmountie/pkg/server/watermark"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
+
+	"go.uber.org/zap"
 )
 
 // Apply is the server handler for the Apply client-streaming RPC.
@@ -181,7 +184,26 @@ func (r *RpcServerImpl) Apply(stream proto.RpcFs_ApplyServer) error {
 		// Dispatch the op.
 		st := r.applyWalOp(ctx, fs, &id, wmKey.Volume, op)
 		if st != fuse.OK {
+			kind, path := walOpKindPath(op)
+			if r.idempotentSkip(ctx, fs, op, st) {
+				// The op's desired end-state already holds: a duplicate mkdir of an
+				// existing directory (concurrent extraction racing a shared parent,
+				// e.g. npm), a symlink of an existing symlink, or an unlink/rmdir of
+				// an already-absent path. SKIP and advance — ordered-halting here
+				// would discard this op AND every later op in the batch: the false
+				// data loss + ENOENT cascade that broke `npm install`.
+				log.Log.Debug("wal apply: idempotent op skipped (desired state already holds)",
+					zap.Uint64("seq", seq), zap.String("op", kind), zap.String("path", path),
+					zap.String("fserr", fserr.FromErrno(syscall.Errno(st)).String()))
+				committed = seq
+				continue
+			}
 			// Ordered halt: persist committed prefix, then ack with failure info.
+			// Logged loudly: a halt discards this op AND every op after it in the
+			// batch, so a single genuine failure can drop thousands of un-flushed ops.
+			log.Log.Warn("wal apply: op failed -> ordered halt (this op + all later ops in the batch are discarded)",
+				zap.Uint64("seq", seq), zap.String("op", kind), zap.String("path", path),
+				zap.String("fserr", fserr.FromErrno(syscall.Errno(st)).String()), zap.Int("errno", int(st)))
 			return sendAck(seq, fserr.FromErrno(syscall.Errno(st)))
 		}
 		committed = seq
@@ -291,6 +313,77 @@ func (r *RpcServerImpl) applyWalOp(
 		// client protocol error). Ordered halt will fire.
 		return fuse.EIO
 	}
+}
+
+// walOpKindPath returns a human-readable (kind, path) for a WalOp, for halt and
+// idempotent-skip logging. Nil-safe via the generated proto getters.
+func walOpKindPath(op *proto.WalOp) (string, string) {
+	switch v := op.Op.(type) {
+	case *proto.WalOp_Create:
+		return "create", v.Create.GetPath()
+	case *proto.WalOp_Write:
+		return "write", v.Write.GetPath()
+	case *proto.WalOp_Mkdir:
+		return "mkdir", v.Mkdir.GetPath()
+	case *proto.WalOp_Rmdir:
+		return "rmdir", v.Rmdir.GetPath()
+	case *proto.WalOp_Unlink:
+		return "unlink", v.Unlink.GetPath()
+	case *proto.WalOp_Rename:
+		return "rename", v.Rename.GetOldName() + " -> " + v.Rename.GetNewName()
+	case *proto.WalOp_Symlink:
+		return "symlink", v.Symlink.GetLinkPath()
+	case *proto.WalOp_SetAttr:
+		return "setattr", v.SetAttr.GetPath()
+	case *proto.WalOp_SetXattr:
+		return "setxattr", v.SetXattr.GetPath()
+	case *proto.WalOp_RemoveXattr:
+		return "removexattr", v.RemoveXattr.GetPath()
+	case *proto.WalOp_Release:
+		return "release", ""
+	}
+	return "unknown", ""
+}
+
+// idempotentSkip reports whether a failed apply is a BENIGN idempotent no-op
+// whose desired end-state already holds, so the Apply loop should skip it and
+// advance the watermark rather than ordered-halt (which discards this op AND
+// every later op in the batch). Scoped tightly to never mask a real failure:
+//
+//   - mkdir EEXIST  → only when a DIRECTORY already exists at the path (a non-dir
+//     there is a real type conflict and still halts). Duplicate mkdirs are normal
+//     under concurrent extraction (npm) racing to create a shared parent dir.
+//   - symlink EEXIST → only when a SYMLINK already exists at the path.
+//   - unlink/rmdir ENOENT → the path is already absent: deletion's desired state.
+//
+// rename and every other (kind, errno) pair still ordered-halt. The extra
+// GetAttr runs only on the (rare) apply-error path, so its cost is negligible.
+func (r *RpcServerImpl) idempotentSkip(ctx context.Context, fs pathfs.FileSystem, op *proto.WalOp, st fuse.Status) bool {
+	errno := syscall.Errno(st)
+	switch v := op.Op.(type) {
+	case *proto.WalOp_Mkdir:
+		return errno == syscall.EEXIST &&
+			existingFileMode(ctx, fs, v.Mkdir.GetPath(), v.Mkdir.GetCaller())&syscall.S_IFMT == syscall.S_IFDIR
+	case *proto.WalOp_Symlink:
+		return errno == syscall.EEXIST &&
+			existingFileMode(ctx, fs, v.Symlink.GetLinkPath(), v.Symlink.GetCaller())&syscall.S_IFMT == syscall.S_IFLNK
+	case *proto.WalOp_Unlink:
+		return errno == syscall.ENOENT
+	case *proto.WalOp_Rmdir:
+		return errno == syscall.ENOENT
+	}
+	return false
+}
+
+// existingFileMode returns the full mode (including S_IFMT type bits) of path,
+// or 0 if it cannot be stat'd. fs.GetAttr is lstat-style (does not follow the
+// final symlink), so a symlink reports S_IFLNK.
+func existingFileMode(ctx context.Context, fs pathfs.FileSystem, path string, caller *proto.Caller) uint32 {
+	attr, gst := fs.GetAttr(path, createContext(ctx, caller))
+	if !gst.Ok() {
+		return 0
+	}
+	return attr.Mode
 }
 
 // applyCreate applies a path-based file creation (the deferred form of the

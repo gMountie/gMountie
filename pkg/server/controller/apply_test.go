@@ -264,6 +264,72 @@ func (s *ApplySuite) TestApply_HappyPath_MkdirBatch() {
 	s.Positive(s.wmStore.advanceCount())
 }
 
+// TestApply_DuplicateMkdir_SkipsEEXIST: a duplicate mkdir of an ALREADY-EXISTING
+// directory (e.g. concurrent npm extraction racing a shared parent) must be
+// SKIPPED as an idempotent no-op, not ordered-halted. A halt would discard the
+// duplicate AND every later op in the batch — the false data loss + ENOENT
+// cascade that broke `npm install`.
+func (s *ApplySuite) TestApply_DuplicateMkdir_SkipsEEXIST() {
+	const vol = "vol"
+	s.bindVolume(vol)
+	ops := []*proto.WalOp{
+		mkdirOp(vol, "pkg", 1, s.sessionID, "r1"),     // creates pkg
+		mkdirOp(vol, "pkg", 2, s.sessionID, "r2"),     // DUPLICATE -> EEXIST -> must be skipped
+		mkdirOp(vol, "pkg/sub", 3, s.sessionID, "r3"), // child AFTER the dup -> must still apply
+	}
+	stream := newStubApplyStream(s.ctxWithSession(), ops...)
+	s.Require().NoError(s.server.Apply(stream))
+	s.Require().NotNil(stream.acked)
+	s.Equal(uint64(3), stream.acked.Watermark, "duplicate mkdir skipped; batch continues to seq 3")
+	s.Equal(uint64(0), stream.acked.FailedSeq, "no ordered halt on a benign duplicate mkdir")
+	s.Equal(proto.FsError_FS_OK, stream.acked.Fserr)
+	// The child created AFTER the duplicate must exist — proves the batch did not halt.
+	info, err := os.Stat(filepath.Join(s.dir, "pkg", "sub"))
+	s.Require().NoError(err)
+	s.True(info.IsDir())
+}
+
+// TestApply_MkdirOverFile_StillHalts: a mkdir EEXIST where a FILE (not a dir)
+// occupies the path is a REAL type conflict and must still ordered-halt — the
+// idempotent-skip must never mask it.
+func (s *ApplySuite) TestApply_MkdirOverFile_StillHalts() {
+	const vol = "vol"
+	s.bindVolume(vol)
+	s.Require().NoError(os.WriteFile(filepath.Join(s.dir, "conflict"), []byte("x"), 0o644))
+	ops := []*proto.WalOp{
+		mkdirOp(vol, "conflict", 1, s.sessionID, "r1"), // mkdir over a file -> EEXIST, real conflict
+		mkdirOp(vol, "after", 2, s.sessionID, "r2"),
+	}
+	stream := newStubApplyStream(s.ctxWithSession(), ops...)
+	s.Require().NoError(s.server.Apply(stream))
+	s.Require().NotNil(stream.acked)
+	s.Equal(uint64(0), stream.acked.Watermark, "type conflict must ordered-halt at seq 1")
+	s.Equal(uint64(1), stream.acked.FailedSeq)
+	s.Equal(proto.FsError_FS_EEXIST, stream.acked.Fserr)
+	_, err := os.Stat(filepath.Join(s.dir, "after"))
+	s.Require().Error(err, "ops after a genuine halt must not apply")
+}
+
+// TestApply_UnlinkMissing_SkipsENOENT: unlink of an already-absent path is the
+// desired end-state of a deletion — skip it, don't halt the batch.
+func (s *ApplySuite) TestApply_UnlinkMissing_SkipsENOENT() {
+	const vol = "vol"
+	s.bindVolume(vol)
+	ops := []*proto.WalOp{
+		mkdirOp(vol, "keep", 1, s.sessionID, "r1"),
+		unlinkOp(vol, "ghost", 2, s.sessionID, "r2"), // never existed -> ENOENT -> skip
+		mkdirOp(vol, "after", 3, s.sessionID, "r3"),
+	}
+	stream := newStubApplyStream(s.ctxWithSession(), ops...)
+	s.Require().NoError(s.server.Apply(stream))
+	s.Require().NotNil(stream.acked)
+	s.Equal(uint64(3), stream.acked.Watermark, "missing-target unlink skipped; batch continues")
+	s.Equal(uint64(0), stream.acked.FailedSeq)
+	info, err := os.Stat(filepath.Join(s.dir, "after"))
+	s.Require().NoError(err)
+	s.True(info.IsDir())
+}
+
 // TestApply_Dedup_SkipsAlreadyApplied: ops with seq ≤ store watermark are
 // skipped. Key proof: if dedup is broken, replaying Mkdir("alpha") would return
 // EEXIST → ordered halt at seq 1 → ack.Watermark=0 and "gamma" would not exist.
@@ -411,10 +477,13 @@ func (s *ApplySuite) TestApply_OrderedHalt_FailingOp() {
 	const vol = "vol"
 	s.bindVolume(vol)
 
+	// A GENUINE failure (mkdir into a missing parent → ENOENT) must ordered-halt.
+	// (A duplicate mkdir of an existing dir is a BENIGN no-op that is skipped, not
+	// halted — see TestApply_DuplicateMkdir_SkipsEEXIST.)
 	ops := []*proto.WalOp{
-		mkdirOp(vol, "alpha", 1, s.sessionID, "r1"), // succeeds
-		mkdirOp(vol, "alpha", 2, s.sessionID, "r2"), // EEXIST → halt
-		mkdirOp(vol, "gamma", 3, s.sessionID, "r3"), // must NOT be applied
+		mkdirOp(vol, "alpha", 1, s.sessionID, "r1"),               // succeeds
+		mkdirOp(vol, "no-such-parent/child", 2, s.sessionID, "r2"), // ENOENT → genuine halt
+		mkdirOp(vol, "gamma", 3, s.sessionID, "r3"),               // must NOT be applied
 	}
 	stream := newStubApplyStream(s.ctxWithSession(), ops...)
 	// Apply returns nil on in-band failure; the error is in the ack.
@@ -690,6 +759,16 @@ func mkdirOp(vol, path string, seq uint64, sessionID, requestID string) *proto.W
 		Op: &proto.WalOp_Mkdir{Mkdir: &proto.MkdirRequest{
 			Volume: vol, Caller: CreateCaller(0, 0, 0), Path: path,
 			Mode: 0o755, SessionId: sessionID, RequestId: requestID,
+		}},
+		Seq: seq,
+	}
+}
+
+func unlinkOp(vol, path string, seq uint64, sessionID, requestID string) *proto.WalOp {
+	return &proto.WalOp{
+		Op: &proto.WalOp_Unlink{Unlink: &proto.UnlinkRequest{
+			Volume: vol, Caller: CreateCaller(0, 0, 0), Path: path,
+			SessionId: sessionID, RequestId: requestID,
 		}},
 		Seq: seq,
 	}
