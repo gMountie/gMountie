@@ -101,8 +101,8 @@ func (r *RpcServerImpl) statAttrsAndEmit(ctx context.Context, fs pathfs.FileSyst
 		zap.String("volume", volume),
 		zap.String("fuse_status", gst.String()),
 		zap.Int("errno", int(gst)),
-		zap.Uint32("caller_uid", fctx.Owner.Uid),
-		zap.Uint32("caller_gid", fctx.Owner.Gid),
+		zap.Uint32("caller_uid", fctx.Uid),
+		zap.Uint32("caller_gid", fctx.Gid),
 	)
 	r.emitMutatedAttr(ctx, volume, path, nil)
 	return nil
