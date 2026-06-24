@@ -69,6 +69,15 @@ type Coordinator struct {
 	// flushMu serialises all Apply streams (Flush, Replay, Fsync, interval, size).
 	flushMu flushMuType
 
+	// recordMu makes a RecordOp's (log.Append + overlay.Apply) atomic with the
+	// flush path's (log.Truncate + overlay rebuild) in commitFlushed, so an op
+	// recorded DURING an in-flight flush is never wiped from the overlay without
+	// being re-applied from the log. Lock ordering: recordMu is OUTERMOST;
+	// overlay.mu is taken inside it; flushMu is independent and RecordOp never
+	// takes it; waitForCap() runs OUTSIDE recordMu (a capped RecordOp must not
+	// hold recordMu while waiting for a flush to drain — that would deadlock).
+	recordMu sync.Mutex
+
 	// capMu and capCond guard the size-cap backpressure path.
 	capMu   sync.Mutex
 	capCond *sync.Cond
@@ -163,14 +172,51 @@ func (c *Coordinator) Drain(
 // pending count drops below the cap, then appends. This provides backpressure:
 // the caller degrades toward synchronous writes rather than OOM-ing.
 func (c *Coordinator) RecordOp(op Op) error {
-	// Backpressure: block if pending WAL count >= cap.
+	// Backpressure: block if pending WAL count >= cap. MUST run outside recordMu:
+	// a capped RecordOp waits here for a flush to drain the log, and the flush's
+	// commitFlushed takes recordMu — holding it here would deadlock.
 	c.waitForCap()
 
+	// log.Append + overlay.Apply are atomic w.r.t. commitFlushed (recordMu), so
+	// the flush's overlay rebuild always sees a log/overlay pair that agree.
+	c.recordMu.Lock()
+	defer c.recordMu.Unlock()
 	if _, err := c.log.Append(op); err != nil {
 		return errors.Wrap(err, "wal RecordOp")
 	}
 	c.overlay.Apply(op)
 	return nil
+}
+
+// commitFlushed drops the flushed prefix (seq ≤ through) from the durable log
+// and rebuilds the overlay from the SURVIVING ops (seq > through). Those
+// survivors are exactly the ops recorded during the in-flight Apply — they were
+// not part of this flush's batch and must remain visible (read-your-own-writes)
+// until a later flush persists them. The old code cleared the entire overlay
+// (DropSubtree("")), wiping these in-flight writes → npm-install ENOENT.
+//
+// Atomic w.r.t. RecordOp via recordMu: no op can be appended between the
+// truncate and the rebuild, so Replay(0) observes exactly the survivors.
+// overlay.Reset rebuilds under a single overlay.mu hold (no partial-overlay
+// reads). recordMu is the outermost lock here; the caller (processAck) holds
+// flushMu, which is independent.
+func (c *Coordinator) commitFlushed(through uint64) {
+	c.recordMu.Lock()
+	defer c.recordMu.Unlock()
+	if through > 0 {
+		_ = c.log.Truncate(through)
+	}
+	remaining, err := c.log.Replay(0)
+	if err != nil {
+		// Can't re-derive the survivors — fall back to clearing everything. This
+		// loses in-flight writes from the overlay but they remain in the log and
+		// flush next cycle; correctness over the read-your-own-writes window.
+		log.Log.Warn("wal commitFlushed: replay remaining log failed; clearing overlay (in-flight writes will reappear on next flush)",
+			zap.Uint64("through", through), zap.Error(err))
+		c.overlay.DropSubtree("")
+		return
+	}
+	c.overlay.Reset(remaining)
 }
 
 // ── Read accessors (thin pass-throughs to Overlay) ────────────────────────────
