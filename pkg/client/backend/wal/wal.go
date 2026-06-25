@@ -61,6 +61,13 @@ type Coordinator struct {
 	// "recall-flush-failure", "wal-unreadable".
 	onLoss func(reason string, lostOps []Op, fe proto.FsError)
 
+	// onFlushed, if set, is called with the flushed ops in processAck just before
+	// the overlay is cleared for them. The Layer wires it to invalidate the inner
+	// cache for each flushed path so a post-flush read falls through to the
+	// authoritative server, not a stale cache hit. Per-flush (not per-op) to keep
+	// the cache warm between flushes. nil = no-op.
+	onFlushed func(sent []Op)
+
 	// watermark is the highest seq durably acked by the server. Written only
 	// inside Flush/Replay (which hold flushMu); read concurrently by
 	// pendingCount (under capMu). Use atomic load/store to avoid a race.

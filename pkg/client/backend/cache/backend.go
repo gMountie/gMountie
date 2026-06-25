@@ -196,6 +196,29 @@ func (b *cachedBackend) invalidateSubtree(path string) {
 	b.access.invalidatePrefix(path)
 }
 
+// InvalidatePath drops the cached entries for a SINGLE path (plus its parent's
+// dir listing + attr) in O(1). The WAL layer calls it per FLUSHED op (once per
+// flush, NOT per recorded op): a delegated-subtree mutation goes to the overlay
+// and bypasses the cache's own Create/Unlink invalidation, so once the flush
+// moves the entry to the server and clears the overlay, a read would otherwise
+// serve a STALE cache hit — the just-created file missing from the parent
+// listing (rm sees an "empty" dir → rmdir → ENOTEMPTY cascade) or a stale
+// negative attr (readback ENOENT). A cache miss here is correct: the server is
+// authoritative post-flush. Per-flush (not per-op) keeps the cache warm between
+// flushes — only just-flushed paths go cold and re-fetch once — avoiding the
+// per-op-invalidation RTT storm that starved npm install.
+func (b *cachedBackend) InvalidatePath(p string) {
+	parent := pathParent(p)
+	b.attr.invalidate(p)
+	b.data.invalidatePath(p)
+	b.xattr.invalidate(p)
+	b.getxattr.invalidate(p)
+	b.access.invalidate(p)
+	b.dir.invalidate(p)      // p's own listing (if p is a dir)
+	b.dir.invalidate(parent) // parent's listing (p added/removed)
+	b.attr.invalidate(parent)
+}
+
 // revalidateResult carries the outcome of a GetAttrIfChanged revalidation
 // call made by the gating logic in Stat/Lookup/ListDir/Read.
 type revalidateResult struct {

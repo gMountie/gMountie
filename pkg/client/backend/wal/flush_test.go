@@ -202,6 +202,29 @@ func (s *FlushSuite) TestFlush_PreservesInFlightWritesAboveThroughSeq() {
 	s.Equal(through, s.coord.watermark.Load())
 }
 
+// TestFlush_OnFlushedReceivesFlushedPaths: the flush invokes onFlushed with the
+// flushed ops so the Layer can invalidate the inner cache for each path. Without
+// it, a delegated-subtree mutation (which bypasses the cache's own Create/Unlink
+// invalidation) leaves a stale cache hit after the overlay clears — the readback
+// ENOENT and the rm-sees-empty-dir → rmdir ENOTEMPTY cascade.
+func (s *FlushSuite) TestFlush_OnFlushedReceivesFlushedPaths() {
+	s.appendOp(OpMkdir, "pkg")
+	s.appendOp(OpCreate, "pkg/a.txt")
+	through := s.appendOp(OpCreate, "pkg/b.txt")
+
+	var got []string
+	s.coord.onFlushed = func(sent []Op) {
+		for i := range sent {
+			got = append(got, sent[i].Path)
+		}
+	}
+	s.stream.ack = &proto.ApplyAck{Watermark: through}
+	s.Require().NoError(s.coord.Flush(context.Background(), through))
+
+	s.Require().Equal([]string{"pkg", "pkg/a.txt", "pkg/b.txt"}, got,
+		"flush must hand the flushed paths to onFlushed for cache invalidation")
+}
+
 // TestFlush_ConcurrentInFlightWriteSurvives is the faithful repro: an op is
 // recorded WHILE the flush's Apply RPC is in flight (blocked on the gate), then
 // the flush completes. The concurrent write (seq > throughSeq) must survive the

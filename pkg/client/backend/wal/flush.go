@@ -191,6 +191,22 @@ func (c *Coordinator) processAck(reason string, ack *proto.ApplyAck, sent []Op, 
 	committed := ack.GetWatermark()
 	failedSeq := ack.GetFailedSeq()
 
+	// Invalidate the inner cache for every flushed path BEFORE clearing the
+	// overlay below. A delegated-subtree mutation went to the overlay and
+	// bypassed the cache's own Create/Unlink invalidation; once commitFlushed
+	// moves it to the server and clears the overlay, a read must fall through to
+	// the (now authoritative) server, not a STALE cache HIT from before the
+	// write — the just-created entry missing from its parent's listing (rm sees
+	// an "empty" dir → rmdir → ENOTEMPTY cascade) or a stale negative attr
+	// (readback ENOENT). Per-FLUSH (not per-op): the cache stays warm between
+	// flushes, only just-flushed paths re-fetch once — avoiding the per-op
+	// invalidation RTT storm that starved npm install. Invalidating before the
+	// clear keeps reads correct from the overlay until it is cleared (no
+	// overlay-empty + cache-stale window).
+	if c.onFlushed != nil {
+		c.onFlushed(sent)
+	}
+
 	if failedSeq == 0 {
 		// Full success: drop the flushed prefix (seq ≤ committed) from the log
 		// and rebuild the overlay from the SURVIVORS (seq > committed) — the ops
