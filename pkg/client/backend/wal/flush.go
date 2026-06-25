@@ -60,6 +60,37 @@ type flushConfig struct {
 	// capOps is the maximum number of pending WAL entries before backpressure
 	// kicks in. 0 means no cap.
 	capOps int
+
+	// maxApplyOps / maxApplyBytes bound a SINGLE Apply stream. A flush of a large
+	// backlog (e.g. an offline/backlogged client reconnecting, or a recall flush
+	// of a big delegated subtree) is split into multiple bounded Apply streams
+	// instead of one unbounded stream. The server applies a stream op-by-op and
+	// frees as it goes, but one continuous multi-thousand-op stream lets the Go
+	// heap outrun GC under the memory limit → OOMKilled. Chunking lets the
+	// handler return between batches so GC reclaims the burst. 0 ⇒ defaults below.
+	maxApplyOps   int
+	maxApplyBytes int
+}
+
+const (
+	// defaultMaxApplyOps caps ops per Apply stream. A normal interval flush is
+	// well under this; only large backlogs/replays chunk.
+	defaultMaxApplyOps = 2000
+	// defaultMaxApplyBytes caps total OpWrite payload bytes per Apply stream so a
+	// few large writes can't blow the batch up even under the op cap.
+	defaultMaxApplyBytes = 16 << 20 // 16 MiB
+)
+
+// applyLimits returns the effective per-Apply-stream bounds (defaults applied).
+func (c *Coordinator) applyLimits() (maxOps, maxBytes int) {
+	maxOps, maxBytes = c.cfg.maxApplyOps, c.cfg.maxApplyBytes
+	if maxOps <= 0 {
+		maxOps = defaultMaxApplyOps
+	}
+	if maxBytes <= 0 {
+		maxBytes = defaultMaxApplyBytes
+	}
+	return maxOps, maxBytes
 }
 
 // Option is a functional option for NewCoordinator.
@@ -93,6 +124,17 @@ func WithOnLoss(fn func(reason string, lostOps []Op, fe proto.FsError)) Option {
 // 0 means no cap (default).
 func WithCapOps(cap int) Option {
 	return func(c *Coordinator) { c.cfg.capOps = cap }
+}
+
+// WithApplyBatchLimits bounds a single Apply stream to maxOps ops and maxBytes
+// of OpWrite payload; a larger flush/replay is split across multiple streams.
+// Non-positive values keep the defaults. Guards the server against an OOM from
+// one unbounded multi-thousand-op Apply stream (e.g. a big offline-client replay).
+func WithApplyBatchLimits(maxOps, maxBytes int) Option {
+	return func(c *Coordinator) {
+		c.cfg.maxApplyOps = maxOps
+		c.cfg.maxApplyBytes = maxBytes
+	}
 }
 
 // ── applyOps ──────────────────────────────────────────────────────────────────
@@ -165,10 +207,32 @@ func (c *Coordinator) Flush(ctx context.Context, throughSeq uint64) error {
 		return nil
 	}
 
-	log.Log.Debug("wal Flush: streaming pending ops via Apply",
-		zap.Uint64("through_seq", throughSeq), zap.Uint64("watermark", wm), zap.Int("pending", len(pending)))
-	ack, err := c.applyOps(ctx, pending)
-	return c.processAck("apply-failure", ack, pending, err)
+	maxOps, maxBytes := c.applyLimits()
+	log.Log.Debug("wal Flush: streaming pending ops via Apply (chunked)",
+		zap.Uint64("through_seq", throughSeq), zap.Uint64("watermark", wm),
+		zap.Int("pending", len(pending)), zap.Int("max_apply_ops", maxOps))
+
+	// Chunk the pending window into bounded Apply streams. The server applies a
+	// stream op-by-op and frees as it goes, but one continuous multi-thousand-op
+	// stream lets the Go heap outrun GC under the memory limit → OOMKilled.
+	// Returning between batches gives the handler a GC boundary. Each batch's
+	// processAck advances the watermark and truncates the flushed prefix; on
+	// ordered halt or transport error processAck returns non-nil and we stop
+	// (those ops were discarded or retained per that path — not re-sent here).
+	for start := 0; start < len(pending); {
+		end, batchBytes := start, 0
+		for end < len(pending) && end-start < maxOps && batchBytes < maxBytes {
+			batchBytes += len(pending[end].Data)
+			end++
+		}
+		batch := pending[start:end]
+		ack, err := c.applyOps(ctx, batch)
+		if perr := c.processAck("apply-failure", ack, batch, err); perr != nil {
+			return perr
+		}
+		start = end
+	}
+	return nil
 }
 
 // processAck handles the ApplyAck and transport error from applyOps.
