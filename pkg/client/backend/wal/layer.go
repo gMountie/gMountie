@@ -118,7 +118,33 @@ type Layer struct {
 func NewLayer(inner backend.FileSystemBackend, mgr *delegation.Manager, coord *Coordinator) backend.FileSystemBackend {
 	l := &Layer{mgr: mgr, coord: coord}
 	l.Inner = inner
+	// On each flush, invalidate the inner cache for the flushed paths so a
+	// post-flush read falls through to the authoritative server instead of a
+	// stale cache hit (see Coordinator.onFlushed / cache.InvalidatePath).
+	coord.onFlushed = func(sent []Op) {
+		for i := range sent {
+			l.invalidateInner(sent[i].Path)
+			if sent[i].NewPath != "" {
+				l.invalidateInner(sent[i].NewPath)
+			}
+		}
+	}
 	return l
+}
+
+// cacheInvalidator is the optional inner-cache capability to drop a single
+// path's cached entries (plus its parent's dir listing) in O(1). The cache
+// layer implements it; the transport doesn't — so we type-assert.
+type cacheInvalidator interface{ InvalidatePath(path string) }
+
+// invalidateInner drops the inner cache entry for path. Called once per FLUSHED
+// op (per-flush, not per recorded op) so the cache stays warm between flushes;
+// only just-flushed paths go cold and re-fetch once. A no-op when the inner
+// backend has no cache (transport-only, tests).
+func (l *Layer) invalidateInner(path string) {
+	if inv, ok := l.Inner.(cacheInvalidator); ok {
+		inv.InvalidatePath(path)
+	}
 }
 
 // ── Read ops ──────────────────────────────────────────────────────────────────
