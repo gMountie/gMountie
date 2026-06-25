@@ -275,8 +275,18 @@ func (n *gMountieNode) wantDirectIO(relPath string) bool {
 	return n.directIOAlways || strings.HasSuffix(relPath, sqliteShmSuffix)
 }
 
+// fmodeExec is the kernel's __FMODE_EXEC bit (0x20). The kernel sets it in a
+// file's open flags when opening it for execve. It is NOT a valid
+// open(2)/openat2(2) flag: the server opens files with openat2(RESOLVE_BENEATH),
+// which strictly rejects unknown flags with EINVAL — surfaced by the kernel as
+// "execve: Invalid argument", i.e. NO binary on a gMountie mount can be executed
+// (npm postinstalls, any run-installed-binary workflow). Strip it at the FUSE
+// boundary so only clean POSIX open flags reach the server.
+const fmodeExec uint32 = 0x20
+
 func (n *gMountieNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
 	p := n.path()
+	flags &^= fmodeExec
 	h, st := n.backend.Open(ctx, p, flags)
 	if st != proto.FsError_FS_OK {
 		return nil, 0, fserr.ToErrno(st)

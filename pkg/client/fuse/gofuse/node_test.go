@@ -125,6 +125,21 @@ func (s *NodeAdapterTestSuite) TestRootOpen_Happy() {
 	s.Require().NotNil(got)
 }
 
+// TestRootOpen_StripsFModeExec: the kernel sets __FMODE_EXEC (0x20) in the open
+// flags when opening a file for execve. It is not a valid open(2)/openat2(2)
+// flag, so the server's openat2(RESOLVE_BENEATH) rejects it with EINVAL —
+// surfaced as "execve: Invalid argument" (no binary on the mount can run). The
+// node must strip it before forwarding to the backend.
+func (s *NodeAdapterTestSuite) TestRootOpen_StripsFModeExec() {
+	fh := iomocks.NewMockFileHandle(s.T())
+	const fmodeExec = uint32(0x20) // __FMODE_EXEC
+	// Backend must receive the flags with __FMODE_EXEC stripped (here: plain 0).
+	s.backend.EXPECT().Open(mock.Anything, "", uint32(0)).Return(fh, proto.FsError_FS_OK)
+	got, _, errno := rootAs[fs.NodeOpener](s).Open(context.Background(), fmodeExec)
+	s.Require().Equal(syscall.Errno(0), errno)
+	s.Require().NotNil(got)
+}
+
 func (s *NodeAdapterTestSuite) TestRootOpen_Error() {
 	s.backend.EXPECT().Open(mock.Anything, "", uint32(0)).Return(nil, proto.FsError_FS_EACCES)
 	got, _, errno := rootAs[fs.NodeOpener](s).Open(context.Background(), 0)
