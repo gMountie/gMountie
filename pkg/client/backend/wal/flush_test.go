@@ -16,6 +16,7 @@ package wal
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -40,7 +41,8 @@ type fakeApplyStream struct {
 	ack     *proto.ApplyAck
 	sendErr error // if non-nil, Send returns this error
 	closed  bool
-	gate    chan struct{} // if non-nil, CloseAndRecv blocks on it (in-flight Apply)
+	gate    chan struct{}          // if non-nil, CloseAndRecv blocks on it (in-flight Apply)
+	onClose func() *proto.ApplyAck // if non-nil, computes the ack from sent ops (chunk test)
 }
 
 func (f *fakeApplyStream) Send(op *proto.WalOp) error {
@@ -63,6 +65,9 @@ func (f *fakeApplyStream) CloseAndRecv() (*proto.ApplyAck, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.closed = true
+	if f.onClose != nil {
+		return f.onClose(), nil
+	}
 	if f.ack == nil {
 		return &proto.ApplyAck{}, nil
 	}
@@ -223,6 +228,42 @@ func (s *FlushSuite) TestFlush_OnFlushedReceivesFlushedPaths() {
 
 	s.Require().Equal([]string{"pkg", "pkg/a.txt", "pkg/b.txt"}, got,
 		"flush must hand the flushed paths to onFlushed for cache invalidation")
+}
+
+// TestFlush_ChunksLargeBacklogIntoBoundedBatches: a large pending backlog must
+// flush as multiple bounded Apply streams, not one unbounded stream. One
+// continuous multi-thousand-op stream lets the server's heap outrun GC under its
+// memory limit → OOMKilled on an offline/backlogged client's reconnect replay.
+// Chunking caps each stream so the handler returns (a GC boundary) between batches.
+func (s *FlushSuite) TestFlush_ChunksLargeBacklogIntoBoundedBatches() {
+	const total = 50
+	for i := 1; i <= total; i++ {
+		s.appendOp(OpCreate, fmt.Sprintf("d/f%d", i))
+	}
+	s.coord.cfg.maxApplyOps = 10 // force chunking (default is 2000)
+
+	var batchSizes []int
+	cumulative := 0
+	s.coord.cfg.applyFactory = func(_ context.Context) (proto.RpcFs_ApplyClient, error) {
+		st := &fakeApplyStream{}
+		st.onClose = func() *proto.ApplyAck {
+			// seqs are contiguous 1..total, so cumulative sent == high watermark.
+			cumulative += len(st.sent)
+			batchSizes = append(batchSizes, len(st.sent))
+			return &proto.ApplyAck{Watermark: uint64(cumulative)}
+		}
+		return st, nil
+	}
+
+	err := s.coord.Flush(context.Background(), uint64(total))
+	s.Require().NoError(err)
+
+	// 50 ops / 10 per stream = 5 bounded Apply streams (was 1 unbounded stream).
+	s.Require().Len(batchSizes, 5, "large backlog must chunk into multiple Apply streams")
+	for _, n := range batchSizes {
+		s.Require().LessOrEqual(n, 10, "each Apply stream must respect maxApplyOps")
+	}
+	s.Equal(uint64(total), s.coord.watermark.Load(), "whole backlog must drain")
 }
 
 // TestFlush_ConcurrentInFlightWriteSurvives is the faithful repro: an op is
