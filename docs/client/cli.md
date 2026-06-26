@@ -50,6 +50,7 @@ gmountie mount ~/mnt/shared -s your-server.example:9449 -n shared -u admin
 | `--raw-ids`     |       | false          | Expose the server's raw uid/gid on file metadata instead of mapping to the local user. |
 | `--verbose`     | `-v`  | false          | Enable verbose (debug-level) logging.                                                   |
 | `--config`      | `-c`  |                | Path to client.yaml. CLI flags override fields in this file.                            |
+| `--set`         |       |                | Override any config value: `--set key=value` (repeatable), e.g. `--set cache.enabled=false --set wal.enabled=true`. Highest precedence (beats the file and env). Keys are struct-validated; see [Configuration § Overriding values](./config.md#overriding-values---set-and-environment-variables). |
 
 ### Password resolution
 

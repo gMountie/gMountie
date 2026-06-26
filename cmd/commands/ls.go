@@ -31,6 +31,7 @@ func newLsCmd() *cobra.Command {
 		},
 	}
 	addProfileFlag(cmd)
+	addSetFlag(cmd)
 	addAuthFlags(cmd, f)
 	addCredentialsFlag(cmd)
 	addRpcTimeoutFlags(cmd, tf)
@@ -80,6 +81,11 @@ func runLs(cmd *cobra.Command, args []string, f *authFlags, tf *rpcTimeoutFlags)
 		return err
 	}
 	applyRpcTimeoutFlags(cmd, v, tf)
+
+	// Generic --set overrides win over the config file, env, and flags above.
+	if err := applySetOverrides(v); err != nil {
+		return err
+	}
 
 	cfg, err := config.ParseConfig(v)
 	if err != nil {

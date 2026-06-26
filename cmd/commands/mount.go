@@ -288,6 +288,12 @@ func buildMountConfig(cmd *cobra.Command, args []string, f *mountFlags) (*mountT
 	}
 	applyRpcTimeoutFlags(cmd, v, &f.rpc)
 
+	// Generic --set overrides win over the config file, env, and the flags
+	// resolved above; struct-derived key validation rejects typos.
+	if err := applySetOverrides(v); err != nil {
+		return nil, err
+	}
+
 	cfg, err := config.ParseConfig(v)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
@@ -510,6 +516,7 @@ func newMountCmd() *cobra.Command {
 	}
 
 	addProfileFlag(cmd)
+	addSetFlag(cmd)
 	cmd.PersistentFlags().StringVarP(&f.serverAddr, "server", "s", "127.0.0.1:9449", "server address")
 	cmd.PersistentFlags().StringVarP(&f.volumeName, "volume", "n", "", "volume name")
 	addAuthFlags(cmd, &f.auth)
