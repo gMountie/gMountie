@@ -126,18 +126,10 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	v.AutomaticEnv()
 
 	// Parse server config. mirrorEnvToSub binds env vars and copies any
-	// overridden values into the sub-tree so UnmarshalExact sees them.
-	serverSub := mirrorEnvToSub(v, "server", []string{
-		"tls.verify",
-		"tls.ca_file",
-		"tls.expected_fingerprint",
-		"tls.server_name",
-		"tls.cert_file",
-		"tls.key_file",
-		"tls.ca_pem",
-		"tls.cert_pem",
-		"tls.key_pem",
-	})
+	// overridden values into the sub-tree so UnmarshalExact sees them. The key
+	// list is reflected from the config struct (see override.go) — one source of
+	// truth for env + --set, no hand-maintained list to drift.
+	serverSub := mirrorEnvToSub(v, "server", sectionLeafKeys("server"))
 	if cfg, err := NewServerConfig(serverSub); err == nil {
 		result.Server = cfg
 	} else {
@@ -162,8 +154,11 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 		}
 	}
 
-	// Parse rpc config (defaults if absent)
-	if cfg, err := NewRpcConfig(v.Sub("rpc")); err == nil {
+	// Parse rpc config (defaults if absent). Routed through mirrorEnvToSub (not
+	// a bare v.Sub) so rpc.* is env- and --set-overridable like the other
+	// sections; NewRpcConfig yields defaults from the empty sub-tree when absent.
+	rpcSub := mirrorEnvToSub(v, "rpc", sectionLeafKeys("rpc"))
+	if cfg, err := NewRpcConfig(rpcSub); err == nil {
 		result.Rpc = cfg
 	} else {
 		return nil, err
@@ -172,16 +167,7 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	// Parse fuse config (defaults if absent). mirrorEnvToSub wires env-var
 	// overrides (e.g. GMOUNTIE_FUSE_ATTR_TIMEOUT) into the sub-tree so
 	// AutomaticEnv propagates through viper.Sub as it does for cache/server.
-	fuseSub := mirrorEnvToSub(v, "fuse", []string{
-		"max_write_bytes",
-		"max_background",
-		"writeback_cache",
-		"direct_io",
-		"attr_timeout",
-		"entry_timeout",
-		"handle_kill_priv",
-		"auto_xattr",
-	})
+	fuseSub := mirrorEnvToSub(v, "fuse", sectionLeafKeys("fuse"))
 	if cfg, err := NewFUSEConfig(fuseSub); err == nil {
 		result.FUSE = cfg
 	} else {
@@ -190,16 +176,7 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 
 	// Parse cache config. mirrorEnvToSub wires env-var overrides into the
 	// sub-tree (AutomaticEnv doesn't propagate through viper.Sub).
-	cacheSub := mirrorEnvToSub(v, "cache", []string{
-		"enabled",
-		"path",
-		"memory_max_bytes",
-		"disk_max_bytes",
-		"chunk_size_bytes",
-		"attr_ttl",
-		"dir_ttl",
-		"negative_ttl",
-	})
+	cacheSub := mirrorEnvToSub(v, "cache", sectionLeafKeys("cache"))
 	if cfg, err := NewCacheConfig(cacheSub); err == nil {
 		result.Cache = cfg
 	} else {
@@ -208,7 +185,7 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 
 	// Parse wal config (defaults to disabled if absent). mirrorEnvToSub wires
 	// the GMOUNTIE_WAL_ENABLED env override into the sub-tree.
-	walSub := mirrorEnvToSub(v, "wal", []string{"enabled"})
+	walSub := mirrorEnvToSub(v, "wal", sectionLeafKeys("wal"))
 	if cfg, err := NewWALConfig(walSub); err == nil {
 		result.WAL = cfg
 	} else {
@@ -216,9 +193,7 @@ func ParseConfig(v *viper.Viper) (*Config, error) {
 	}
 
 	// Parse renew config (optional; absent block yields disabled defaults).
-	renewSub := mirrorEnvToSub(v, "renew", []string{
-		"endpoint", "token", "token_file", "before",
-	})
+	renewSub := mirrorEnvToSub(v, "renew", sectionLeafKeys("renew"))
 	if cfg, err := NewRenewConfig(renewSub); err == nil {
 		result.Renew = cfg
 	} else {

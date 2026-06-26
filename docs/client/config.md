@@ -8,6 +8,15 @@ description: Every client.yaml field — server, RPC tuning (timeouts, retry win
 
 The client reads a YAML file with up to six sections: **`server`** (where to connect), **`rpc`** (per-RPC timeouts, retry window, message size, [readahead](#readahead), [write coalescing](#write-coalescing), keepalive), **`fuse`** (kernel-side mount knobs), **`cache`** (client-side cache), **`auth`** (credentials), and **`mount`** (volume and path). CLI flags override the corresponding fields — see **[Client CLI](./cli.md)** for the override list.
 
+## Overriding values: `--set` and environment variables
+
+Any config value can be overridden without editing the file, two ways:
+
+- **`--set key=value`** (repeatable) on `mount`/`ls`, e.g. `gmountie mount --set cache.enabled=false --set wal.enabled=true --set fuse.attr_timeout=5s`. The key is the dotted config path (`section.key`, or `section.sub.key` for nested values like `server.tls.verify`). Keys are validated against the config structs, so a typo fails fast with the valid keys for that section.
+- **Environment variables** `GMOUNTIE_<KEY>` — the dotted key uppercased with `.`→`_`, e.g. `GMOUNTIE_CACHE_ENABLED=false`, `GMOUNTIE_WAL_ENABLED=true`, `GMOUNTIE_FUSE_ATTR_TIMEOUT=5s`, `GMOUNTIE_SERVER_TLS_VERIFY=insecure`. `--set x.y=z` and `GMOUNTIE_X_Y=z` target the same key set.
+
+**Precedence (highest wins):** `--set` → environment variable → config file → built-in default. (`auth` and `mount` are not `--set`/env targets — use the dedicated flags `--auth-type`/`--username`/`--password` and `--server`/`--volume`.)
+
 ## Configuration File Structure
 
 The configuration file has three main sections:
