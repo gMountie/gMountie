@@ -292,6 +292,12 @@ The readahead engine now serves partial/cross-chunk sub-ranges and retains the u
 
 `google.golang.org/protobuf` v1.36 has no zero-copy path for `bytes` fields. A custom codec using the gRPC `CodecV2` interface could thread the FUSE-provided destination buffer directly through the protobuf unmarshal, saving a copy on every read. This requires migrating to the `CodecV2` buffer model, which is non-trivial. Defer until the measured copy cost justifies the work. See [Performance § CodecV2](design/performance.md#52-zero-copy-codecv2-marshaling-serialization-win).
 
+### Dir-completeness negative-lookup caching (bulk-create / `npm install` WAN win)
+
+A both-layers measurement of a real `cp -a` and a real `npm install` through a cached mount (harness: `test/e2e/fs/copy_chatter_test.go`, gated by `GMOUNTIE_CHATTER_MEASURE`) found the metadata chatter on a bulk create is **not** getxattr — the kernel's per-file `security.capability` probe (≈1/file; 1620 on the cp, 2068 on the npm install) is **fully absorbed** to zero `GetXAttr` RPCs by the `Create`-time negative priming + `CAP_HANDLE_KILLPRIV_V2` (see [caching § 2.3](design/caching-and-consistency.md)). The remaining reducible round-trip is **one negative `LOOKUP` per newly-created file** — the kernel's pre-`Create` existence check (≈1873 ENOENT lookups in the npm-install run). The negative cache can't absorb a first-time lookup of a never-seen path.
+
+The lever: after the client creates a directory empty via `Mkdir` (or fully enumerates it via `ReadDir`), mark it **complete** and serve a lookup of any absent child as a local ENOENT instead of an RPC — eliminating the per-new-file lookup on `cp -a`, `tar -x`, and especially `npm install` over a high-RTT link. Deferred (not built): it adds negative-serving logic to the Subscribe/validity coherence machinery (the completeness flag must clear wherever a dir listing is invalidated, and stay correct under WAL on and off), so it wants a deliberate, well-tested implementation pass rather than a speculative one. `SetAttr` is the other large copy-time cost (`cp -a`'s per-file chmod+utimes) but is out of scope here — it is what the WAL batches.
+
 ---
 
 ## Appendix A — Known security gaps
