@@ -104,9 +104,20 @@ throughput cliff on high-latency links. The xattr names cache is
 advisory/display-only: ACL enforcement remains server-side and kernel-native,
 so the cache is served on TTL (`cache.xattr_ttl`, default 5 min) plus
 Subscribe MUTATED/DELETED/RENAMED push invalidation — no per-path
-revalidation is needed. The cache stores names only; `GetXAttr` values are
-not cached (values are large, content-dependent, and their caching is deferred
-to a future phase). Because proto3 cannot distinguish an empty `repeated` field
+revalidation is needed. The names cache stores names only; `GetXAttr` *values*
+are cached separately (keyed `path → attribute → value`, on `cache.xattr_ttl`)
+and, more importantly, it caches **negative** answers (`ENO_XATTR`/`ENOTSUP`).
+This is what tames the getxattr flood: the kernel probes `security.capability`
+(and `system.posix_acl_*`) on essentially every file before a write, and absent
+a negative cache each probe is one WAN round-trip. On `Create`, a fresh file
+provably has no file capabilities, so the client primes a negative
+`security.capability` entry; together with `CAP_HANDLE_KILLPRIV_V2` (which marks
+the inode `S_NOSEC` so the kernel performs the suid/sgid/cap strip via a server
+`SetAttr` instead) the per-write killpriv getxattr never reaches the wire. The
+net effect, measured against a real FUSE mount, is that a bulk create — a
+`cp -a` or an `npm install` of thousands of files — issues **zero** `GetXAttr`
+RPCs even though the kernel still issues roughly one getxattr per file. Positive
+values above a small size cap are served through uncached. Because proto3 cannot distinguish an empty `repeated` field
 from an unset one, each `ReadDir` entry carries an explicit `xattr_listed` bool
 alongside `xattr_names`: the client primes the cache — including an empty
 "no xattrs" list, which is a valid positive hit — only when that bool is set,
@@ -147,6 +158,17 @@ return immediately without hitting the server.
   on TTL expiry.
 - **Persistence:** no. Negative entries are memory-only. A restart defaults to
   a fresh pass to the server for previously-negative paths.
+
+**Pre-create lookups — a known bulk-create cost.** Tools that create many files
+(`cp -a`, `npm install`, `tar -x`) issue one negative `LOOKUP` per new file: the
+kernel resolves the destination name before the `Create`, and that first-time
+lookup of a not-yet-existing path is necessarily a server round-trip (ENOENT),
+one per created file. The negative cache cannot absorb it — the path has never
+been seen. This (not getxattr, which is fully absorbed above) is the dominant
+*reducible* metadata round-trip of a WAN `npm install`. Serving these from a
+*known-complete* directory — one the client just created empty via `Mkdir` or
+fully enumerated via `ReadDir`, so an absent child resolves to ENOENT locally —
+is a tracked future optimisation (roadmap: dir-completeness negative caching).
 
 ### 2.6 Write-through semantics
 
