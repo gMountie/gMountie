@@ -29,11 +29,21 @@
 // the caller falls back to the synchronous inner path.
 //
 // Write (byte-level) dispatches on handle type (Task 14b):
-//   - syntheticHandle: the file was created by this overlay and inner knows
-//     nothing about it. Write is recorded via coord.RecordOp(OpWrite) directly.
+//   - syntheticHandle, still covered by its delegation: Write is recorded via
+//     recordDeferred(OpWrite) into the overlay.
+//   - syntheticHandle, orphaned (recordDeferred refused with ErrNotDelegated —
+//     its grant was recalled while the handle stayed open): writeThrough opens
+//     a transient inner handle and writes directly, since there is nowhere
+//     left to defer to.
 //   - All other handles: the write flows through the transport layer's walHandle
 //     → Coordinator.Drain (Task 10a). Writing here for non-synthetic handles
 //     would double-record bytes in the overlay, so we pass through to inner.
+//
+// Read (byte-level) mirrors this for the synthetic branch: a syntheticHandle
+// whose overlay node no longer fully owns the file (flushed, tombstoned, or
+// base-delta) reads through a transient inner handle (readThrough) merged with
+// any still-pending overlay bytes, instead of merging over a nil base (which
+// would silently serve empty data after a flush cleared the overlay).
 //
 // Open: for overlay-created paths (Has && !baseDelta) under delegation, Open
 // returns a syntheticHandle instead of calling inner (inner would return ENOENT).
@@ -207,16 +217,28 @@ func (l *Layer) ListDir(ctx context.Context, path string) ([]backend.DirEntryPlu
 // Read serves the overlay-merged byte view for delegated files.
 //
 // Handle-type dispatch:
-//   - syntheticHandle (overlay-only file, inner knows nothing): serve purely
-//     from the overlay using an empty base — coord.ReadMerge with nil base
-//     returns the bytes recorded via RecordOp/Write. No inner call.
+//   - syntheticHandle whose overlay node still fully owns the file (ok &&
+//     !tombstoned && !baseDelta): serve purely from the overlay using an
+//     empty base — coord.ReadMerge with nil base returns the bytes recorded
+//     via RecordOp/Write. No inner call.
+//   - syntheticHandle whose overlay node no longer fully owns the file (!ok,
+//     tombstoned, or baseDelta — flushed by an interval/recall flush,
+//     deleted, or partially flushed): route through readThrough, a transient
+//     inner handle merged with any still-pending overlay bytes.
 //   - All other handles (transport-backed, memfs-backed, etc.): read the base
 //     bytes from inner first, then merge any pending overlay bytes on top.
 func (l *Layer) Read(ctx context.Context, fh backend.FileHandle, off int64, dest []byte) (int, proto.FsError) {
 	path := fh.Path()
 
-	// Synthetic handle: the file exists only in the overlay; inner cannot serve it.
 	if sh := asSynthetic(fh); sh != nil {
+		_, ok, tombstoned, baseDelta, _ := l.coord.Stat(sh.path)
+		if !ok || tombstoned || baseDelta {
+			// The overlay no longer fully owns this file: it was flushed
+			// (interval/recall — bytes now live on the server), deleted, or
+			// partially flushed (base-delta). Serve via a transient inner
+			// handle, merging any still-pending bytes on top.
+			return l.readThrough(ctx, sh.path, off, dest)
+		}
 		merged := l.coord.ReadMerge(sh.path, off, nil)
 		copied := copy(dest, merged)
 		return copied, proto.FsError_FS_OK
@@ -237,22 +259,69 @@ func (l *Layer) Read(ctx context.Context, fh backend.FileHandle, off int64, dest
 	return l.Inner.Read(ctx, fh, off, dest)
 }
 
+// readThrough opens a transient inner handle for path, reads the base range,
+// merges any pending overlay bytes, and releases the handle. Used for
+// synthetic handles that outlived their overlay node (flushed / recalled).
+func (l *Layer) readThrough(ctx context.Context, path string, off int64, dest []byte) (int, proto.FsError) {
+	ih, ferr := l.Inner.Open(ctx, path, uint32(syscall.O_RDONLY))
+	if ferr != proto.FsError_FS_OK {
+		return 0, ferr
+	}
+	defer func() { _ = l.Inner.Release(ctx, ih) }()
+	n, ferr := l.Inner.Read(ctx, ih, off, dest)
+	if ferr != proto.FsError_FS_OK && ferr != proto.FsError_FS_ENOENT {
+		return 0, ferr
+	}
+	merged := l.coord.ReadMerge(path, off, dest[:n])
+	return copy(dest, merged), proto.FsError_FS_OK
+}
+
 // Write records a byte-write op for overlay-only files, or passes through to
 // inner for transport-backed handles.
 //
 // No-double-record invariant: only syntheticHandle writes go through
-// coord.RecordOp here. All other writes are routed by the transport layer via
-// Coordinator.Drain (which calls RecordOp for delegated paths), so we must not
-// intercept them here.
+// coord.RecordOp (via recordDeferred) here. All other writes are routed by the
+// transport layer via Coordinator.Drain (which calls RecordOp for delegated
+// paths), so we must not intercept them here.
+//
+// Orphaned synthetic handle: when the covering delegation is gone
+// (ErrNotDelegated — a recall handoff completed while the handle was still
+// open), recordDeferred's retry is refused again and there is nowhere left to
+// defer to; write through a transient inner handle instead.
 func (l *Layer) Write(ctx context.Context, fh backend.FileHandle, off int64, data []byte) (uint32, proto.FsError) {
 	if sh := asSynthetic(fh); sh != nil {
 		op := Op{Kind: OpWrite, Path: sh.path, Offset: off, Data: data}
-		if err := l.coord.RecordOp(op); err != nil {
+		switch err := l.recordDeferred(ctx, op); {
+		case err == nil:
+			return uint32(len(data)), proto.FsError_FS_OK
+		case stderrors.Is(err, ErrNotDelegated):
+			// Orphaned synthetic handle: its delegation was recalled while
+			// open. The recall flush materialised the file on the server;
+			// write through a transient inner handle.
+			return l.writeThrough(ctx, sh.path, off, data)
+		default:
 			return 0, proto.FsError_FS_EIO
 		}
-		return uint32(len(data)), proto.FsError_FS_OK
 	}
 	return l.Inner.Write(ctx, fh, off, data)
+}
+
+// writeThrough writes to path via a transient inner handle (open→write→flush→
+// release). Used for orphaned synthetic handles after a recall handoff.
+func (l *Layer) writeThrough(ctx context.Context, path string, off int64, data []byte) (uint32, proto.FsError) {
+	ih, ferr := l.Inner.Open(ctx, path, uint32(syscall.O_WRONLY))
+	if ferr != proto.FsError_FS_OK {
+		return 0, ferr
+	}
+	defer func() { _ = l.Inner.Release(ctx, ih) }()
+	n, ferr := l.Inner.Write(ctx, ih, off, data)
+	if ferr != proto.FsError_FS_OK {
+		return 0, ferr
+	}
+	if st := l.Inner.Flush(ctx, ih); st != proto.FsError_FS_OK {
+		return 0, st
+	}
+	return n, proto.FsError_FS_OK
 }
 
 // Open returns a syntheticHandle for overlay-created files (delegated + Has +

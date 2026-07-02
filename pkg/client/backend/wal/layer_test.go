@@ -26,7 +26,10 @@ package wal_test
 
 import (
 	"context"
+	"io"
 	"path/filepath"
+	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -37,6 +40,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/backend/memfs"
 	"go.gmountie.dev/gmountie/pkg/client/backend/wal"
 	"go.gmountie.dev/gmountie/pkg/proto"
+	"google.golang.org/grpc/metadata"
 )
 
 // ── test helpers ──────────────────────────────────────────────────────────────
@@ -57,6 +61,44 @@ func openLayerLog(t *testing.T) *wal.BboltLog {
 	return l
 }
 
+// fakeApplyStream is an external-package fake for proto.RpcFs_ApplyClient
+// (a grpc.ClientStreamingClient[proto.WalOp, proto.ApplyAck]). It records
+// every sent WalOp and, on CloseAndRecv, acks the highest seq it saw — i.e.
+// it always fully commits whatever batch it is given. This lets tests drive
+// a REAL wal.Coordinator.Flush / FlushForRecall to completion (the fixture
+// guidance's alternative to the unexported commitFlushedForTest hook, which
+// this external _test package cannot reach).
+type fakeApplyStream struct {
+	mu   sync.Mutex
+	sent []*proto.WalOp
+}
+
+func (f *fakeApplyStream) Send(op *proto.WalOp) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sent = append(f.sent, op)
+	return nil
+}
+
+func (f *fakeApplyStream) CloseAndRecv() (*proto.ApplyAck, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var wm uint64
+	if len(f.sent) > 0 {
+		wm = f.sent[len(f.sent)-1].Seq
+	}
+	return &proto.ApplyAck{Watermark: wm}, nil
+}
+
+func (f *fakeApplyStream) Header() (metadata.MD, error) { return nil, nil } //nolint:nilnil // fake gRPC stream: no metadata and no error is the correct test-double contract
+func (f *fakeApplyStream) Trailer() metadata.MD         { return nil }
+func (f *fakeApplyStream) CloseSend() error             { return nil }
+func (f *fakeApplyStream) Context() context.Context     { return context.Background() }
+func (f *fakeApplyStream) SendMsg(m any) error          { return nil }
+func (f *fakeApplyStream) RecvMsg(m any) error          { return io.EOF }
+
+var _ proto.RpcFs_ApplyClient = (*fakeApplyStream)(nil)
+
 // ── LayerSuite ────────────────────────────────────────────────────────────────
 
 type LayerSuite struct {
@@ -75,7 +117,15 @@ func (s *LayerSuite) SetupTest() {
 	s.mgr = delegation.NewManager(noopInv{})
 	s.log = openLayerLog(s.T())
 	s.ovl = wal.NewOverlay()
-	s.coord = wal.NewCoordinator(s.mgr, s.log, s.ovl)
+	// WithApplyFactory wires a fake Apply stream that always fully commits
+	// whatever it is sent, so tests can drive a REAL Flush/FlushForRecall to
+	// completion (see fakeApplyStream doc comment). Harmless for tests that
+	// never call Flush.
+	s.coord = wal.NewCoordinator(s.mgr, s.log, s.ovl,
+		wal.WithApplyFactory(func(_ context.Context) (proto.RpcFs_ApplyClient, error) {
+			return &fakeApplyStream{}, nil
+		}),
+	)
 	s.layer = wal.NewLayer(s.fs, s.mgr, s.coord)
 	s.ctx = context.Background()
 }
@@ -83,6 +133,41 @@ func (s *LayerSuite) SetupTest() {
 // grant makes root and all paths under it delegated.
 func (s *LayerSuite) grant(root string) {
 	s.mgr.Apply(&proto.DelegationGrant{GrantedRoot: root})
+}
+
+// flushAll drives a real, full Flush of every op currently in the WAL log
+// (the fakeApplyStream always fully commits). Standing in for a completed
+// interval flush.
+func (s *LayerSuite) flushAll() {
+	ops, err := s.log.Replay(0)
+	s.Require().NoError(err)
+	s.Require().NotEmpty(ops, "flushAll requires at least one pending op")
+	s.Require().NoError(s.coord.Flush(s.ctx, ops[len(ops)-1].Seq))
+}
+
+// writeInner materialises path with data directly in the inner memfs
+// backend, standing in for the real server-side Apply pipeline (out of scope
+// for this unit test — the property under test is the Layer's read/write
+// routing, not the Apply pipeline itself).
+func (s *LayerSuite) writeInner(path string, data []byte) {
+	parent, name := splitInnerPath(path)
+	_, _, ferr := s.fs.Create(s.ctx, parent, name, 0, 0o100644)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	fh, ferr := s.fs.Open(s.ctx, path, 0)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	_, ferr = s.fs.Write(s.ctx, fh, 0, data)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	s.Require().Equal(proto.FsError_FS_OK, s.fs.Release(s.ctx, fh))
+}
+
+// splitInnerPath splits a memfs-convention path ("dir/f.txt") into parent
+// ("dir") and name ("f.txt"); a root-level path ("f.txt") splits to ("", "f.txt").
+func splitInnerPath(path string) (parent, name string) {
+	idx := strings.LastIndex(path, "/")
+	if idx < 0 {
+		return "", path
+	}
+	return path[:idx], path[idx+1:]
 }
 
 // ── Test 1: delegated Create → overlay visible; memfs never sees it ───────────
@@ -588,6 +673,80 @@ func (s *LayerSuite) TestMutationBlocksOnDrainThenFallsBackAfterHandoff() {
 	ops, logerr := s.log.Replay(0)
 	s.Require().NoError(logerr)
 	s.Empty(ops, "nothing must be recorded in the WAL after fallback")
+}
+
+// ── Test 17: flushed synthetic handle reads through to inner ─────────────────
+//
+// TestSyntheticHandleReadsAfterFlushServeFromInner is the headline regression
+// test (Task 5): a still-open syntheticHandle whose overlay node was cleared
+// by a completed flush must serve reads from inner (the server), not empty
+// data from a nil-base overlay merge.
+
+func (s *LayerSuite) TestSyntheticHandleReadsAfterFlushServeFromInner() {
+	s.grant("dir")
+	_, err := s.fs.Mkdir(s.ctx, "dir", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	fh, _, st := s.layer.Create(s.ctx, "dir", "f.txt", 0, 0o644)
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	_, st = s.layer.Write(s.ctx, fh, 0, []byte("hello"))
+	s.Require().Equal(proto.FsError_FS_OK, st)
+
+	// Simulate a completed interval flush: server has the bytes, overlay is
+	// clear. The real Apply pipeline is out of scope for this unit test — we
+	// prime inner directly with the bytes the (fake) flush would have sent,
+	// then drive the coordinator's REAL Flush so the overlay actually clears.
+	s.writeInner("dir/f.txt", []byte("hello"))
+	s.flushAll()
+	s.False(s.coord.Has("dir/f.txt"), "overlay must be cleared after the flush")
+
+	dest := make([]byte, 5)
+	n, st := s.layer.Read(s.ctx, fh, 0, dest)
+	s.Equal(proto.FsError_FS_OK, st)
+	s.Equal("hello", string(dest[:n]), "read through a flushed synthetic handle must serve server bytes, not empty")
+}
+
+// ── Test 18: orphaned synthetic handle writes through after recall ───────────
+//
+// TestOrphanedSyntheticHandleWritesThroughAfterRecall proves the write side
+// of the same bug: a still-open syntheticHandle whose delegation was recalled
+// (grant dropped by a completed handoff) has nowhere left to defer its write
+// to; it must write through a transient inner handle instead of failing.
+
+func (s *LayerSuite) TestOrphanedSyntheticHandleWritesThroughAfterRecall() {
+	s.grant("dir")
+	_, err := s.fs.Mkdir(s.ctx, "dir", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	fh, _, st := s.layer.Create(s.ctx, "dir", "f.txt", 0, 0o644)
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	_, st = s.layer.Write(s.ctx, fh, 0, []byte("hello"))
+	s.Require().Equal(proto.FsError_FS_OK, st)
+
+	// Simulate the recall flush materialising the file on the server: prime
+	// inner directly (the real Apply pipeline is out of scope here).
+	s.writeInner("dir/f.txt", []byte("hello"))
+
+	// Wire the coordinator as the recall flusher and drive a REAL recall —
+	// FlushForRecall flushes the WAL (the fake Apply stream acks it in full)
+	// and the handoff drops the grant.
+	s.mgr.SetRecallFlusher(s.coord)
+	s.Require().NoError(s.mgr.OnRecall(s.ctx, "dir"))
+	s.False(s.mgr.IsDelegated("dir/f.txt"), "grant must be dropped after a completed recall handoff")
+
+	// fh is still open (never Released) — an orphaned synthetic handle. Write
+	// through it must land on inner via writeThrough.
+	n, st := s.layer.Write(s.ctx, fh, 5, []byte(" world"))
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	s.Equal(uint32(6), n)
+
+	rfh, ferr := s.fs.Open(s.ctx, "dir/f.txt", 0)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	defer func() { _ = s.fs.Release(s.ctx, rfh) }()
+	dest := make([]byte, 11)
+	rn, ferr := s.fs.Read(s.ctx, rfh, 0, dest)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	s.Equal("hello world", string(dest[:rn]), "orphaned synthetic handle's write must land on inner via writeThrough")
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
