@@ -749,6 +749,54 @@ func (s *LayerSuite) TestOrphanedSyntheticHandleWritesThroughAfterRecall() {
 	s.Equal("hello world", string(dest[:rn]), "orphaned synthetic handle's write must land on inner via writeThrough")
 }
 
+// ── Test 19: synthetic handle read merges pending over flushed base ──────────
+//
+// TestSyntheticHandleReadMergesPendingOverFlushedBase pins the baseDelta arm
+// of the Read routing condition. A synthetic file is flushed (overlay cleared),
+// then re-written through the same open handle while still delegated, creating
+// a base-delta overlay node (pending intervals only). Reading it must merge
+// pending bytes over the flushed base via readThrough, not serve a nil-base
+// overlay view with holes.
+
+func (s *LayerSuite) TestSyntheticHandleReadMergesPendingOverFlushedBase() {
+	s.grant("dir")
+	_, err := s.fs.Mkdir(s.ctx, "dir", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	// 1. Create and write "AAAA" via synthetic handle.
+	fh, _, ferr := s.layer.Create(s.ctx, "dir", "f.txt", 0, 0o100644)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	_, ferr = s.layer.Write(s.ctx, fh, 0, []byte("AAAA"))
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+
+	// 2. Flush the overlay: prime inner with flushed bytes and drive a real flush
+	// (fakeApplyStream commits the batch). Overlay node is now cleared.
+	s.writeInner("dir/f.txt", []byte("AAAA"))
+	s.flushAll()
+	s.False(s.coord.Has("dir/f.txt"), "overlay must be cleared after flush")
+
+	// 3. Write "BB" at offset 1 through the SAME still-open handle.
+	// Since the overlay node was cleared by flush, RecordOp sees ok=false and
+	// creates a base-delta node with pending interval [1,3).
+	n, ferr := s.layer.Write(s.ctx, fh, 1, []byte("BB"))
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	s.Equal(uint32(2), n)
+	s.True(s.coord.Has("dir/f.txt"), "overlay must have a base-delta node after write")
+
+	// 4. Read 4 bytes at offset 0 through the same handle. Must merge:
+	//    - bytes 0, 3 from inner (flushed base "AAAA")
+	//    - bytes 1-2 from overlay (pending "BB")
+	//    Result: "ABBA"
+	dest := make([]byte, 4)
+	rn, ferr := s.layer.Read(s.ctx, fh, 0, dest)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	s.Equal(4, rn)
+	s.Equal([]byte("ABBA"), dest[:rn],
+		"read through base-delta synthetic handle must merge pending over flushed base")
+
+	s.Require().Equal(proto.FsError_FS_OK, s.layer.Release(s.ctx, fh))
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func dirNames(entries []backend.DirEntryPlus) []string {
