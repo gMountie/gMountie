@@ -17,8 +17,9 @@ type CacheInvalidator interface {
 }
 
 // RecallFlusher is implemented by the WAL Coordinator (wired in Task 14). It
-// flushes all pending WAL ops to the server before the recall handoff completes,
-// so the contender always sees the holder's deferred writes. The root parameter
+// flushes a barrier snapshot of the pending prefix (a bounded superset of the
+// recalled region's ops) to the server before the recall handoff completes, so
+// the contender always sees the holder's deferred writes. The root parameter
 // names the recalled subtree (for logging/tracing); the current implementation
 // flushes the entire pending prefix, which is a correct superset of root.
 //
