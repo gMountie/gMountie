@@ -20,6 +20,7 @@ import (
 	"context"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -559,12 +560,14 @@ func (b *blockingRecallFlusher) FlushForRecall(_ context.Context, _ string) erro
 	return nil
 }
 
-// TestDrain_FallsBackToWireWhileRootIsDraining verifies that Drain uses
-// IsWriteDelegated (not IsDelegated): once a recall marks a root draining,
-// Drain must go synchronous even though the grant covering the path is still
-// held (IsDelegated would still be true) — new deferred writes must stop
-// admitting the moment a recall begins.
-func (s *CoordinatorSuite) TestDrain_FallsBackToWireWhileRootIsDraining() {
+// TestDrain_ParksWhileRootDrainsThenWiresAfterHandoff verifies Drain's
+// park-until-resolved contract: a Drain issued while the covering root is
+// draining must NOT write to the wire — a wire Write would race the in-flight
+// recall Apply stream carrying OLDER deferred writes for the same path, and
+// the server serializes the two arbitrarily (newer bytes silently overwritten
+// by older = lost update). Drain must park until the drain resolves and reach
+// the wire only AFTER the handoff completes with the grant gone.
+func (s *CoordinatorSuite) TestDrain_ParksWhileRootDrainsThenWiresAfterHandoff() {
 	mgr := delegation.NewManager(noopInvalidator{})
 	mgr.Apply(&proto.DelegationGrant{GrantedRoot: "dir", Gen: 1})
 	release := make(chan struct{})
@@ -585,17 +588,39 @@ func (s *CoordinatorSuite) TestDrain_FallsBackToWireWhileRootIsDraining() {
 	}
 	s.True(mgr.IsDelegated("dir/f.txt"), "the grant is still held while draining (reads stay served from the overlay)")
 
-	wireCalled := false
+	var wireCalls atomic.Int32
 	wireFlush := func(_ context.Context, _ []byte, _ int64, _ string) proto.FsError {
-		wireCalled = true
+		wireCalls.Add(1)
 		return proto.FsError_FS_OK
 	}
-	st := coord.Drain(context.Background(), "dir/f.txt", []byte("x"), 0, "req-drain", wireFlush)
-	s.Equal(proto.FsError_FS_OK, st)
-	s.True(wireCalled, "Drain must fall back to wire while the region is draining")
 
+	drainDone := make(chan proto.FsError, 1)
+	go func() {
+		drainDone <- coord.Drain(context.Background(), "dir/f.txt", []byte("x"), 0, "req-drain", wireFlush)
+	}()
+
+	// While the recall flush is parked, Drain must neither return nor touch
+	// the wire (bounded negative window).
+	select {
+	case <-drainDone:
+		s.Fail("Drain must park while the root is draining, not return")
+	case <-time.After(50 * time.Millisecond):
+	}
+	s.Zero(wireCalls.Load(), "Drain must not wire-write mid-drain (would race the recall Apply stream)")
+
+	// Complete the recall: the handoff drops the grant, the parked Drain
+	// wakes, is refused deferral (grant gone), and only then goes to the wire.
 	close(release)
 	<-recallDone
+
+	var st proto.FsError
+	select {
+	case st = <-drainDone:
+	case <-time.After(2 * time.Second):
+		s.FailNow("Drain did not resolve after the drain completed")
+	}
+	s.Equal(proto.FsError_FS_OK, st)
+	s.Equal(int32(1), wireCalls.Load(), "Drain must reach the wire exactly once, after the handoff")
 }
 
 func TestCoordinatorSuite(t *testing.T) {

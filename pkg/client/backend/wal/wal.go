@@ -11,12 +11,16 @@
 //     an OpWrite to the BboltLog (durable) then applies it to the Overlay
 //     (in-memory), and Drain returns FS_OK without calling wireFlush.
 //     Zero-byte flushes (empty pending) are skipped — they carry no data and
-//     would pollute the log. IsWriteDelegated (unlike IsDelegated) is false
-//     while the path's region is draining under an in-flight recall, so a
-//     write admitted here can still lose the race to RecordOp's authoritative
-//     recheck (ErrNotDelegated) — Drain falls back to wireFlush in that case.
-//   - Otherwise → wireFlush is called immediately (unchanged behavior for
-//     non-delegated paths). The log and overlay are not touched.
+//     would pollute the log.
+//   - If the path's region is DRAINING under an in-flight recall (or a rename
+//     admission barrier) → Drain PARKS in Manager.WaitDrained until the drain
+//     resolves, then re-decides: grant retained (failed recall flush) → defer;
+//     grant gone (completed handoff) → wireFlush. It never wire-writes
+//     mid-drain — a wire Write would race the in-flight recall Apply stream
+//     carrying OLDER deferred writes for the same path (lost update).
+//   - Otherwise (genuinely undelegated) → wireFlush is called immediately
+//     (unchanged behavior for non-delegated paths). The log and overlay are
+//     not touched.
 //
 // # Import direction
 //
@@ -67,8 +71,9 @@ type Coordinator struct {
 
 	// onLoss is the hook called on an ordered halt (FailedSeq > 0) or gen-fence.
 	// Default is nil (no-op). Set via WithOnLoss.
-	// reason identifies the loss path: "apply-failure", "gen-fenced",
-	// "recall-flush-failure", "wal-unreadable".
+	// reason identifies the loss path: "apply-failure" (any Flush trigger,
+	// including a recall-window flush — FlushForRecall routes through Flush and
+	// does not get its own label), "gen-fenced", "wal-unreadable".
 	onLoss func(reason string, lostOps []Op, fe proto.FsError)
 
 	// onFlushed, if set, is called with the flushed ops in processAck just before
@@ -149,8 +154,18 @@ func NewCoordinator(mgr *delegation.Manager, log *BboltLog, overlay *Overlay, op
 // Zero-byte pending data on a delegated path is a no-op (fast-path: skip the
 // log entry for a clean Flush that had nothing coalesced).
 //
-// Non-delegated path: calls wireFlush directly — byte-identical to the
-// pre-Task-10 wire-drain behavior.
+// Genuinely undelegated path (no drain in flight): calls wireFlush directly —
+// byte-identical to the pre-Task-10 wire-drain behavior.
+//
+// Mid-drain, Drain PARKS until resolved instead of falling back to the wire.
+// The old "synchronous is always coherent" reasoning is wrong there: a wire
+// Write issued while the region drains races the in-flight recall Apply
+// stream, which may carry OLDER deferred writes for the same path — the
+// server serializes the two arbitrarily, so the newer bytes can be silently
+// overwritten by the older (lost update). Only once no drain is in flight is
+// the wire safe: either the path was never delegated (no deferred op can be
+// racing an Apply), or the handoff completed and the recalled prefix is
+// durably applied (or loudly lost), so a wire write cannot be overtaken.
 func (c *Coordinator) Drain(
 	ctx context.Context,
 	path string,
@@ -159,32 +174,36 @@ func (c *Coordinator) Drain(
 	requestID string,
 	wireFlush func(ctx context.Context, data []byte, off int64, reqID string) proto.FsError,
 ) proto.FsError {
-	if !c.mgr.IsWriteDelegated(path) {
-		return wireFlush(ctx, pendingData, pendingOff, requestID)
+	for {
+		if !c.mgr.IsWriteDelegated(path) && !c.mgr.IsDraining(path) {
+			// Genuinely undelegated (no drain in flight): the wire is safe —
+			// no deferred op for this path can still be racing an Apply.
+			return wireFlush(ctx, pendingData, pendingOff, requestID)
+		}
+		if len(pendingData) == 0 {
+			return proto.FsError_FS_OK
+		}
+		op := Op{Kind: OpWrite, Path: path, Offset: pendingOff, Data: pendingData}
+		err := c.RecordOp(op)
+		if err == nil {
+			return proto.FsError_FS_OK
+		}
+		if !stderrors.Is(err, ErrNotDelegated) {
+			return proto.FsError_FS_EIO
+		}
+		if !c.mgr.IsDraining(path) {
+			// Refused because the grant is gone (handoff complete), not
+			// because a drain is in flight: the recalled prefix is durably
+			// applied (or loudly lost), so a wire write cannot be overtaken.
+			return wireFlush(ctx, pendingData, pendingOff, requestID)
+		}
+		if ctx.Err() != nil {
+			// Dead ctx while a drain is in flight: fail closed. Writing to
+			// the wire here could still be overtaken by the in-flight Apply.
+			return proto.FsError_FS_EIO
+		}
+		c.mgr.WaitDrained(ctx, path)
 	}
-
-	// Delegated: skip zero-byte flushes (no data to persist).
-	if len(pendingData) == 0 {
-		return proto.FsError_FS_OK
-	}
-
-	op := Op{
-		Kind:   OpWrite,
-		Path:   path,
-		Offset: pendingOff,
-		Data:   pendingData,
-	}
-	err := c.RecordOp(op)
-	if stderrors.Is(err, ErrNotDelegated) {
-		// Lost the race with a recall between the check above and the append:
-		// the region is draining or handed off. Fall back to the wire —
-		// synchronous is always coherent.
-		return wireFlush(ctx, pendingData, pendingOff, requestID)
-	}
-	if err != nil {
-		return proto.FsError_FS_EIO
-	}
-	return proto.FsError_FS_OK
 }
 
 // RecordOp admits, gen-stamps, and durably appends op, then applies it to the

@@ -163,6 +163,25 @@ func (m *Manager) IsWriteDelegated(path string) bool {
 	return m.coveringGrantLocked(path) != nil
 }
 
+// IsDraining reports whether any draining (recall or admission barrier in
+// flight) root covers path. Callers refused admission (ErrNotDelegated)
+// discriminate with it: refused WHILE draining → park in WaitDrained and
+// re-decide; refused with no drain in flight → the grant is gone and the
+// synchronous fallback is safe. Nil-receiver safe.
+func (m *Manager) IsDraining(path string) bool {
+	if m == nil {
+		return false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for root := range m.draining {
+		if contains(root, path) {
+			return true
+		}
+	}
+	return false
+}
+
 // GenFor returns the server-issued generation of the grant covering path, or 0
 // when no grant covers it. The Coordinator stamps this on every deferred op so
 // the server's revoked-gen fence can reject the op if the grant is later

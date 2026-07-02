@@ -236,8 +236,10 @@ func (c *Coordinator) Flush(ctx context.Context, throughSeq uint64) error {
 }
 
 // processAck handles the ApplyAck and transport error from applyOps.
-// reason is the loss reason label passed to onLoss (e.g. "apply-failure",
-// "gen-fenced", "recall-flush-failure"). It must be called while holding flushMu.
+// reason is the loss reason label passed to onLoss: "apply-failure" from Flush
+// — including a recall-window flush, since FlushForRecall routes through the
+// same Flush path and does not distinguish the caller (design doc §7.4) — or
+// "gen-fenced" from Replay. It must be called while holding flushMu.
 func (c *Coordinator) processAck(reason string, ack *proto.ApplyAck, sent []Op, transportErr error) error {
 	if transportErr != nil {
 		// Transport-level failure: the ops are NOT discarded (they stay in the
