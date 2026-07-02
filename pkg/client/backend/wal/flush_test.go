@@ -312,34 +312,41 @@ func (s *FlushSuite) TestFlush_ConcurrentInFlightWriteSurvives() {
 
 // ── Test 2b: FlushForRecall barrier ───────────────────────────────────────────
 
-// TestFlushForRecallDrainsOpsRecordedMidFlush proves the recall-flush barrier
-// (Task 3): FlushForRecall takes recordMu around its log snapshot and loops
-// until the log is empty, so an op recorded WHILE the first Apply batch is in
-// flight (and thus not in that batch's snapshot) is still picked up and
-// flushed by a later loop iteration — it cannot be left deferred past the
-// recall handoff.
-func (s *FlushSuite) TestFlushForRecallDrainsOpsRecordedMidFlush() {
+// TestFlushForRecallBoundedByBarrierSnapshot proves the FlushForRecall
+// contract is a SINGLE bounded flush of the recordMu-barrier snapshot, not a
+// loop-until-empty. It grants two independent regions ("dir" and "other").
+// One op is recorded under "dir" before the recall; that op is the entire
+// barrier snapshot. While the resulting single Apply batch is in flight
+// (signalled via onFirstSend), a second op is recorded under "other" — a
+// non-draining region, so admission succeeds. This op arrives strictly AFTER
+// the barrier snapshot was taken.
+//
+// FlushForRecall must flush only the snapshot (the "dir" op) and return —
+// the late "other" op must remain deferred in the log. This is the
+// discriminating assertion: the old loop-until-empty version would re-snapshot
+// after the first flush, pick up the late "other" op too, and leave the log
+// empty. That behavior is exactly the liveness bug — sustained writes to
+// OTHER, non-draining regions would keep the log non-empty forever and the
+// recall handoff would never return.
+func (s *FlushSuite) TestFlushForRecallBoundedByBarrierSnapshot() {
 	s.mgr.Apply(&proto.DelegationGrant{GrantedRoot: "dir", Gen: 1})
+	s.mgr.Apply(&proto.DelegationGrant{GrantedRoot: "other", Gen: 1})
 
 	s.Require().NoError(s.coord.RecordOp(Op{Kind: OpCreate, Path: "dir/a", Mode: 0o644}))
 
-	firstBatchSent := make(chan struct{})
-	secondOpRecorded := make(chan struct{})
-	var closeFirstBatchSent sync.Once
+	firstBatchSending := make(chan struct{})
+	otherRecorded := make(chan struct{})
+	var closeFirstBatchSending sync.Once
 
-	callCount := 0
 	s.coord.cfg.applyFactory = func(_ context.Context) (proto.RpcFs_ApplyClient, error) {
-		callCount++
-		batchNum := callCount
 		st := &fakeApplyStream{}
-		if batchNum == 1 {
-			// Block the first batch's Send until the second op is recorded, so
-			// FlushForRecall's second loop iteration is guaranteed to see it —
-			// without this the test would be racy (RecordOp vs. the snapshot).
-			st.onFirstSend = func() {
-				closeFirstBatchSent.Do(func() { close(firstBatchSent) })
-				<-secondOpRecorded
-			}
+		// Block the single batch's Send until the "other" op is recorded, so
+		// the assertion below is deterministic (not racing RecordOp against
+		// the Apply completing) regardless of which FlushForRecall variant is
+		// under test.
+		st.onFirstSend = func() {
+			closeFirstBatchSending.Do(func() { close(firstBatchSending) })
+			<-otherRecorded
 		}
 		st.onClose = func() *proto.ApplyAck {
 			seq := uint64(0)
@@ -351,18 +358,22 @@ func (s *FlushSuite) TestFlushForRecallDrainsOpsRecordedMidFlush() {
 		return st, nil
 	}
 
+	var otherRecordErr error
 	go func() {
-		<-firstBatchSent
-		_ = s.coord.RecordOp(Op{Kind: OpCreate, Path: "dir/b", Mode: 0o644})
-		close(secondOpRecorded)
+		<-firstBatchSending
+		// "other" is not draining — admission must succeed.
+		otherRecordErr = s.coord.RecordOp(Op{Kind: OpCreate, Path: "other/x", Mode: 0o644})
+		close(otherRecorded)
 	}()
 
-	s.Require().NoError(s.coord.FlushForRecall(context.Background(), "dir"))
-
-	remaining, err := s.log.Replay(0)
+	err := s.coord.FlushForRecall(context.Background(), "dir")
 	s.Require().NoError(err)
-	s.Empty(remaining, "FlushForRecall must loop until the log is empty")
-	s.GreaterOrEqual(callCount, 2, "the op recorded mid-flush must be picked up by a second loop iteration")
+	s.Require().NoError(otherRecordErr, "'other' is not draining so admission must succeed")
+
+	remaining, rerr := s.log.Replay(0)
+	s.Require().NoError(rerr)
+	s.Require().Len(remaining, 1, "the late other-region op recorded after the barrier snapshot must remain deferred")
+	s.Equal("other/x", remaining[0].Path, "the surviving log entry must be the late other-region op, not the flushed snapshot op")
 }
 
 // ── Test 3: Ordered halt ──────────────────────────────────────────────────────
