@@ -9,6 +9,10 @@ import (
 	"go.gmountie.dev/gmountie/pkg/proto"
 )
 
+type noopInvalidator struct{}
+
+func (noopInvalidator) InvalidateSubtree(string) {}
+
 type fakeInv struct{ subtrees []string }
 
 func (f *fakeInv) InvalidateSubtree(p string) { f.subtrees = append(f.subtrees, p) }
@@ -168,4 +172,22 @@ func (s *ManagerSuite) TestOnRecall_NilFlusher_Phase1Behavior() {
 	s.Require().NoError(err)
 	s.False(m.IsDelegated("proj/x"), "grant must be dropped")
 	s.Equal([]string{"proj"}, inv.subtrees, "cache must be invalidated")
+}
+
+func (s *ManagerSuite) TestApplyStoresGenAndGenForReturnsIt() {
+	m := NewManager(noopInvalidator{})
+	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj", Gen: 42})
+
+	s.Equal(uint64(42), m.GenFor("proj/src/a.txt"))
+	s.Equal(uint64(42), m.GenFor("proj"))
+	s.Zero(m.GenFor("elsewhere/b.txt"), "uncovered path has gen 0")
+}
+
+func (s *ManagerSuite) TestGenForRespectsExclusionsAndNilReceiver() {
+	m := NewManager(noopInvalidator{})
+	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj", ExcludedPaths: []string{"proj/hot"}, Gen: 7})
+
+	s.Zero(m.GenFor("proj/hot/x"), "excluded sub-path is not delegated")
+	var nilMgr *Manager
+	s.Zero(nilMgr.GenFor("proj/src/a.txt"), "nil manager returns 0")
 }

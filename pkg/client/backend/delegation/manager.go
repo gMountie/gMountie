@@ -34,6 +34,10 @@ type RecallFlusher interface {
 type grantState struct {
 	grantedRoot   string
 	excludedPaths []string
+	// gen is the server-issued generation for this grant. Every WAL op deferred
+	// under the grant is stamped with it (Coordinator.RecordOp) so the server's
+	// revoked-gen fence can reject a stale replay after a handoff.
+	gen uint64
 }
 
 // Manager holds active delegation grants, exposes the IsDelegated oracle used
@@ -85,18 +89,11 @@ func contains(a, b string) bool {
 	return a == "" || a == b || strings.HasPrefix(b, a+"/")
 }
 
-// IsDelegated returns true iff at least one held grant covers path and no
-// excluded sub-path covers path.
-func (m *Manager) IsDelegated(path string) bool {
-	// Nil-receiver safe: a nil *Manager (WAL disabled → no delegation) means
-	// "nothing is delegated". Defends against a typed-nil oracle reaching the
-	// cache's delegation-aware fast path without panicking.
-	if m == nil {
-		return false
-	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	for _, g := range m.grants {
+// coveringGrantLocked returns the grant covering path (containment minus
+// exclusions), or nil. Caller must hold m.mu (read or write).
+func (m *Manager) coveringGrantLocked(path string) *grantState {
+	for k := range m.grants {
+		g := m.grants[k]
 		if !contains(g.grantedRoot, path) {
 			continue
 		}
@@ -108,10 +105,40 @@ func (m *Manager) IsDelegated(path string) bool {
 			}
 		}
 		if !excluded {
-			return true
+			return &g
 		}
 	}
-	return false
+	return nil
+}
+
+// IsDelegated returns true iff at least one held grant covers path and no
+// excluded sub-path covers path.
+func (m *Manager) IsDelegated(path string) bool {
+	// Nil-receiver safe: a nil *Manager (WAL disabled → no delegation) means
+	// "nothing is delegated". Defends against a typed-nil oracle reaching the
+	// cache's delegation-aware fast path without panicking.
+	if m == nil {
+		return false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.coveringGrantLocked(path) != nil
+}
+
+// GenFor returns the server-issued generation of the grant covering path, or 0
+// when no grant covers it. The Coordinator stamps this on every deferred op so
+// the server's revoked-gen fence can reject the op if the grant is later
+// revoked (machine-death handoff). Nil-receiver safe.
+func (m *Manager) GenFor(path string) uint64 {
+	if m == nil {
+		return 0
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if g := m.coveringGrantLocked(path); g != nil {
+		return g.gen
+	}
+	return 0
 }
 
 // Apply records a grant returned by the server. A grant with an empty
@@ -125,6 +152,7 @@ func (m *Manager) Apply(grant *proto.DelegationGrant) {
 	m.grants[grant.GrantedRoot] = grantState{
 		grantedRoot:   grant.GrantedRoot,
 		excludedPaths: grant.ExcludedPaths,
+		gen:           grant.GetGen(),
 	}
 }
 
