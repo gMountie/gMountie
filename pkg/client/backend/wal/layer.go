@@ -17,9 +17,16 @@
 //
 // # Write routing
 //
-// For delegated paths, mutating ops (Create/Mkdir/Unlink/Rmdir/Rename/
-// SetAttr/Symlink/SetXAttr/RemoveXAttr) record a wal.Op via coord.RecordOp
-// and return optimistic success without forwarding to inner.
+// Mutating ops (Create/Mkdir/Unlink/Rmdir/Rename/SetAttr/Symlink/SetXAttr/
+// RemoveXAttr) record a wal.Op via coord.RecordOp (through the recordDeferred
+// helper for everything except Rename) and return optimistic success without
+// forwarding to inner. Admission is owned by the Coordinator: RecordOp refuses
+// with ErrNotDelegated when the path (or NewPath) is not write-delegated,
+// checked atomically with the append. recordDeferred handles the recall race
+// — on a first refusal it waits out an in-flight drain via mgr.WaitDrained and
+// retries once; the retry either defers as usual (failed recall flush, grant
+// retained) or is refused again (completed handoff, grant gone), in which case
+// the caller falls back to the synchronous inner path.
 //
 // Write (byte-level) dispatches on handle type (Task 14b):
 //   - syntheticHandle: the file was created by this overlay and inner knows
@@ -61,6 +68,7 @@ package wal
 
 import (
 	"context"
+	stderrors "errors"
 	"syscall"
 
 	"go.gmountie.dev/gmountie/pkg/client/backend"
@@ -309,10 +317,37 @@ func (l *Layer) GetXAttr(ctx context.Context, path, attr string) ([]byte, proto.
 
 // ── Write ops ─────────────────────────────────────────────────────────────────
 
+// recordDeferred records op via the Coordinator, handling a recall race: when
+// admission is refused because the covering region is draining, wait for the
+// drain to finish and retry once. After a completed handoff the retry is
+// refused again (grant gone) and the caller falls back to the synchronous
+// inner path; after a failed recall flush the grant is retained and the retry
+// defers as before.
+func (l *Layer) recordDeferred(ctx context.Context, op Op) error {
+	err := l.coord.RecordOp(op)
+	if !stderrors.Is(err, ErrNotDelegated) {
+		return err
+	}
+	l.mgr.WaitDrained(ctx, op.Path)
+	return l.coord.RecordOp(op)
+}
+
+// deferOrForward is the shared status-only body: defer via the WAL, or forward
+// to inner when not write-delegated, or EIO on a durable-append failure.
+func (l *Layer) deferOrForward(ctx context.Context, op Op, forward func() proto.FsError) proto.FsError {
+	switch err := l.recordDeferred(ctx, op); {
+	case err == nil:
+		return proto.FsError_FS_OK
+	case stderrors.Is(err, ErrNotDelegated):
+		return forward()
+	default:
+		return proto.FsError_FS_EIO
+	}
+}
+
 // Create records a pending create in the WAL for delegated parents and returns
-// a synthetic handle + the overlay's attr. Inner is NOT called for delegated
-// creates (the create is deferred until delegation is recalled and the WAL is
-// replayed to the server).
+// a synthetic handle + the overlay's attr. Falls back to inner when the path
+// is not write-delegated (never was, or a recall just handed it off).
 //
 // The returned syntheticHandle is R/W-capable via the overlay (Task 14b):
 // Write routes through coord.RecordOp; Read serves from coord.ReadMerge with
@@ -320,60 +355,55 @@ func (l *Layer) GetXAttr(ctx context.Context, path, attr string) ([]byte, proto.
 // fresh syntheticHandle for the same overlay-created file.
 func (l *Layer) Create(ctx context.Context, parent, name string, flags, mode uint32) (backend.FileHandle, *backend.Attr, proto.FsError) {
 	path := joinPath(parent, name)
-	if l.mgr.IsDelegated(path) {
-		op := Op{Kind: OpCreate, Path: path, Mode: mode, Flags: flags}
-		if err := l.coord.RecordOp(op); err != nil {
-			return nil, nil, proto.FsError_FS_EIO
-		}
+	op := Op{Kind: OpCreate, Path: path, Mode: mode, Flags: flags}
+	switch err := l.recordDeferred(ctx, op); {
+	case err == nil:
 		attr, ok, _, _, _ := l.coord.Stat(path)
 		if !ok {
 			return nil, nil, proto.FsError_FS_EIO
 		}
 		return &syntheticHandle{path: path}, attr, proto.FsError_FS_OK
+	case stderrors.Is(err, ErrNotDelegated):
+		return l.Inner.Create(ctx, parent, name, flags, mode)
+	default:
+		return nil, nil, proto.FsError_FS_EIO
 	}
-	return l.Inner.Create(ctx, parent, name, flags, mode)
 }
 
-// Mkdir records a pending mkdir in the WAL for delegated paths.
+// Mkdir records a pending mkdir in the WAL for delegated paths. Falls back to
+// inner when the path is not write-delegated.
 func (l *Layer) Mkdir(ctx context.Context, path string, mode uint32) (*backend.Attr, proto.FsError) {
-	if l.mgr.IsDelegated(path) {
-		op := Op{Kind: OpMkdir, Path: path, Mode: mode}
-		if err := l.coord.RecordOp(op); err != nil {
-			log.Log.Warn("wal: deferred Mkdir RecordOp failed -> EIO", zap.String("path", path), zap.Error(err))
-			return nil, proto.FsError_FS_EIO
-		}
+	op := Op{Kind: OpMkdir, Path: path, Mode: mode}
+	switch err := l.recordDeferred(ctx, op); {
+	case err == nil:
 		attr, ok, _, _, _ := l.coord.Stat(path)
 		if !ok {
 			log.Log.Warn("wal: deferred Mkdir overlay Stat !ok -> EIO", zap.String("path", path))
 			return nil, proto.FsError_FS_EIO
 		}
 		return attr, proto.FsError_FS_OK
+	case stderrors.Is(err, ErrNotDelegated):
+		return l.Inner.Mkdir(ctx, path, mode)
+	default:
+		log.Log.Warn("wal: deferred Mkdir RecordOp failed -> EIO", zap.String("path", path))
+		return nil, proto.FsError_FS_EIO
 	}
-	return l.Inner.Mkdir(ctx, path, mode)
 }
 
-// Unlink records a pending delete for delegated paths.
+// Unlink records a pending delete for delegated paths. Falls back to inner
+// when the path is not write-delegated.
 func (l *Layer) Unlink(ctx context.Context, path string) proto.FsError {
-	if l.mgr.IsDelegated(path) {
-		op := Op{Kind: OpUnlink, Path: path}
-		if err := l.coord.RecordOp(op); err != nil {
-			return proto.FsError_FS_EIO
-		}
-		return proto.FsError_FS_OK
-	}
-	return l.Inner.Unlink(ctx, path)
+	return l.deferOrForward(ctx, Op{Kind: OpUnlink, Path: path}, func() proto.FsError {
+		return l.Inner.Unlink(ctx, path)
+	})
 }
 
-// Rmdir records a pending rmdir for delegated paths.
+// Rmdir records a pending rmdir for delegated paths. Falls back to inner when
+// the path is not write-delegated.
 func (l *Layer) Rmdir(ctx context.Context, path string) proto.FsError {
-	if l.mgr.IsDelegated(path) {
-		op := Op{Kind: OpRmdir, Path: path}
-		if err := l.coord.RecordOp(op); err != nil {
-			return proto.FsError_FS_EIO
-		}
-		return proto.FsError_FS_OK
-	}
-	return l.Inner.Rmdir(ctx, path)
+	return l.deferOrForward(ctx, Op{Kind: OpRmdir, Path: path}, func() proto.FsError {
+		return l.Inner.Rmdir(ctx, path)
+	})
 }
 
 // Rename defers the rename via the WAL only when both the old and new paths
@@ -391,80 +421,78 @@ func (l *Layer) Rename(ctx context.Context, oldPath, newPath string) proto.FsErr
 	return l.Inner.Rename(ctx, oldPath, newPath)
 }
 
-// SetAttr records a pending setattr for delegated paths and returns merged attrs.
+// SetAttr records a pending setattr for delegated paths and returns merged
+// attrs. Falls back to inner when the path is not write-delegated.
 func (l *Layer) SetAttr(ctx context.Context, path string, in backend.SetAttrIn) (*backend.Attr, proto.FsError) {
-	if l.mgr.IsDelegated(path) {
-		op := Op{
-			Kind:  OpSetAttr,
-			Path:  path,
-			Valid: in.Valid,
-			Mode:  in.Mode,
-			UID:   in.Uid,
-			GID:   in.Gid,
-		}
-		if in.Valid&backend.FATTR_SIZE != 0 {
-			op.Size = in.Size
-		}
-		if in.Valid&backend.FATTR_ATIME != 0 && in.Atime != nil {
-			op.AtimeSec = in.Atime.Unix()
-			op.AtimeNsec = uint32(in.Atime.Nanosecond())
-		}
-		if in.Valid&backend.FATTR_MTIME != 0 && in.Mtime != nil {
-			op.MtimeSec = in.Mtime.Unix()
-			op.MtimeNsec = uint32(in.Mtime.Nanosecond())
-		}
-		if err := l.coord.RecordOp(op); err != nil {
-			return nil, proto.FsError_FS_EIO
-		}
-		return l.mergedStat(ctx, path)
+	op := Op{
+		Kind:  OpSetAttr,
+		Path:  path,
+		Valid: in.Valid,
+		Mode:  in.Mode,
+		UID:   in.Uid,
+		GID:   in.Gid,
 	}
-	return l.Inner.SetAttr(ctx, path, in)
+	if in.Valid&backend.FATTR_SIZE != 0 {
+		op.Size = in.Size
+	}
+	if in.Valid&backend.FATTR_ATIME != 0 && in.Atime != nil {
+		op.AtimeSec = in.Atime.Unix()
+		op.AtimeNsec = uint32(in.Atime.Nanosecond())
+	}
+	if in.Valid&backend.FATTR_MTIME != 0 && in.Mtime != nil {
+		op.MtimeSec = in.Mtime.Unix()
+		op.MtimeNsec = uint32(in.Mtime.Nanosecond())
+	}
+	switch err := l.recordDeferred(ctx, op); {
+	case err == nil:
+		return l.mergedStat(ctx, path)
+	case stderrors.Is(err, ErrNotDelegated):
+		return l.Inner.SetAttr(ctx, path, in)
+	default:
+		return nil, proto.FsError_FS_EIO
+	}
 }
 
-// Symlink records a pending symlink create for delegated paths.
+// Symlink records a pending symlink create for delegated paths. Falls back to
+// inner when the path is not write-delegated.
 func (l *Layer) Symlink(ctx context.Context, target, linkPath string) (*backend.Attr, proto.FsError) {
-	if l.mgr.IsDelegated(linkPath) {
-		op := Op{Kind: OpSymlink, Path: linkPath, Data: []byte(target)}
-		if err := l.coord.RecordOp(op); err != nil {
-			return nil, proto.FsError_FS_EIO
-		}
+	op := Op{Kind: OpSymlink, Path: linkPath, Data: []byte(target)}
+	switch err := l.recordDeferred(ctx, op); {
+	case err == nil:
 		attr, ok, _, _, _ := l.coord.Stat(linkPath)
 		if !ok {
 			return nil, proto.FsError_FS_EIO
 		}
 		return attr, proto.FsError_FS_OK
+	case stderrors.Is(err, ErrNotDelegated):
+		return l.Inner.Symlink(ctx, target, linkPath)
+	default:
+		return nil, proto.FsError_FS_EIO
 	}
-	return l.Inner.Symlink(ctx, target, linkPath)
 }
 
-// SetXAttr records a pending xattr set for delegated paths.
+// SetXAttr records a pending xattr set for delegated paths. Falls back to
+// inner when the path is not write-delegated.
 func (l *Layer) SetXAttr(ctx context.Context, path, attr string, data []byte, flags uint32) proto.FsError {
-	if l.mgr.IsDelegated(path) {
-		op := Op{
-			Kind:       OpSetXAttr,
-			Path:       path,
-			XattrName:  attr,
-			XattrValue: data,
-			XattrFlags: flags,
-		}
-		if err := l.coord.RecordOp(op); err != nil {
-			return proto.FsError_FS_EIO
-		}
-		return proto.FsError_FS_OK
+	op := Op{
+		Kind:       OpSetXAttr,
+		Path:       path,
+		XattrName:  attr,
+		XattrValue: data,
+		XattrFlags: flags,
 	}
-	return l.Inner.SetXAttr(ctx, path, attr, data, flags)
+	return l.deferOrForward(ctx, op, func() proto.FsError {
+		return l.Inner.SetXAttr(ctx, path, attr, data, flags)
+	})
 }
 
-// RemoveXAttr records a pending xattr removal for delegated paths.
+// RemoveXAttr records a pending xattr removal for delegated paths. Falls back
+// to inner when the path is not write-delegated.
 func (l *Layer) RemoveXAttr(ctx context.Context, path, attr string) proto.FsError {
-	if l.mgr.IsDelegated(path) {
-		op := Op{Kind: OpRemoveXAttr, Path: path, XattrName: attr}
-		if err := l.coord.RecordOp(op); err != nil {
-			return proto.FsError_FS_EIO
-		}
-		return proto.FsError_FS_OK
-	}
-	return l.Inner.RemoveXAttr(ctx, path, attr)
+	op := Op{Kind: OpRemoveXAttr, Path: path, XattrName: attr}
+	return l.deferOrForward(ctx, op, func() proto.FsError {
+		return l.Inner.RemoveXAttr(ctx, path, attr)
+	})
 }
 
 // ── mergedStat ───────────────────────────────────────────────────────────────

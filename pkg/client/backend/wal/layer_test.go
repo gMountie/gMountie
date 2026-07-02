@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 	"go.gmountie.dev/gmountie/pkg/client/backend"
@@ -482,6 +483,111 @@ func (s *LayerSuite) TestNonDelegated_Create_PassthroughToInner() {
 	ops, logerr := s.log.Replay(0)
 	s.Require().NoError(logerr)
 	s.Empty(ops, "non-delegated Create must not produce a WAL entry")
+}
+
+// ── Test 15: undelegated mutation falls back to inner (contract pin) ─────────
+//
+// This pins the post-refactor contract: admission now lives in
+// Coordinator.RecordOp (Task 3), not an IsDelegated gate in the Layer. With no
+// grant applied, every mutating op must still reach inner synchronously, and
+// nothing may be recorded in the WAL.
+
+func (s *LayerSuite) TestMutationFallsBackToInnerWhenNotDelegated() {
+	// No grant applied.
+	_, err := s.fs.Mkdir(s.ctx, "plain", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+	_, _, err = s.fs.Create(s.ctx, "plain", "file.txt", 0, 0o100644)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	st := s.layer.Unlink(s.ctx, "plain/file.txt")
+	s.Equal(proto.FsError_FS_OK, st)
+
+	_, innerErr := s.fs.Stat(s.ctx, "plain/file.txt")
+	s.Equal(proto.FsError_FS_ENOENT, innerErr, "undelegated unlink must reach inner")
+
+	ops, logerr := s.log.Replay(0)
+	s.Require().NoError(logerr)
+	s.Empty(ops, "nothing recorded in the WAL")
+}
+
+// ── Test 16: draining region blocks, then falls back after handoff ───────────
+//
+// blockingRecallFlusher implements delegation.RecallFlusher and blocks
+// FlushForRecall until release is closed — used to hold a root in the
+// "draining" state for the duration of the test, mirroring the pattern in
+// wal_test.go's TestDrain_FallsBackToWireWhileRootIsDraining.
+type blockingRecallFlusher struct {
+	release chan struct{}
+}
+
+func (b *blockingRecallFlusher) FlushForRecall(_ context.Context, _ string) error {
+	<-b.release
+	return nil
+}
+
+// TestMutationBlocksOnDrainThenFallsBackAfterHandoff is the discriminating
+// test for recordDeferred: while a recall is draining the covering root,
+// RecordOp refuses immediately (ErrNotDelegated), so a concurrent Unlink must
+// block in mgr.WaitDrained rather than either succeeding early or forwarding
+// to inner prematurely. Once the recall flush completes, the handoff drops
+// the grant, the retried RecordOp is refused again, and Unlink falls back to
+// inner synchronously — recording nothing in the WAL.
+func (s *LayerSuite) TestMutationBlocksOnDrainThenFallsBackAfterHandoff() {
+	_, err := s.fs.Mkdir(s.ctx, "dir", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+	_, _, err = s.fs.Create(s.ctx, "dir", "f.txt", 0, 0o100644)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	s.grant("dir")
+
+	release := make(chan struct{})
+	s.mgr.SetRecallFlusher(&blockingRecallFlusher{release: release})
+
+	recallDone := make(chan struct{})
+	go func() {
+		_ = s.mgr.OnRecall(s.ctx, "dir")
+		close(recallDone)
+	}()
+
+	// Wait for the recall to mark "dir" draining.
+	for s.mgr.IsWriteDelegated("dir/f.txt") {
+		time.Sleep(time.Millisecond)
+	}
+	s.True(s.mgr.IsDelegated("dir/f.txt"), "grant is still held while draining")
+
+	unlinkDone := make(chan proto.FsError, 1)
+	go func() {
+		unlinkDone <- s.layer.Unlink(s.ctx, "dir/f.txt")
+	}()
+
+	// Must block while the recall flush is in flight.
+	select {
+	case <-unlinkDone:
+		s.Fail("Unlink must block while the region is draining")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// Complete the recall flush — the handoff drops the grant.
+	close(release)
+	<-recallDone
+
+	var st proto.FsError
+	select {
+	case st = <-unlinkDone:
+	case <-time.After(2 * time.Second):
+		s.FailNow("Unlink did not unblock after the drain completed")
+	}
+	s.Equal(proto.FsError_FS_OK, st)
+
+	// Fell back to inner: memfs must have the unlink.
+	_, innerErr := s.fs.Stat(s.ctx, "dir/f.txt")
+	s.Equal(proto.FsError_FS_ENOENT, innerErr, "unlink must have reached inner after fallback")
+
+	// Nothing recorded in the WAL (the grant was already dropped by the time
+	// the retried RecordOp ran).
+	ops, logerr := s.log.Replay(0)
+	s.Require().NoError(logerr)
+	s.Empty(ops, "nothing must be recorded in the WAL after fallback")
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
