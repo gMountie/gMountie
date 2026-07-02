@@ -23,10 +23,11 @@
 // forwarding to inner. Admission is owned by the Coordinator: RecordOp refuses
 // with ErrNotDelegated when the path (or NewPath) is not write-delegated,
 // checked atomically with the append. recordDeferred handles the recall race
-// — on a first refusal it waits out an in-flight drain via mgr.WaitDrained and
-// retries once; the retry either defers as usual (failed recall flush, grant
-// retained) or is refused again (completed handoff, grant gone), in which case
-// the caller falls back to the synchronous inner path.
+// — on a refusal while the region is draining it parks in mgr.WaitDrained and
+// re-decides in a loop; it returns the refusal only once no drain is in
+// flight (completed handoff, grant gone), at which point the caller's
+// synchronous inner fallback is safe. After a failed recall flush the grant
+// is retained and the retried op defers as usual.
 //
 // Write (byte-level) dispatches on handle type (Task 14b):
 //   - syntheticHandle, still covered by its delegation: Write is recorded via
@@ -399,19 +400,32 @@ func (l *Layer) GetXAttr(ctx context.Context, path, attr string) ([]byte, proto.
 
 // ── Write ops ─────────────────────────────────────────────────────────────────
 
-// recordDeferred records op via the Coordinator, handling a recall race: when
-// admission is refused because the covering region is draining, wait for the
-// drain to finish and retry once. After a completed handoff the retry is
-// refused again (grant gone) and the caller falls back to the synchronous
-// inner path; after a failed recall flush the grant is retained and the retry
-// defers as before.
+// recordDeferred records op via the Coordinator, handling recall races: when
+// admission is refused while the covering region is draining, park in
+// WaitDrained and re-decide — looping, because the retry itself can be
+// refused while ANOTHER (or a re-entered) drain is in flight, and falling
+// back synchronously mid-drain would race the in-flight recall Apply stream
+// (same hazard as Coordinator.Drain). The loop exits when RecordOp succeeds,
+// fails with a non-admission error, or is refused with no drain in flight —
+// the grant is gone (completed handoff), so the caller's synchronous fallback
+// is safe. A dead ctx also exits, returning the admission refusal: the
+// caller's synchronous fallback fails fast on the same ctx anyway, so this
+// escape trades the mid-drain guarantee for not spinning on a wait that can
+// no longer park.
 func (l *Layer) recordDeferred(ctx context.Context, op Op) error {
-	err := l.coord.RecordOp(op)
-	if !stderrors.Is(err, ErrNotDelegated) {
-		return err
+	for {
+		err := l.coord.RecordOp(op)
+		if !stderrors.Is(err, ErrNotDelegated) {
+			return err
+		}
+		if !l.mgr.IsDraining(op.Path) {
+			return err // grant gone: synchronous fallback is safe
+		}
+		if ctx.Err() != nil {
+			return err // dead ctx: sync fallback fails fast on it anyway
+		}
+		l.mgr.WaitDrained(ctx, op.Path)
 	}
-	l.mgr.WaitDrained(ctx, op.Path)
-	return l.coord.RecordOp(op)
 }
 
 // deferOrForward is the shared status-only body: defer via the WAL, or forward
