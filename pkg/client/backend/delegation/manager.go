@@ -145,6 +145,17 @@ func (m *Manager) IsDelegated(path string) bool {
 	return m.coveringGrantLocked(path) != nil
 }
 
+// drainingLocked reports whether any draining (recall or admission barrier in
+// flight) root covers path. Caller must hold m.mu (read or write).
+func (m *Manager) drainingLocked(path string) bool {
+	for root := range m.draining {
+		if contains(root, path) {
+			return true
+		}
+	}
+	return false
+}
+
 // IsWriteDelegated reports whether path may admit NEW deferred ops: covered by
 // a grant AND not under a draining (recall in progress) root. Read paths keep
 // using IsDelegated during a drain; write admission stops the moment a recall
@@ -155,31 +166,42 @@ func (m *Manager) IsWriteDelegated(path string) bool {
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	for root := range m.draining {
-		if contains(root, path) {
-			return false
-		}
+	if m.drainingLocked(path) {
+		return false
 	}
 	return m.coveringGrantLocked(path) != nil
 }
 
 // IsDraining reports whether any draining (recall or admission barrier in
-// flight) root covers path. Callers refused admission (ErrNotDelegated)
-// discriminate with it: refused WHILE draining → park in WaitDrained and
-// re-decide; refused with no drain in flight → the grant is gone and the
-// synchronous fallback is safe. Nil-receiver safe.
+// flight) root covers path. Nil-receiver safe.
+//
+// NOTE: IsDraining alone cannot decide whether a synchronous (wire) fallback
+// is safe after an admission refusal — that inference needs the grant state
+// and the drain state from ONE lock snapshot. Use AdmissionState for that.
 func (m *Manager) IsDraining(path string) bool {
 	if m == nil {
 		return false
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	for root := range m.draining {
-		if contains(root, path) {
-			return true
-		}
+	return m.drainingLocked(path)
+}
+
+// AdmissionState reports, under ONE lock snapshot, whether path is covered by
+// a grant (delegated) and whether a draining root covers it (draining). The
+// pair answers the wire/sync-fallback safety question atomically: both false
+// ⇒ no pending WAL op for path can exist or be racing a recall Apply — the
+// grant can only be gone after a SUCCESSFUL recall flush (every op-retaining
+// failure path retains the grant), and no flush is in flight. Two separate
+// IsWriteDelegated/IsDraining calls cannot make that inference (a failed
+// recall flush can end the drain grant-retained between them). Nil-safe.
+func (m *Manager) AdmissionState(path string) (delegated, draining bool) {
+	if m == nil {
+		return false, false
 	}
-	return false
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.coveringGrantLocked(path) != nil, m.drainingLocked(path)
 }
 
 // GenFor returns the server-issued generation of the grant covering path, or 0

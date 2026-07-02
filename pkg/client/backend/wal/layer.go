@@ -23,11 +23,11 @@
 // forwarding to inner. Admission is owned by the Coordinator: RecordOp refuses
 // with ErrNotDelegated when the path (or NewPath) is not write-delegated,
 // checked atomically with the append. recordDeferred handles the recall race
-// — on a refusal while the region is draining it parks in mgr.WaitDrained and
-// re-decides in a loop; it returns the refusal only once no drain is in
-// flight (completed handoff, grant gone), at which point the caller's
-// synchronous inner fallback is safe. After a failed recall flush the grant
-// is retained and the retried op defers as usual.
+// — it resolves every refusal from ONE atomic mgr.AdmissionState snapshot:
+// draining → park in mgr.WaitDrained and re-decide; delegated (a drain ended
+// grant-RETAINED, e.g. a failed recall flush) → retry, which re-admits; both
+// false → the grant is gone (completed handoff) and the caller's synchronous
+// inner fallback is safe.
 //
 // Write (byte-level) dispatches on handle type (Task 14b):
 //   - syntheticHandle, still covered by its delegation: Write is recorded via
@@ -404,15 +404,23 @@ func (l *Layer) GetXAttr(ctx context.Context, path, attr string) ([]byte, proto.
 
 // ── Write ops ─────────────────────────────────────────────────────────────────
 
-// recordDeferred records op via the Coordinator, handling recall races: when
-// admission is refused while the covering region is draining, park in
-// WaitDrained and re-decide — looping, because the retry itself can be
-// refused while ANOTHER (or a re-entered) drain is in flight, and falling
-// back synchronously mid-drain would race the in-flight recall Apply stream
-// (same hazard as Coordinator.Drain). The loop exits when RecordOp succeeds,
-// fails with a non-admission error, or is refused with no drain in flight —
-// the grant is gone (completed handoff), so the caller's synchronous fallback
-// is safe. A dead ctx also exits, returning the admission refusal: the
+// recordDeferred records op via the Coordinator, handling recall races. Every
+// admission refusal is resolved from ONE atomic mgr.AdmissionState snapshot —
+// never from separate IsDraining/IsWriteDelegated reads, which a drain ending
+// grant-RETAINED (failed recall flush) between them can make look like a safe
+// synchronous fallback while the retained deferred ops still sit in the WAL:
+//
+//   - draining → park in WaitDrained and re-decide — looping, because the
+//     retry itself can be refused while ANOTHER (or a re-entered) drain is in
+//     flight, and falling back synchronously mid-drain would race the
+//     in-flight recall Apply stream (same hazard as Coordinator.Drain).
+//   - delegated, non-rename → transient refusal (drain ended grant-retained
+//     between the refusal and the snapshot): retry, never fall back.
+//   - otherwise → return the refusal; the caller's synchronous fallback is
+//     safe (grant gone ⇒ the recall flush SUCCEEDED, or an uncovered rename
+//     endpoint handled by Rename's barrier path).
+//
+// A dead ctx exits while draining, returning the admission refusal: the
 // caller's synchronous fallback fails fast on the same ctx anyway, so this
 // escape trades the mid-drain guarantee for not spinning on a wait that can
 // no longer park.
@@ -420,15 +428,27 @@ func (l *Layer) recordDeferred(ctx context.Context, op Op) error {
 	for {
 		err := l.coord.RecordOp(op)
 		if !stderrors.Is(err, ErrNotDelegated) {
+			return err // admitted, ErrNotOwned, or append failure
+		}
+		delegated, draining := l.mgr.AdmissionState(op.Path)
+		switch {
+		case draining:
+			if ctx.Err() != nil {
+				return err // dead ctx: sync fallback fails fast on it anyway
+			}
+			l.mgr.WaitDrained(ctx, op.Path)
+		case delegated && op.NewPath == "":
+			// Transient: a drain ended grant-RETAINED between the refusal
+			// and this snapshot. Non-rename admission depends only on
+			// op.Path, so the next attempt admits — retry, never fall back
+			// synchronously while the grant (and possibly pending ops) live.
+		default:
+			// Grant gone (single-snapshot ⇒ recall flush succeeded ⇒ sync is
+			// safe), or a rename whose NewPath side is uncovered — the
+			// caller's synchronous path handles both (rename via the
+			// BeginDrain barrier + HasSubtree flush).
 			return err
 		}
-		if !l.mgr.IsDraining(op.Path) {
-			return err // grant gone: synchronous fallback is safe
-		}
-		if ctx.Err() != nil {
-			return err // dead ctx: sync fallback fails fast on it anyway
-		}
-		l.mgr.WaitDrained(ctx, op.Path)
 	}
 }
 
@@ -541,6 +561,10 @@ func (l *Layer) Rename(ctx context.Context, oldPath, newPath string) proto.FsErr
 	// Residual path-capture caveat: an op whose path was captured BEFORE the
 	// rename (an already-open fd under oldPath) can still be deferred after
 	// release, referencing the moved path — see design doc §7.7 gap (d).
+	// The barrier is taken even for fully-undelegated renames: concurrent
+	// Drain/recordDeferred calls under the endpoints briefly park instead of
+	// going straight to the wire — harmless serialization, and release never
+	// depends on the parked ops.
 	releaseOld := l.mgr.BeginDrain(oldPath)
 	defer releaseOld()
 	releaseNew := l.mgr.BeginDrain(newPath)

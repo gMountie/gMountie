@@ -26,6 +26,7 @@ package wal_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"path/filepath"
 	"strings"
@@ -818,14 +819,17 @@ func (s *LayerSuite) TestMutationFallsBackToInnerWhenNotDelegated() {
 // blockingRecallFlusher implements delegation.RecallFlusher and blocks
 // FlushForRecall until release is closed — used to hold a root in the
 // "draining" state for the duration of the test, mirroring the pattern in
-// wal_test.go's TestDrain_FallsBackToWireWhileRootIsDraining.
+// wal_test.go's TestDrain_FallsBackToWireWhileRootIsDraining. A non-nil err
+// makes the flush FAIL after release: the drain ends but the grant is
+// retained (aborted handoff).
 type blockingRecallFlusher struct {
 	release chan struct{}
+	err     error
 }
 
 func (b *blockingRecallFlusher) FlushForRecall(_ context.Context, _ string) error {
 	<-b.release
-	return nil
+	return b.err
 }
 
 // TestMutationBlocksOnDrainThenFallsBackAfterHandoff is the discriminating
@@ -891,6 +895,70 @@ func (s *LayerSuite) TestMutationBlocksOnDrainThenFallsBackAfterHandoff() {
 	ops, logerr := s.log.Replay(0)
 	s.Require().NoError(logerr)
 	s.Empty(ops, "nothing must be recorded in the WAL after fallback")
+}
+
+// TestMutationBlocksOnDrainThenRedefersAfterFailedRecall is the recordDeferred
+// twin of the Drain-seam N1 test: an Unlink parked mid-drain wakes after the
+// recall flush FAILS — the drain is over but the grant is RETAINED (aborted
+// handoff, pending ops kept). The single-snapshot rule resolves the refusal to
+// RE-DEFER: the op must land in the WAL, never run synchronously against inner
+// (a sync unlink would race the retained deferred state for the subtree).
+func (s *LayerSuite) TestMutationBlocksOnDrainThenRedefersAfterFailedRecall() {
+	_, err := s.fs.Mkdir(s.ctx, "dir", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+	_, _, err = s.fs.Create(s.ctx, "dir", "f.txt", 0, 0o100644)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	s.grant("dir")
+
+	release := make(chan struct{})
+	s.mgr.SetRecallFlusher(&blockingRecallFlusher{release: release, err: errors.New("recall flush failed")})
+
+	recallDone := make(chan struct{})
+	go func() {
+		_ = s.mgr.OnRecall(s.ctx, "dir")
+		close(recallDone)
+	}()
+
+	// Wait for the recall to mark "dir" draining.
+	for s.mgr.IsWriteDelegated("dir/f.txt") {
+		time.Sleep(time.Millisecond)
+	}
+
+	unlinkDone := make(chan proto.FsError, 1)
+	go func() {
+		unlinkDone <- s.layer.Unlink(s.ctx, "dir/f.txt")
+	}()
+
+	// Must park while the recall flush is in flight.
+	select {
+	case <-unlinkDone:
+		s.Fail("Unlink must park while the region is draining")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// The recall flush FAILS: drain ends, grant retained, handoff aborted.
+	close(release)
+	<-recallDone
+
+	var st proto.FsError
+	select {
+	case st = <-unlinkDone:
+	case <-time.After(2 * time.Second):
+		s.FailNow("Unlink did not unblock after the failed recall ended the drain")
+	}
+	s.Equal(proto.FsError_FS_OK, st)
+
+	// Deferred, not synchronous: the WAL holds the unlink, inner still has
+	// the file (it is removed only when the WAL flushes).
+	ops, logerr := s.log.Replay(0)
+	s.Require().NoError(logerr)
+	s.Require().Len(ops, 1, "the retried op must be recorded in the WAL")
+	s.Equal(wal.OpUnlink, ops[0].Kind)
+	s.Equal("dir/f.txt", ops[0].Path)
+
+	_, innerErr := s.fs.Stat(s.ctx, "dir/f.txt")
+	s.Equal(proto.FsError_FS_OK, innerErr, "inner must be untouched — the unlink was deferred, not synchronous")
 }
 
 // ── Test 17: flushed synthetic handle reads through to inner ─────────────────

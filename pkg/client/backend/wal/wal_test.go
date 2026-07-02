@@ -18,7 +18,9 @@ package wal
 
 import (
 	"context"
+	stderrors "errors"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -621,6 +623,146 @@ func (s *CoordinatorSuite) TestDrain_ParksWhileRootDrainsThenWiresAfterHandoff()
 	}
 	s.Equal(proto.FsError_FS_OK, st)
 	s.Equal(int32(1), wireCalls.Load(), "Drain must reach the wire exactly once, after the handoff")
+}
+
+// failingRecallFlusher blocks FlushForRecall until release is closed, then
+// FAILS — modelling a recall whose flush could not complete (ENOSPC, wire
+// error). The drain ends but the grant is RETAINED and the pending ops stay
+// in the WAL, which is exactly the state where a wire write must NOT happen.
+type failingRecallFlusher struct {
+	release chan struct{}
+}
+
+func (f *failingRecallFlusher) FlushForRecall(_ context.Context, _ string) error {
+	<-f.release
+	return stderrors.New("recall flush failed")
+}
+
+// TestDrain_FailedRecallFlushRedefers_NeverWires is the N1 scenario test at
+// the Drain seam: a Drain parked mid-drain wakes after the recall flush FAILS
+// (drain over, grant retained, older deferred ops still in the WAL). The
+// single-snapshot rule says the refusal must resolve to RE-DEFER — a wire
+// write here would land behind older deferred ops for the same path (reorder
+// / lost update). Assert the op is RECORDED and the wire is never touched.
+func (s *CoordinatorSuite) TestDrain_FailedRecallFlushRedefers_NeverWires() {
+	mgr := delegation.NewManager(noopInvalidator{})
+	mgr.Apply(&proto.DelegationGrant{GrantedRoot: "dir", Gen: 1})
+	release := make(chan struct{})
+	mgr.SetRecallFlusher(&failingRecallFlusher{release: release})
+
+	l := openTestLog(s.T())
+	coord := NewCoordinator(mgr, l, NewOverlay())
+
+	// One older deferred op sits in the WAL for the same path — the state a
+	// wire write would reorder against.
+	s.Require().NoError(coord.RecordOp(Op{Kind: OpWrite, Path: "dir/f", Offset: 0, Data: []byte("old")}))
+
+	recallDone := make(chan struct{})
+	go func() {
+		_ = mgr.OnRecall(context.Background(), "dir")
+		close(recallDone)
+	}()
+	// Wait for the recall to mark the root draining.
+	for mgr.IsWriteDelegated("dir/f") {
+		time.Sleep(time.Millisecond)
+	}
+
+	var wireCalls atomic.Int32
+	wireFlush := func(_ context.Context, _ []byte, _ int64, _ string) proto.FsError {
+		wireCalls.Add(1)
+		return proto.FsError_FS_OK
+	}
+
+	drainDone := make(chan proto.FsError, 1)
+	go func() {
+		drainDone <- coord.Drain(context.Background(), "dir/f", []byte("new"), 8, "req-fail", wireFlush)
+	}()
+
+	// Drain must park while the drain is in flight (bounded negative window).
+	select {
+	case <-drainDone:
+		s.Fail("Drain must park while the root is draining, not return")
+	case <-time.After(50 * time.Millisecond):
+	}
+	s.Zero(wireCalls.Load(), "Drain must not wire-write mid-drain")
+
+	// Release the FAILING flush: the drain ends with the grant retained.
+	close(release)
+	<-recallDone
+
+	var st proto.FsError
+	select {
+	case st = <-drainDone:
+	case <-time.After(2 * time.Second):
+		s.FailNow("Drain did not resolve after the failed recall ended the drain")
+	}
+	s.Equal(proto.FsError_FS_OK, st)
+	s.Zero(wireCalls.Load(), "grant retained after the failed flush: Drain must RE-DEFER, never wire")
+
+	ops, err := l.Replay(0)
+	s.Require().NoError(err)
+	s.Require().Len(ops, 2, "the parked Drain's op must be recorded behind the older deferred op")
+	s.Equal(OpWrite, ops[1].Kind)
+	s.Equal("dir/f", ops[1].Path)
+	s.Equal(int64(8), ops[1].Offset)
+	s.Equal([]byte("new"), ops[1].Data)
+}
+
+// TestDrain_RefusalResolutionIsAtomic_NoWireWhileGrantRetained is the
+// discriminating N1 race test: the grant for "dir" is NEVER dropped while a
+// toggler thread cycles drains that always end grant-RETAINED (BeginDrain /
+// release — the same refcounted entries a failed recall flush uses). Under
+// the single-snapshot rule no Drain may EVER reach the wire: the path is
+// delegated in every atomic snapshot. The pre-fix two-oracle-read code
+// (RecordOp refused → separate IsDraining check) wires whenever a drain ends
+// in the window between the two reads — this test drives thousands of
+// iterations through that window and fails on the first wire call.
+func (s *CoordinatorSuite) TestDrain_RefusalResolutionIsAtomic_NoWireWhileGrantRetained() {
+	mgr := delegation.NewManager(noopInvalidator{})
+	mgr.Apply(&proto.DelegationGrant{GrantedRoot: "dir", Gen: 1})
+
+	l := openTestLog(s.T())
+	coord := NewCoordinator(mgr, l, NewOverlay())
+
+	// Older deferred state for the path: what a rogue wire write would
+	// reorder against.
+	s.Require().NoError(coord.RecordOp(Op{Kind: OpWrite, Path: "dir/f", Offset: 0, Data: []byte("old")}))
+
+	var wireCalls atomic.Int32
+	wireFlush := func(_ context.Context, _ []byte, _ int64, _ string) proto.FsError {
+		wireCalls.Add(1)
+		return proto.FsError_FS_OK
+	}
+
+	stop := make(chan struct{})
+	var togglerWg sync.WaitGroup
+	togglerWg.Add(1)
+	go func() {
+		defer togglerWg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			// A drain that ends grant-RETAINED (exactly what a failed recall
+			// flush leaves behind), cycled as fast as possible.
+			release := mgr.BeginDrain("dir")
+			runtime.Gosched()
+			release()
+			runtime.Gosched()
+		}
+	}()
+
+	for i := 0; i < 1500 && wireCalls.Load() == 0; i++ {
+		st := coord.Drain(context.Background(), "dir/f", []byte("x"), int64(i), "req-race", wireFlush)
+		s.Require().Equal(proto.FsError_FS_OK, st)
+	}
+	close(stop)
+	togglerWg.Wait()
+
+	s.Zero(wireCalls.Load(),
+		"the grant was never dropped: every atomic admission snapshot is delegated, so no Drain may wire-write")
 }
 
 func TestCoordinatorSuite(t *testing.T) {

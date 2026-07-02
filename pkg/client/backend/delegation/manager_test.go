@@ -391,6 +391,77 @@ func (s *ManagerSuite) TestBeginDrainAndIsDrainingNilReceiverSafe() {
 	})
 }
 
+// TestAdmissionStateSnapshotsGrantAndDrainTogether walks AdmissionState
+// through the three states the wire/sync-fallback decision discriminates:
+//
+//	(true, true)   mid-drain          — grant held, recall flush in flight
+//	(true, false)  failed recall      — drain ended, grant RETAINED
+//	(false, false) successful handoff — grant gone, nothing draining
+//
+// Only the (false,false) snapshot licenses a synchronous fallback; the
+// (true,false) state after a FAILED flush is exactly the one a two-call
+// IsWriteDelegated/IsDraining sequence can misread as safe.
+func (s *ManagerSuite) TestAdmissionStateSnapshotsGrantAndDrainTogether() {
+	m := NewManager(noopInvalidator{})
+	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj", Gen: 1})
+
+	delegated, draining := m.AdmissionState("proj/src/a.txt")
+	s.True(delegated, "grant covers the path before any recall")
+	s.False(draining, "nothing draining before any recall")
+
+	type flushCall struct {
+		started chan struct{}
+		release chan struct{}
+		fail    bool
+	}
+	failing := &flushCall{started: make(chan struct{}), release: make(chan struct{}), fail: true}
+	succeeding := &flushCall{started: make(chan struct{}), release: make(chan struct{})}
+	queue := make(chan *flushCall, 2)
+	queue <- failing
+	queue <- succeeding
+	m.SetRecallFlusher(recallFlusherFunc(func(ctx context.Context, root string) error {
+		c := <-queue
+		close(c.started)
+		<-c.release
+		if c.fail {
+			return errors.New("flush failed")
+		}
+		return nil
+	}))
+
+	// Mid-drain: (true, true).
+	done := make(chan error, 1)
+	go func() { done <- m.OnRecall(context.Background(), "proj") }()
+	<-failing.started
+	delegated, draining = m.AdmissionState("proj/src/a.txt")
+	s.True(delegated, "grant is held while the recall flush is in flight")
+	s.True(draining, "the recalled root is draining while the flush is in flight")
+
+	// FAILED recall flush: drain ends, grant RETAINED → (true, false).
+	close(failing.release)
+	s.Require().Error(<-done)
+	delegated, draining = m.AdmissionState("proj/src/a.txt")
+	s.True(delegated, "a failed recall flush retains the grant")
+	s.False(draining, "the drain ends when the failed recall finishes")
+
+	// Successful handoff: grant gone, nothing draining → (false, false).
+	go func() { done <- m.OnRecall(context.Background(), "proj") }()
+	<-succeeding.started
+	close(succeeding.release)
+	s.Require().NoError(<-done)
+	delegated, draining = m.AdmissionState("proj/src/a.txt")
+	s.False(delegated, "a successful handoff drops the grant")
+	s.False(draining, "nothing drains after the handoff completes")
+
+	// Nil-receiver safe: both false.
+	var nilMgr *Manager
+	s.NotPanics(func() {
+		delegated, draining = nilMgr.AdmissionState("anything")
+		s.False(delegated)
+		s.False(draining)
+	})
+}
+
 // TestWaitDrainedReturnsOnContextCancel verifies that WaitDrained unblocks on
 // context cancellation even when the recall flusher is still running (i.e., the
 // context cancel returns the waiter, not the completion of the flush itself).

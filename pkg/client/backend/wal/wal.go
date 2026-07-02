@@ -22,6 +22,12 @@
 //     (unchanged behavior for non-delegated paths). The log and overlay are
 //     not touched.
 //
+// "Genuinely undelegated" is decided from ONE atomic Manager.AdmissionState
+// snapshot (!delegated && !draining), never from two separate oracle reads —
+// a failed recall flush can end the drain grant-RETAINED between two reads,
+// making a refused-then-not-draining sequence look wire-safe while older
+// deferred ops for the path still sit in the WAL.
+//
 // # Import direction
 //
 // wal imports transport (for the WriteDrain interface assertion); transport
@@ -171,10 +177,17 @@ func NewCoordinator(mgr *delegation.Manager, log *BboltLog, overlay *Overlay, op
 // Write issued while the region drains races the in-flight recall Apply
 // stream, which may carry OLDER deferred writes for the same path — the
 // server serializes the two arbitrarily, so the newer bytes can be silently
-// overwritten by the older (lost update). Only once no drain is in flight is
-// the wire safe: either the path was never delegated (no deferred op can be
-// racing an Apply), or the handoff completed and the recalled prefix is
-// durably applied (or loudly lost), so a wire write cannot be overtaken.
+// overwritten by the older (lost update).
+//
+// The wire exit is decided ONLY from the single atomic AdmissionState
+// snapshot at the top of the loop: both false ⇒ either the path was never
+// delegated (no deferred op can be racing an Apply), or the handoff completed
+// — the grant can only be gone after a SUCCESSFUL recall flush, so the
+// recalled prefix is durably applied (or loudly lost) and a wire write cannot
+// be overtaken. No post-refusal check may wire: a refusal only proves the
+// state at RecordOp's admission read, and a drain ending grant-RETAINED
+// (failed recall flush) right after it would make a separate "not draining"
+// read look wire-safe while the retained deferred ops still sit in the WAL.
 func (c *Coordinator) Drain(
 	ctx context.Context,
 	path string,
@@ -184,9 +197,10 @@ func (c *Coordinator) Drain(
 	wireFlush func(ctx context.Context, data []byte, off int64, reqID string) proto.FsError,
 ) proto.FsError {
 	for {
-		if !c.mgr.IsWriteDelegated(path) && !c.mgr.IsDraining(path) {
-			// Genuinely undelegated (no drain in flight): the wire is safe —
-			// no deferred op for this path can still be racing an Apply.
+		delegated, draining := c.mgr.AdmissionState(path)
+		if !delegated && !draining {
+			// Single-snapshot both-false: no pending op for this path can
+			// exist or be racing an Apply — the wire is safe.
 			return wireFlush(ctx, pendingData, pendingOff, requestID)
 		}
 		if len(pendingData) == 0 {
@@ -200,18 +214,20 @@ func (c *Coordinator) Drain(
 		if !stderrors.Is(err, ErrNotDelegated) {
 			return proto.FsError_FS_EIO
 		}
-		if !c.mgr.IsDraining(path) {
-			// Refused because the grant is gone (handoff complete), not
-			// because a drain is in flight: the recalled prefix is durably
-			// applied (or loudly lost), so a wire write cannot be overtaken.
-			return wireFlush(ctx, pendingData, pendingOff, requestID)
+		// Refused. If a drain is in flight, park; either way the top-of-loop
+		// snapshot re-decides atomically (a drain that ended grant-RETAINED
+		// re-admits next iteration; grant-GONE exits to the wire). Every
+		// iteration therefore returns, parks, or observes a state transition
+		// — the loop cannot spin without progress.
+		if _, d := c.mgr.AdmissionState(path); d {
+			if ctx.Err() != nil {
+				// Dead ctx while a drain is in flight: fail closed. Writing
+				// to the wire here could still be overtaken by the in-flight
+				// Apply.
+				return proto.FsError_FS_EIO
+			}
+			c.mgr.WaitDrained(ctx, path)
 		}
-		if ctx.Err() != nil {
-			// Dead ctx while a drain is in flight: fail closed. Writing to
-			// the wire here could still be overtaken by the in-flight Apply.
-			return proto.FsError_FS_EIO
-		}
-		c.mgr.WaitDrained(ctx, path)
 	}
 }
 
