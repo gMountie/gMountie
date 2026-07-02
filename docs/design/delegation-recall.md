@@ -377,9 +377,15 @@ starts from.
 
 **Error mid-batch (ordered halt):** the WAL is one ordered seq-space, so the
 server halts at first failure. `ApplyAck` carries `{committed_watermark,
-failed_seq, fserr}`. Permanent failures (ENOSPC/EACCES/EIO) cause the client to
-discard the overlay, mark the subtree EIO, and release the delegation. Transient
-(EAGAIN) → retry the batch from `committed_watermark + 1`.
+failed_seq, fserr}`. Permanent failures (ENOSPC/EACCES/EIO) truncate the log's
+committed prefix (seq ≤ `committed_watermark`), rebuild the overlay from the
+surviving in-flight ops (seq beyond the sent batch), and discard the lost tail
+(seq ≥ `failed_seq`) with the loud-loss log (§7.6) — the client does **not**
+mark the subtree EIO or auto-release the delegation; the grant is retained and
+ordinary deferral resumes for the rest of the subtree. (Releasing a
+delegation is specifically what a *recall* handoff does, and only after its
+own flush succeeds — §7.4.) Transient (EAGAIN) → retry the batch from
+`committed_watermark + 1`.
 
 **Generation lifecycle + GC:** the server durably records a revoked gen in the
 `WatermarkStore` *before* serving the contender on handoff. Revoked-gens are
@@ -465,7 +471,7 @@ Events that emit this log:
 
 | Event | Logged detail |
 |---|---|
-| Permanent apply-failure (ordered halt) | The failed op's path + `fserr` + seq, and every still-deferred path after it (stuck behind the halt, discarded with the poisoned overlay) |
+| Permanent apply-failure (ordered halt) | The failed op's path + `fserr` + seq, and every still-deferred path after it (stuck behind the halt, discarded when the lost tail is truncated) |
 | Gen-fence discard on replay | Every fenced path + the revoked gen + seq range |
 | Recall-flush failure | The recalled region's pending paths + `fserr` |
 | WAL unreadable on startup (corrupt persist tier) | The WAL file + any entries recoverable enough to name |
