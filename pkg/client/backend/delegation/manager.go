@@ -269,8 +269,17 @@ func (m *Manager) OnRecall(ctx context.Context, root string) error {
 	m.mu.Unlock()
 	defer func() {
 		m.mu.Lock()
-		delete(m.draining, root)
+		// Instance-checked delete: only delete the map entry if it still holds this
+		// call's channel. With concurrent recalls for the same root, a superseded
+		// channel's finisher will not un-drain the root; the last finisher deletes
+		// the entry. Waiters on a superseded channel wake on close and re-check via
+		// WaitDrained's loop, finding the newer channel.
+		if m.draining[root] == drainCh {
+			delete(m.draining, root)
+		}
 		m.mu.Unlock()
+		// Always close our own channel: waiters that grabbed it wake and re-block
+		// on any newer channel for the same root via WaitDrained's re-check loop.
 		close(drainCh)
 	}()
 

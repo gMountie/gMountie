@@ -258,3 +258,61 @@ func (s *ManagerSuite) TestWaitDrainedBlocksUntilRecallCompletes() {
 		s.Fail("WaitDrained did not return after the recall completed")
 	}
 }
+
+// TestConcurrentSameRootRecallsKeepDrainingUntilLastFinishes verifies that when
+// two OnRecall calls for the same root interleave, the root stays marked draining
+// until the LAST in-flight recall's flush finishes. This prevents writes from
+// re-entering mid-flush when the first finisher prematurely un-drains.
+func (s *ManagerSuite) TestConcurrentSameRootRecallsKeepDrainingUntilLastFinishes() {
+	m := NewManager(noopInvalidator{})
+	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj", Gen: 1})
+
+	started := make(chan struct{}, 2)
+	release := make(chan struct{}, 2)
+	m.SetRecallFlusher(recallFlusherFunc(func(ctx context.Context, root string) error {
+		started <- struct{}{}
+		<-release
+		return nil
+	}))
+
+	done := make(chan error, 2)
+	go func() { done <- m.OnRecall(context.Background(), "proj") }()
+	<-started
+	go func() { done <- m.OnRecall(context.Background(), "proj") }()
+	<-started
+
+	// Let the FIRST recall finish; the second is still flushing.
+	release <- struct{}{}
+	s.NoError(<-done)
+	s.False(m.IsWriteDelegated("proj/a.txt"),
+		"root must stay draining while the second recall's flush is in flight")
+
+	release <- struct{}{}
+	s.NoError(<-done)
+	s.False(m.IsDelegated("proj/a.txt"), "grants dropped after both recalls")
+}
+
+// TestWaitDrainedReturnsOnContextCancel verifies that WaitDrained unblocks on
+// context cancellation even when the recall flusher is still running (i.e., the
+// context cancel returns the waiter, not the completion of the flush itself).
+func (s *ManagerSuite) TestWaitDrainedReturnsOnContextCancel() {
+	m := NewManager(noopInvalidator{})
+	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj", Gen: 1})
+	blocked := make(chan struct{})
+	m.SetRecallFlusher(recallFlusherFunc(func(ctx context.Context, root string) error {
+		close(blocked)
+		select {} // never returns; ctx cancel must free the waiter, not the flush
+	}))
+	go func() { _ = m.OnRecall(context.Background(), "proj") }()
+	<-blocked
+
+	ctx, cancel := context.WithCancel(context.Background())
+	returned := make(chan struct{})
+	go func() { m.WaitDrained(ctx, "proj/x"); close(returned) }()
+	cancel()
+	select {
+	case <-returned:
+	case <-time.After(2 * time.Second):
+		s.Fail("WaitDrained ignored context cancellation")
+	}
+}
