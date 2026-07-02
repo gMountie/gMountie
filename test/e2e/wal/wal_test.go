@@ -585,6 +585,13 @@ func (s *WalE2ESuite) TestLossLogging() {
 	// ENOENT → ordered-halt at seq=1 → logDataLost fires via onLoss.
 	lostPath1 := "ghost1.bin"
 	lostPath2 := "ghost2.bin"
+	// RecordOp admits only write-delegated paths (5167fa8): grant each ghost
+	// path its own root so admission succeeds. No Gen is set (defaults to 0),
+	// which the server never fences (isRevokedGen: gen==0 is untagged) — the
+	// ordered halt below is a genuine ENOENT apply-failure, not a gen-fence,
+	// exactly matching this test's intent (reason stays "apply-failure").
+	lossMgr.Apply(&proto.DelegationGrant{GrantedRoot: lostPath1})
+	lossMgr.Apply(&proto.DelegationGrant{GrantedRoot: lostPath2})
 	r.NoError(lossCoord.RecordOp(wal.Op{
 		Kind:   wal.OpWrite,
 		Path:   lostPath1,
@@ -772,6 +779,11 @@ func (s *WalE2ESuite) TestCloseFlushFailure_LoudLossLog() {
 
 	// Record ops for paths that do NOT exist on the server: OpWrite with no
 	// preceding Create → server ENOENT → ordered-halt at seq=1.
+	// RecordOp admits only write-delegated paths (5167fa8): grant each ghost
+	// path its own root (no Gen ⇒ 0 ⇒ never fenced by the server), so this
+	// stays a genuine ENOENT apply-failure, not a gen-fence.
+	lossMgr.Apply(&proto.DelegationGrant{GrantedRoot: "ghost-close1.bin"})
+	lossMgr.Apply(&proto.DelegationGrant{GrantedRoot: "ghost-close2.bin"})
 	r.NoError(lossCoord.RecordOp(wal.Op{
 		Kind:   wal.OpWrite,
 		Path:   "ghost-close1.bin",
@@ -851,6 +863,10 @@ func (s *WalE2ESuite) TestStartupRecovery_RebuildAndReplay() {
 		}),
 		wal.WithVolume(volName),
 	)
+
+	// RecordOp admits only write-delegated paths (5167fa8): grant the subtree
+	// root so both the Mkdir and the Create+Write beneath it are admitted.
+	seedMgr.Apply(&proto.DelegationGrant{GrantedRoot: "recovery/crash-dir"})
 
 	// Record a Mkdir and a Create+Write — replayable ops with a parent that
 	// exists on the server (srcSub = srcDir/recovery, already created above).
