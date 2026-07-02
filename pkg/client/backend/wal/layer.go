@@ -354,12 +354,20 @@ func (l *Layer) Flush(ctx context.Context, fh backend.FileHandle) proto.FsError 
 	return l.Inner.Flush(ctx, fh)
 }
 
-// Fsync for a syntheticHandle triggers a synchronous WAL flush via
-// coord.Fsync, which sends all pending ops to the server and blocks until
-// acknowledged. For all other handles, fsync is delegated to inner.
+// Fsync is the hard durability barrier. For a syntheticHandle everything lives
+// in the WAL, so a synchronous WAL flush IS the fsync. For transport-backed
+// handles the inner fsync only covers bytes that already reached the server —
+// if this path ALSO has pending WAL state (a deferred tail from a previous
+// close, a deferred setattr), that state must be flushed too, or fsync returns
+// OK while data exists only in the local wal.db (lost on machine death).
 func (l *Layer) Fsync(ctx context.Context, fh backend.FileHandle, flags int64) proto.FsError {
 	if asSynthetic(fh) != nil {
 		return l.coord.Fsync(ctx)
+	}
+	if l.coord.Has(fh.Path()) {
+		if st := l.coord.Fsync(ctx); st != proto.FsError_FS_OK {
+			return st
+		}
 	}
 	return l.Inner.Fsync(ctx, fh, flags)
 }

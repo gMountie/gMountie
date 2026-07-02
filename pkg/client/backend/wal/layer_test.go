@@ -941,6 +941,48 @@ func (s *LayerSuite) TestSyntheticHandleReadMergesPendingOverFlushedBase() {
 	s.Require().Equal(proto.FsError_FS_OK, s.layer.Release(s.ctx, fh))
 }
 
+// ── Test: Fsync on transport-backed handle flushes pending WAL ─────────────────
+
+func (s *LayerSuite) TestFsyncOnTransportHandleFlushesPendingWal() {
+	s.grant("dir")
+
+	// Create the parent in memfs.
+	_, err := s.fs.Mkdir(s.ctx, "dir", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	// Write a base file to memfs (pre-existing, not created by overlay).
+	s.writeInner("dir/f.txt", []byte("base"))
+
+	// SetAttr on the base file creates a base-delta pending state.
+	newPerm := uint32(0o600)
+	in := backend.SetAttrIn{
+		Valid: backend.FATTR_MODE,
+		Mode:  newPerm,
+	}
+	_, ferr := s.layer.SetAttr(s.ctx, "dir/f.txt", in)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+
+	// Confirm pending state exists in the overlay.
+	s.True(s.coord.Has("dir/f.txt"), "SetAttr must create base-delta pending state")
+
+	// Open the file (returns inner-backed handle for base-delta path).
+	fh, ferr := s.layer.Open(s.ctx, "dir/f.txt", 0)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	s.Require().NotNil(fh)
+
+	// Fsync on the inner-backed handle must flush pending WAL state.
+	ferr = s.layer.Fsync(s.ctx, fh, 0)
+	s.Equal(proto.FsError_FS_OK, ferr)
+
+	// Release the handle.
+	s.Require().Equal(proto.FsError_FS_OK, s.layer.Release(s.ctx, fh))
+
+	// Verify the log is empty: pending SetAttr was flushed to the server.
+	ops, logerr := s.log.Replay(0)
+	s.Require().NoError(logerr)
+	s.Empty(ops, "fsync must flush pending WAL ops for the path, leaving log empty")
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func dirNames(entries []backend.DirEntryPlus) []string {
