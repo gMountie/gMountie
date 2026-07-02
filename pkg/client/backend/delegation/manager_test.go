@@ -44,7 +44,9 @@ func (f *fakeRecallFlusher) FlushForRecall(_ context.Context, root string) error
 // recallFlusherFunc is an adapter allowing a function to implement RecallFlusher.
 type recallFlusherFunc func(ctx context.Context, root string) error
 
-func (f recallFlusherFunc) FlushForRecall(ctx context.Context, root string) error { return f(ctx, root) }
+func (f recallFlusherFunc) FlushForRecall(ctx context.Context, root string) error {
+	return f(ctx, root)
+}
 
 type ManagerSuite struct{ suite.Suite }
 
@@ -218,7 +220,7 @@ func (s *ManagerSuite) TestIsWriteDelegatedFalseWhileDraining() {
 	s.True(m.IsDelegated("proj/src/a.txt"), "reads keep merging the overlay during drain")
 
 	close(releaseFlush)
-	s.NoError(<-done)
+	s.Require().NoError(<-done)
 	s.False(m.IsDelegated("proj/src/a.txt"), "grant dropped after handoff")
 }
 
@@ -251,7 +253,7 @@ func (s *ManagerSuite) TestWaitDrainedBlocksUntilRecallCompletes() {
 	}
 
 	close(releaseFlush)
-	s.NoError(<-recallDone)
+	s.Require().NoError(<-recallDone)
 	select {
 	case <-waited:
 	case <-time.After(time.Second):
@@ -302,13 +304,13 @@ func (s *ManagerSuite) TestConcurrentSameRootRecallsKeepDrainingUntilLastFinishe
 	// RETAINED (no grant-drop to mask the verdict) — only the draining entry
 	// can keep write admission closed while the older recall still flushes.
 	close(newer.release)
-	s.Error(<-doneNewer)
+	s.Require().Error(<-doneNewer)
 	s.False(m.IsWriteDelegated("proj/a.txt"),
 		"root must stay draining until the LAST in-flight recall finishes")
 	s.True(m.IsDelegated("proj/a.txt"), "failed recall retains the grant")
 
 	close(older.release)
-	s.NoError(<-doneOlder)
+	s.Require().NoError(<-doneOlder)
 	s.False(m.IsDelegated("proj/a.txt"), "successful recall drops the grant")
 	s.False(m.IsWriteDelegated("proj/a.txt"))
 }
