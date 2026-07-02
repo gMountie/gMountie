@@ -55,11 +55,16 @@
 // Release is a no-op (no inner state to clean up).
 // For all other handles these lifecycle ops passthrough to inner.
 //
-// # Cross-subtree rename
+// # Rename correctness
 //
-// A rename where either old or new is NOT delegated is forced synchronous
-// (passthrough to inner). Only when both paths are delegated is the rename
-// deferred via the WAL.
+// A rename defers via the WAL only when the source is entirely the overlay's
+// own creation (overlayOwns: a full-create node, not a tombstone, not a
+// base-delta) — the atomic-write `create tmp → rename over` fast path. Any
+// other source (base-only, or base-delta with pending mutations) cannot be
+// re-homed by the overlay at the destination, so it runs synchronously against
+// inner — first flushing any pending state touching either endpoint's subtree
+// (coord.HasSubtree), so a deferred op is never left stranded against a path
+// the rename has moved away from.
 //
 // # Base-delta Stat merge (the keystone)
 //
@@ -475,19 +480,39 @@ func (l *Layer) Rmdir(ctx context.Context, path string) proto.FsError {
 	})
 }
 
-// Rename defers the rename via the WAL only when both the old and new paths
-// are delegated. A cross-subtree rename (either path not delegated) is forced
-// synchronous (passthrough to inner) so that non-delegated side-effects
-// (directory additions, cache invalidation) happen promptly.
+// Rename defers via the WAL only when the source is ENTIRELY the overlay's
+// creation (a full-create node — the atomic-write `create tmp → rename over`
+// fast path). A base or base-delta source cannot be represented by the overlay
+// at the destination (the server holds content the overlay cannot re-home), so
+// those renames run synchronously — after flushing any pending state touching
+// either endpoint, so no deferred op is left targeting a path the rename has
+// moved away (a stranded op would ENOENT on flush = ordered-halt data loss).
 func (l *Layer) Rename(ctx context.Context, oldPath, newPath string) proto.FsError {
-	if l.mgr.IsDelegated(oldPath) && l.mgr.IsDelegated(newPath) {
+	if l.overlayOwns(oldPath) {
 		op := Op{Kind: OpRename, Path: oldPath, NewPath: newPath}
-		if err := l.coord.RecordOp(op); err != nil {
+		switch err := l.recordDeferred(ctx, op); {
+		case err == nil:
+			return proto.FsError_FS_OK
+		case !stderrors.Is(err, ErrNotDelegated):
 			return proto.FsError_FS_EIO
 		}
-		return proto.FsError_FS_OK
+		// ErrNotDelegated: fall through to the synchronous path below.
+	}
+	if l.coord.HasSubtree(oldPath) || l.coord.HasSubtree(newPath) {
+		if st := l.coord.Fsync(ctx); st != proto.FsError_FS_OK {
+			return st
+		}
 	}
 	return l.Inner.Rename(ctx, oldPath, newPath)
+}
+
+// overlayOwns reports whether path is a full overlay-create node (not a
+// tombstone, not a base-delta). Only such a source can be re-homed by a
+// deferred rename. An overlay-created directory can only contain
+// overlay-created children, so subtree ownership follows.
+func (l *Layer) overlayOwns(path string) bool {
+	_, ok, tomb, baseDelta, _ := l.coord.Stat(path)
+	return ok && !tomb && !baseDelta
 }
 
 // SetAttr records a pending setattr for delegated paths and returns merged

@@ -35,6 +35,20 @@ func (s *OverlaySuite) TestApplyCreate_SetsRegTypeBit() {
 	s.Equal(uint32(0o644), attr.Mode&0o7777, "perms preserved")
 }
 
+// TestHasSubtree pins Overlay.HasSubtree's "/"-bounded prefix matching, which
+// Task 6's Layer.Rename relies on to decide whether a rename must flush
+// pending state touching either endpoint before running synchronously.
+func (s *OverlaySuite) TestHasSubtree() {
+	ov := s.newOverlay()
+	ov.Apply(s.createOp("dir/sub/f.txt", 0o644))
+
+	s.True(ov.HasSubtree("dir"))
+	s.True(ov.HasSubtree("dir/sub"))
+	s.True(ov.HasSubtree("dir/sub/f.txt"))
+	s.False(ov.HasSubtree("dir/subx"), "prefix match must be /-bounded")
+	s.False(ov.HasSubtree("other"))
+}
+
 // OverlaySuite exercises the Overlay's merge logic exhaustively.
 type OverlaySuite struct {
 	suite.Suite

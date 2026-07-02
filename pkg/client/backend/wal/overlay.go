@@ -574,6 +574,23 @@ func (ov *Overlay) Has(path string) bool {
 	return ok
 }
 
+// HasSubtree reports whether any pending state (including tombstones) exists
+// at root or under root/. Prefix matching is "/"-bounded.
+func (ov *Overlay) HasSubtree(root string) bool {
+	ov.mu.RLock()
+	defer ov.mu.RUnlock()
+	if _, ok := ov.nodes[root]; ok {
+		return true
+	}
+	prefix := root + "/"
+	for p := range ov.nodes {
+		if strings.HasPrefix(p, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // ListMerge produces a merged directory listing for dirPath.
 // base entries whose name appears as a tombstone in the overlay are omitted;
 // overlay-created entries not already in base are appended.

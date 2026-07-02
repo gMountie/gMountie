@@ -273,6 +273,12 @@ func (c *Coordinator) Has(path string) bool {
 	return c.overlay.Has(path)
 }
 
+// HasSubtree reports whether any pending overlay state exists at or under root.
+// See Overlay.HasSubtree.
+func (c *Coordinator) HasSubtree(root string) bool {
+	return c.overlay.HasSubtree(root)
+}
+
 // Epoch returns the durable WAL-epoch (minted in wal.db at creation) that
 // stamps this coordinator's WalOps and DelegationRequests, so the server keys
 // its dedup watermark + gen-fence by (identity, volume, epoch).
