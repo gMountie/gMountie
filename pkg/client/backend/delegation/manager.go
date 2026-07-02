@@ -54,12 +54,24 @@ type Manager struct {
 	flusher  RecallFlusher         // optional; wired in Task 14 via SetRecallFlusher
 	once     sync.Once
 	walEpoch string // client wal.db epoch (mu-guarded); stamped on DelegationRequests
-	// draining maps a recalled root → a channel closed when its recall
-	// (flush + handoff) finishes. While a root is draining, IsWriteDelegated
-	// is false for paths under it (new mutations must not defer — the recall
+	// draining maps a recalled root → the refcounted entry tracking every
+	// in-flight recall for it. While a root is draining, IsWriteDelegated is
+	// false for paths under it (new mutations must not defer — the recall
 	// flush snapshot would miss them) while IsDelegated stays true (the
 	// overlay is still authoritative for reads until it is flushed+cleared).
-	draining map[string]chan struct{}
+	// The entry stays in the map — and the root stays draining — until the
+	// LAST in-flight recall for the root finishes, regardless of the order in
+	// which concurrent recalls for the same root complete.
+	draining map[string]*drainEntry
+}
+
+// drainEntry tracks the in-flight recalls draining one root. n counts them;
+// ch closes when the last finishes. Shared by every concurrent OnRecall for
+// the same root so no ordering of completions can un-drain the root while any
+// recall's flush is still in flight.
+type drainEntry struct {
+	n  int
+	ch chan struct{}
 }
 
 // SetWalEpoch records the client wal.db's stable epoch. Called once at mount
@@ -86,7 +98,7 @@ func NewManager(inv CacheInvalidator) *Manager {
 		inv:      inv,
 		ws:       newWriteSet(64),
 		grants:   make(map[string]grantState),
-		draining: make(map[string]chan struct{}),
+		draining: make(map[string]*drainEntry),
 	}
 }
 
@@ -178,9 +190,9 @@ func (m *Manager) WaitDrained(ctx context.Context, path string) {
 	for {
 		m.mu.RLock()
 		var ch chan struct{}
-		for root, c := range m.draining {
+		for root, e := range m.draining {
 			if contains(root, path) {
-				ch = c
+				ch = e.ch
 				break
 			}
 		}
@@ -263,24 +275,31 @@ func (m *Manager) OnRecall(ctx context.Context, root string) error {
 	// keep merging the overlay until the flush clears it. Cleared on BOTH the
 	// success and failure paths: on failure the grant is retained and deferral
 	// resumes (fail-closed handoff — the server times out the recall).
-	drainCh := make(chan struct{})
+	//
+	// Refcounted: concurrent OnRecall calls for the same root share one
+	// drainEntry. The root stays in m.draining — and IsWriteDelegated stays
+	// false for it — until the LAST in-flight recall for the root finishes,
+	// no matter which of several concurrent recalls happens to complete (or
+	// fail) first.
 	m.mu.Lock()
-	m.draining[root] = drainCh
+	entry := m.draining[root]
+	if entry == nil {
+		entry = &drainEntry{ch: make(chan struct{})}
+		m.draining[root] = entry
+	}
+	entry.n++
 	m.mu.Unlock()
 	defer func() {
 		m.mu.Lock()
-		// Instance-checked delete: only delete the map entry if it still holds this
-		// call's channel. With concurrent recalls for the same root, a superseded
-		// channel's finisher will not un-drain the root; the last finisher deletes
-		// the entry. Waiters on a superseded channel wake on close and re-check via
-		// WaitDrained's loop, finding the newer channel.
-		if m.draining[root] == drainCh {
+		entry.n--
+		last := entry.n == 0
+		if last {
 			delete(m.draining, root)
 		}
 		m.mu.Unlock()
-		// Always close our own channel: waiters that grabbed it wake and re-block
-		// on any newer channel for the same root via WaitDrained's re-check loop.
-		close(drainCh)
+		if last {
+			close(entry.ch) // n-write happens-before the close via m.mu
+		}
 	}()
 
 	if flusher != nil {

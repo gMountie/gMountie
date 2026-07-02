@@ -261,35 +261,56 @@ func (s *ManagerSuite) TestWaitDrainedBlocksUntilRecallCompletes() {
 
 // TestConcurrentSameRootRecallsKeepDrainingUntilLastFinishes verifies that when
 // two OnRecall calls for the same root interleave, the root stays marked draining
-// until the LAST in-flight recall's flush finishes. This prevents writes from
-// re-entering mid-flush when the first finisher prematurely un-drains.
+// until the LAST in-flight recall's flush finishes, in EVERY completion ordering.
+// The newer recall is made to finish (and fail) FIRST: its flush error means the
+// grant is retained (no grant-drop to mask the verdict), so only the draining
+// entry can be keeping write admission closed while the older recall still
+// flushes. This discriminates against the pre-fix instance-checked delete, which
+// would let the newer recall's completion prematurely un-drain the root.
 func (s *ManagerSuite) TestConcurrentSameRootRecallsKeepDrainingUntilLastFinishes() {
 	m := NewManager(noopInvalidator{})
 	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj", Gen: 1})
 
-	started := make(chan struct{}, 2)
-	release := make(chan struct{}, 2)
+	type flushCall struct {
+		started chan struct{}
+		release chan struct{}
+		fail    bool
+	}
+	older := &flushCall{started: make(chan struct{}), release: make(chan struct{})}
+	newer := &flushCall{started: make(chan struct{}), release: make(chan struct{}), fail: true}
+	queue := make(chan *flushCall, 2)
+	queue <- older
+	queue <- newer
 	m.SetRecallFlusher(recallFlusherFunc(func(ctx context.Context, root string) error {
-		started <- struct{}{}
-		<-release
+		c := <-queue
+		close(c.started)
+		<-c.release
+		if c.fail {
+			return errors.New("flush failed")
+		}
 		return nil
 	}))
 
-	done := make(chan error, 2)
-	go func() { done <- m.OnRecall(context.Background(), "proj") }()
-	<-started
-	go func() { done <- m.OnRecall(context.Background(), "proj") }()
-	<-started
+	doneOlder := make(chan error, 1)
+	go func() { doneOlder <- m.OnRecall(context.Background(), "proj") }()
+	<-older.started
+	doneNewer := make(chan error, 1)
+	go func() { doneNewer <- m.OnRecall(context.Background(), "proj") }()
+	<-newer.started
 
-	// Let the FIRST recall finish; the second is still flushing.
-	release <- struct{}{}
-	s.NoError(<-done)
+	// The NEWER recall fails first. Its flush error means the grant is
+	// RETAINED (no grant-drop to mask the verdict) — only the draining entry
+	// can keep write admission closed while the older recall still flushes.
+	close(newer.release)
+	s.Error(<-doneNewer)
 	s.False(m.IsWriteDelegated("proj/a.txt"),
-		"root must stay draining while the second recall's flush is in flight")
+		"root must stay draining until the LAST in-flight recall finishes")
+	s.True(m.IsDelegated("proj/a.txt"), "failed recall retains the grant")
 
-	release <- struct{}{}
-	s.NoError(<-done)
-	s.False(m.IsDelegated("proj/a.txt"), "grants dropped after both recalls")
+	close(older.release)
+	s.NoError(<-doneOlder)
+	s.False(m.IsDelegated("proj/a.txt"), "successful recall drops the grant")
+	s.False(m.IsWriteDelegated("proj/a.txt"))
 }
 
 // TestWaitDrainedReturnsOnContextCancel verifies that WaitDrained unblocks on
@@ -299,9 +320,12 @@ func (s *ManagerSuite) TestWaitDrainedReturnsOnContextCancel() {
 	m := NewManager(noopInvalidator{})
 	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj", Gen: 1})
 	blocked := make(chan struct{})
+	stop := make(chan struct{})
+	defer close(stop)
 	m.SetRecallFlusher(recallFlusherFunc(func(ctx context.Context, root string) error {
 		close(blocked)
-		select {} // never returns; ctx cancel must free the waiter, not the flush
+		<-stop // blocks until the test ends; ctx cancel must free the waiter, not the flush
+		return nil
 	}))
 	go func() { _ = m.OnRecall(context.Background(), "proj") }()
 	<-blocked
