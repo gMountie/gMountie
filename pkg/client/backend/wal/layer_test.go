@@ -981,6 +981,16 @@ func (s *LayerSuite) TestFsyncOnTransportHandleFlushesPendingWal() {
 	ops, logerr := s.log.Replay(0)
 	s.Require().NoError(logerr)
 	s.Empty(ops, "fsync must flush pending WAL ops for the path, leaving log empty")
+
+	// Verify the pending SetAttr crossed the Apply stream — not just removed from log.
+	var sawSetAttr bool
+	for _, op := range s.sentOps() {
+		if op.GetSetAttr() != nil {
+			sawSetAttr = true
+			break
+		}
+	}
+	s.True(sawSetAttr, "fsync must flush the pending SetAttr over the Apply stream")
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
