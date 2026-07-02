@@ -54,6 +54,12 @@ type Manager struct {
 	flusher  RecallFlusher         // optional; wired in Task 14 via SetRecallFlusher
 	once     sync.Once
 	walEpoch string // client wal.db epoch (mu-guarded); stamped on DelegationRequests
+	// draining maps a recalled root → a channel closed when its recall
+	// (flush + handoff) finishes. While a root is draining, IsWriteDelegated
+	// is false for paths under it (new mutations must not defer — the recall
+	// flush snapshot would miss them) while IsDelegated stays true (the
+	// overlay is still authoritative for reads until it is flushed+cleared).
+	draining map[string]chan struct{}
 }
 
 // SetWalEpoch records the client wal.db's stable epoch. Called once at mount
@@ -77,9 +83,10 @@ func (m *Manager) WalEpoch() string {
 // when a server-issued recall arrives (via OnRecall).
 func NewManager(inv CacheInvalidator) *Manager {
 	return &Manager{
-		inv:    inv,
-		ws:     newWriteSet(64),
-		grants: make(map[string]grantState),
+		inv:      inv,
+		ws:       newWriteSet(64),
+		grants:   make(map[string]grantState),
+		draining: make(map[string]chan struct{}),
 	}
 }
 
@@ -125,6 +132,24 @@ func (m *Manager) IsDelegated(path string) bool {
 	return m.coveringGrantLocked(path) != nil
 }
 
+// IsWriteDelegated reports whether path may admit NEW deferred ops: covered by
+// a grant AND not under a draining (recall in progress) root. Read paths keep
+// using IsDelegated during a drain; write admission stops the moment a recall
+// begins so the recall flush is a complete snapshot of deferred state.
+func (m *Manager) IsWriteDelegated(path string) bool {
+	if m == nil {
+		return false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for root := range m.draining {
+		if contains(root, path) {
+			return false
+		}
+	}
+	return m.coveringGrantLocked(path) != nil
+}
+
 // GenFor returns the server-issued generation of the grant covering path, or 0
 // when no grant covers it. The Coordinator stamps this on every deferred op so
 // the server's revoked-gen fence can reject the op if the grant is later
@@ -139,6 +164,36 @@ func (m *Manager) GenFor(path string) uint64 {
 		return g.gen
 	}
 	return 0
+}
+
+// WaitDrained blocks while any draining root covers path (or until ctx is
+// done). Callers race a recall: an op refused admission because its region is
+// draining waits here, then retries — after a completed handoff the retry is
+// refused again (grant gone) and the caller goes synchronous; after a FAILED
+// recall flush the grant is retained and the retry defers as before.
+func (m *Manager) WaitDrained(ctx context.Context, path string) {
+	if m == nil {
+		return
+	}
+	for {
+		m.mu.RLock()
+		var ch chan struct{}
+		for root, c := range m.draining {
+			if contains(root, path) {
+				ch = c
+				break
+			}
+		}
+		m.mu.RUnlock()
+		if ch == nil {
+			return
+		}
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // Apply records a grant returned by the server. A grant with an empty
@@ -202,6 +257,22 @@ func (m *Manager) OnRecall(ctx context.Context, root string) error {
 	m.mu.RLock()
 	flusher := m.flusher
 	m.mu.RUnlock()
+
+	// Stop write admission for the recalled region for the duration of the
+	// flush. New mutating ops go synchronous (or wait via WaitDrained); reads
+	// keep merging the overlay until the flush clears it. Cleared on BOTH the
+	// success and failure paths: on failure the grant is retained and deferral
+	// resumes (fail-closed handoff — the server times out the recall).
+	drainCh := make(chan struct{})
+	m.mu.Lock()
+	m.draining[root] = drainCh
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		delete(m.draining, root)
+		m.mu.Unlock()
+		close(drainCh)
+	}()
 
 	if flusher != nil {
 		if err := flusher.FlushForRecall(ctx, root); err != nil {

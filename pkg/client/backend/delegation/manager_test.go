@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 	"go.gmountie.dev/gmountie/pkg/proto"
@@ -39,6 +40,11 @@ func (f *fakeRecallFlusher) FlushForRecall(_ context.Context, root string) error
 	*f.events = append(*f.events, "flush:"+root)
 	return f.err
 }
+
+// recallFlusherFunc is an adapter allowing a function to implement RecallFlusher.
+type recallFlusherFunc func(ctx context.Context, root string) error
+
+func (f recallFlusherFunc) FlushForRecall(ctx context.Context, root string) error { return f(ctx, root) }
 
 type ManagerSuite struct{ suite.Suite }
 
@@ -190,4 +196,65 @@ func (s *ManagerSuite) TestGenForRespectsExclusionsAndNilReceiver() {
 	s.Zero(m.GenFor("proj/hot/x"), "excluded sub-path is not delegated")
 	var nilMgr *Manager
 	s.Zero(nilMgr.GenFor("proj/src/a.txt"), "nil manager returns 0")
+}
+
+func (s *ManagerSuite) TestIsWriteDelegatedFalseWhileDraining() {
+	m := NewManager(noopInvalidator{})
+	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj", Gen: 1})
+
+	flushStarted := make(chan struct{})
+	releaseFlush := make(chan struct{})
+	m.SetRecallFlusher(recallFlusherFunc(func(ctx context.Context, root string) error {
+		close(flushStarted)
+		<-releaseFlush
+		return nil
+	}))
+
+	done := make(chan error, 1)
+	go func() { done <- m.OnRecall(context.Background(), "proj") }()
+
+	<-flushStarted
+	s.False(m.IsWriteDelegated("proj/src/a.txt"), "write admission stops during drain")
+	s.True(m.IsDelegated("proj/src/a.txt"), "reads keep merging the overlay during drain")
+
+	close(releaseFlush)
+	s.NoError(<-done)
+	s.False(m.IsDelegated("proj/src/a.txt"), "grant dropped after handoff")
+}
+
+func (s *ManagerSuite) TestWaitDrainedBlocksUntilRecallCompletes() {
+	m := NewManager(noopInvalidator{})
+	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj", Gen: 1})
+
+	flushStarted := make(chan struct{})
+	releaseFlush := make(chan struct{})
+	m.SetRecallFlusher(recallFlusherFunc(func(ctx context.Context, root string) error {
+		close(flushStarted)
+		<-releaseFlush
+		return nil
+	}))
+
+	recallDone := make(chan error, 1)
+	go func() { recallDone <- m.OnRecall(context.Background(), "proj") }()
+	<-flushStarted
+
+	waited := make(chan struct{})
+	go func() {
+		m.WaitDrained(context.Background(), "proj/src/a.txt")
+		close(waited)
+	}()
+
+	select {
+	case <-waited:
+		s.Fail("WaitDrained returned while the recall flush was still in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(releaseFlush)
+	s.NoError(<-recallDone)
+	select {
+	case <-waited:
+	case <-time.After(time.Second):
+		s.Fail("WaitDrained did not return after the recall completed")
+	}
 }
