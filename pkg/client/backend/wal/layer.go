@@ -520,6 +520,19 @@ func (l *Layer) Rename(ctx context.Context, oldPath, newPath string) proto.FsErr
 		}
 		// ErrNotDelegated: fall through to the synchronous path below.
 	}
+	// Admission barrier over BOTH endpoints for the compound flush-then-rename:
+	// without it, a racing thread could defer a new op referencing the
+	// pre-rename path between coord.Fsync and Inner.Rename — stranded against a
+	// path the rename has moved away, so a later flush ENOENTs it (ordered-halt
+	// loss). BeginDrain reuses the recall drain machinery: racing deferrals are
+	// refused admission, park in WaitDrained, and re-decide after release.
+	// Residual path-capture caveat: an op whose path was captured BEFORE the
+	// rename (an already-open fd under oldPath) can still be deferred after
+	// release, referencing the moved path — see design doc §7.7 gap (d).
+	releaseOld := l.mgr.BeginDrain(oldPath)
+	defer releaseOld()
+	releaseNew := l.mgr.BeginDrain(newPath)
+	defer releaseNew()
 	if l.coord.HasSubtree(oldPath) || l.coord.HasSubtree(newPath) {
 		if st := l.coord.Fsync(ctx); st != proto.FsError_FS_OK {
 			return st

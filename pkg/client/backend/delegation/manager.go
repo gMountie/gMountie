@@ -228,6 +228,53 @@ func (m *Manager) WaitDrained(ctx context.Context, path string) {
 	}
 }
 
+// markDraining registers one in-flight drain for root and returns the shared
+// refcounted entry. While ANY drain for a covering root is registered,
+// IsWriteDelegated is false (and IsDraining true) for paths under it, so new
+// deferrals park in WaitDrained instead of being admitted. Shared by OnRecall
+// and BeginDrain so the two use literally the same refcount logic.
+func (m *Manager) markDraining(root string) *drainEntry {
+	m.mu.Lock()
+	entry := m.draining[root]
+	if entry == nil {
+		entry = &drainEntry{ch: make(chan struct{})}
+		m.draining[root] = entry
+	}
+	entry.n++
+	m.mu.Unlock()
+	return entry
+}
+
+// endDraining releases one in-flight drain for root. When the LAST drain for
+// the root ends, the root leaves the draining set and entry.ch closes, waking
+// every WaitDrained parker (the n-write happens-before the close via m.mu).
+func (m *Manager) endDraining(root string, entry *drainEntry) {
+	m.mu.Lock()
+	entry.n--
+	last := entry.n == 0
+	if last {
+		delete(m.draining, root)
+	}
+	m.mu.Unlock()
+	if last {
+		close(entry.ch)
+	}
+}
+
+// BeginDrain marks root draining (refcounted, same entries as OnRecall) and
+// returns a release func. Used by the WAL layer to hold an admission barrier
+// over compound operations (flush-then-rename): racing deferrals park in
+// WaitDrained instead of being admitted against a path about to move.
+// Nil-receiver safe (returns a no-op release). release must be called exactly
+// once.
+func (m *Manager) BeginDrain(root string) (release func()) {
+	if m == nil {
+		return func() {}
+	}
+	entry := m.markDraining(root)
+	return func() { m.endDraining(root, entry) }
+}
+
 // Apply records a grant returned by the server. A grant with an empty
 // GrantedRoot is a denial and is silently ignored.
 func (m *Manager) Apply(grant *proto.DelegationGrant) {
@@ -280,7 +327,7 @@ func (m *Manager) Record(path string) {
 // has already fired for the lost ops when the error is returned here.
 //
 // nil flusher or no pending WAL ops: flush is skipped, and Phase-1 behaviour
-// (invalidate + drop) is preserved unchanged.
+// (drop + invalidate) is preserved unchanged.
 func (m *Manager) OnRecall(ctx context.Context, root string) error {
 	// Step 1: flush the entire pending WAL prefix (a correct superset of root).
 	// The full-pending-prefix approach is correct because every deferred write
@@ -301,26 +348,8 @@ func (m *Manager) OnRecall(ctx context.Context, root string) error {
 	// false for it — until the LAST in-flight recall for the root finishes,
 	// no matter which of several concurrent recalls happens to complete (or
 	// fail) first.
-	m.mu.Lock()
-	entry := m.draining[root]
-	if entry == nil {
-		entry = &drainEntry{ch: make(chan struct{})}
-		m.draining[root] = entry
-	}
-	entry.n++
-	m.mu.Unlock()
-	defer func() {
-		m.mu.Lock()
-		entry.n--
-		last := entry.n == 0
-		if last {
-			delete(m.draining, root)
-		}
-		m.mu.Unlock()
-		if last {
-			close(entry.ch) // n-write happens-before the close via m.mu
-		}
-	}()
+	entry := m.markDraining(root)
+	defer m.endDraining(root, entry)
 
 	if flusher != nil {
 		if err := flusher.FlushForRecall(ctx, root); err != nil {

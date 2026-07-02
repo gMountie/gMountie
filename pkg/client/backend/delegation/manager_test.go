@@ -315,6 +315,82 @@ func (s *ManagerSuite) TestConcurrentSameRootRecallsKeepDrainingUntilLastFinishe
 	s.False(m.IsWriteDelegated("proj/a.txt"))
 }
 
+// TestBeginDrainMarksDrainingAndWaitDrainedParksUntilRelease verifies the
+// manual admission barrier: BeginDrain must mark every covered path draining
+// (IsWriteDelegated false, IsDraining true) without touching the grant, park
+// WaitDrained callers, and restore admission when the release func runs.
+func (s *ManagerSuite) TestBeginDrainMarksDrainingAndWaitDrainedParksUntilRelease() {
+	m := NewManager(noopInvalidator{})
+	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj", Gen: 1})
+
+	release := m.BeginDrain("proj/old.txt")
+
+	s.True(m.IsDraining("proj/old.txt"), "BeginDrain must mark the root draining")
+	s.True(m.IsDraining("proj/old.txt/nested"), "covered paths drain too")
+	s.False(m.IsDraining("proj/other.txt"), "sibling paths are unaffected")
+	s.False(m.IsWriteDelegated("proj/old.txt"), "write admission stops under the barrier")
+	s.True(m.IsDelegated("proj/old.txt"), "the grant itself is untouched")
+
+	waited := make(chan struct{})
+	go func() { m.WaitDrained(context.Background(), "proj/old.txt"); close(waited) }()
+	select {
+	case <-waited:
+		s.Fail("WaitDrained returned while the barrier was held")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	release()
+	select {
+	case <-waited:
+	case <-time.After(time.Second):
+		s.Fail("WaitDrained did not return after the barrier released")
+	}
+	s.False(m.IsDraining("proj/old.txt"), "root must un-drain on release")
+	s.True(m.IsWriteDelegated("proj/old.txt"), "admission resumes after release")
+}
+
+// TestBeginDrainRefcountComposesWithConcurrentOnRecall verifies that a manual
+// barrier and a concurrent recall for the SAME root share one refcounted
+// drainEntry: the root stays draining until BOTH end, regardless of order.
+func (s *ManagerSuite) TestBeginDrainRefcountComposesWithConcurrentOnRecall() {
+	m := NewManager(noopInvalidator{})
+	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj", Gen: 1})
+
+	flushStarted := make(chan struct{})
+	releaseFlush := make(chan struct{})
+	m.SetRecallFlusher(recallFlusherFunc(func(ctx context.Context, root string) error {
+		close(flushStarted)
+		<-releaseFlush
+		return nil
+	}))
+
+	release := m.BeginDrain("proj")
+
+	recallDone := make(chan error, 1)
+	go func() { recallDone <- m.OnRecall(context.Background(), "proj") }()
+	<-flushStarted
+
+	// The barrier ends first; the recall still holds the shared entry.
+	release()
+	s.True(m.IsDraining("proj/a.txt"), "root must stay draining while the recall is in flight")
+	s.False(m.IsWriteDelegated("proj/a.txt"))
+
+	close(releaseFlush)
+	s.Require().NoError(<-recallDone)
+	s.False(m.IsDraining("proj/a.txt"), "root un-drains when the last holder ends")
+}
+
+// TestBeginDrainAndIsDrainingNilReceiverSafe: with WAL disabled the layer holds
+// a nil *Manager; both the barrier and the oracle must be no-ops, not panics.
+func (s *ManagerSuite) TestBeginDrainAndIsDrainingNilReceiverSafe() {
+	var m *Manager
+	s.NotPanics(func() {
+		release := m.BeginDrain("anything")
+		release()
+		s.False(m.IsDraining("anything"))
+	})
+}
+
 // TestWaitDrainedReturnsOnContextCancel verifies that WaitDrained unblocks on
 // context cancellation even when the recall flusher is still running (i.e., the
 // context cancel returns the waiter, not the completion of the flush itself).

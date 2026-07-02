@@ -266,7 +266,7 @@ delegations are dropped when a session expires.
 | Self-access | Never recalls its own delegation; cooldown only triggers on a recall event |
 | Draining a recalled root (Phase 2) | Write admission stops (`IsWriteDelegated` false) the instant the recall starts; reads keep merging the overlay (`IsDelegated` true) until the flush clears it. Refcounted across concurrent recalls for the same root — stays draining until the last one finishes. Racing ops — including the coalescer's `Drain` — park in `WaitDrained` and re-decide in a loop: a refusal with no drain in flight (grant gone, handoff complete) falls back synchronously; a refusal while a drain is still in flight parks again. Nothing wire-writes mid-drain: a synchronous write issued then would race the in-flight recall `Apply` stream carrying older deferred writes for the same path, and the server serializes the two arbitrarily (lost update) |
 | Synthetic-handle lifecycle across flush/recall (Phase 2) | A synthetic (overlay-created) handle whose node was flushed away or recalled still has an open fd from the caller's point of view. Routing key: "does the overlay still fully own the node" (not tombstoned, not base-delta). If yes, reads/writes serve purely from the overlay. If no, reads go through a transient inner handle merged with any still-pending bytes (`readThrough`), and writes go through a transient inner handle after a completed handoff (`writeThrough`) |
-| Rename of a delegated path (Phase 2) | Deferred via the WAL ONLY when the source is a full overlay-create node (`overlayOwns`) — keeps the atomic `create tmp → rename over` pattern fast. A base or base-delta source cannot be re-homed by the overlay, so it renames synchronously against inner, first flushing any pending state touching either endpoint's subtree — otherwise a deferred op could be left stranded against a path the rename already moved away from |
+| Rename of a delegated path (Phase 2) | Deferred via the WAL ONLY when the source is a full overlay-create node — keeps the atomic `create tmp → rename over` pattern fast. The ownership decision is made by `RecordOp` itself, under `recordMu`, atomically with the append (`ErrNotOwned` otherwise): an unlocked pre-check could race a concurrent flush clearing the node between decision and append, leaving a rename that tombstones the source and synthesizes nothing. A non-owned source cannot be re-homed by the overlay, so it renames synchronously against inner: an admission barrier (`BeginDrain`, the same refcounted entries recalls use) over both endpoints covers the flush-then-rename compound, and any pending state touching either endpoint's subtree is flushed first. This closes the stranding races up to the path-capture caveat (§7.7 gap d) |
 
 ---
 
@@ -512,6 +512,17 @@ poison). An explicit `RecallAck{error}` or `RecallAbort` message would let the
 server fail faster and with a clearer signal. This is a protocol follow-up.
 **Scheduled:** the follow-up server-coherence PR adds `RecallAck` abort
 signalling.
+
+**(d) Path-capture caveat on the rename admission barrier.** The synchronous
+rename path holds an admission barrier (`BeginDrain`) over both endpoints for
+its flush-then-rename compound, so a racing deferral cannot be *admitted*
+against a path the rename is about to move (§6.3). But WAL ops are
+path-addressed: an op whose path was captured *before* the rename — typically
+a write through an fd that was already open under the old path — can be
+deferred *after* the barrier releases, referencing the moved path. A later
+flush would ENOENT it (ordered halt, loud loss §7.6). This is inherent to
+path-addressed WAL ops; closing it needs handle-identity (fd → current-path)
+tracking through the rename, which is a follow-up.
 
 ---
 
