@@ -53,6 +53,15 @@ var _ transport.WriteDrain = (*Coordinator)(nil)
 // (wire) path, optionally after Manager.WaitDrained.
 var ErrNotDelegated = stderrors.New("wal: path not write-delegated")
 
+// ErrNotOwned is returned by RecordOp when an OpRename's source is not a full
+// overlay-create node (it is absent, tombstoned, or a base-delta) at append
+// time. Only an overlay-owned source can be re-homed by a deferred rename;
+// anything else must run synchronously (Layer.Rename's barrier path). Decided
+// under recordMu, atomically with the append — an unlocked pre-check could
+// race a concurrent commitFlushed clearing the node between decision and
+// append.
+var ErrNotOwned = stderrors.New("wal: rename source not overlay-owned")
+
 // Coordinator ties the WAL log, the pending overlay, and the delegation
 // Manager together. It implements transport.WriteDrain so the transport layer
 // can route Flush calls to the WAL (delegated paths) or the wire (all others).
@@ -235,6 +244,15 @@ func (c *Coordinator) RecordOp(op Op) error {
 	if !c.mgr.IsWriteDelegated(op.Path) ||
 		(op.NewPath != "" && !c.mgr.IsWriteDelegated(op.NewPath)) {
 		return ErrNotDelegated
+	}
+	// A rename's overlay-ownership decision must be atomic with the append:
+	// checked outside recordMu, a concurrent commitFlushed could clear the
+	// full-create node between the check and the append — applyRename would
+	// then tombstone the source and synthesize nothing at the destination
+	// (both paths ENOENT locally until the next flush). recordMu → overlay.mu
+	// is the established nesting (overlay.Apply below runs under recordMu too).
+	if op.Kind == OpRename && !c.overlay.OwnsFull(op.Path) {
+		return ErrNotOwned
 	}
 	op.Gen = c.mgr.GenFor(op.Path)
 	if _, err := c.log.Append(op); err != nil {

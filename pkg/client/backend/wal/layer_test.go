@@ -397,8 +397,9 @@ func (s *LayerSuite) TestCrossSubtreeRename_Synchronous() {
 // deferred rename of a base-only (not overlay-created) file tombstoned the
 // source in the overlay but synthesised nothing at the destination, so
 // `mv delegated/old.txt delegated/new.txt && cat delegated/new.txt` returned
-// ENOENT until the next flush. Under the new contract (overlayOwns gates
-// deferral) a base-only source is not overlay-owned, so the rename executes
+// ENOENT until the next flush. Under the new contract (RecordOp's atomic
+// ownership check gates deferral) a base-only source is not overlay-owned
+// (ErrNotOwned), so the rename executes
 // synchronously against inner immediately — no ENOENT window, nothing
 // deferred in the WAL.
 func (s *LayerSuite) TestRenameOfBaseOnlyPathGoesSynchronous() {
@@ -488,7 +489,8 @@ func (s *LayerSuite) TestRenameFlushesPendingBaseDeltaBeforeSyncRename() {
 	s.grant("dir")
 
 	// SetAttr (mtime touch) on a base-only path creates a base-delta overlay
-	// node with pending state — overlayOwns must be false for it.
+	// node with pending state — RecordOp must refuse an OpRename for it
+	// (ErrNotOwned: a base-delta node is not overlay-owned).
 	mtime := time.Unix(1_700_000_000, 0)
 	_, ferr := s.layer.SetAttr(s.ctx, "dir/data.txt", backend.SetAttrIn{
 		Valid: backend.FATTR_MTIME,
@@ -525,6 +527,78 @@ func (s *LayerSuite) TestRenameFlushesPendingBaseDeltaBeforeSyncRename() {
 	}
 	s.True(sawSetAttr, "the flush must have sent the pending SetAttr")
 	s.False(sawRename, "the rename must never be deferred through the WAL for a base-delta source")
+}
+
+// ── Test 8d: rename ownership is decided atomically with the append ──────────
+//
+// TestRecordOpRenameRefusedAfterFlushClearsOwnership pins the RecordOp-side
+// contract for the ownership race: a full-create node is seeded, then a real
+// flush commits it and clears the overlay — exactly the state a commitFlushed
+// racing an unlocked ownership pre-check would produce. RecordOp(OpRename)
+// must then refuse with ErrNotOwned instead of appending a rename that would
+// tombstone the source and synthesize nothing (both paths ENOENT locally).
+func (s *LayerSuite) TestRecordOpRenameRefusedAfterFlushClearsOwnership() {
+	s.grant("dir")
+	_, err := s.fs.Mkdir(s.ctx, "dir", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	_, _, st := s.layer.Create(s.ctx, "dir", "tmp.txt", 0, 0o644)
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	s.True(s.coord.Has("dir/tmp.txt"), "the create must be pending in the overlay")
+
+	// A real flush commits the create and clears the overlay node.
+	s.flushAll()
+	s.False(s.coord.Has("dir/tmp.txt"), "flush must clear the overlay node")
+
+	recErr := s.coord.RecordOp(wal.Op{Kind: wal.OpRename, Path: "dir/tmp.txt", NewPath: "dir/final.txt"})
+	s.Require().ErrorIs(recErr, wal.ErrNotOwned,
+		"rename of a source the overlay no longer owns must be refused atomically")
+
+	ops, logerr := s.log.Replay(0)
+	s.Require().NoError(logerr)
+	s.Empty(ops, "no OpRename may be appended for a non-owned source")
+}
+
+// TestRenameOfJustFlushedSyntheticFileGoesSynchronous is the Layer-level view
+// of the same race outcome: renaming a synthetic file whose overlay node was
+// just cleared by a flush must take the synchronous path — the inner rename
+// executes, and no OpRename ever enters the log or crosses the Apply stream.
+func (s *LayerSuite) TestRenameOfJustFlushedSyntheticFileGoesSynchronous() {
+	s.grant("dir")
+	_, err := s.fs.Mkdir(s.ctx, "dir", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	fh, _, st := s.layer.Create(s.ctx, "dir", "tmp.txt", 0, 0o644)
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	_, st = s.layer.Write(s.ctx, fh, 0, []byte("hello"))
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, s.layer.Release(s.ctx, fh))
+
+	// Simulate the completed flush: prime inner with the materialised file
+	// (standing in for the server-side Apply pipeline) and drive a real Flush
+	// so the overlay actually clears.
+	s.writeInner("dir/tmp.txt", []byte("hello"))
+	s.flushAll()
+	s.False(s.coord.Has("dir/tmp.txt"), "overlay must be cleared after the flush")
+
+	st = s.layer.Rename(s.ctx, "dir/tmp.txt", "dir/final.txt")
+	s.Require().Equal(proto.FsError_FS_OK, st)
+
+	// The rename executed synchronously against inner.
+	_, innerErr := s.fs.Stat(s.ctx, "dir/final.txt")
+	s.Equal(proto.FsError_FS_OK, innerErr, "just-flushed rename must reach inner synchronously")
+	_, innerErr = s.fs.Stat(s.ctx, "dir/tmp.txt")
+	s.Equal(proto.FsError_FS_ENOENT, innerErr, "old path must be gone in inner")
+
+	// ...and never through the WAL: no OpRename in the log or on the wire.
+	ops, logerr := s.log.Replay(0)
+	s.Require().NoError(logerr)
+	for _, op := range ops {
+		s.NotEqual(wal.OpRename, op.Kind, "no OpRename may be deferred for a non-owned source")
+	}
+	for _, w := range s.sentOps() {
+		s.Nil(w.GetRename(), "no OpRename may cross the Apply stream")
+	}
 }
 
 // ── Test 9: Read on delegated pending path → overlay bytes merged ─────────────

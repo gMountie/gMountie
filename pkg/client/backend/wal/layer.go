@@ -59,13 +59,17 @@
 // # Rename correctness
 //
 // A rename defers via the WAL only when the source is entirely the overlay's
-// own creation (overlayOwns: a full-create node, not a tombstone, not a
-// base-delta) — the atomic-write `create tmp → rename over` fast path. Any
-// other source (base-only, or base-delta with pending mutations) cannot be
-// re-homed by the overlay at the destination, so it runs synchronously against
-// inner — first flushing any pending state touching either endpoint's subtree
-// (coord.HasSubtree), so a deferred op is never left stranded against a path
-// the rename has moved away from.
+// own creation (a full-create node, not a tombstone, not a base-delta) — the
+// atomic-write `create tmp → rename over` fast path. The ownership decision is
+// made by RecordOp under recordMu, atomically with the append (ErrNotOwned
+// otherwise), so a concurrent flush cannot clear the node between decision and
+// append. Any other source (base-only, or base-delta with pending mutations)
+// cannot be re-homed by the overlay at the destination, so it runs
+// synchronously against inner — under a BeginDrain admission barrier over both
+// endpoints, first flushing any pending state touching either endpoint's
+// subtree (coord.HasSubtree), so a deferred op is never left stranded against
+// a path the rename has moved away from (up to the path-capture caveat, design
+// doc §7.7 gap d).
 //
 // # Base-delta Stat merge (the keystone)
 //
@@ -506,19 +510,27 @@ func (l *Layer) Rmdir(ctx context.Context, path string) proto.FsError {
 // creation (a full-create node — the atomic-write `create tmp → rename over`
 // fast path). A base or base-delta source cannot be represented by the overlay
 // at the destination (the server holds content the overlay cannot re-home), so
-// those renames run synchronously — after flushing any pending state touching
-// either endpoint, so no deferred op is left targeting a path the rename has
-// moved away (a stranded op would ENOENT on flush = ordered-halt data loss).
+// those renames run synchronously — under an admission barrier, after flushing
+// any pending state touching either endpoint, so no deferred op is left
+// targeting a path the rename has moved away (a stranded op would ENOENT on
+// flush = ordered-halt data loss).
+//
+// The ownership decision is NOT made here: RecordOp decides it under recordMu,
+// atomically with the append (ErrNotOwned otherwise). An unlocked gate here
+// could race a concurrent commitFlushed clearing the full-create node between
+// the check and the append — applyRename would then tombstone the source and
+// synthesize nothing at the destination (both paths ENOENT locally until the
+// next flush). recordDeferred passes ErrNotOwned straight through (its loop
+// only parks on ErrNotDelegated while a drain is in flight).
 func (l *Layer) Rename(ctx context.Context, oldPath, newPath string) proto.FsError {
-	if l.overlayOwns(oldPath) {
-		op := Op{Kind: OpRename, Path: oldPath, NewPath: newPath}
-		switch err := l.recordDeferred(ctx, op); {
-		case err == nil:
-			return proto.FsError_FS_OK
-		case !stderrors.Is(err, ErrNotDelegated):
-			return proto.FsError_FS_EIO
-		}
-		// ErrNotDelegated: fall through to the synchronous path below.
+	op := Op{Kind: OpRename, Path: oldPath, NewPath: newPath}
+	switch err := l.recordDeferred(ctx, op); {
+	case err == nil:
+		return proto.FsError_FS_OK
+	case stderrors.Is(err, ErrNotOwned), stderrors.Is(err, ErrNotDelegated):
+		// Not deferrable: run synchronously below.
+	default:
+		return proto.FsError_FS_EIO
 	}
 	// Admission barrier over BOTH endpoints for the compound flush-then-rename:
 	// without it, a racing thread could defer a new op referencing the
@@ -539,15 +551,6 @@ func (l *Layer) Rename(ctx context.Context, oldPath, newPath string) proto.FsErr
 		}
 	}
 	return l.Inner.Rename(ctx, oldPath, newPath)
-}
-
-// overlayOwns reports whether path is a full overlay-create node (not a
-// tombstone, not a base-delta). Only such a source can be re-homed by a
-// deferred rename. An overlay-created directory can only contain
-// overlay-created children, so subtree ownership follows.
-func (l *Layer) overlayOwns(path string) bool {
-	_, ok, tomb, baseDelta, _ := l.coord.Stat(path)
-	return ok && !tomb && !baseDelta
 }
 
 // SetAttr records a pending setattr for delegated paths and returns merged
