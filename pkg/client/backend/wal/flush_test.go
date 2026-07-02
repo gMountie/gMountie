@@ -36,22 +36,31 @@ import (
 // fakeApplyStream implements grpc.ClientStreamingClient[proto.WalOp, proto.ApplyAck].
 // It records sent WalOps and returns a scripted ApplyAck.
 type fakeApplyStream struct {
-	mu      sync.Mutex
-	sent    []*proto.WalOp
-	ack     *proto.ApplyAck
-	sendErr error // if non-nil, Send returns this error
-	closed  bool
-	gate    chan struct{}          // if non-nil, CloseAndRecv blocks on it (in-flight Apply)
-	onClose func() *proto.ApplyAck // if non-nil, computes the ack from sent ops (chunk test)
+	mu          sync.Mutex
+	sent        []*proto.WalOp
+	ack         *proto.ApplyAck
+	sendErr     error // if non-nil, Send returns this error
+	closed      bool
+	gate        chan struct{}          // if non-nil, CloseAndRecv blocks on it (in-flight Apply)
+	onClose     func() *proto.ApplyAck // if non-nil, computes the ack from sent ops (chunk test)
+	onFirstSend func()                 // if non-nil, called once on this stream's first Send
+	sentOnce    sync.Once
 }
 
 func (f *fakeApplyStream) Send(op *proto.WalOp) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.sendErr != nil {
-		return f.sendErr
+	sendErr := f.sendErr
+	if sendErr == nil {
+		f.sent = append(f.sent, op)
 	}
-	f.sent = append(f.sent, op)
+	hook := f.onFirstSend
+	f.mu.Unlock()
+	if sendErr != nil {
+		return sendErr
+	}
+	if hook != nil {
+		f.sentOnce.Do(hook)
+	}
 	return nil
 }
 
@@ -271,6 +280,9 @@ func (s *FlushSuite) TestFlush_ChunksLargeBacklogIntoBoundedBatches() {
 // the flush completes. The concurrent write (seq > throughSeq) must survive the
 // flush's overlay rebuild. Run under -race to exercise recordMu vs commitFlushed.
 func (s *FlushSuite) TestFlush_ConcurrentInFlightWriteSurvives() {
+	// RecordOp now admits only write-delegated paths (Task 3).
+	s.mgr.Apply(&proto.DelegationGrant{GrantedRoot: "pkg"})
+
 	s.appendOp(OpMkdir, "pkg")
 	through := s.appendOp(OpCreate, "pkg/flushed.txt")
 	s.stream.ack = &proto.ApplyAck{Watermark: through}
@@ -296,6 +308,61 @@ func (s *FlushSuite) TestFlush_ConcurrentInFlightWriteSurvives() {
 
 	s.False(s.coord.Has("pkg/flushed.txt"), "flushed op must be cleared")
 	s.True(s.coord.Has("pkg/inflight.txt"), "write recorded during the in-flight Apply must survive")
+}
+
+// ── Test 2b: FlushForRecall barrier ───────────────────────────────────────────
+
+// TestFlushForRecallDrainsOpsRecordedMidFlush proves the recall-flush barrier
+// (Task 3): FlushForRecall takes recordMu around its log snapshot and loops
+// until the log is empty, so an op recorded WHILE the first Apply batch is in
+// flight (and thus not in that batch's snapshot) is still picked up and
+// flushed by a later loop iteration — it cannot be left deferred past the
+// recall handoff.
+func (s *FlushSuite) TestFlushForRecallDrainsOpsRecordedMidFlush() {
+	s.mgr.Apply(&proto.DelegationGrant{GrantedRoot: "dir", Gen: 1})
+
+	s.Require().NoError(s.coord.RecordOp(Op{Kind: OpCreate, Path: "dir/a", Mode: 0o644}))
+
+	firstBatchSent := make(chan struct{})
+	secondOpRecorded := make(chan struct{})
+	var closeFirstBatchSent sync.Once
+
+	callCount := 0
+	s.coord.cfg.applyFactory = func(_ context.Context) (proto.RpcFs_ApplyClient, error) {
+		callCount++
+		batchNum := callCount
+		st := &fakeApplyStream{}
+		if batchNum == 1 {
+			// Block the first batch's Send until the second op is recorded, so
+			// FlushForRecall's second loop iteration is guaranteed to see it —
+			// without this the test would be racy (RecordOp vs. the snapshot).
+			st.onFirstSend = func() {
+				closeFirstBatchSent.Do(func() { close(firstBatchSent) })
+				<-secondOpRecorded
+			}
+		}
+		st.onClose = func() *proto.ApplyAck {
+			seq := uint64(0)
+			if len(st.sent) > 0 {
+				seq = st.sent[len(st.sent)-1].Seq
+			}
+			return &proto.ApplyAck{Watermark: seq}
+		}
+		return st, nil
+	}
+
+	go func() {
+		<-firstBatchSent
+		_ = s.coord.RecordOp(Op{Kind: OpCreate, Path: "dir/b", Mode: 0o644})
+		close(secondOpRecorded)
+	}()
+
+	s.Require().NoError(s.coord.FlushForRecall(context.Background(), "dir"))
+
+	remaining, err := s.log.Replay(0)
+	s.Require().NoError(err)
+	s.Empty(remaining, "FlushForRecall must loop until the log is empty")
+	s.GreaterOrEqual(callCount, 2, "the op recorded mid-flush must be picked up by a second loop iteration")
 }
 
 // ── Test 3: Ordered halt ──────────────────────────────────────────────────────

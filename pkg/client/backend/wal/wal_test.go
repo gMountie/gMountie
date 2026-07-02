@@ -165,6 +165,10 @@ func (s *CoordinatorSuite) TestDrain_DelegatedPath_ZeroBytePending_NoOpAndWireNo
 // ── Test 4: RecordOp ─────────────────────────────────────────────────────────
 
 func (s *CoordinatorSuite) TestRecordOp_AppendsToLogAndAppliesOverlay() {
+	// RecordOp now admits only write-delegated paths (Task 3): grant the root
+	// first, or the op is refused with ErrNotDelegated.
+	s.grant("newdir")
+
 	op := Op{
 		Kind: OpMkdir,
 		Path: "newdir",
@@ -194,6 +198,11 @@ func (s *CoordinatorSuite) TestRecordOp_AppendsToLogAndAppliesOverlay() {
 // ── Test 5: RecordOp with log failure skips Apply ────────────────────────────
 
 func (s *CoordinatorSuite) TestRecordOpLogFailureSkipsApply() {
+	// Grant the root first — RecordOp now admits only write-delegated paths
+	// (Task 3), and this test wants to exercise the Append failure, not the
+	// admission refusal.
+	s.grant("faildir")
+
 	// Close the log to force Append to fail on the next RecordOp.
 	err := s.log.Close()
 	s.Require().NoError(err)
@@ -231,6 +240,9 @@ func (s *CoordinatorSuite) TestDrain_NonDelegatedPath_PropagatesWireError() {
 // ── Test 7: Read accessors pass through to Overlay ───────────────────────────
 
 func (s *CoordinatorSuite) TestReadAccessors_PassThroughToOverlay() {
+	// RecordOp now admits only write-delegated paths (Task 3).
+	s.grant("sub")
+
 	// Apply a write via RecordOp so the overlay has data.
 	err := s.coord.RecordOp(Op{
 		Kind:   OpWrite,
@@ -466,6 +478,9 @@ func (s *CoordinatorSuite) TestRebuildOverlay_LeftoverOps_OverlayPopulated() {
 	seedOverlay := NewOverlay()
 	seedCoord := NewCoordinator(seedMgr, seedLog, seedOverlay)
 
+	// RecordOp now admits only write-delegated paths (Task 3).
+	seedMgr.Apply(&proto.DelegationGrant{GrantedRoot: "crash"})
+
 	// Record a Mkdir and a Create op.
 	s.Require().NoError(seedCoord.RecordOp(Op{Kind: OpMkdir, Path: "crash/dir", Mode: 0o40755}))
 	s.Require().NoError(seedCoord.RecordOp(Op{Kind: OpCreate, Path: "crash/dir/file.txt", Mode: 0o644}))
@@ -494,6 +509,93 @@ func (s *CoordinatorSuite) TestRebuildOverlay_LeftoverOps_OverlayPopulated() {
 	ops, err := freshLog.Replay(0)
 	s.Require().NoError(err)
 	s.Assert().Len(ops, 2, "log must retain all ops after RebuildOverlay (no truncation)")
+}
+
+// ── Test 11: RecordOp admission (Task 3) ─────────────────────────────────────
+
+// TestRecordOpStampsGenAndRefusesUndelegated verifies that RecordOp stamps the
+// op with the covering grant's gen (so the server's revoked-gen fence can
+// reject a stale replay), and that a path outside any grant is refused with
+// ErrNotDelegated instead of being silently appended.
+func (s *CoordinatorSuite) TestRecordOpStampsGenAndRefusesUndelegated() {
+	mgr := delegation.NewManager(noopInvalidator{})
+	mgr.Apply(&proto.DelegationGrant{GrantedRoot: "dir", Gen: 9})
+	l := openTestLog(s.T())
+	coord := NewCoordinator(mgr, l, NewOverlay())
+
+	s.Require().NoError(coord.RecordOp(Op{Kind: OpMkdir, Path: "dir/sub", Mode: 0o755}))
+	ops, err := l.Replay(0)
+	s.Require().NoError(err)
+	s.Require().Len(ops, 1)
+	s.Equal(uint64(9), ops[0].Gen, "recorded op carries the covering grant's gen")
+
+	err = coord.RecordOp(Op{Kind: OpMkdir, Path: "other/sub", Mode: 0o755})
+	s.ErrorIs(err, ErrNotDelegated, "undelegated path is refused, caller goes synchronous")
+}
+
+// TestRecordOpRefusesRenameWithUndelegatedNewPath verifies that a rename whose
+// destination falls outside the covering grant is refused even though the
+// source path is delegated — both endpoints must be write-delegated for the
+// rename to be deferred.
+func (s *CoordinatorSuite) TestRecordOpRefusesRenameWithUndelegatedNewPath() {
+	mgr := delegation.NewManager(noopInvalidator{})
+	mgr.Apply(&proto.DelegationGrant{GrantedRoot: "dir", Gen: 3})
+	l := openTestLog(s.T())
+	coord := NewCoordinator(mgr, l, NewOverlay())
+
+	err := coord.RecordOp(Op{Kind: OpRename, Path: "dir/a", NewPath: "outside/b"})
+	s.ErrorIs(err, ErrNotDelegated)
+}
+
+// blockingRecallFlusher implements delegation.RecallFlusher and blocks
+// FlushForRecall until release is closed — used to hold a root in the
+// "draining" state for the duration of a test.
+type blockingRecallFlusher struct {
+	release chan struct{}
+}
+
+func (b *blockingRecallFlusher) FlushForRecall(_ context.Context, _ string) error {
+	<-b.release
+	return nil
+}
+
+// TestDrain_FallsBackToWireWhileRootIsDraining verifies that Drain uses
+// IsWriteDelegated (not IsDelegated): once a recall marks a root draining,
+// Drain must go synchronous even though the grant covering the path is still
+// held (IsDelegated would still be true) — new deferred writes must stop
+// admitting the moment a recall begins.
+func (s *CoordinatorSuite) TestDrain_FallsBackToWireWhileRootIsDraining() {
+	mgr := delegation.NewManager(noopInvalidator{})
+	mgr.Apply(&proto.DelegationGrant{GrantedRoot: "dir", Gen: 1})
+	release := make(chan struct{})
+	mgr.SetRecallFlusher(&blockingRecallFlusher{release: release})
+
+	l := openTestLog(s.T())
+	coord := NewCoordinator(mgr, l, NewOverlay())
+
+	recallDone := make(chan struct{})
+	go func() {
+		_ = mgr.OnRecall(context.Background(), "dir")
+		close(recallDone)
+	}()
+
+	// Wait for the recall to mark the root draining.
+	for mgr.IsWriteDelegated("dir/f.txt") {
+		time.Sleep(time.Millisecond)
+	}
+	s.True(mgr.IsDelegated("dir/f.txt"), "the grant is still held while draining (reads stay served from the overlay)")
+
+	wireCalled := false
+	wireFlush := func(_ context.Context, _ []byte, _ int64, _ string) proto.FsError {
+		wireCalled = true
+		return proto.FsError_FS_OK
+	}
+	st := coord.Drain(context.Background(), "dir/f.txt", []byte("x"), 0, "req-drain", wireFlush)
+	s.Equal(proto.FsError_FS_OK, st)
+	s.True(wireCalled, "Drain must fall back to wire while the region is draining")
+
+	close(release)
+	<-recallDone
 }
 
 func TestCoordinatorSuite(t *testing.T) {

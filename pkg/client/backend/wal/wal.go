@@ -7,10 +7,14 @@
 // # Delegation routing
 //
 // On Drain:
-//   - If mgr.IsDelegated(path) → the write is DEFERRED: append an OpWrite to
-//     the BboltLog (durable) then apply it to the Overlay (in-memory), and
-//     return FS_OK without calling wireFlush. Zero-byte flushes (empty pending)
-//     are skipped — they carry no data and would pollute the log.
+//   - If mgr.IsWriteDelegated(path) → the write is DEFERRED: RecordOp appends
+//     an OpWrite to the BboltLog (durable) then applies it to the Overlay
+//     (in-memory), and Drain returns FS_OK without calling wireFlush.
+//     Zero-byte flushes (empty pending) are skipped — they carry no data and
+//     would pollute the log. IsWriteDelegated (unlike IsDelegated) is false
+//     while the path's region is draining under an in-flight recall, so a
+//     write admitted here can still lose the race to RecordOp's authoritative
+//     recheck (ErrNotDelegated) — Drain falls back to wireFlush in that case.
 //   - Otherwise → wireFlush is called immediately (unchanged behavior for
 //     non-delegated paths). The log and overlay are not touched.
 //
@@ -38,6 +42,12 @@ import (
 
 // compile-time assertion: Coordinator must satisfy transport.WriteDrain.
 var _ transport.WriteDrain = (*Coordinator)(nil)
+
+// ErrNotDelegated is returned by RecordOp when the op's path (or NewPath) is
+// not write-delegated at append time — either never delegated, or its region
+// is draining under an in-flight recall. Callers fall back to the synchronous
+// (wire) path, optionally after Manager.WaitDrained.
+var ErrNotDelegated = stderrors.New("wal: path not write-delegated")
 
 // Coordinator ties the WAL log, the pending overlay, and the delegation
 // Manager together. It implements transport.WriteDrain so the transport layer
@@ -149,7 +159,7 @@ func (c *Coordinator) Drain(
 	requestID string,
 	wireFlush func(ctx context.Context, data []byte, off int64, reqID string) proto.FsError,
 ) proto.FsError {
-	if !c.mgr.IsDelegated(path) {
+	if !c.mgr.IsWriteDelegated(path) {
 		return wireFlush(ctx, pendingData, pendingOff, requestID)
 	}
 
@@ -164,30 +174,50 @@ func (c *Coordinator) Drain(
 		Offset: pendingOff,
 		Data:   pendingData,
 	}
-	if err := c.RecordOp(op); err != nil {
+	err := c.RecordOp(op)
+	if stderrors.Is(err, ErrNotDelegated) {
+		// Lost the race with a recall between the check above and the append:
+		// the region is draining or handed off. Fall back to the wire —
+		// synchronous is always coherent.
+		return wireFlush(ctx, pendingData, pendingOff, requestID)
+	}
+	if err != nil {
 		return proto.FsError_FS_EIO
 	}
 	return proto.FsError_FS_OK
 }
 
-// RecordOp appends op to the durable log and then applies it to the in-memory
-// overlay. Durability-first: if Append fails, Apply is skipped and the error
-// is returned. Used by the 10b backend layer for create/mkdir/rename/unlink/
-// setattr/xattr ops (non-write mutations that bypass the WriteDrain seam).
+// RecordOp admits, gen-stamps, and durably appends op, then applies it to the
+// in-memory overlay.
 //
-// When a size cap is configured (WithCapOps), RecordOp blocks until the
-// pending count drops below the cap, then appends. This provides backpressure:
-// the caller degrades toward synchronous writes rather than OOM-ing.
+// Admission (IsWriteDelegated) happens INSIDE recordMu, atomically with the
+// append. Combined with FlushForRecall's recordMu barrier this closes the
+// recall TOCTOU: once a recall marks a region draining and takes the barrier,
+// every already-admitted op is in the log (the snapshot sees it) and every
+// later op is refused (ErrNotDelegated → synchronous fallback).
+//
+// The op is stamped with the covering grant's gen so the server's revoked-gen
+// fence can reject it if the grant is revoked before the op is flushed
+// (machine-death handoff → stale replay).
 func (c *Coordinator) RecordOp(op Op) error {
+	// Cheap pre-check outside the cap wait so an undelegated op never blocks
+	// on backpressure. Re-checked authoritatively under recordMu below.
+	if !c.mgr.IsWriteDelegated(op.Path) {
+		return ErrNotDelegated
+	}
+
 	// Backpressure: block if pending WAL count >= cap. MUST run outside recordMu:
 	// a capped RecordOp waits here for a flush to drain the log, and the flush's
 	// commitFlushed takes recordMu — holding it here would deadlock.
 	c.waitForCap()
 
-	// log.Append + overlay.Apply are atomic w.r.t. commitFlushed (recordMu), so
-	// the flush's overlay rebuild always sees a log/overlay pair that agree.
 	c.recordMu.Lock()
 	defer c.recordMu.Unlock()
+	if !c.mgr.IsWriteDelegated(op.Path) ||
+		(op.NewPath != "" && !c.mgr.IsWriteDelegated(op.NewPath)) {
+		return ErrNotDelegated
+	}
+	op.Gen = c.mgr.GenFor(op.Path)
 	if _, err := c.log.Append(op); err != nil {
 		return errors.Wrap(err, "wal RecordOp")
 	}

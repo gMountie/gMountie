@@ -330,25 +330,30 @@ func (c *Coordinator) Fsync(ctx context.Context) proto.FsError {
 	return proto.FsError_FS_OK
 }
 
-// FlushForRecall implements delegation.RecallFlusher. It flushes all pending
-// WAL ops to the server before the recall handoff completes, ensuring the
-// contender sees the holder's deferred writes. root identifies the recalled
-// subtree (logged for observability); the flush covers the entire pending prefix
-// (a correct superset of root).
+// FlushForRecall implements delegation.RecallFlusher. It flushes ALL pending
+// WAL ops before the recall handoff completes, looping until the log is empty.
 //
-// FlushForRecall blocks until the ops are durably acked by the server (or until
-// ctx is cancelled). On permanent failure the onLoss hook has already fired;
-// the returned error prevents the recall from completing the clean handoff.
+// Barrier: the log snapshot is taken under recordMu. RecordOp's admission
+// check + append are atomic under the same mutex, and the Manager marks the
+// recalled region draining BEFORE calling this — so once we hold recordMu,
+// every admitted op is visible to the snapshot and every later op is refused
+// deferral. The loop handles ops admitted for OTHER (non-draining) regions
+// while a flush round is in flight.
 func (c *Coordinator) FlushForRecall(ctx context.Context, root string) error {
-	ops, err := c.log.Replay(0)
-	if err != nil {
-		return errors.Wrap(err, "wal: FlushForRecall read log")
+	for {
+		c.recordMu.Lock()
+		ops, err := c.log.Replay(0)
+		c.recordMu.Unlock()
+		if err != nil {
+			return errors.Wrap(err, "wal: FlushForRecall read log")
+		}
+		if len(ops) == 0 {
+			return nil
+		}
+		if err := c.Flush(ctx, ops[len(ops)-1].Seq); err != nil {
+			return err
+		}
 	}
-	if len(ops) == 0 {
-		return nil
-	}
-	maxSeq := ops[len(ops)-1].Seq
-	return c.Flush(ctx, maxSeq)
 }
 
 // ── Replay ────────────────────────────────────────────────────────────────────
