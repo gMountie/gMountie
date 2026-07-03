@@ -271,7 +271,6 @@ func (s *DelegationHandlerSuite) TestGetAttrIfChangedRecallFailureReturnsUnavail
 		KnownVersion: 0,
 	})
 	s.Require().Error(err, "recall failure surfaces as a transport error")
-	s.Require().NotNil(err)
 
 	// Verify it's a codes.Unavailable gRPC status error.
 	st, ok := status.FromError(err)
