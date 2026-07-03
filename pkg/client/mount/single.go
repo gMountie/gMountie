@@ -415,12 +415,21 @@ func (m *SingleVolumeMounterImpl) runRecallLoop(ctx context.Context, mgr *delega
 					// of burning the recall timeout while the contender blocks. The
 					// grant is retained (OnRecall didn't drop it) and the ops remain
 					// in the WAL for retry.
+					//
+					// fserr fidelity: a TRANSIENT halt (wal.ErrTransientHalt — the
+					// server refused the tail on contention, tail retained) is
+					// retryable, so report FS_EAGAIN; anything else is FS_EIO.
+					fserr := proto.FsError_FS_EIO
+					if errors.Is(err, wal.ErrTransientHalt) {
+						fserr = proto.FsError_FS_EAGAIN
+					}
 					log.Log.Error("recall flush failed; sending abort ack",
 						zap.String("volume", volume),
 						zap.String("root", msg.GetRoot()),
+						zap.String("fserr", fserr.String()),
 						zap.Error(err),
 					)
-					_ = stream.Send(&proto.RecallAck{RecallId: msg.GetRecallId(), Done: false, Fserr: proto.FsError_FS_EIO})
+					_ = stream.Send(&proto.RecallAck{RecallId: msg.GetRecallId(), Done: false, Fserr: fserr})
 					continue
 				}
 				_ = stream.Send(&proto.RecallAck{RecallId: msg.GetRecallId(), Done: true})

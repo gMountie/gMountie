@@ -36,6 +36,7 @@ package wal
 
 import (
 	"context"
+	stderrors "errors"
 	"io"
 	"sync"
 	"time"
@@ -48,6 +49,13 @@ import (
 
 	"go.uber.org/zap"
 )
+
+// ErrTransientHalt marks a flush halted by transient delegation contention
+// (the server answered FS_EAGAIN mid-Apply): the un-applied tail is retained
+// in the WAL for the next flush trigger — nothing was lost. Callers detect it
+// with errors.Is, e.g. the recall loop maps an aborted handoff's fserr to
+// FS_EAGAIN (retryable) instead of FS_EIO.
+var ErrTransientHalt = stderrors.New("wal: transient apply halt")
 
 // flushConfig holds the options that enable flush behaviour. All fields are
 // optional; a zero-value flushConfig means flushing is disabled (no-op).
@@ -289,7 +297,7 @@ func (c *Coordinator) processAck(reason string, ack *proto.ApplyAck, sent []Op, 
 		c.commitFlushed(committed)
 		c.watermark.Store(committed)
 		c.capCond.Broadcast()
-		return errors.Errorf("wal: Apply transient halt at seq %d (EAGAIN); tail retained for retry", failedSeq)
+		return errors.Wrapf(ErrTransientHalt, "wal: Apply transient halt at seq %d (EAGAIN); tail retained for retry", failedSeq)
 	}
 
 	if failedSeq == 0 {

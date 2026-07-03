@@ -7,7 +7,11 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
+
+	"go.gmountie.dev/gmountie/pkg/common"
 	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
 )
 
 // ErrNoStream is returned by RecallRegistry.Recall when the owner session has no
@@ -23,6 +27,12 @@ type Recaller interface {
 }
 
 type pending struct {
+	// owner is the session the RecallMsg was pushed to — the ONLY session
+	// whose ack may complete this recall. recall_ids are guessable
+	// (sequential), so without this check any session with a Recall stream
+	// could ack another holder's recall: done=true forges a clean handoff
+	// against un-flushed holder state; done=false is a targeted DoS.
+	owner string
 	ackCh chan struct{}
 	// err is set (before ackCh closes) when the holder aborted the recall
 	// (done=false): its flush failed, the handoff must fail closed NOW rather
@@ -71,9 +81,26 @@ func (r *RecallRegistry) Register(sessionID string, send func(*proto.RecallMsg) 
 
 // Ack completes the in-flight recall for recallID. done=false marks the
 // recall aborted by the holder; fserr is the holder-reported cause.
+//
+// Only the session the recall was pushed to may ack it: an ack from any other
+// session is logged and ignored (the recall stays pending and, absent the
+// owner's ack, times out).
 func (r *RecallRegistry) Ack(sessionID string, recallID uint64, done bool, fserr proto.FsError) {
 	r.mu.Lock()
 	p := r.inflight[recallID]
+	if p != nil && p.owner != sessionID {
+		// Leave the entry in place: a non-owner cannot complete OR abort a
+		// recall it does not hold. p.owner is immutable after creation, so
+		// reading it after unlock is safe.
+		r.mu.Unlock()
+		log.Log.Warn("recall ack from non-owner session ignored",
+			zap.Uint64("recall_id", recallID),
+			zap.Bool("done", done),
+			zap.String("owner_fp", common.FingerprintID(p.owner)),
+			zap.String("acker_fp", common.FingerprintID(sessionID)),
+		)
+		return
+	}
 	delete(r.inflight, recallID)
 	r.mu.Unlock()
 	if p != nil {
@@ -89,7 +116,7 @@ func (r *RecallRegistry) Ack(sessionID string, recallID uint64, done bool, fserr
 // releasing its table mutex.
 func (r *RecallRegistry) Recall(ownerSession, root string) error {
 	id := r.nextID.Add(1)
-	p := &pending{ackCh: make(chan struct{})}
+	p := &pending{owner: ownerSession, ackCh: make(chan struct{})}
 
 	r.mu.Lock()
 	slot := r.streams[ownerSession]
