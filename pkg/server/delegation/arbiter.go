@@ -3,6 +3,7 @@ package delegation
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -52,6 +53,7 @@ type Arbiter struct {
 	table    *delegationTable
 	cooldown *cooldownTable
 	regions  map[string]*regionState // keyed by delegated root being recalled
+	grantCount atomic.Int64            // maintained at every table mutation (under mu)
 }
 
 // NewArbiter creates a new Arbiter. store is required and must not be nil;
@@ -125,6 +127,7 @@ func (a *Arbiter) Request(owner, root, principal, volume, epoch string) *proto.D
 		// are harmless; do NOT decrement (no in-memory counter to roll back).
 		return &proto.DelegationGrant{RetryAfterMs: uint64(a.cfgRetryMs())}
 	}
+	a.grantCount.Store(int64(a.table.size()))
 	a.mGrantsActive()
 	return &proto.DelegationGrant{GrantedRoot: granted, ExcludedPaths: excluded, Gen: gen}
 }
@@ -136,6 +139,12 @@ func (a *Arbiter) cfgRetryMs() int64 { return a.cooldown.cfg.Base.Milliseconds()
 // drop it. Self-owned coverage is a no-op. Returns the recall error so the
 // caller can fail the contender's op closed (map to FS_EAGAIN).
 func (a *Arbiter) OnMutation(contender, path string) error {
+	// Hot-path exit: with zero grants anywhere there is nothing to arbitrate.
+	// Read handlers call this on every RPC; do not touch a.mu for the common
+	// no-delegations case (WAL-off clients, idle volumes).
+	if a.grantCount.Load() == 0 {
+		return nil
+	}
 	a.mu.Lock()
 	owner, root, ok := a.table.ownerOf(path)
 	if !ok || owner == contender {
@@ -210,6 +219,7 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 	a.mu.Lock()
 	if handoff {
 		a.table.release(root)
+		a.grantCount.Store(int64(a.table.size()))
 		a.cooldown.trip(root, a.now())
 		a.mRecall()
 		a.mCooldownTrip()
@@ -234,6 +244,7 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 func (a *Arbiter) ReleaseSession(sessionID string) {
 	a.mu.Lock()
 	drained := a.table.drainOwner(sessionID)
+	a.grantCount.Store(int64(a.table.size()))
 	a.mGrantsActive()
 	a.mu.Unlock()
 

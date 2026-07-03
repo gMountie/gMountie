@@ -50,6 +50,13 @@ type errInfo string
 
 func (e errInfo) Error() string { return string(e) }
 
+// recallerFunc is a Recaller adapter for inline callback functions.
+type recallerFunc func(owner, root string) error
+
+func (f recallerFunc) Recall(owner, root string) error {
+	return f(owner, root)
+}
+
 // fakeStore is a minimal watermark.Store for arbiter tests. It records
 // RevokeGen calls so tests can assert handoff ordering. NextGen is per-key
 // so that per-(identity,volume) gen isolation is faithfully represented.
@@ -310,6 +317,37 @@ func (s *ArbiterSuite) TestMetricsReleaseSession() {
 	a.ReleaseSession("sessA")
 	s.Equal([]int{0}, fm.grantsActive, "ReleaseSession must emit GrantsActiveSet(0)")
 }
+
+func (s *ArbiterSuite) TestOnMutationFastPathWithoutGrants() {
+	// A recaller that fails the test if invoked, plus a mutex-poisoning probe:
+	// hold a.mu from another goroutine and assert OnMutation still returns
+	// (i.e. it never touched the mutex).
+	a := NewArbiter(recallerFunc(func(owner, root string) error {
+		s.Fail("no recall expected")
+		return nil
+	}), Config{}, time.Now, newFakeStore())
+
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		a.mu.Lock()
+		close(locked)
+		<-release
+		a.mu.Unlock()
+	}()
+	<-locked
+
+	done := make(chan error, 1)
+	go func() { done <- a.OnMutation("sess-b", "some/path") }()
+	select {
+	case err := <-done:
+		s.Require().NoError(err)
+	case <-time.After(200 * time.Millisecond):
+		s.Fail("OnMutation blocked on a.mu despite zero grants")
+	}
+	close(release)
+}
+
 
 func (s *ArbiterSuite) TestConcurrentContendersCoalesce() {
 	fr := &fakeRecaller{block: make(chan struct{})}
