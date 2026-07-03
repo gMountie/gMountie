@@ -416,6 +416,42 @@ func (s *FlushSuite) TestFlush_OrderedHalt_OnLossCalledAndPrefixTruncated() {
 	s.Equal(seq1, s.coord.watermark.Load())
 }
 
+// TestFlush_EagainHaltRetainsTailAndSkipsLossHook verifies that transient
+// FS_EAGAIN halts are retried (design §7.3), not treated as permanent data loss.
+// The tail is retained, onLoss is NOT fired, and a distinguishable error is returned.
+func (s *FlushSuite) TestFlush_EagainHaltRetainsTailAndSkipsLossHook() {
+	seq1 := s.appendOp(OpCreate, "dir/a")
+	seq2 := s.appendOp(OpCreate, "dir/b")
+
+	// Server acks seq1, fails at seq2 with FS_EAGAIN (transient: recall in flight
+	// or foreign delegation contended).
+	s.stream.ack = &proto.ApplyAck{
+		Watermark: seq1,
+		FailedSeq: seq2,
+		Fserr:     proto.FsError_FS_EAGAIN,
+	}
+
+	var lossFired bool
+	s.coord.onLoss = func(_ string, _ []Op, _ proto.FsError) {
+		lossFired = true
+	}
+
+	// Flush should error but NOT fire onLoss for EAGAIN.
+	err := s.coord.Flush(context.Background(), seq2)
+	s.Require().Error(err, "flush must report the transient halt")
+	s.False(lossFired, "EAGAIN is not a data-loss event, so onLoss must NOT fire")
+
+	// The committed prefix should be truncated (seq1 gone), but the failed tail
+	// (seq2) must be RETAINED in the log for retry on the next flush.
+	remaining, rerr := s.log.Replay(0)
+	s.Require().NoError(rerr)
+	s.Require().Len(remaining, 1, "committed prefix truncated, failed tail RETAINED for retry")
+	s.Equal(seq2, remaining[0].Seq, "the failed seq must remain in the log")
+
+	// Watermark should advance to the committed prefix only (seq1), not beyond.
+	s.Equal(seq1, s.coord.watermark.Load(), "watermark must advance to the committed prefix")
+}
+
 // ── Test 4: Fsync flushes synchronously ──────────────────────────────────────
 
 func (s *FlushSuite) TestFsync_FlushesBlockinglyAndReturnsError() {

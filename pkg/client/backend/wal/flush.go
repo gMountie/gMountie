@@ -273,6 +273,19 @@ func (c *Coordinator) processAck(reason string, ack *proto.ApplyAck, sent []Op, 
 		c.onFlushed(sent)
 	}
 
+	if failedSeq != 0 && ack.GetFserr() == proto.FsError_FS_EAGAIN {
+		// Transient halt: the server refused the tail (a recall was in flight
+		// or a foreign delegation contended). Commit the applied prefix only;
+		// ops ≥ failedSeq stay durably in the log and the overlay for the next
+		// flush attempt (interval / fsync / recall). NOT a data-loss event —
+		// no onLoss, no tail truncation. Implements design §7.3's
+		// "transient (EAGAIN) → retry from committed_watermark + 1".
+		c.commitFlushed(committed)
+		c.watermark.Store(committed)
+		c.capCond.Broadcast()
+		return errors.Errorf("wal: Apply transient halt at seq %d (EAGAIN); tail retained for retry", failedSeq)
+	}
+
 	if failedSeq == 0 {
 		// Full success: drop the flushed prefix (seq ≤ committed) from the log
 		// and rebuild the overlay from the SURVIVORS (seq > committed) — the ops
