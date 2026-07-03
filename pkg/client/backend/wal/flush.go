@@ -236,8 +236,10 @@ func (c *Coordinator) Flush(ctx context.Context, throughSeq uint64) error {
 }
 
 // processAck handles the ApplyAck and transport error from applyOps.
-// reason is the loss reason label passed to onLoss (e.g. "apply-failure",
-// "gen-fenced", "recall-flush-failure"). It must be called while holding flushMu.
+// reason is the loss reason label passed to onLoss: "apply-failure" from Flush
+// — including a recall-window flush, since FlushForRecall routes through the
+// same Flush path and does not distinguish the caller (design doc §7.4) — or
+// "gen-fenced" from Replay. It must be called while holding flushMu.
 func (c *Coordinator) processAck(reason string, ack *proto.ApplyAck, sent []Op, transportErr error) error {
 	if transportErr != nil {
 		// Transport-level failure: the ops are NOT discarded (they stay in the
@@ -330,25 +332,50 @@ func (c *Coordinator) Fsync(ctx context.Context) proto.FsError {
 	return proto.FsError_FS_OK
 }
 
-// FlushForRecall implements delegation.RecallFlusher. It flushes all pending
-// WAL ops to the server before the recall handoff completes, ensuring the
-// contender sees the holder's deferred writes. root identifies the recalled
-// subtree (logged for observability); the flush covers the entire pending prefix
-// (a correct superset of root).
+// FlushForRecall implements delegation.RecallFlusher. It performs a SINGLE
+// bounded flush of a barrier snapshot of the WAL — not a loop until the log
+// is empty.
 //
-// FlushForRecall blocks until the ops are durably acked by the server (or until
-// ctx is cancelled). On permanent failure the onLoss hook has already fired;
-// the returned error prevents the recall from completing the clean handoff.
+// # Why one snapshot is sufficient
+//
+// The Manager marks the recalled region "draining" BEFORE calling
+// FlushForRecall, and RecordOp's admission check + append are atomic under
+// recordMu (the same mutex this function takes for its snapshot). That
+// makes taking recordMu once a correct barrier for the recalled region:
+//
+//   - Every op already admitted for the recalled region completed its
+//     append before this snapshot could acquire recordMu, so it is in
+//     ops.
+//   - Every op that ARRIVES for the recalled region after the snapshot is
+//     refused admission (ErrNotDelegated) — draining was set before we were
+//     ever called, so there is no window in which a new op for this region
+//     can land outside the snapshot.
+//
+// The result is a bounded, contiguous prefix through ops[len(ops)-1].Seq — a
+// correct superset of everything the recalled root will ever need flushed
+// (design doc §7.4: recall flushes the contiguous prefix up to the last op
+// touching the recalled delegation, not the whole future of the log).
+//
+// # Why NOT loop until empty
+//
+// Ops admitted after the snapshot for OTHER, non-draining regions are
+// deliberately left deferred — flushing them is not this recall's job. A
+// loop-until-empty variant would keep re-snapshotting and re-flushing as long
+// as ANY region keeps writing, so sustained concurrent writes to unrelated
+// delegated subtrees could keep the log perpetually non-empty and stall the
+// recall handoff indefinitely. A single bounded flush cannot be starved by
+// unrelated write traffic.
 func (c *Coordinator) FlushForRecall(ctx context.Context, root string) error {
+	c.recordMu.Lock()
 	ops, err := c.log.Replay(0)
+	c.recordMu.Unlock()
 	if err != nil {
 		return errors.Wrap(err, "wal: FlushForRecall read log")
 	}
 	if len(ops) == 0 {
 		return nil
 	}
-	maxSeq := ops[len(ops)-1].Seq
-	return c.Flush(ctx, maxSeq)
+	return c.Flush(ctx, ops[len(ops)-1].Seq)
 }
 
 // ── Replay ────────────────────────────────────────────────────────────────────

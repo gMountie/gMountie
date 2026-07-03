@@ -566,12 +566,41 @@ func (ov *Overlay) Xattr(path, name string) (val []byte, set bool, removed bool)
 	return nil, false, false
 }
 
+// OwnsFull reports whether path is a full overlay-create node: it exists, is
+// not a tombstone, and is not a base-delta. Only such a source can be re-homed
+// by a deferred rename (applyRename). Consulted by RecordOp under recordMu so
+// the ownership decision is atomic with the append — a concurrent
+// commitFlushed cannot clear the node between decision and append.
+func (ov *Overlay) OwnsFull(path string) bool {
+	ov.mu.RLock()
+	defer ov.mu.RUnlock()
+	n, ok := ov.nodes[path]
+	return ok && !n.tomb && !n.baseDelta
+}
+
 // Has returns true if path has any pending state (including a tombstone).
 func (ov *Overlay) Has(path string) bool {
 	ov.mu.RLock()
 	defer ov.mu.RUnlock()
 	_, ok := ov.nodes[path]
 	return ok
+}
+
+// HasSubtree reports whether any pending state (including tombstones) exists
+// at root or under root/. Prefix matching is "/"-bounded.
+func (ov *Overlay) HasSubtree(root string) bool {
+	ov.mu.RLock()
+	defer ov.mu.RUnlock()
+	if _, ok := ov.nodes[root]; ok {
+		return true
+	}
+	prefix := root + "/"
+	for p := range ov.nodes {
+		if strings.HasPrefix(p, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // ListMerge produces a merged directory listing for dirPath.

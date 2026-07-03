@@ -1,7 +1,7 @@
 # Write Delegation and Recall
 
-**Status:** Phase 1 (delegation + recall coherence layer) shipped (2026-06-23). Phase 2 (WAL + deferred writes) shipped (2026-06-24).
-**Last updated:** 2026-06-24
+**Status:** Phase 1 (delegation + recall coherence layer) shipped (2026-06-23). Phase 2 (WAL + deferred writes) shipped (2026-06-24). Handoff-correctness hardening shipped (2026-07-02).
+**Last updated:** 2026-07-02
 
 This document covers gMountie's write-delegation and recall system: how clients
 can hold a write-delegation over a subtree, how the server arbitrates grants and
@@ -209,13 +209,49 @@ delegations are dropped when a session expires.
 **Client — `pkg/client/backend/delegation/`:**
 
 - **Manager + delegation layer** at the `posWritePath` slot in the backend chain.
+  The `Manager` retains each grant's server-issued `Gen` (`DelegationGrant.Gen`)
+  alongside its root and exclusions. Every deferred op is gen-stamped inside
+  `RecordOp` (the WAL Coordinator), atomically with the durable append —
+  `op.Gen = mgr.GenFor(op.Path)` runs under the same `recordMu` that appends to
+  the log. This is what makes the server's revoked-gen fence (§7.3) actually
+  fire end-to-end: a stale replay after a handoff carries the grant's old gen,
+  the server rejects it, and the client halts with `FS_ESTALE` (loss reason
+  `"gen-fenced"`) instead of silently re-applying data that belongs to a
+  handoff that already completed.
 - **Active-write-set tracker** — computes the LCA subtree to request, promotes
   upward as writes spread, piggybacks the request on outgoing ops via a
   `DelegationHook`.
-- **Recall handler** — on `Recall`: invalidate read cache for affected paths,
-  then drop the delegation and skip-revalidation gate, then ack. Invalidating
-  before dropping is a correctness requirement: dropping without flushing the
-  cache is a stale-read bug.
+- **Recall handler (`OnRecall`)** — on `Recall`: marks the recalled root
+  **draining** first (§7.4), then flushes the WAL prefix (Coordinator-owned) —
+  the flush invalidates the inner cache entry for each flushed path as it
+  commits (`Coordinator.onFlushed`, before the grant is touched) — then drops
+  the delegation grant(s) covering the root, then performs a final
+  `InvalidateSubtree(root)` sweep to catch any cached entries the flush didn't
+  touch (e.g. reads served under the delegation's skip-revalidation gate that
+  were never written). The caller (the recall loop) sends `RecallAck` only
+  after `OnRecall` returns, so all of the above — flush, per-path invalidate,
+  grant drop, subtree sweep — completes before the ack, whatever their
+  internal order.
+- **Draining state.** Marking a root draining splits admission from
+  readability: `IsWriteDelegated` goes false for the root the instant the
+  recall starts (new mutating ops stop deferring — see "Admission is
+  Coordinator-owned" below), while `IsDelegated` stays true (reads keep
+  merging the pending overlay) until the recall flush actually clears it.
+  Entries are refcounted (`drainEntry.n`), so a root with several concurrent
+  in-flight recalls stays draining until the *last* one finishes, regardless
+  of completion order. An op that loses the admission race parks in
+  `Manager.WaitDrained` and retries once the drain ends — after a completed
+  handoff the retry is refused again (grant gone) and the caller falls back
+  synchronously; after a failed recall flush the grant is retained and the
+  retry defers as before.
+- **Admission is Coordinator-owned.** The defer-vs-forward decision is not
+  made by the delegation layer's `IsDelegated` check alone — it is made inside
+  `RecordOp` under the same `recordMu` that performs the durable append.
+  `RecordOp` refuses with `ErrNotDelegated` when the path is not (still)
+  write-delegated, and callers fall back to the synchronous path. This closes
+  the recall/RecordOp TOCTOU: the recall's flush takes a barrier snapshot
+  under the identical mutex (§7.4), so there is no window in which an op can
+  be admitted for a region after the recall has already snapshotted it.
 - **Cache `IsDelegated` oracle** — the cache layer consults this to decide
   whether to suppress `GetAttrIfChanged` during Unverified windows.
 
@@ -228,6 +264,9 @@ delegations are dropped when a session expires.
 | Cache-invalidate on recall | Holder MUST invalidate read cache for affected paths before sending RecallAck — drop-without-invalidate is a stale-read bug |
 | Recall coalescing | One recall per region at a time; additional contenders queue on the in-flight handoff |
 | Self-access | Never recalls its own delegation; cooldown only triggers on a recall event |
+| Draining a recalled root (Phase 2) | Write admission stops (`IsWriteDelegated` false) the instant the recall starts; reads keep merging the overlay (`IsDelegated` true) until the flush clears it. Refcounted across concurrent recalls for the same root — stays draining until the last one finishes. Racing ops — including the coalescer's `Drain` — park in `WaitDrained` and re-decide in a loop; each refusal is resolved from one atomic admission snapshot (`AdmissionState`): not-delegated + not-draining (grant gone — only a SUCCESSFUL recall flush drops it — so the handoff is complete) falls back synchronously; still-draining parks again; delegated but no longer draining (a drain that ended with the grant retained, e.g. a failed recall flush) re-defers rather than falling back — two separate oracle reads could misread that state as wire-safe while the retained deferred ops still sit in the WAL. Nothing wire-writes mid-drain: a synchronous write issued then would race the in-flight recall `Apply` stream carrying older deferred writes for the same path, and the server serializes the two arbitrarily (lost update) |
+| Synthetic-handle lifecycle across flush/recall (Phase 2) | A synthetic (overlay-created) handle whose node was flushed away or recalled still has an open fd from the caller's point of view. Routing key: "does the overlay still fully own the node" (not tombstoned, not base-delta). If yes, reads/writes serve purely from the overlay. If no, reads go through a transient inner handle merged with any still-pending bytes (`readThrough`), and writes go through a transient inner handle after a completed handoff (`writeThrough`) |
+| Rename of a delegated path (Phase 2) | Deferred via the WAL ONLY when the source is a full overlay-create node — keeps the atomic `create tmp → rename over` pattern fast. The ownership decision is made by `RecordOp` itself, under `recordMu`, atomically with the append (`ErrNotOwned` otherwise): an unlocked pre-check could race a concurrent flush clearing the node between decision and append, leaving a rename that tombstones the source and synthesizes nothing. A non-owned source cannot be re-homed by the overlay, so it renames synchronously against inner: an admission barrier (`BeginDrain`, the same refcounted entries recalls use) over both endpoints covers the flush-then-rename compound, and any pending state touching either endpoint's subtree is flushed first. This closes the stranding races up to the path-capture caveat (§7.7 gap d) |
 
 ---
 
@@ -294,7 +333,12 @@ Three durable concepts:
   dedup. Carried in the `WalOp` envelope.
 - **`gen`** — the server stamps a generation on each granted delegation; the
   grant returns it. The client tags every WAL op with the gen it was deferred
-  under. This is the fence.
+  under. This is the fence, and it is live end-to-end: the `Manager` retains
+  `DelegationGrant.Gen` per grant, `RecordOp` stamps it on every deferred op
+  atomically with the durable append (§6.2), and the server's revoked-gen
+  fence therefore actually rejects a stale replay rather than being dead
+  wiring. Covered by an e2e test: a stale replay after an `ErrNoStream`
+  handoff halts with `FS_ESTALE` and loss reason `"gen-fenced"`.
 - **Watermark** — server-durable per `(identity, volume)`: the highest seq
   durably applied. Replay of any op `seq ≤ watermark` is a no-op (dedup).
   Stored **alongside the revoked-gen set in one store** — if they diverge,
@@ -333,9 +377,15 @@ starts from.
 
 **Error mid-batch (ordered halt):** the WAL is one ordered seq-space, so the
 server halts at first failure. `ApplyAck` carries `{committed_watermark,
-failed_seq, fserr}`. Permanent failures (ENOSPC/EACCES/EIO) cause the client to
-discard the overlay, mark the subtree EIO, and release the delegation. Transient
-(EAGAIN) → retry the batch from `committed_watermark + 1`.
+failed_seq, fserr}`. Permanent failures (ENOSPC/EACCES/EIO) truncate the log's
+committed prefix (seq ≤ `committed_watermark`), rebuild the overlay from the
+surviving in-flight ops (seq beyond the sent batch), and discard the lost tail
+(seq ≥ `failed_seq`) with the loud-loss log (§7.6) — the client does **not**
+mark the subtree EIO or auto-release the delegation; the grant is retained and
+ordinary deferral resumes for the rest of the subtree. (Releasing a
+delegation is specifically what a *recall* handoff does, and only after its
+own flush succeeds — §7.4.) Transient (EAGAIN) → retry the batch from
+`committed_watermark + 1`.
 
 **Generation lifecycle + GC:** the server durably records a revoked gen in the
 `WatermarkStore` *before* serving the contender on handoff. Revoked-gens are
@@ -344,12 +394,21 @@ max seq, or after a TTL ≥ the max plausible reconnect window.
 
 ### 7.4 Recall-flush integration
 
-On `Recall{root}` the holder:
+On `Recall{root}` the holder (`Manager.OnRecall` → `Coordinator.FlushForRecall`):
 
-1. **Flushes the contiguous WAL prefix** covering the recalled delegation via
-   `Apply` and waits for the watermark ack.
-2. Clears the overlay for that subtree and drops the delegation.
-3. Sends `RecallAck{done}`.
+1. Marks `root` **draining** (§6.2/§6.3) — write admission for the region
+   stops before anything else happens.
+2. **Takes one barrier snapshot** of the pending WAL prefix under the same
+   `recordMu` that `RecordOp` uses for its admission check + append, then
+   **flushes it in a single bounded flush** through the snapshot's max seq
+   and waits for the watermark ack. (A large snapshot may itself be chunked
+   into multiple bounded `Apply` streams — §7.3's `maxApplyOps`/`maxApplyBytes`
+   — but it is still one flush of one snapshot, not repeated re-snapshotting.)
+   This is a single flush, not a loop-until-empty: ops admitted for *other*,
+   non-draining regions after the snapshot is taken are deliberately left
+   deferred, so unrelated write traffic cannot stall the handoff indefinitely.
+3. Clears the overlay for that subtree and drops the delegation.
+4. Sends `RecallAck{done}`.
 
 The server's handoff barrier now means *"the holder's WAL for this region is
 durably applied"* — so when the contender is unblocked it sees the holder's
@@ -362,17 +421,33 @@ It may incidentally flush another live delegation's earlier ops (harmless —
 independent, server-bound anyway); that delegation keeps its post-prefix ops
 deferred.
 
-**Recall-flush failure fail-closed:** if the flush fails, the client does not
-send `RecallAck`. The server's recall **timeout** then expires without an ack,
-and the server fails the handoff — the contender stays blocked or gets EAGAIN,
-and the holder's subtree is poisoned EIO. This is the fail-closed path: correct
-over fast. (See Known Gaps §7.7 for the current mechanism.)
+**Recall-flush failure — what actually ships.** A permanent apply failure
+during a recall flush does **not** poison the holder's subtree with EIO. It
+follows the same ordered-halt path as any other flush (§7.6): the lost tail is
+discarded with the loud-loss log, but the **grant is retained** — the client
+does not drop its delegation or clear the overlay on a failed flush. No
+`RecallAck` is sent; the server's recall **timeout** then expires without an
+ack and fails the handoff (the contender stays blocked or gets `EAGAIN`), and
+the *next* recall attempt retries the flush from where the log now stands.
+This is self-healing and fail-closed (a contender never observes a torn
+handoff), but there is no EIO poisoning of the holder's subtree — an important
+correction from an earlier draft of this document. See Known Gaps §7.7(c) for
+the follow-up that would let the server fail faster with an explicit signal
+instead of relying on the timeout.
+
+One nuance on loss attribution: if a *concurrent* interval (or size-cap, or
+fsync) flush suffers the ordered halt for the same or an overlapping prefix
+while the recall flush is waiting on `flushMu`, the loss is attributed to
+reason `"apply-failure"` — the reason `Flush` always passes to `processAck` —
+rather than `"recall-flush-failure"`, since `FlushForRecall` calls the same
+`Flush` path as every other trigger and does not distinguish the caller in the
+loss reason it reports.
 
 ### 7.5 Flush triggers
 
 | Trigger | Behavior |
 |---|---|
-| `fsync`/`fdatasync` | Hard barrier — flush the prefix covering that file, synchronous, returns the real error (the truth-point). |
+| `fsync`/`fdatasync` | Hard barrier — flush the prefix covering that file, synchronous, returns the real error (the truth-point). This now flushes pending WAL state for **any handle type** — synthetic (overlay-created) or transport-backed — whenever the file's path has pending overlay state (`coord.Has(path)`), not only synthetic handles. Before this fix, `fsync` on a transport-backed handle with a deferred tail (e.g. a deferred `SetAttr` after a prior close) could return `FS_OK` while data still lived only in `wal.db` — the "durable before return, always" row in §8 is true again because of this fix. |
 | Recall | Flush the contiguous prefix for the recalled delegation before `RecallAck` (§7.4). |
 | Size cap | WAL bytes/ops over threshold → flush; backpressure — when full, the next deferred op blocks on a drain (bounds memory; degrades toward synchronous under slow WAN; never OOMs). |
 | Interval | Periodic background flush — bounds the un-`fsync`'d loss window in wall-clock time. |
@@ -396,10 +471,11 @@ Events that emit this log:
 
 | Event | Logged detail |
 |---|---|
-| Permanent apply-failure (ordered halt) | The failed op's path + `fserr` + seq, and every still-deferred path after it (stuck behind the halt, discarded with the poisoned overlay) |
+| Permanent apply-failure (ordered halt) | The failed op's path + `fserr` + seq, and every still-deferred path after it (stuck behind the halt, discarded when the lost tail is truncated) |
 | Gen-fence discard on replay | Every fenced path + the revoked gen + seq range |
-| Recall-flush failure | The recalled region's pending paths + `fserr` |
+| Recall-window flush failure | Surfaces as `"apply-failure"` — `FlushForRecall` routes through the same `Flush`/`processAck` path as every other trigger and does not distinguish the caller in the loss reason (§7.4). The logged detail is the ordered-halt row above: the failed op's path + `fserr` + seq, and every still-deferred path behind the halt |
 | WAL unreadable on startup (corrupt persist tier) | The WAL file + any entries recoverable enough to name |
+| Corrupt WAL entry (unmarshal failure) | A single `wal.db` entry that fails to unmarshal is skipped with an **ERROR** log naming its `seq` — its payload is unrecoverable, so there is nothing else to name. This is a per-entry skip inside `Replay`/`Prefix`, not a whole-log failure: one bad record no longer wedges every flush path (interval, fsync, recall) the way an unhandled unmarshal error previously would have. Any knock-on failure (e.g. a write whose create was the lost entry) surfaces separately through the ordered-halt + loud-loss path above |
 
 **Honest limit — machine-death loss is server-side and region-level only.** When
 the client machine dies, its WAL dies with it; no client-side enumeration is
@@ -418,20 +494,35 @@ on session resume. The `SetVolume` call is not wired in the mount path, so the
 client sends an empty Volume on resume — the server returns a zero watermark and
 the client replays from seq 0. The server-side dedup (`seq ≤ watermark` → skip)
 makes this **correct and data-safe**; it just re-streams more ops than necessary.
-Wiring the resume-watermark is a follow-up optimization.
+Wiring the resume-watermark is a follow-up optimization. **Scheduled:** the
+flush-robustness follow-up PR wires the resume watermark into the mount path.
 
 **(b) Per-op caller fidelity for non-squash mapping modes.** WAL ops carry a
 mount-level `Caller` (the principal that established the mount). This is correct
 for squash mode (the default — all ops map to one identity). For `passthrough` and
 `system` mapping modes, where the per-op caller matters for identity resolution,
 the WAL caller may not reflect the original caller's identity. Per-op caller
-fidelity for non-squash modes is a follow-up.
+fidelity for non-squash modes is a follow-up. (Unchanged by this hardening pass.)
 
 **(c) `RecallAck` has no explicit Abort/Error field.** When a recall-flush fails,
 the client does not send a clean `RecallAck`; the server relies on the recall
-**timeout** to fail the handoff (fail-closed). An explicit `RecallAck{error}` or
-`RecallAbort` message would let the server fail faster and with a clearer signal.
-This is a protocol follow-up.
+**timeout** to fail the handoff (fail-closed — see the corrected §7.4 description:
+the holder's grant is retained and the next recall retries, it is not an EIO
+poison). An explicit `RecallAck{error}` or `RecallAbort` message would let the
+server fail faster and with a clearer signal. This is a protocol follow-up.
+**Scheduled:** the follow-up server-coherence PR adds `RecallAck` abort
+signalling.
+
+**(d) Path-capture caveat on the rename admission barrier.** The synchronous
+rename path holds an admission barrier (`BeginDrain`) over both endpoints for
+its flush-then-rename compound, so a racing deferral cannot be *admitted*
+against a path the rename is about to move (§6.3). But WAL ops are
+path-addressed: an op whose path was captured *before* the rename — typically
+a write through an fd that was already open under the old path — can be
+deferred *after* the barrier releases, referencing the moved path. A later
+flush would ENOENT it (ordered halt, loud loss §7.6). This is inherent to
+path-addressed WAL ops; closing it needs handle-identity (fd → current-path)
+tracking through the rename, which is a follow-up.
 
 ---
 
@@ -439,7 +530,7 @@ This is a protocol follow-up.
 
 | Scenario | Phase 1 | Phase 2 |
 |---|---|---|
-| `fsync`/`fdatasync` | Durable before return, always | Durable before return, always |
+| `fsync`/`fdatasync` | Durable before return, always | Durable before return, always — genuinely true now for transport-backed handles with a pending WAL tail too, not only synthetic handles (§7.5) |
 | Remote contention | Recall flushes → coherent, no loss | Recall flushes WAL prefix → coherent, no loss |
 | Client process dies, machine lives | No deferred data; close already durable | Boot-epoch reclaim + gen-fence replays WAL from seq 0 via server-dedup → zero loss |
 | Machine death or partition > grace | No deferred data; no loss | Bounded dirty WAL window lost — same as local-FS power loss |

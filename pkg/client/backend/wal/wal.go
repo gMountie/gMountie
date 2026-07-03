@@ -7,12 +7,26 @@
 // # Delegation routing
 //
 // On Drain:
-//   - If mgr.IsDelegated(path) → the write is DEFERRED: append an OpWrite to
-//     the BboltLog (durable) then apply it to the Overlay (in-memory), and
-//     return FS_OK without calling wireFlush. Zero-byte flushes (empty pending)
-//     are skipped — they carry no data and would pollute the log.
-//   - Otherwise → wireFlush is called immediately (unchanged behavior for
-//     non-delegated paths). The log and overlay are not touched.
+//   - If mgr.IsWriteDelegated(path) → the write is DEFERRED: RecordOp appends
+//     an OpWrite to the BboltLog (durable) then applies it to the Overlay
+//     (in-memory), and Drain returns FS_OK without calling wireFlush.
+//     Zero-byte flushes (empty pending) are skipped — they carry no data and
+//     would pollute the log.
+//   - If the path's region is DRAINING under an in-flight recall (or a rename
+//     admission barrier) → Drain PARKS in Manager.WaitDrained until the drain
+//     resolves, then re-decides: grant retained (failed recall flush) → defer;
+//     grant gone (completed handoff) → wireFlush. It never wire-writes
+//     mid-drain — a wire Write would race the in-flight recall Apply stream
+//     carrying OLDER deferred writes for the same path (lost update).
+//   - Otherwise (genuinely undelegated) → wireFlush is called immediately
+//     (unchanged behavior for non-delegated paths). The log and overlay are
+//     not touched.
+//
+// "Genuinely undelegated" is decided from ONE atomic Manager.AdmissionState
+// snapshot (!delegated && !draining), never from two separate oracle reads —
+// a failed recall flush can end the drain grant-RETAINED between two reads,
+// making a refused-then-not-draining sequence look wire-safe while older
+// deferred ops for the path still sit in the WAL.
 //
 // # Import direction
 //
@@ -39,6 +53,21 @@ import (
 // compile-time assertion: Coordinator must satisfy transport.WriteDrain.
 var _ transport.WriteDrain = (*Coordinator)(nil)
 
+// ErrNotDelegated is returned by RecordOp when the op's path (or NewPath) is
+// not write-delegated at append time — either never delegated, or its region
+// is draining under an in-flight recall. Callers fall back to the synchronous
+// (wire) path, optionally after Manager.WaitDrained.
+var ErrNotDelegated = stderrors.New("wal: path not write-delegated")
+
+// ErrNotOwned is returned by RecordOp when an OpRename's source is not a full
+// overlay-create node (it is absent, tombstoned, or a base-delta) at append
+// time. Only an overlay-owned source can be re-homed by a deferred rename;
+// anything else must run synchronously (Layer.Rename's barrier path). Decided
+// under recordMu, atomically with the append — an unlocked pre-check could
+// race a concurrent commitFlushed clearing the node between decision and
+// append.
+var ErrNotOwned = stderrors.New("wal: rename source not overlay-owned")
+
 // Coordinator ties the WAL log, the pending overlay, and the delegation
 // Manager together. It implements transport.WriteDrain so the transport layer
 // can route Flush calls to the WAL (delegated paths) or the wire (all others).
@@ -57,8 +86,9 @@ type Coordinator struct {
 
 	// onLoss is the hook called on an ordered halt (FailedSeq > 0) or gen-fence.
 	// Default is nil (no-op). Set via WithOnLoss.
-	// reason identifies the loss path: "apply-failure", "gen-fenced",
-	// "recall-flush-failure", "wal-unreadable".
+	// reason identifies the loss path: "apply-failure" (any Flush trigger,
+	// including a recall-window flush — FlushForRecall routes through Flush and
+	// does not get its own label), "gen-fenced", "wal-unreadable".
 	onLoss func(reason string, lostOps []Op, fe proto.FsError)
 
 	// onFlushed, if set, is called with the flushed ops in processAck just before
@@ -139,8 +169,25 @@ func NewCoordinator(mgr *delegation.Manager, log *BboltLog, overlay *Overlay, op
 // Zero-byte pending data on a delegated path is a no-op (fast-path: skip the
 // log entry for a clean Flush that had nothing coalesced).
 //
-// Non-delegated path: calls wireFlush directly — byte-identical to the
-// pre-Task-10 wire-drain behavior.
+// Genuinely undelegated path (no drain in flight): calls wireFlush directly —
+// byte-identical to the pre-Task-10 wire-drain behavior.
+//
+// Mid-drain, Drain PARKS until resolved instead of falling back to the wire.
+// The old "synchronous is always coherent" reasoning is wrong there: a wire
+// Write issued while the region drains races the in-flight recall Apply
+// stream, which may carry OLDER deferred writes for the same path — the
+// server serializes the two arbitrarily, so the newer bytes can be silently
+// overwritten by the older (lost update).
+//
+// The wire exit is decided ONLY from the single atomic AdmissionState
+// snapshot at the top of the loop: both false ⇒ either the path was never
+// delegated (no deferred op can be racing an Apply), or the handoff completed
+// — the grant can only be gone after a SUCCESSFUL recall flush, so the
+// recalled prefix is durably applied (or loudly lost) and a wire write cannot
+// be overtaken. No post-refusal check may wire: a refusal only proves the
+// state at RecordOp's admission read, and a drain ending grant-RETAINED
+// (failed recall flush) right after it would make a separate "not draining"
+// read look wire-safe while the retained deferred ops still sit in the WAL.
 func (c *Coordinator) Drain(
 	ctx context.Context,
 	path string,
@@ -149,45 +196,81 @@ func (c *Coordinator) Drain(
 	requestID string,
 	wireFlush func(ctx context.Context, data []byte, off int64, reqID string) proto.FsError,
 ) proto.FsError {
-	if !c.mgr.IsDelegated(path) {
-		return wireFlush(ctx, pendingData, pendingOff, requestID)
+	for {
+		delegated, draining := c.mgr.AdmissionState(path)
+		if !delegated && !draining {
+			// Single-snapshot both-false: no pending op for this path can
+			// exist or be racing an Apply — the wire is safe.
+			return wireFlush(ctx, pendingData, pendingOff, requestID)
+		}
+		if len(pendingData) == 0 {
+			return proto.FsError_FS_OK
+		}
+		op := Op{Kind: OpWrite, Path: path, Offset: pendingOff, Data: pendingData}
+		err := c.RecordOp(op)
+		if err == nil {
+			return proto.FsError_FS_OK
+		}
+		if !stderrors.Is(err, ErrNotDelegated) {
+			return proto.FsError_FS_EIO
+		}
+		// Refused. If a drain is in flight, park; either way the top-of-loop
+		// snapshot re-decides atomically (a drain that ended grant-RETAINED
+		// re-admits next iteration; grant-GONE exits to the wire). Every
+		// iteration therefore returns, parks, or observes a state transition
+		// — the loop cannot spin without progress.
+		if _, d := c.mgr.AdmissionState(path); d {
+			if ctx.Err() != nil {
+				// Dead ctx while a drain is in flight: fail closed. Writing
+				// to the wire here could still be overtaken by the in-flight
+				// Apply.
+				return proto.FsError_FS_EIO
+			}
+			c.mgr.WaitDrained(ctx, path)
+		}
 	}
-
-	// Delegated: skip zero-byte flushes (no data to persist).
-	if len(pendingData) == 0 {
-		return proto.FsError_FS_OK
-	}
-
-	op := Op{
-		Kind:   OpWrite,
-		Path:   path,
-		Offset: pendingOff,
-		Data:   pendingData,
-	}
-	if err := c.RecordOp(op); err != nil {
-		return proto.FsError_FS_EIO
-	}
-	return proto.FsError_FS_OK
 }
 
-// RecordOp appends op to the durable log and then applies it to the in-memory
-// overlay. Durability-first: if Append fails, Apply is skipped and the error
-// is returned. Used by the 10b backend layer for create/mkdir/rename/unlink/
-// setattr/xattr ops (non-write mutations that bypass the WriteDrain seam).
+// RecordOp admits, gen-stamps, and durably appends op, then applies it to the
+// in-memory overlay.
 //
-// When a size cap is configured (WithCapOps), RecordOp blocks until the
-// pending count drops below the cap, then appends. This provides backpressure:
-// the caller degrades toward synchronous writes rather than OOM-ing.
+// Admission (IsWriteDelegated) happens INSIDE recordMu, atomically with the
+// append. Combined with FlushForRecall's recordMu barrier this closes the
+// recall TOCTOU: once a recall marks a region draining and takes the barrier,
+// every already-admitted op is in the log (the snapshot sees it) and every
+// later op is refused (ErrNotDelegated → synchronous fallback).
+//
+// The op is stamped with the covering grant's gen so the server's revoked-gen
+// fence can reject it if the grant is revoked before the op is flushed
+// (machine-death handoff → stale replay).
 func (c *Coordinator) RecordOp(op Op) error {
+	// Cheap pre-check outside the cap wait so an undelegated op never blocks
+	// on backpressure. Re-checked authoritatively under recordMu below.
+	if !c.mgr.IsWriteDelegated(op.Path) {
+		return ErrNotDelegated
+	}
+
 	// Backpressure: block if pending WAL count >= cap. MUST run outside recordMu:
 	// a capped RecordOp waits here for a flush to drain the log, and the flush's
 	// commitFlushed takes recordMu — holding it here would deadlock.
 	c.waitForCap()
 
-	// log.Append + overlay.Apply are atomic w.r.t. commitFlushed (recordMu), so
-	// the flush's overlay rebuild always sees a log/overlay pair that agree.
 	c.recordMu.Lock()
 	defer c.recordMu.Unlock()
+	if !c.mgr.IsWriteDelegated(op.Path) ||
+		(op.NewPath != "" && !c.mgr.IsWriteDelegated(op.NewPath)) {
+		return ErrNotDelegated
+	}
+	// A rename's overlay-ownership decision must be atomic with the append:
+	// checked outside recordMu, a concurrent commitFlushed could clear the
+	// full-create node between the check and the append — applyRename would
+	// then tombstone the source and synthesize nothing at the destination
+	// (both paths ENOENT locally until the next flush). recordMu → overlay.mu
+	// is the established nesting (overlay.Apply below runs under recordMu too).
+	if op.Kind == OpRename && !c.overlay.OwnsFull(op.Path) {
+		return ErrNotOwned
+	}
+	op.Gen = c.mgr.GenFor(op.Path)
 	if _, err := c.log.Append(op); err != nil {
 		return errors.Wrap(err, "wal RecordOp")
 	}
@@ -241,6 +324,12 @@ func (c *Coordinator) Stat(path string) (attr *backend.Attr, ok bool, tombstoned
 // tombstone). Used by Task 10b to decide whether to consult the overlay at all.
 func (c *Coordinator) Has(path string) bool {
 	return c.overlay.Has(path)
+}
+
+// HasSubtree reports whether any pending overlay state exists at or under root.
+// See Overlay.HasSubtree.
+func (c *Coordinator) HasSubtree(root string) bool {
+	return c.overlay.HasSubtree(root)
 }
 
 // Epoch returns the durable WAL-epoch (minted in wal.db at creation) that

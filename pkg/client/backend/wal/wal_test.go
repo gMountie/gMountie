@@ -18,8 +18,11 @@ package wal
 
 import (
 	"context"
+	stderrors "errors"
 	"path/filepath"
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -165,6 +168,10 @@ func (s *CoordinatorSuite) TestDrain_DelegatedPath_ZeroBytePending_NoOpAndWireNo
 // ── Test 4: RecordOp ─────────────────────────────────────────────────────────
 
 func (s *CoordinatorSuite) TestRecordOp_AppendsToLogAndAppliesOverlay() {
+	// RecordOp now admits only write-delegated paths (Task 3): grant the root
+	// first, or the op is refused with ErrNotDelegated.
+	s.grant("newdir")
+
 	op := Op{
 		Kind: OpMkdir,
 		Path: "newdir",
@@ -194,6 +201,11 @@ func (s *CoordinatorSuite) TestRecordOp_AppendsToLogAndAppliesOverlay() {
 // ── Test 5: RecordOp with log failure skips Apply ────────────────────────────
 
 func (s *CoordinatorSuite) TestRecordOpLogFailureSkipsApply() {
+	// Grant the root first — RecordOp now admits only write-delegated paths
+	// (Task 3), and this test wants to exercise the Append failure, not the
+	// admission refusal.
+	s.grant("faildir")
+
 	// Close the log to force Append to fail on the next RecordOp.
 	err := s.log.Close()
 	s.Require().NoError(err)
@@ -231,6 +243,9 @@ func (s *CoordinatorSuite) TestDrain_NonDelegatedPath_PropagatesWireError() {
 // ── Test 7: Read accessors pass through to Overlay ───────────────────────────
 
 func (s *CoordinatorSuite) TestReadAccessors_PassThroughToOverlay() {
+	// RecordOp now admits only write-delegated paths (Task 3).
+	s.grant("sub")
+
 	// Apply a write via RecordOp so the overlay has data.
 	err := s.coord.RecordOp(Op{
 		Kind:   OpWrite,
@@ -466,6 +481,9 @@ func (s *CoordinatorSuite) TestRebuildOverlay_LeftoverOps_OverlayPopulated() {
 	seedOverlay := NewOverlay()
 	seedCoord := NewCoordinator(seedMgr, seedLog, seedOverlay)
 
+	// RecordOp now admits only write-delegated paths (Task 3).
+	seedMgr.Apply(&proto.DelegationGrant{GrantedRoot: "crash"})
+
 	// Record a Mkdir and a Create op.
 	s.Require().NoError(seedCoord.RecordOp(Op{Kind: OpMkdir, Path: "crash/dir", Mode: 0o40755}))
 	s.Require().NoError(seedCoord.RecordOp(Op{Kind: OpCreate, Path: "crash/dir/file.txt", Mode: 0o644}))
@@ -494,6 +512,257 @@ func (s *CoordinatorSuite) TestRebuildOverlay_LeftoverOps_OverlayPopulated() {
 	ops, err := freshLog.Replay(0)
 	s.Require().NoError(err)
 	s.Assert().Len(ops, 2, "log must retain all ops after RebuildOverlay (no truncation)")
+}
+
+// ── Test 11: RecordOp admission (Task 3) ─────────────────────────────────────
+
+// TestRecordOpStampsGenAndRefusesUndelegated verifies that RecordOp stamps the
+// op with the covering grant's gen (so the server's revoked-gen fence can
+// reject a stale replay), and that a path outside any grant is refused with
+// ErrNotDelegated instead of being silently appended.
+func (s *CoordinatorSuite) TestRecordOpStampsGenAndRefusesUndelegated() {
+	mgr := delegation.NewManager(noopInvalidator{})
+	mgr.Apply(&proto.DelegationGrant{GrantedRoot: "dir", Gen: 9})
+	l := openTestLog(s.T())
+	coord := NewCoordinator(mgr, l, NewOverlay())
+
+	s.Require().NoError(coord.RecordOp(Op{Kind: OpMkdir, Path: "dir/sub", Mode: 0o755}))
+	ops, err := l.Replay(0)
+	s.Require().NoError(err)
+	s.Require().Len(ops, 1)
+	s.Equal(uint64(9), ops[0].Gen, "recorded op carries the covering grant's gen")
+
+	err = coord.RecordOp(Op{Kind: OpMkdir, Path: "other/sub", Mode: 0o755})
+	s.ErrorIs(err, ErrNotDelegated, "undelegated path is refused, caller goes synchronous")
+}
+
+// TestRecordOpRefusesRenameWithUndelegatedNewPath verifies that a rename whose
+// destination falls outside the covering grant is refused even though the
+// source path is delegated — both endpoints must be write-delegated for the
+// rename to be deferred.
+func (s *CoordinatorSuite) TestRecordOpRefusesRenameWithUndelegatedNewPath() {
+	mgr := delegation.NewManager(noopInvalidator{})
+	mgr.Apply(&proto.DelegationGrant{GrantedRoot: "dir", Gen: 3})
+	l := openTestLog(s.T())
+	coord := NewCoordinator(mgr, l, NewOverlay())
+
+	err := coord.RecordOp(Op{Kind: OpRename, Path: "dir/a", NewPath: "outside/b"})
+	s.ErrorIs(err, ErrNotDelegated)
+}
+
+// blockingRecallFlusher implements delegation.RecallFlusher and blocks
+// FlushForRecall until release is closed — used to hold a root in the
+// "draining" state for the duration of a test.
+type blockingRecallFlusher struct {
+	release chan struct{}
+}
+
+func (b *blockingRecallFlusher) FlushForRecall(_ context.Context, _ string) error {
+	<-b.release
+	return nil
+}
+
+// TestDrain_ParksWhileRootDrainsThenWiresAfterHandoff verifies Drain's
+// park-until-resolved contract: a Drain issued while the covering root is
+// draining must NOT write to the wire — a wire Write would race the in-flight
+// recall Apply stream carrying OLDER deferred writes for the same path, and
+// the server serializes the two arbitrarily (newer bytes silently overwritten
+// by older = lost update). Drain must park until the drain resolves and reach
+// the wire only AFTER the handoff completes with the grant gone.
+func (s *CoordinatorSuite) TestDrain_ParksWhileRootDrainsThenWiresAfterHandoff() {
+	mgr := delegation.NewManager(noopInvalidator{})
+	mgr.Apply(&proto.DelegationGrant{GrantedRoot: "dir", Gen: 1})
+	release := make(chan struct{})
+	mgr.SetRecallFlusher(&blockingRecallFlusher{release: release})
+
+	l := openTestLog(s.T())
+	coord := NewCoordinator(mgr, l, NewOverlay())
+
+	recallDone := make(chan struct{})
+	go func() {
+		_ = mgr.OnRecall(context.Background(), "dir")
+		close(recallDone)
+	}()
+
+	// Wait for the recall to mark the root draining.
+	for mgr.IsWriteDelegated("dir/f.txt") {
+		time.Sleep(time.Millisecond)
+	}
+	s.True(mgr.IsDelegated("dir/f.txt"), "the grant is still held while draining (reads stay served from the overlay)")
+
+	var wireCalls atomic.Int32
+	wireFlush := func(_ context.Context, _ []byte, _ int64, _ string) proto.FsError {
+		wireCalls.Add(1)
+		return proto.FsError_FS_OK
+	}
+
+	drainDone := make(chan proto.FsError, 1)
+	go func() {
+		drainDone <- coord.Drain(context.Background(), "dir/f.txt", []byte("x"), 0, "req-drain", wireFlush)
+	}()
+
+	// While the recall flush is parked, Drain must neither return nor touch
+	// the wire (bounded negative window).
+	select {
+	case <-drainDone:
+		s.Fail("Drain must park while the root is draining, not return")
+	case <-time.After(50 * time.Millisecond):
+	}
+	s.Zero(wireCalls.Load(), "Drain must not wire-write mid-drain (would race the recall Apply stream)")
+
+	// Complete the recall: the handoff drops the grant, the parked Drain
+	// wakes, is refused deferral (grant gone), and only then goes to the wire.
+	close(release)
+	<-recallDone
+
+	var st proto.FsError
+	select {
+	case st = <-drainDone:
+	case <-time.After(2 * time.Second):
+		s.FailNow("Drain did not resolve after the drain completed")
+	}
+	s.Equal(proto.FsError_FS_OK, st)
+	s.Equal(int32(1), wireCalls.Load(), "Drain must reach the wire exactly once, after the handoff")
+}
+
+// failingRecallFlusher blocks FlushForRecall until release is closed, then
+// FAILS — modelling a recall whose flush could not complete (ENOSPC, wire
+// error). The drain ends but the grant is RETAINED and the pending ops stay
+// in the WAL, which is exactly the state where a wire write must NOT happen.
+type failingRecallFlusher struct {
+	release chan struct{}
+}
+
+func (f *failingRecallFlusher) FlushForRecall(_ context.Context, _ string) error {
+	<-f.release
+	return stderrors.New("recall flush failed")
+}
+
+// TestDrain_FailedRecallFlushRedefers_NeverWires is the N1 scenario test at
+// the Drain seam: a Drain parked mid-drain wakes after the recall flush FAILS
+// (drain over, grant retained, older deferred ops still in the WAL). The
+// single-snapshot rule says the refusal must resolve to RE-DEFER — a wire
+// write here would land behind older deferred ops for the same path (reorder
+// / lost update). Assert the op is RECORDED and the wire is never touched.
+func (s *CoordinatorSuite) TestDrain_FailedRecallFlushRedefers_NeverWires() {
+	mgr := delegation.NewManager(noopInvalidator{})
+	mgr.Apply(&proto.DelegationGrant{GrantedRoot: "dir", Gen: 1})
+	release := make(chan struct{})
+	mgr.SetRecallFlusher(&failingRecallFlusher{release: release})
+
+	l := openTestLog(s.T())
+	coord := NewCoordinator(mgr, l, NewOverlay())
+
+	// One older deferred op sits in the WAL for the same path — the state a
+	// wire write would reorder against.
+	s.Require().NoError(coord.RecordOp(Op{Kind: OpWrite, Path: "dir/f", Offset: 0, Data: []byte("old")}))
+
+	recallDone := make(chan struct{})
+	go func() {
+		_ = mgr.OnRecall(context.Background(), "dir")
+		close(recallDone)
+	}()
+	// Wait for the recall to mark the root draining.
+	for mgr.IsWriteDelegated("dir/f") {
+		time.Sleep(time.Millisecond)
+	}
+
+	var wireCalls atomic.Int32
+	wireFlush := func(_ context.Context, _ []byte, _ int64, _ string) proto.FsError {
+		wireCalls.Add(1)
+		return proto.FsError_FS_OK
+	}
+
+	drainDone := make(chan proto.FsError, 1)
+	go func() {
+		drainDone <- coord.Drain(context.Background(), "dir/f", []byte("new"), 8, "req-fail", wireFlush)
+	}()
+
+	// Drain must park while the drain is in flight (bounded negative window).
+	select {
+	case <-drainDone:
+		s.Fail("Drain must park while the root is draining, not return")
+	case <-time.After(50 * time.Millisecond):
+	}
+	s.Zero(wireCalls.Load(), "Drain must not wire-write mid-drain")
+
+	// Release the FAILING flush: the drain ends with the grant retained.
+	close(release)
+	<-recallDone
+
+	var st proto.FsError
+	select {
+	case st = <-drainDone:
+	case <-time.After(2 * time.Second):
+		s.FailNow("Drain did not resolve after the failed recall ended the drain")
+	}
+	s.Equal(proto.FsError_FS_OK, st)
+	s.Zero(wireCalls.Load(), "grant retained after the failed flush: Drain must RE-DEFER, never wire")
+
+	ops, err := l.Replay(0)
+	s.Require().NoError(err)
+	s.Require().Len(ops, 2, "the parked Drain's op must be recorded behind the older deferred op")
+	s.Equal(OpWrite, ops[1].Kind)
+	s.Equal("dir/f", ops[1].Path)
+	s.Equal(int64(8), ops[1].Offset)
+	s.Equal([]byte("new"), ops[1].Data)
+}
+
+// TestDrain_RefusalResolutionIsAtomic_NoWireWhileGrantRetained is the
+// discriminating N1 race test: the grant for "dir" is NEVER dropped while a
+// toggler thread cycles drains that always end grant-RETAINED (BeginDrain /
+// release — the same refcounted entries a failed recall flush uses). Under
+// the single-snapshot rule no Drain may EVER reach the wire: the path is
+// delegated in every atomic snapshot. The pre-fix two-oracle-read code
+// (RecordOp refused → separate IsDraining check) wires whenever a drain ends
+// in the window between the two reads — this test drives thousands of
+// iterations through that window and fails on the first wire call.
+func (s *CoordinatorSuite) TestDrain_RefusalResolutionIsAtomic_NoWireWhileGrantRetained() {
+	mgr := delegation.NewManager(noopInvalidator{})
+	mgr.Apply(&proto.DelegationGrant{GrantedRoot: "dir", Gen: 1})
+
+	l := openTestLog(s.T())
+	coord := NewCoordinator(mgr, l, NewOverlay())
+
+	// Older deferred state for the path: what a rogue wire write would
+	// reorder against.
+	s.Require().NoError(coord.RecordOp(Op{Kind: OpWrite, Path: "dir/f", Offset: 0, Data: []byte("old")}))
+
+	var wireCalls atomic.Int32
+	wireFlush := func(_ context.Context, _ []byte, _ int64, _ string) proto.FsError {
+		wireCalls.Add(1)
+		return proto.FsError_FS_OK
+	}
+
+	stop := make(chan struct{})
+	var togglerWg sync.WaitGroup
+	togglerWg.Add(1)
+	go func() {
+		defer togglerWg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			// A drain that ends grant-RETAINED (exactly what a failed recall
+			// flush leaves behind), cycled as fast as possible.
+			release := mgr.BeginDrain("dir")
+			runtime.Gosched()
+			release()
+			runtime.Gosched()
+		}
+	}()
+
+	for i := 0; i < 1500 && wireCalls.Load() == 0; i++ {
+		st := coord.Drain(context.Background(), "dir/f", []byte("x"), int64(i), "req-race", wireFlush)
+		s.Require().Equal(proto.FsError_FS_OK, st)
+	}
+	close(stop)
+	togglerWg.Wait()
+
+	s.Zero(wireCalls.Load(),
+		"the grant was never dropped: every atomic admission snapshot is delegated, so no Drain may wire-write")
 }
 
 func TestCoordinatorSuite(t *testing.T) {

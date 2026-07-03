@@ -4,10 +4,15 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 	"go.gmountie.dev/gmountie/pkg/proto"
 )
+
+type noopInvalidator struct{}
+
+func (noopInvalidator) InvalidateSubtree(string) {}
 
 type fakeInv struct{ subtrees []string }
 
@@ -34,6 +39,13 @@ type fakeRecallFlusher struct {
 func (f *fakeRecallFlusher) FlushForRecall(_ context.Context, root string) error {
 	*f.events = append(*f.events, "flush:"+root)
 	return f.err
+}
+
+// recallFlusherFunc is an adapter allowing a function to implement RecallFlusher.
+type recallFlusherFunc func(ctx context.Context, root string) error
+
+func (f recallFlusherFunc) FlushForRecall(ctx context.Context, root string) error {
+	return f(ctx, root)
 }
 
 type ManagerSuite struct{ suite.Suite }
@@ -168,4 +180,312 @@ func (s *ManagerSuite) TestOnRecall_NilFlusher_Phase1Behavior() {
 	s.Require().NoError(err)
 	s.False(m.IsDelegated("proj/x"), "grant must be dropped")
 	s.Equal([]string{"proj"}, inv.subtrees, "cache must be invalidated")
+}
+
+func (s *ManagerSuite) TestApplyStoresGenAndGenForReturnsIt() {
+	m := NewManager(noopInvalidator{})
+	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj", Gen: 42})
+
+	s.Equal(uint64(42), m.GenFor("proj/src/a.txt"))
+	s.Equal(uint64(42), m.GenFor("proj"))
+	s.Zero(m.GenFor("elsewhere/b.txt"), "uncovered path has gen 0")
+}
+
+func (s *ManagerSuite) TestGenForRespectsExclusionsAndNilReceiver() {
+	m := NewManager(noopInvalidator{})
+	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj", ExcludedPaths: []string{"proj/hot"}, Gen: 7})
+
+	s.Zero(m.GenFor("proj/hot/x"), "excluded sub-path is not delegated")
+	var nilMgr *Manager
+	s.Zero(nilMgr.GenFor("proj/src/a.txt"), "nil manager returns 0")
+}
+
+func (s *ManagerSuite) TestIsWriteDelegatedFalseWhileDraining() {
+	m := NewManager(noopInvalidator{})
+	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj", Gen: 1})
+
+	flushStarted := make(chan struct{})
+	releaseFlush := make(chan struct{})
+	m.SetRecallFlusher(recallFlusherFunc(func(ctx context.Context, root string) error {
+		close(flushStarted)
+		<-releaseFlush
+		return nil
+	}))
+
+	done := make(chan error, 1)
+	go func() { done <- m.OnRecall(context.Background(), "proj") }()
+
+	<-flushStarted
+	s.False(m.IsWriteDelegated("proj/src/a.txt"), "write admission stops during drain")
+	s.True(m.IsDelegated("proj/src/a.txt"), "reads keep merging the overlay during drain")
+
+	close(releaseFlush)
+	s.Require().NoError(<-done)
+	s.False(m.IsDelegated("proj/src/a.txt"), "grant dropped after handoff")
+}
+
+func (s *ManagerSuite) TestWaitDrainedBlocksUntilRecallCompletes() {
+	m := NewManager(noopInvalidator{})
+	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj", Gen: 1})
+
+	flushStarted := make(chan struct{})
+	releaseFlush := make(chan struct{})
+	m.SetRecallFlusher(recallFlusherFunc(func(ctx context.Context, root string) error {
+		close(flushStarted)
+		<-releaseFlush
+		return nil
+	}))
+
+	recallDone := make(chan error, 1)
+	go func() { recallDone <- m.OnRecall(context.Background(), "proj") }()
+	<-flushStarted
+
+	waited := make(chan struct{})
+	go func() {
+		m.WaitDrained(context.Background(), "proj/src/a.txt")
+		close(waited)
+	}()
+
+	select {
+	case <-waited:
+		s.Fail("WaitDrained returned while the recall flush was still in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(releaseFlush)
+	s.Require().NoError(<-recallDone)
+	select {
+	case <-waited:
+	case <-time.After(time.Second):
+		s.Fail("WaitDrained did not return after the recall completed")
+	}
+}
+
+// TestConcurrentSameRootRecallsKeepDrainingUntilLastFinishes verifies that when
+// two OnRecall calls for the same root interleave, the root stays marked draining
+// until the LAST in-flight recall's flush finishes, in EVERY completion ordering.
+// The newer recall is made to finish (and fail) FIRST: its flush error means the
+// grant is retained (no grant-drop to mask the verdict), so only the draining
+// entry can be keeping write admission closed while the older recall still
+// flushes. This discriminates against the pre-fix instance-checked delete, which
+// would let the newer recall's completion prematurely un-drain the root.
+func (s *ManagerSuite) TestConcurrentSameRootRecallsKeepDrainingUntilLastFinishes() {
+	m := NewManager(noopInvalidator{})
+	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj", Gen: 1})
+
+	type flushCall struct {
+		started chan struct{}
+		release chan struct{}
+		fail    bool
+	}
+	older := &flushCall{started: make(chan struct{}), release: make(chan struct{})}
+	newer := &flushCall{started: make(chan struct{}), release: make(chan struct{}), fail: true}
+	queue := make(chan *flushCall, 2)
+	queue <- older
+	queue <- newer
+	m.SetRecallFlusher(recallFlusherFunc(func(ctx context.Context, root string) error {
+		c := <-queue
+		close(c.started)
+		<-c.release
+		if c.fail {
+			return errors.New("flush failed")
+		}
+		return nil
+	}))
+
+	doneOlder := make(chan error, 1)
+	go func() { doneOlder <- m.OnRecall(context.Background(), "proj") }()
+	<-older.started
+	doneNewer := make(chan error, 1)
+	go func() { doneNewer <- m.OnRecall(context.Background(), "proj") }()
+	<-newer.started
+
+	// The NEWER recall fails first. Its flush error means the grant is
+	// RETAINED (no grant-drop to mask the verdict) — only the draining entry
+	// can keep write admission closed while the older recall still flushes.
+	close(newer.release)
+	s.Require().Error(<-doneNewer)
+	s.False(m.IsWriteDelegated("proj/a.txt"),
+		"root must stay draining until the LAST in-flight recall finishes")
+	s.True(m.IsDelegated("proj/a.txt"), "failed recall retains the grant")
+
+	close(older.release)
+	s.Require().NoError(<-doneOlder)
+	s.False(m.IsDelegated("proj/a.txt"), "successful recall drops the grant")
+	s.False(m.IsWriteDelegated("proj/a.txt"))
+}
+
+// TestBeginDrainMarksDrainingAndWaitDrainedParksUntilRelease verifies the
+// manual admission barrier: BeginDrain must mark every covered path draining
+// (IsWriteDelegated false, IsDraining true) without touching the grant, park
+// WaitDrained callers, and restore admission when the release func runs.
+func (s *ManagerSuite) TestBeginDrainMarksDrainingAndWaitDrainedParksUntilRelease() {
+	m := NewManager(noopInvalidator{})
+	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj", Gen: 1})
+
+	release := m.BeginDrain("proj/old.txt")
+
+	s.True(m.IsDraining("proj/old.txt"), "BeginDrain must mark the root draining")
+	s.True(m.IsDraining("proj/old.txt/nested"), "covered paths drain too")
+	s.False(m.IsDraining("proj/other.txt"), "sibling paths are unaffected")
+	s.False(m.IsWriteDelegated("proj/old.txt"), "write admission stops under the barrier")
+	s.True(m.IsDelegated("proj/old.txt"), "the grant itself is untouched")
+
+	waited := make(chan struct{})
+	go func() { m.WaitDrained(context.Background(), "proj/old.txt"); close(waited) }()
+	select {
+	case <-waited:
+		s.Fail("WaitDrained returned while the barrier was held")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	release()
+	select {
+	case <-waited:
+	case <-time.After(time.Second):
+		s.Fail("WaitDrained did not return after the barrier released")
+	}
+	s.False(m.IsDraining("proj/old.txt"), "root must un-drain on release")
+	s.True(m.IsWriteDelegated("proj/old.txt"), "admission resumes after release")
+}
+
+// TestBeginDrainRefcountComposesWithConcurrentOnRecall verifies that a manual
+// barrier and a concurrent recall for the SAME root share one refcounted
+// drainEntry: the root stays draining until BOTH end, regardless of order.
+func (s *ManagerSuite) TestBeginDrainRefcountComposesWithConcurrentOnRecall() {
+	m := NewManager(noopInvalidator{})
+	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj", Gen: 1})
+
+	flushStarted := make(chan struct{})
+	releaseFlush := make(chan struct{})
+	m.SetRecallFlusher(recallFlusherFunc(func(ctx context.Context, root string) error {
+		close(flushStarted)
+		<-releaseFlush
+		return nil
+	}))
+
+	release := m.BeginDrain("proj")
+
+	recallDone := make(chan error, 1)
+	go func() { recallDone <- m.OnRecall(context.Background(), "proj") }()
+	<-flushStarted
+
+	// The barrier ends first; the recall still holds the shared entry.
+	release()
+	s.True(m.IsDraining("proj/a.txt"), "root must stay draining while the recall is in flight")
+	s.False(m.IsWriteDelegated("proj/a.txt"))
+
+	close(releaseFlush)
+	s.Require().NoError(<-recallDone)
+	s.False(m.IsDraining("proj/a.txt"), "root un-drains when the last holder ends")
+}
+
+// TestBeginDrainAndIsDrainingNilReceiverSafe: with WAL disabled the layer holds
+// a nil *Manager; both the barrier and the oracle must be no-ops, not panics.
+func (s *ManagerSuite) TestBeginDrainAndIsDrainingNilReceiverSafe() {
+	var m *Manager
+	s.NotPanics(func() {
+		release := m.BeginDrain("anything")
+		release()
+		s.False(m.IsDraining("anything"))
+	})
+}
+
+// TestAdmissionStateSnapshotsGrantAndDrainTogether walks AdmissionState
+// through the three states the wire/sync-fallback decision discriminates:
+//
+//	(true, true)   mid-drain          — grant held, recall flush in flight
+//	(true, false)  failed recall      — drain ended, grant RETAINED
+//	(false, false) successful handoff — grant gone, nothing draining
+//
+// Only the (false,false) snapshot licenses a synchronous fallback; the
+// (true,false) state after a FAILED flush is exactly the one a two-call
+// IsWriteDelegated/IsDraining sequence can misread as safe.
+func (s *ManagerSuite) TestAdmissionStateSnapshotsGrantAndDrainTogether() {
+	m := NewManager(noopInvalidator{})
+	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj", Gen: 1})
+
+	delegated, draining := m.AdmissionState("proj/src/a.txt")
+	s.True(delegated, "grant covers the path before any recall")
+	s.False(draining, "nothing draining before any recall")
+
+	type flushCall struct {
+		started chan struct{}
+		release chan struct{}
+		fail    bool
+	}
+	failing := &flushCall{started: make(chan struct{}), release: make(chan struct{}), fail: true}
+	succeeding := &flushCall{started: make(chan struct{}), release: make(chan struct{})}
+	queue := make(chan *flushCall, 2)
+	queue <- failing
+	queue <- succeeding
+	m.SetRecallFlusher(recallFlusherFunc(func(ctx context.Context, root string) error {
+		c := <-queue
+		close(c.started)
+		<-c.release
+		if c.fail {
+			return errors.New("flush failed")
+		}
+		return nil
+	}))
+
+	// Mid-drain: (true, true).
+	done := make(chan error, 1)
+	go func() { done <- m.OnRecall(context.Background(), "proj") }()
+	<-failing.started
+	delegated, draining = m.AdmissionState("proj/src/a.txt")
+	s.True(delegated, "grant is held while the recall flush is in flight")
+	s.True(draining, "the recalled root is draining while the flush is in flight")
+
+	// FAILED recall flush: drain ends, grant RETAINED → (true, false).
+	close(failing.release)
+	s.Require().Error(<-done)
+	delegated, draining = m.AdmissionState("proj/src/a.txt")
+	s.True(delegated, "a failed recall flush retains the grant")
+	s.False(draining, "the drain ends when the failed recall finishes")
+
+	// Successful handoff: grant gone, nothing draining → (false, false).
+	go func() { done <- m.OnRecall(context.Background(), "proj") }()
+	<-succeeding.started
+	close(succeeding.release)
+	s.Require().NoError(<-done)
+	delegated, draining = m.AdmissionState("proj/src/a.txt")
+	s.False(delegated, "a successful handoff drops the grant")
+	s.False(draining, "nothing drains after the handoff completes")
+
+	// Nil-receiver safe: both false.
+	var nilMgr *Manager
+	s.NotPanics(func() {
+		delegated, draining = nilMgr.AdmissionState("anything")
+		s.False(delegated)
+		s.False(draining)
+	})
+}
+
+// TestWaitDrainedReturnsOnContextCancel verifies that WaitDrained unblocks on
+// context cancellation even when the recall flusher is still running (i.e., the
+// context cancel returns the waiter, not the completion of the flush itself).
+func (s *ManagerSuite) TestWaitDrainedReturnsOnContextCancel() {
+	m := NewManager(noopInvalidator{})
+	m.Apply(&proto.DelegationGrant{GrantedRoot: "proj", Gen: 1})
+	blocked := make(chan struct{})
+	stop := make(chan struct{})
+	defer close(stop)
+	m.SetRecallFlusher(recallFlusherFunc(func(ctx context.Context, root string) error {
+		close(blocked)
+		<-stop // blocks until the test ends; ctx cancel must free the waiter, not the flush
+		return nil
+	}))
+	go func() { _ = m.OnRecall(context.Background(), "proj") }()
+	<-blocked
+
+	ctx, cancel := context.WithCancel(context.Background())
+	returned := make(chan struct{})
+	go func() { m.WaitDrained(ctx, "proj/x"); close(returned) }()
+	cancel()
+	select {
+	case <-returned:
+	case <-time.After(2 * time.Second):
+		s.Fail("WaitDrained ignored context cancellation")
+	}
 }

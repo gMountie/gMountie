@@ -18,6 +18,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	bolt "go.etcd.io/bbolt"
+	"go.gmountie.dev/gmountie/pkg/utils/log"
+	"go.uber.org/zap"
 )
 
 // OpKind identifies the filesystem operation recorded in the WAL.
@@ -176,6 +178,9 @@ func (l *BboltLog) Append(op Op) (uint64, error) {
 
 // Replay returns all ops with seq > fromSeq, in ascending seq order.
 // fromSeq=0 returns all persisted ops.
+// Corrupt entries (unmarshal failures) are skipped with a loud ERROR log;
+// their payload is unrecoverable, and downstream ordered-halt will surface
+// any knock-on failure.
 func (l *BboltLog) Replay(fromSeq uint64) ([]Op, error) {
 	var out []Op
 	err := l.db.View(func(tx *bolt.Tx) error {
@@ -191,7 +196,16 @@ func (l *BboltLog) Replay(fromSeq uint64) ([]Op, error) {
 		for ; k != nil; k, v = c.Next() {
 			var op Op
 			if err := json.Unmarshal(v, &op); err != nil {
-				return errors.Wrap(err, "unmarshal op")
+				// A corrupt entry must not brick the whole WAL: previously
+				// Replay errored here, which wedged every flush (interval,
+				// fsync, recall) forever. Skip it LOUDLY — the op's payload is
+				// unrecoverable, and the ordered stream downstream will surface
+				// any knock-on failure (e.g. a write whose create was lost)
+				// through the ordered-halt + loud-loss path.
+				log.Log.Error("wal: corrupt WAL entry skipped — this op is lost",
+					zap.Uint64("seq", binary.BigEndian.Uint64(k)),
+					zap.Error(err))
+				continue
 			}
 			out = append(out, op)
 		}
@@ -223,7 +237,7 @@ func (l *BboltLog) Truncate(throughSeq uint64) error {
 }
 
 // Prefix returns all persisted ops with seq ≤ throughSeq, in ascending order.
-// Unmarshal errors are silently skipped (the entry is omitted from the result).
+// Corrupt entries are skipped with a loud ERROR log; their payload is unrecoverable.
 func (l *BboltLog) Prefix(throughSeq uint64) []Op {
 	var out []Op
 	_ = l.db.View(func(tx *bolt.Tx) error {
@@ -234,6 +248,9 @@ func (l *BboltLog) Prefix(throughSeq uint64) []Op {
 			}
 			var op Op
 			if err := json.Unmarshal(v, &op); err != nil {
+				log.Log.Error("wal: corrupt WAL entry skipped — this op is lost",
+					zap.Uint64("seq", binary.BigEndian.Uint64(k)),
+					zap.Error(err))
 				continue
 			}
 			out = append(out, op)

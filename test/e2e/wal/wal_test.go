@@ -585,6 +585,13 @@ func (s *WalE2ESuite) TestLossLogging() {
 	// ENOENT → ordered-halt at seq=1 → logDataLost fires via onLoss.
 	lostPath1 := "ghost1.bin"
 	lostPath2 := "ghost2.bin"
+	// RecordOp admits only write-delegated paths (5167fa8): grant each ghost
+	// path its own root so admission succeeds. No Gen is set (defaults to 0),
+	// which the server never fences (isRevokedGen: gen==0 is untagged) — the
+	// ordered halt below is a genuine ENOENT apply-failure, not a gen-fence,
+	// exactly matching this test's intent (reason stays "apply-failure").
+	lossMgr.Apply(&proto.DelegationGrant{GrantedRoot: lostPath1})
+	lossMgr.Apply(&proto.DelegationGrant{GrantedRoot: lostPath2})
 	r.NoError(lossCoord.RecordOp(wal.Op{
 		Kind:   wal.OpWrite,
 		Path:   lostPath1,
@@ -772,6 +779,11 @@ func (s *WalE2ESuite) TestCloseFlushFailure_LoudLossLog() {
 
 	// Record ops for paths that do NOT exist on the server: OpWrite with no
 	// preceding Create → server ENOENT → ordered-halt at seq=1.
+	// RecordOp admits only write-delegated paths (5167fa8): grant each ghost
+	// path its own root (no Gen ⇒ 0 ⇒ never fenced by the server), so this
+	// stays a genuine ENOENT apply-failure, not a gen-fence.
+	lossMgr.Apply(&proto.DelegationGrant{GrantedRoot: "ghost-close1.bin"})
+	lossMgr.Apply(&proto.DelegationGrant{GrantedRoot: "ghost-close2.bin"})
 	r.NoError(lossCoord.RecordOp(wal.Op{
 		Kind:   wal.OpWrite,
 		Path:   "ghost-close1.bin",
@@ -851,6 +863,10 @@ func (s *WalE2ESuite) TestStartupRecovery_RebuildAndReplay() {
 		}),
 		wal.WithVolume(volName),
 	)
+
+	// RecordOp admits only write-delegated paths (5167fa8): grant the subtree
+	// root so both the Mkdir and the Create+Write beneath it are admitted.
+	seedMgr.Apply(&proto.DelegationGrant{GrantedRoot: "recovery/crash-dir"})
 
 	// Record a Mkdir and a Create+Write — replayable ops with a parent that
 	// exists on the server (srcSub = srcDir/recovery, already created above).
@@ -937,6 +953,173 @@ func (s *WalE2ESuite) TestStartupRecovery_EmptyWAL_NoOp() {
 
 	// Replay on an empty log must return nil without error.
 	r.NoError(freshCoord.Replay(ctx, 0), "Replay on empty WAL must return nil")
+}
+
+// ─── Scenario 10: stale replay is gen-fenced after a handoff ─────────────────
+//
+// Client A defers a create+write under a delegation grant and dies
+// ungracefully (its recall stream drops) BEFORE flushing. Client B then
+// contends inside A's granted subtree; with A's recall stream gone, the
+// arbiter's OnMutation takes the ErrNoStream path (arbiter.go) and durably
+// revokes A's gen as part of the handoff — no session grace-period reap is
+// needed (and this harness never triggers one anyway: MarkDisconnected only
+// fires from a live Keepalive stream closing, which these bufconn stacks
+// never open).
+//
+// A is then "resurrected": a NEW Coordinator opens the SAME wal.db (same
+// epoch, same un-acked ops) and replays. The server's Apply handler must halt
+// the batch at the first op carrying the now-revoked gen (FS_ESTALE via
+// isRevokedGen in apply.go) — A's stale ops must never land over B's
+// already-applied state, and the loud loss hook must fire with reason
+// "gen-fenced" (flush.go's Replay hardcodes that reason for any Replay
+// ordered halt).
+//
+// Home: wal_e2e, not delegation_e2e. This scenario needs a REAL
+// wal.Coordinator + wal.db (RecordOp gen-stamping, Replay, WithOnLoss) wired
+// against a real in-process server — exactly what walClientStack already
+// provides. delegation_test.go's clientStack has no WAL layer at all, so it
+// cannot defer ops or replay a wal.db.
+func (s *WalE2ESuite) TestStaleReplayIsFencedAfterHandoff() {
+	r := s.Require()
+	ctx := bg()
+
+	tc, _, srcDir, volName := s.newScenarioCtx()
+	srcSub := filepath.Join(srcDir, "handoff")
+	r.NoError(os.Mkdir(srcSub, 0o755))
+
+	// ── Client A: real wal.Coordinator over a real wal.db, delegation wired ────
+	walPath := filepath.Join(s.T().TempDir(), "handoff.db")
+	walLogA, err := wal.Open(walPath)
+	r.NoError(err, "wal.Open A")
+
+	overlayA := wal.NewOverlay()
+	invA := &trackingInvalidator{}
+	mgrA := clientdelegation.NewManager(invA)
+
+	clA, err := tc.NewClientAs("user", "pass")
+	r.NoError(err, "NewClientAs A")
+
+	coordA := wal.NewCoordinator(mgrA, walLogA, overlayA,
+		wal.WithApplyFactory(func(ctx context.Context) (proto.RpcFs_ApplyClient, error) {
+			return clA.Fs().Apply(ctx)
+		}),
+		wal.WithVolume(volName),
+	)
+	// The grant epoch piggybacked on DelegationRequests must match the WAL's
+	// durable epoch, so the server's revoked-gen fence key (identity, volume,
+	// epoch) lines up with the Apply stream's key (derived from WalOp.WalEpoch).
+	mgrA.SetWalEpoch(coordA.Epoch())
+	epochA := coordA.Epoch()
+	r.NotEmpty(epochA, "A's coordinator must mint a durable wal-epoch")
+
+	transportA := transport.NewBackendClient(clA, volName,
+		transport.WithDelegationHook(mgrA),
+		transport.WithWriteDrain(coordA),
+	)
+	delegationA := clientdelegation.NewLayer(transportA, mgrA)
+	walBeA := wal.NewLayer(delegationA, mgrA, coordA)
+
+	recallCtxA, cancelRecallA := context.WithCancel(context.Background())
+	mgrA.SetCancel(cancelRecallA)
+	mgrA.SetRecallFlusher(coordA)
+	go runRecallPump(recallCtxA, clA, mgrA)
+
+	csA := &walClientStack{
+		cl:           clA,
+		mgr:          mgrA,
+		inv:          invA,
+		coord:        coordA,
+		walLog:       walLogA,
+		be:           walBeA,
+		cancelRecall: cancelRecallA,
+	}
+
+	// A acquires the delegation grant for "handoff".
+	acquireGrant(s.T(), csA, "handoff", 5*time.Second)
+	r.True(mgrA.IsDelegated("handoff"), "A must hold the grant before deferring ops")
+
+	// ── Step 1: A defers a create+write under the grant, WITHOUT flushing ──────
+	fh, _, fst := csA.be.Create(ctx, "handoff", "f.txt", uint32(os.O_RDWR|os.O_CREATE), 0o644)
+	r.Equal(proto.FsError_FS_OK, fst, "A Create must succeed (deferred)")
+	staleBytes := []byte("A's stale pre-handoff content")
+	_, wst := csA.be.Write(ctx, fh, 0, staleBytes)
+	r.Equal(proto.FsError_FS_OK, wst, "A Write must succeed (deferred)")
+	r.Equal(proto.FsError_FS_OK, csA.be.Release(ctx, fh))
+
+	// Server must NOT have the file yet — everything is still in A's WAL/overlay.
+	_, statErr := os.Stat(filepath.Join(srcSub, "f.txt"))
+	r.True(os.IsNotExist(statErr), "server must not have f.txt before any flush")
+
+	// ── Step 2: kill A ungracefully, then trigger the handoff ──────────────────
+	// Drop A's recall stream and connection WITHOUT flushing. Close ONLY the
+	// underlying wal.db (release the bbolt file lock) so a later process can
+	// reopen the SAME file with its pending ops intact — do NOT call
+	// coordA.Close(), which would flush (and thus durably commit or discard)
+	// the very ops this test needs to remain un-acked for the resurrection
+	// below (mirrors the seedLog.Close()-not-coord.Close() pattern used by
+	// TestStartupRecovery_RebuildAndReplay to simulate a crash).
+	cancelRecallA()
+	_ = clA.Close()
+	r.NoError(walLogA.Close(), "close A's wal.db (release file lock, no flush)")
+
+	// Client B contends inside A's granted subtree. With A's recall stream
+	// gone, the arbiter's OnMutation takes the ErrNoStream path: the holder's
+	// gen is durably revoked and the handoff completes immediately.
+	csB := newWALStack(s.T(), tc, "user", "pass", volName)
+	defer csB.Close()
+
+	r.Eventually(func() bool {
+		st, _ := csB.MkdirFresh(ctx, "handoff")
+		return st == proto.FsError_FS_OK
+	}, 15*time.Second, 100*time.Millisecond, "B must succeed once A's gen is fenced and the handoff completes")
+
+	// ── Step 3: resurrect A over the SAME wal.db (same epoch, same pending ops) ─
+	walLogA2, err := wal.Open(walPath)
+	r.NoError(err, "reopen A's wal.db")
+
+	overlayA2 := wal.NewOverlay()
+	mgrA2 := clientdelegation.NewManager(&trackingInvalidator{})
+	clA2, err := tc.NewClientAs("user", "pass")
+	r.NoError(err, "NewClientAs A2 (resurrected)")
+	defer clA2.Close()
+
+	var lossReason string
+	var lossOps []wal.Op
+	coordA2 := wal.NewCoordinator(mgrA2, walLogA2, overlayA2,
+		wal.WithApplyFactory(func(ctx context.Context) (proto.RpcFs_ApplyClient, error) {
+			return clA2.Fs().Apply(ctx)
+		}),
+		wal.WithVolume(volName),
+		wal.WithOnLoss(func(reason string, lost []wal.Op, fe proto.FsError) {
+			lossReason = reason
+			lossOps = append(lossOps, lost...)
+		}),
+	)
+	defer coordA2.Close()
+
+	r.Equal(epochA, coordA2.Epoch(), "resurrected coordinator must share the same durable wal-epoch")
+
+	// ── Step 4: Replay must be fenced ───────────────────────────────────────────
+	replayErr := coordA2.Replay(ctx, 0)
+	r.Error(replayErr, "Replay of a gen-fenced WAL must return a non-nil error")
+
+	r.Equal("gen-fenced", lossReason, `loss hook must fire with reason "gen-fenced"`)
+	r.NotEmpty(lossOps, "loss hook must be called with the discarded ops")
+	for _, op := range lossOps {
+		r.Equal("handoff/f.txt", op.Path, "the fenced ops must be A's deferred create+write")
+	}
+
+	// Server-side: the stale file must NOT exist — B's view is intact, A's
+	// discarded ops never reached the server.
+	_, statErr2 := os.Stat(filepath.Join(srcSub, "f.txt"))
+	r.True(os.IsNotExist(statErr2), "A's stale file must never reach the server after the fence")
+
+	// A's wal.db log must be empty — the poisoned tail was truncated on the
+	// fenced discard (processAck's commitFlushed(lastSeq) drops the WHOLE sent
+	// batch through the last op's seq, not just the prefix up to the fence).
+	remaining, replayReadErr := walLogA2.Replay(0)
+	r.NoError(replayReadErr)
+	r.Empty(remaining, "A's wal.db must be empty after the fenced discard (poisoned tail truncated)")
 }
 
 // ─── test entry-point ─────────────────────────────────────────────────────────

@@ -36,22 +36,31 @@ import (
 // fakeApplyStream implements grpc.ClientStreamingClient[proto.WalOp, proto.ApplyAck].
 // It records sent WalOps and returns a scripted ApplyAck.
 type fakeApplyStream struct {
-	mu      sync.Mutex
-	sent    []*proto.WalOp
-	ack     *proto.ApplyAck
-	sendErr error // if non-nil, Send returns this error
-	closed  bool
-	gate    chan struct{}          // if non-nil, CloseAndRecv blocks on it (in-flight Apply)
-	onClose func() *proto.ApplyAck // if non-nil, computes the ack from sent ops (chunk test)
+	mu          sync.Mutex
+	sent        []*proto.WalOp
+	ack         *proto.ApplyAck
+	sendErr     error // if non-nil, Send returns this error
+	closed      bool
+	gate        chan struct{}          // if non-nil, CloseAndRecv blocks on it (in-flight Apply)
+	onClose     func() *proto.ApplyAck // if non-nil, computes the ack from sent ops (chunk test)
+	onFirstSend func()                 // if non-nil, called once on this stream's first Send
+	sentOnce    sync.Once
 }
 
 func (f *fakeApplyStream) Send(op *proto.WalOp) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.sendErr != nil {
-		return f.sendErr
+	sendErr := f.sendErr
+	if sendErr == nil {
+		f.sent = append(f.sent, op)
 	}
-	f.sent = append(f.sent, op)
+	hook := f.onFirstSend
+	f.mu.Unlock()
+	if sendErr != nil {
+		return sendErr
+	}
+	if hook != nil {
+		f.sentOnce.Do(hook)
+	}
 	return nil
 }
 
@@ -271,6 +280,9 @@ func (s *FlushSuite) TestFlush_ChunksLargeBacklogIntoBoundedBatches() {
 // the flush completes. The concurrent write (seq > throughSeq) must survive the
 // flush's overlay rebuild. Run under -race to exercise recordMu vs commitFlushed.
 func (s *FlushSuite) TestFlush_ConcurrentInFlightWriteSurvives() {
+	// RecordOp now admits only write-delegated paths (Task 3).
+	s.mgr.Apply(&proto.DelegationGrant{GrantedRoot: "pkg"})
+
 	s.appendOp(OpMkdir, "pkg")
 	through := s.appendOp(OpCreate, "pkg/flushed.txt")
 	s.stream.ack = &proto.ApplyAck{Watermark: through}
@@ -296,6 +308,72 @@ func (s *FlushSuite) TestFlush_ConcurrentInFlightWriteSurvives() {
 
 	s.False(s.coord.Has("pkg/flushed.txt"), "flushed op must be cleared")
 	s.True(s.coord.Has("pkg/inflight.txt"), "write recorded during the in-flight Apply must survive")
+}
+
+// ── Test 2b: FlushForRecall barrier ───────────────────────────────────────────
+
+// TestFlushForRecallBoundedByBarrierSnapshot proves the FlushForRecall
+// contract is a SINGLE bounded flush of the recordMu-barrier snapshot, not a
+// loop-until-empty. It grants two independent regions ("dir" and "other").
+// One op is recorded under "dir" before the recall; that op is the entire
+// barrier snapshot. While the resulting single Apply batch is in flight
+// (signalled via onFirstSend), a second op is recorded under "other" — a
+// non-draining region, so admission succeeds. This op arrives strictly AFTER
+// the barrier snapshot was taken.
+//
+// FlushForRecall must flush only the snapshot (the "dir" op) and return —
+// the late "other" op must remain deferred in the log. This is the
+// discriminating assertion: the old loop-until-empty version would re-snapshot
+// after the first flush, pick up the late "other" op too, and leave the log
+// empty. That behavior is exactly the liveness bug — sustained writes to
+// OTHER, non-draining regions would keep the log non-empty forever and the
+// recall handoff would never return.
+func (s *FlushSuite) TestFlushForRecallBoundedByBarrierSnapshot() {
+	s.mgr.Apply(&proto.DelegationGrant{GrantedRoot: "dir", Gen: 1})
+	s.mgr.Apply(&proto.DelegationGrant{GrantedRoot: "other", Gen: 1})
+
+	s.Require().NoError(s.coord.RecordOp(Op{Kind: OpCreate, Path: "dir/a", Mode: 0o644}))
+
+	firstBatchSending := make(chan struct{})
+	otherRecorded := make(chan struct{})
+	var closeFirstBatchSending sync.Once
+
+	s.coord.cfg.applyFactory = func(_ context.Context) (proto.RpcFs_ApplyClient, error) {
+		st := &fakeApplyStream{}
+		// Block the single batch's Send until the "other" op is recorded, so
+		// the assertion below is deterministic (not racing RecordOp against
+		// the Apply completing) regardless of which FlushForRecall variant is
+		// under test.
+		st.onFirstSend = func() {
+			closeFirstBatchSending.Do(func() { close(firstBatchSending) })
+			<-otherRecorded
+		}
+		st.onClose = func() *proto.ApplyAck {
+			seq := uint64(0)
+			if len(st.sent) > 0 {
+				seq = st.sent[len(st.sent)-1].Seq
+			}
+			return &proto.ApplyAck{Watermark: seq}
+		}
+		return st, nil
+	}
+
+	var otherRecordErr error
+	go func() {
+		<-firstBatchSending
+		// "other" is not draining — admission must succeed.
+		otherRecordErr = s.coord.RecordOp(Op{Kind: OpCreate, Path: "other/x", Mode: 0o644})
+		close(otherRecorded)
+	}()
+
+	err := s.coord.FlushForRecall(context.Background(), "dir")
+	s.Require().NoError(err)
+	s.Require().NoError(otherRecordErr, "'other' is not draining so admission must succeed")
+
+	remaining, rerr := s.log.Replay(0)
+	s.Require().NoError(rerr)
+	s.Require().Len(remaining, 1, "the late other-region op recorded after the barrier snapshot must remain deferred")
+	s.Equal("other/x", remaining[0].Path, "the surviving log entry must be the late other-region op, not the flushed snapshot op")
 }
 
 // ── Test 3: Ordered halt ──────────────────────────────────────────────────────

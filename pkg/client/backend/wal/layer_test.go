@@ -26,9 +26,14 @@ package wal_test
 
 import (
 	"context"
+	"errors"
+	"io"
 	"path/filepath"
+	"strings"
+	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 	"go.gmountie.dev/gmountie/pkg/client/backend"
@@ -36,6 +41,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/client/backend/memfs"
 	"go.gmountie.dev/gmountie/pkg/client/backend/wal"
 	"go.gmountie.dev/gmountie/pkg/proto"
+	"google.golang.org/grpc/metadata"
 )
 
 // ── test helpers ──────────────────────────────────────────────────────────────
@@ -56,6 +62,44 @@ func openLayerLog(t *testing.T) *wal.BboltLog {
 	return l
 }
 
+// fakeApplyStream is an external-package fake for proto.RpcFs_ApplyClient
+// (a grpc.ClientStreamingClient[proto.WalOp, proto.ApplyAck]). It records
+// every sent WalOp and, on CloseAndRecv, acks the highest seq it saw — i.e.
+// it always fully commits whatever batch it is given. This lets tests drive
+// a REAL wal.Coordinator.Flush / FlushForRecall to completion (the fixture
+// guidance's alternative to the unexported commitFlushedForTest hook, which
+// this external _test package cannot reach).
+type fakeApplyStream struct {
+	mu   sync.Mutex
+	sent []*proto.WalOp
+}
+
+func (f *fakeApplyStream) Send(op *proto.WalOp) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sent = append(f.sent, op)
+	return nil
+}
+
+func (f *fakeApplyStream) CloseAndRecv() (*proto.ApplyAck, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var wm uint64
+	if len(f.sent) > 0 {
+		wm = f.sent[len(f.sent)-1].Seq
+	}
+	return &proto.ApplyAck{Watermark: wm}, nil
+}
+
+func (f *fakeApplyStream) Header() (metadata.MD, error) { return nil, nil } //nolint:nilnil // fake gRPC stream: no metadata and no error is the correct test-double contract
+func (f *fakeApplyStream) Trailer() metadata.MD         { return nil }
+func (f *fakeApplyStream) CloseSend() error             { return nil }
+func (f *fakeApplyStream) Context() context.Context     { return context.Background() }
+func (f *fakeApplyStream) SendMsg(m any) error          { return nil }
+func (f *fakeApplyStream) RecvMsg(m any) error          { return io.EOF }
+
+var _ proto.RpcFs_ApplyClient = (*fakeApplyStream)(nil)
+
 // ── LayerSuite ────────────────────────────────────────────────────────────────
 
 type LayerSuite struct {
@@ -67,6 +111,14 @@ type LayerSuite struct {
 	coord *wal.Coordinator
 	layer backend.FileSystemBackend
 	ctx   context.Context
+
+	// applyStreamsMu guards applyStreams — the set of fakeApplyStream instances
+	// minted by the WithApplyFactory closure below, one per Flush/Fsync call.
+	// Tests that need to inspect exactly which ops were sent to the (fake) wire
+	// — e.g. asserting a rename's pre-flush never sent an OpRename — read this
+	// after the call returns.
+	applyStreamsMu sync.Mutex
+	applyStreams   []*fakeApplyStream
 }
 
 func (s *LayerSuite) SetupTest() {
@@ -74,14 +126,77 @@ func (s *LayerSuite) SetupTest() {
 	s.mgr = delegation.NewManager(noopInv{})
 	s.log = openLayerLog(s.T())
 	s.ovl = wal.NewOverlay()
-	s.coord = wal.NewCoordinator(s.mgr, s.log, s.ovl)
+	s.applyStreams = nil
+	// WithApplyFactory wires a fake Apply stream that always fully commits
+	// whatever it is sent, so tests can drive a REAL Flush/FlushForRecall to
+	// completion (see fakeApplyStream doc comment). Harmless for tests that
+	// never call Flush. Each minted stream is recorded in s.applyStreams so
+	// tests can inspect exactly what was sent.
+	s.coord = wal.NewCoordinator(s.mgr, s.log, s.ovl,
+		wal.WithApplyFactory(func(_ context.Context) (proto.RpcFs_ApplyClient, error) {
+			st := &fakeApplyStream{}
+			s.applyStreamsMu.Lock()
+			s.applyStreams = append(s.applyStreams, st)
+			s.applyStreamsMu.Unlock()
+			return st, nil
+		}),
+	)
 	s.layer = wal.NewLayer(s.fs, s.mgr, s.coord)
 	s.ctx = context.Background()
+}
+
+// sentOps flattens every WalOp sent across all fakeApplyStream instances
+// minted so far (i.e. every op that has gone through a Flush/Fsync call).
+func (s *LayerSuite) sentOps() []*proto.WalOp {
+	s.applyStreamsMu.Lock()
+	defer s.applyStreamsMu.Unlock()
+	var out []*proto.WalOp
+	for _, st := range s.applyStreams {
+		st.mu.Lock()
+		out = append(out, st.sent...)
+		st.mu.Unlock()
+	}
+	return out
 }
 
 // grant makes root and all paths under it delegated.
 func (s *LayerSuite) grant(root string) {
 	s.mgr.Apply(&proto.DelegationGrant{GrantedRoot: root})
+}
+
+// flushAll drives a real, full Flush of every op currently in the WAL log
+// (the fakeApplyStream always fully commits). Standing in for a completed
+// interval flush.
+func (s *LayerSuite) flushAll() {
+	ops, err := s.log.Replay(0)
+	s.Require().NoError(err)
+	s.Require().NotEmpty(ops, "flushAll requires at least one pending op")
+	s.Require().NoError(s.coord.Flush(s.ctx, ops[len(ops)-1].Seq))
+}
+
+// writeInner materialises path with data directly in the inner memfs
+// backend, standing in for the real server-side Apply pipeline (out of scope
+// for this unit test — the property under test is the Layer's read/write
+// routing, not the Apply pipeline itself).
+func (s *LayerSuite) writeInner(path string, data []byte) {
+	parent, name := splitInnerPath(path)
+	_, _, ferr := s.fs.Create(s.ctx, parent, name, 0, 0o100644)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	fh, ferr := s.fs.Open(s.ctx, path, 0)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	_, ferr = s.fs.Write(s.ctx, fh, 0, data)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	s.Require().Equal(proto.FsError_FS_OK, s.fs.Release(s.ctx, fh))
+}
+
+// splitInnerPath splits a memfs-convention path ("dir/f.txt") into parent
+// ("dir") and name ("f.txt"); a root-level path ("f.txt") splits to ("", "f.txt").
+func splitInnerPath(path string) (parent, name string) {
+	idx := strings.LastIndex(path, "/")
+	if idx < 0 {
+		return "", path
+	}
+	return path[:idx], path[idx+1:]
 }
 
 // ── Test 1: delegated Create → overlay visible; memfs never sees it ───────────
@@ -276,10 +391,20 @@ func (s *LayerSuite) TestCrossSubtreeRename_Synchronous() {
 	s.Equal(proto.FsError_FS_ENOENT, innerErr, "old path must be gone in memfs")
 }
 
-// ── Test 8: in-delegation rename → deferred (memfs does not see it) ──────────
-
-func (s *LayerSuite) TestInDelegationRename_Deferred() {
-	// Create source file in memfs.
+// ── Test 8: base-only rename (source pre-exists in inner) goes synchronous ───
+//
+// TestRenameOfBaseOnlyPathGoesSynchronous replaces the old
+// TestInDelegationRename_Deferred, which pinned the BUG this task fixes: a
+// deferred rename of a base-only (not overlay-created) file tombstoned the
+// source in the overlay but synthesised nothing at the destination, so
+// `mv delegated/old.txt delegated/new.txt && cat delegated/new.txt` returned
+// ENOENT until the next flush. Under the new contract (RecordOp's atomic
+// ownership check gates deferral) a base-only source is not overlay-owned
+// (ErrNotOwned), so the rename executes
+// synchronously against inner immediately — no ENOENT window, nothing
+// deferred in the WAL.
+func (s *LayerSuite) TestRenameOfBaseOnlyPathGoesSynchronous() {
+	// Create source file in memfs (base-only — never touched via the layer).
 	_, err := s.fs.Mkdir(s.ctx, "delegated", 0o40755)
 	s.Require().Equal(proto.FsError_FS_OK, err)
 	_, _, err = s.fs.Create(s.ctx, "delegated", "old.txt", 0, 0o100644)
@@ -290,11 +415,191 @@ func (s *LayerSuite) TestInDelegationRename_Deferred() {
 	ferr := s.layer.Rename(s.ctx, "delegated/old.txt", "delegated/new.txt")
 	s.Require().Equal(proto.FsError_FS_OK, ferr)
 
-	// memfs must NOT have seen the rename.
-	_, innerErr := s.fs.Stat(s.ctx, "delegated/old.txt")
-	s.Equal(proto.FsError_FS_OK, innerErr, "memfs must still have the old path (deferred)")
-	_, innerErr = s.fs.Stat(s.ctx, "delegated/new.txt")
-	s.Equal(proto.FsError_FS_ENOENT, innerErr, "memfs must not have the new path (deferred)")
+	// memfs must have received the rename synchronously — no deferred window.
+	_, innerErr := s.fs.Stat(s.ctx, "delegated/new.txt")
+	s.Equal(proto.FsError_FS_OK, innerErr, "base-only rename must reach inner synchronously")
+	_, innerErr = s.fs.Stat(s.ctx, "delegated/old.txt")
+	s.Equal(proto.FsError_FS_ENOENT, innerErr, "old path must be gone in memfs")
+
+	// Nothing deferred in the WAL.
+	ops, logerr := s.log.Replay(0)
+	s.Require().NoError(logerr)
+	s.Empty(ops, "no deferred rename recorded for a base-only source")
+}
+
+// ── Test 8b: overlay-owned rename (atomic-write fast path) stays deferred ────
+//
+// TestRenameOfOverlayCreatedFileStaysDeferred pins the surviving fast path:
+// when the rename's source is entirely the overlay's own creation (the
+// `create tmp → rename over` atomic-write idiom), the overlay CAN represent
+// the destination, so the rename still defers via the WAL — inner is never
+// touched and the destination is visible immediately (RYOW).
+func (s *LayerSuite) TestRenameOfOverlayCreatedFileStaysDeferred() {
+	s.grant("dir")
+	_, err := s.fs.Mkdir(s.ctx, "dir", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	_, _, st := s.layer.Create(s.ctx, "dir", "tmp.txt", 0, 0o644)
+	s.Require().Equal(proto.FsError_FS_OK, st)
+
+	st = s.layer.Rename(s.ctx, "dir/tmp.txt", "dir/final.txt")
+	s.Require().Equal(proto.FsError_FS_OK, st)
+
+	// inner must NOT have seen either path — the rename is purely in the overlay.
+	_, innerErr := s.fs.Stat(s.ctx, "dir/final.txt")
+	s.Equal(proto.FsError_FS_ENOENT, innerErr, "overlay-owned rename must not reach inner")
+
+	// The WAL log must contain the deferred OpRename.
+	ops, logerr := s.log.Replay(0)
+	s.Require().NoError(logerr)
+	found := false
+	for _, op := range ops {
+		if op.Kind == wal.OpRename {
+			found = true
+		}
+	}
+	s.True(found, "deferred OpRename must be recorded in the WAL")
+
+	// RYOW: destination visible immediately; source gone.
+	attr, ferr := s.layer.Stat(s.ctx, "dir/final.txt")
+	s.Equal(proto.FsError_FS_OK, ferr)
+	s.NotNil(attr, "RYOW: destination visible immediately")
+
+	_, ferr = s.layer.Stat(s.ctx, "dir/tmp.txt")
+	s.Equal(proto.FsError_FS_ENOENT, ferr, "RYOW: source tombstoned")
+}
+
+// ── Test 8c: rename of a pending base-delta source flushes then syncs ────────
+//
+// TestRenameFlushesPendingBaseDeltaBeforeSyncRename is the discriminating case
+// for the flush-first rule: the source is NOT overlay-owned (it is a
+// base-delta node — a pre-existing inner file with a pending SetAttr), so the
+// rename must run synchronously against inner. But if it ran synchronously
+// WITHOUT first flushing, the pending SetAttr recorded against the old path
+// would be stranded — the next flush would try to apply it to a path the
+// rename already moved away from, and the server would ENOENT it (ordered
+// halt = data loss). Rename must therefore flush the pending SetAttr first
+// (observed here as it landing on the fake Apply stream, with the WAL log
+// left empty), and only then execute the rename against inner. Crucially, the
+// fake Apply stream must never see an OpRename — the rename itself always
+// took the synchronous inner path, never the WAL.
+func (s *LayerSuite) TestRenameFlushesPendingBaseDeltaBeforeSyncRename() {
+	_, err := s.fs.Mkdir(s.ctx, "dir", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+	s.writeInner("dir/data.txt", []byte("AAAA"))
+	s.grant("dir")
+
+	// SetAttr (mtime touch) on a base-only path creates a base-delta overlay
+	// node with pending state — RecordOp must refuse an OpRename for it
+	// (ErrNotOwned: a base-delta node is not overlay-owned).
+	mtime := time.Unix(1_700_000_000, 0)
+	_, ferr := s.layer.SetAttr(s.ctx, "dir/data.txt", backend.SetAttrIn{
+		Valid: backend.FATTR_MTIME,
+		Mtime: &mtime,
+	})
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	s.True(s.coord.Has("dir/data.txt"), "SetAttr must have created a pending base-delta node")
+
+	ferr = s.layer.Rename(s.ctx, "dir/data.txt", "dir/moved.txt")
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+
+	// The pending SetAttr must have been flushed (WAL log now empty) before the
+	// synchronous rename ran.
+	ops, logerr := s.log.Replay(0)
+	s.Require().NoError(logerr)
+	s.Empty(ops, "pending base-delta state must be flushed before the sync rename, leaving the WAL empty")
+
+	// The synchronous rename must have reached inner.
+	_, innerErr := s.fs.Stat(s.ctx, "dir/moved.txt")
+	s.Equal(proto.FsError_FS_OK, innerErr, "base-delta rename must reach inner synchronously")
+	_, innerErr = s.fs.Stat(s.ctx, "dir/data.txt")
+	s.Equal(proto.FsError_FS_ENOENT, innerErr, "old path must be gone in memfs")
+
+	// The flush must have carried the pending SetAttr — and the rename itself
+	// must NEVER have gone through the WAL (no OpRename ever sent to Apply).
+	var sawSetAttr, sawRename bool
+	for _, op := range s.sentOps() {
+		if op.GetSetAttr() != nil {
+			sawSetAttr = true
+		}
+		if op.GetRename() != nil {
+			sawRename = true
+		}
+	}
+	s.True(sawSetAttr, "the flush must have sent the pending SetAttr")
+	s.False(sawRename, "the rename must never be deferred through the WAL for a base-delta source")
+}
+
+// ── Test 8d: rename ownership is decided atomically with the append ──────────
+//
+// TestRecordOpRenameRefusedAfterFlushClearsOwnership pins the RecordOp-side
+// contract for the ownership race: a full-create node is seeded, then a real
+// flush commits it and clears the overlay — exactly the state a commitFlushed
+// racing an unlocked ownership pre-check would produce. RecordOp(OpRename)
+// must then refuse with ErrNotOwned instead of appending a rename that would
+// tombstone the source and synthesize nothing (both paths ENOENT locally).
+func (s *LayerSuite) TestRecordOpRenameRefusedAfterFlushClearsOwnership() {
+	s.grant("dir")
+	_, err := s.fs.Mkdir(s.ctx, "dir", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	_, _, st := s.layer.Create(s.ctx, "dir", "tmp.txt", 0, 0o644)
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	s.True(s.coord.Has("dir/tmp.txt"), "the create must be pending in the overlay")
+
+	// A real flush commits the create and clears the overlay node.
+	s.flushAll()
+	s.False(s.coord.Has("dir/tmp.txt"), "flush must clear the overlay node")
+
+	recErr := s.coord.RecordOp(wal.Op{Kind: wal.OpRename, Path: "dir/tmp.txt", NewPath: "dir/final.txt"})
+	s.Require().ErrorIs(recErr, wal.ErrNotOwned,
+		"rename of a source the overlay no longer owns must be refused atomically")
+
+	ops, logerr := s.log.Replay(0)
+	s.Require().NoError(logerr)
+	s.Empty(ops, "no OpRename may be appended for a non-owned source")
+}
+
+// TestRenameOfJustFlushedSyntheticFileGoesSynchronous is the Layer-level view
+// of the same race outcome: renaming a synthetic file whose overlay node was
+// just cleared by a flush must take the synchronous path — the inner rename
+// executes, and no OpRename ever enters the log or crosses the Apply stream.
+func (s *LayerSuite) TestRenameOfJustFlushedSyntheticFileGoesSynchronous() {
+	s.grant("dir")
+	_, err := s.fs.Mkdir(s.ctx, "dir", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	fh, _, st := s.layer.Create(s.ctx, "dir", "tmp.txt", 0, 0o644)
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	_, st = s.layer.Write(s.ctx, fh, 0, []byte("hello"))
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	s.Require().Equal(proto.FsError_FS_OK, s.layer.Release(s.ctx, fh))
+
+	// Simulate the completed flush: prime inner with the materialised file
+	// (standing in for the server-side Apply pipeline) and drive a real Flush
+	// so the overlay actually clears.
+	s.writeInner("dir/tmp.txt", []byte("hello"))
+	s.flushAll()
+	s.False(s.coord.Has("dir/tmp.txt"), "overlay must be cleared after the flush")
+
+	st = s.layer.Rename(s.ctx, "dir/tmp.txt", "dir/final.txt")
+	s.Require().Equal(proto.FsError_FS_OK, st)
+
+	// The rename executed synchronously against inner.
+	_, innerErr := s.fs.Stat(s.ctx, "dir/final.txt")
+	s.Equal(proto.FsError_FS_OK, innerErr, "just-flushed rename must reach inner synchronously")
+	_, innerErr = s.fs.Stat(s.ctx, "dir/tmp.txt")
+	s.Equal(proto.FsError_FS_ENOENT, innerErr, "old path must be gone in inner")
+
+	// ...and never through the WAL: no OpRename in the log or on the wire.
+	ops, logerr := s.log.Replay(0)
+	s.Require().NoError(logerr)
+	for _, op := range ops {
+		s.NotEqual(wal.OpRename, op.Kind, "no OpRename may be deferred for a non-owned source")
+	}
+	for _, w := range s.sentOps() {
+		s.Nil(w.GetRename(), "no OpRename may cross the Apply stream")
+	}
 }
 
 // ── Test 9: Read on delegated pending path → overlay bytes merged ─────────────
@@ -482,6 +787,352 @@ func (s *LayerSuite) TestNonDelegated_Create_PassthroughToInner() {
 	ops, logerr := s.log.Replay(0)
 	s.Require().NoError(logerr)
 	s.Empty(ops, "non-delegated Create must not produce a WAL entry")
+}
+
+// ── Test 15: undelegated mutation falls back to inner (contract pin) ─────────
+//
+// This pins the post-refactor contract: admission now lives in
+// Coordinator.RecordOp (Task 3), not an IsDelegated gate in the Layer. With no
+// grant applied, every mutating op must still reach inner synchronously, and
+// nothing may be recorded in the WAL.
+
+func (s *LayerSuite) TestMutationFallsBackToInnerWhenNotDelegated() {
+	// No grant applied.
+	_, err := s.fs.Mkdir(s.ctx, "plain", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+	_, _, err = s.fs.Create(s.ctx, "plain", "file.txt", 0, 0o100644)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	st := s.layer.Unlink(s.ctx, "plain/file.txt")
+	s.Equal(proto.FsError_FS_OK, st)
+
+	_, innerErr := s.fs.Stat(s.ctx, "plain/file.txt")
+	s.Equal(proto.FsError_FS_ENOENT, innerErr, "undelegated unlink must reach inner")
+
+	ops, logerr := s.log.Replay(0)
+	s.Require().NoError(logerr)
+	s.Empty(ops, "nothing recorded in the WAL")
+}
+
+// ── Test 16: draining region blocks, then falls back after handoff ───────────
+//
+// blockingRecallFlusher implements delegation.RecallFlusher and blocks
+// FlushForRecall until release is closed — used to hold a root in the
+// "draining" state for the duration of the test, mirroring the pattern in
+// wal_test.go's TestDrain_FallsBackToWireWhileRootIsDraining. A non-nil err
+// makes the flush FAIL after release: the drain ends but the grant is
+// retained (aborted handoff).
+type blockingRecallFlusher struct {
+	release chan struct{}
+	err     error
+}
+
+func (b *blockingRecallFlusher) FlushForRecall(_ context.Context, _ string) error {
+	<-b.release
+	return b.err
+}
+
+// TestMutationBlocksOnDrainThenFallsBackAfterHandoff is the discriminating
+// test for recordDeferred: while a recall is draining the covering root,
+// RecordOp refuses immediately (ErrNotDelegated), so a concurrent Unlink must
+// block in mgr.WaitDrained rather than either succeeding early or forwarding
+// to inner prematurely. Once the recall flush completes, the handoff drops
+// the grant, the retried RecordOp is refused again, and Unlink falls back to
+// inner synchronously — recording nothing in the WAL.
+func (s *LayerSuite) TestMutationBlocksOnDrainThenFallsBackAfterHandoff() {
+	_, err := s.fs.Mkdir(s.ctx, "dir", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+	_, _, err = s.fs.Create(s.ctx, "dir", "f.txt", 0, 0o100644)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	s.grant("dir")
+
+	release := make(chan struct{})
+	s.mgr.SetRecallFlusher(&blockingRecallFlusher{release: release})
+
+	recallDone := make(chan struct{})
+	go func() {
+		_ = s.mgr.OnRecall(s.ctx, "dir")
+		close(recallDone)
+	}()
+
+	// Wait for the recall to mark "dir" draining.
+	for s.mgr.IsWriteDelegated("dir/f.txt") {
+		time.Sleep(time.Millisecond)
+	}
+	s.True(s.mgr.IsDelegated("dir/f.txt"), "grant is still held while draining")
+
+	unlinkDone := make(chan proto.FsError, 1)
+	go func() {
+		unlinkDone <- s.layer.Unlink(s.ctx, "dir/f.txt")
+	}()
+
+	// Must block while the recall flush is in flight.
+	select {
+	case <-unlinkDone:
+		s.Fail("Unlink must block while the region is draining")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// Complete the recall flush — the handoff drops the grant.
+	close(release)
+	<-recallDone
+
+	var st proto.FsError
+	select {
+	case st = <-unlinkDone:
+	case <-time.After(2 * time.Second):
+		s.FailNow("Unlink did not unblock after the drain completed")
+	}
+	s.Equal(proto.FsError_FS_OK, st)
+
+	// Fell back to inner: memfs must have the unlink.
+	_, innerErr := s.fs.Stat(s.ctx, "dir/f.txt")
+	s.Equal(proto.FsError_FS_ENOENT, innerErr, "unlink must have reached inner after fallback")
+
+	// Nothing recorded in the WAL (the grant was already dropped by the time
+	// the retried RecordOp ran).
+	ops, logerr := s.log.Replay(0)
+	s.Require().NoError(logerr)
+	s.Empty(ops, "nothing must be recorded in the WAL after fallback")
+}
+
+// TestMutationBlocksOnDrainThenRedefersAfterFailedRecall is the recordDeferred
+// twin of the Drain-seam N1 test: an Unlink parked mid-drain wakes after the
+// recall flush FAILS — the drain is over but the grant is RETAINED (aborted
+// handoff, pending ops kept). The single-snapshot rule resolves the refusal to
+// RE-DEFER: the op must land in the WAL, never run synchronously against inner
+// (a sync unlink would race the retained deferred state for the subtree).
+func (s *LayerSuite) TestMutationBlocksOnDrainThenRedefersAfterFailedRecall() {
+	_, err := s.fs.Mkdir(s.ctx, "dir", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+	_, _, err = s.fs.Create(s.ctx, "dir", "f.txt", 0, 0o100644)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	s.grant("dir")
+
+	release := make(chan struct{})
+	s.mgr.SetRecallFlusher(&blockingRecallFlusher{release: release, err: errors.New("recall flush failed")})
+
+	recallDone := make(chan struct{})
+	go func() {
+		_ = s.mgr.OnRecall(s.ctx, "dir")
+		close(recallDone)
+	}()
+
+	// Wait for the recall to mark "dir" draining.
+	for s.mgr.IsWriteDelegated("dir/f.txt") {
+		time.Sleep(time.Millisecond)
+	}
+
+	unlinkDone := make(chan proto.FsError, 1)
+	go func() {
+		unlinkDone <- s.layer.Unlink(s.ctx, "dir/f.txt")
+	}()
+
+	// Must park while the recall flush is in flight.
+	select {
+	case <-unlinkDone:
+		s.Fail("Unlink must park while the region is draining")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// The recall flush FAILS: drain ends, grant retained, handoff aborted.
+	close(release)
+	<-recallDone
+
+	var st proto.FsError
+	select {
+	case st = <-unlinkDone:
+	case <-time.After(2 * time.Second):
+		s.FailNow("Unlink did not unblock after the failed recall ended the drain")
+	}
+	s.Equal(proto.FsError_FS_OK, st)
+
+	// Deferred, not synchronous: the WAL holds the unlink, inner still has
+	// the file (it is removed only when the WAL flushes).
+	ops, logerr := s.log.Replay(0)
+	s.Require().NoError(logerr)
+	s.Require().Len(ops, 1, "the retried op must be recorded in the WAL")
+	s.Equal(wal.OpUnlink, ops[0].Kind)
+	s.Equal("dir/f.txt", ops[0].Path)
+
+	_, innerErr := s.fs.Stat(s.ctx, "dir/f.txt")
+	s.Equal(proto.FsError_FS_OK, innerErr, "inner must be untouched — the unlink was deferred, not synchronous")
+}
+
+// ── Test 17: flushed synthetic handle reads through to inner ─────────────────
+//
+// TestSyntheticHandleReadsAfterFlushServeFromInner is the headline regression
+// test (Task 5): a still-open syntheticHandle whose overlay node was cleared
+// by a completed flush must serve reads from inner (the server), not empty
+// data from a nil-base overlay merge.
+
+func (s *LayerSuite) TestSyntheticHandleReadsAfterFlushServeFromInner() {
+	s.grant("dir")
+	_, err := s.fs.Mkdir(s.ctx, "dir", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	fh, _, st := s.layer.Create(s.ctx, "dir", "f.txt", 0, 0o644)
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	_, st = s.layer.Write(s.ctx, fh, 0, []byte("hello"))
+	s.Require().Equal(proto.FsError_FS_OK, st)
+
+	// Simulate a completed interval flush: server has the bytes, overlay is
+	// clear. The real Apply pipeline is out of scope for this unit test — we
+	// prime inner directly with the bytes the (fake) flush would have sent,
+	// then drive the coordinator's REAL Flush so the overlay actually clears.
+	s.writeInner("dir/f.txt", []byte("hello"))
+	s.flushAll()
+	s.False(s.coord.Has("dir/f.txt"), "overlay must be cleared after the flush")
+
+	dest := make([]byte, 5)
+	n, st := s.layer.Read(s.ctx, fh, 0, dest)
+	s.Equal(proto.FsError_FS_OK, st)
+	s.Equal("hello", string(dest[:n]), "read through a flushed synthetic handle must serve server bytes, not empty")
+}
+
+// ── Test 18: orphaned synthetic handle writes through after recall ───────────
+//
+// TestOrphanedSyntheticHandleWritesThroughAfterRecall proves the write side
+// of the same bug: a still-open syntheticHandle whose delegation was recalled
+// (grant dropped by a completed handoff) has nowhere left to defer its write
+// to; it must write through a transient inner handle instead of failing.
+
+func (s *LayerSuite) TestOrphanedSyntheticHandleWritesThroughAfterRecall() {
+	s.grant("dir")
+	_, err := s.fs.Mkdir(s.ctx, "dir", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	fh, _, st := s.layer.Create(s.ctx, "dir", "f.txt", 0, 0o644)
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	_, st = s.layer.Write(s.ctx, fh, 0, []byte("hello"))
+	s.Require().Equal(proto.FsError_FS_OK, st)
+
+	// Simulate the recall flush materialising the file on the server: prime
+	// inner directly (the real Apply pipeline is out of scope here).
+	s.writeInner("dir/f.txt", []byte("hello"))
+
+	// Wire the coordinator as the recall flusher and drive a REAL recall —
+	// FlushForRecall flushes the WAL (the fake Apply stream acks it in full)
+	// and the handoff drops the grant.
+	s.mgr.SetRecallFlusher(s.coord)
+	s.Require().NoError(s.mgr.OnRecall(s.ctx, "dir"))
+	s.False(s.mgr.IsDelegated("dir/f.txt"), "grant must be dropped after a completed recall handoff")
+
+	// fh is still open (never Released) — an orphaned synthetic handle. Write
+	// through it must land on inner via writeThrough.
+	n, st := s.layer.Write(s.ctx, fh, 5, []byte(" world"))
+	s.Require().Equal(proto.FsError_FS_OK, st)
+	s.Equal(uint32(6), n)
+
+	rfh, ferr := s.fs.Open(s.ctx, "dir/f.txt", 0)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	defer func() { _ = s.fs.Release(s.ctx, rfh) }()
+	dest := make([]byte, 11)
+	rn, ferr := s.fs.Read(s.ctx, rfh, 0, dest)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	s.Equal("hello world", string(dest[:rn]), "orphaned synthetic handle's write must land on inner via writeThrough")
+}
+
+// ── Test 19: synthetic handle read merges pending over flushed base ──────────
+//
+// TestSyntheticHandleReadMergesPendingOverFlushedBase pins the baseDelta arm
+// of the Read routing condition. A synthetic file is flushed (overlay cleared),
+// then re-written through the same open handle while still delegated, creating
+// a base-delta overlay node (pending intervals only). Reading it must merge
+// pending bytes over the flushed base via readThrough, not serve a nil-base
+// overlay view with holes.
+
+func (s *LayerSuite) TestSyntheticHandleReadMergesPendingOverFlushedBase() {
+	s.grant("dir")
+	_, err := s.fs.Mkdir(s.ctx, "dir", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	// 1. Create and write "AAAA" via synthetic handle.
+	fh, _, ferr := s.layer.Create(s.ctx, "dir", "f.txt", 0, 0o100644)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	_, ferr = s.layer.Write(s.ctx, fh, 0, []byte("AAAA"))
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+
+	// 2. Flush the overlay: prime inner with flushed bytes and drive a real flush
+	// (fakeApplyStream commits the batch). Overlay node is now cleared.
+	s.writeInner("dir/f.txt", []byte("AAAA"))
+	s.flushAll()
+	s.False(s.coord.Has("dir/f.txt"), "overlay must be cleared after flush")
+
+	// 3. Write "BB" at offset 1 through the SAME still-open handle.
+	// Since the overlay node was cleared by flush, RecordOp sees ok=false and
+	// creates a base-delta node with pending interval [1,3).
+	n, ferr := s.layer.Write(s.ctx, fh, 1, []byte("BB"))
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	s.Equal(uint32(2), n)
+	s.True(s.coord.Has("dir/f.txt"), "overlay must have a base-delta node after write")
+
+	// 4. Read 4 bytes at offset 0 through the same handle. Must merge:
+	//    - bytes 0, 3 from inner (flushed base "AAAA")
+	//    - bytes 1-2 from overlay (pending "BB")
+	//    Result: "ABBA"
+	dest := make([]byte, 4)
+	rn, ferr := s.layer.Read(s.ctx, fh, 0, dest)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	s.Equal(4, rn)
+	s.Equal([]byte("ABBA"), dest[:rn],
+		"read through base-delta synthetic handle must merge pending over flushed base")
+
+	s.Require().Equal(proto.FsError_FS_OK, s.layer.Release(s.ctx, fh))
+}
+
+// ── Test: Fsync on transport-backed handle flushes pending WAL ─────────────────
+
+func (s *LayerSuite) TestFsyncOnTransportHandleFlushesPendingWal() {
+	s.grant("dir")
+
+	// Create the parent in memfs.
+	_, err := s.fs.Mkdir(s.ctx, "dir", 0o40755)
+	s.Require().Equal(proto.FsError_FS_OK, err)
+
+	// Write a base file to memfs (pre-existing, not created by overlay).
+	s.writeInner("dir/f.txt", []byte("base"))
+
+	// SetAttr on the base file creates a base-delta pending state.
+	newPerm := uint32(0o600)
+	in := backend.SetAttrIn{
+		Valid: backend.FATTR_MODE,
+		Mode:  newPerm,
+	}
+	_, ferr := s.layer.SetAttr(s.ctx, "dir/f.txt", in)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+
+	// Confirm pending state exists in the overlay.
+	s.True(s.coord.Has("dir/f.txt"), "SetAttr must create base-delta pending state")
+
+	// Open the file (returns inner-backed handle for base-delta path).
+	fh, ferr := s.layer.Open(s.ctx, "dir/f.txt", 0)
+	s.Require().Equal(proto.FsError_FS_OK, ferr)
+	s.Require().NotNil(fh)
+
+	// Fsync on the inner-backed handle must flush pending WAL state.
+	ferr = s.layer.Fsync(s.ctx, fh, 0)
+	s.Equal(proto.FsError_FS_OK, ferr)
+
+	// Release the handle.
+	s.Require().Equal(proto.FsError_FS_OK, s.layer.Release(s.ctx, fh))
+
+	// Verify the log is empty: pending SetAttr was flushed to the server.
+	ops, logerr := s.log.Replay(0)
+	s.Require().NoError(logerr)
+	s.Empty(ops, "fsync must flush pending WAL ops for the path, leaving log empty")
+
+	// Verify the pending SetAttr crossed the Apply stream — not just removed from log.
+	var sawSetAttr bool
+	for _, op := range s.sentOps() {
+		if op.GetSetAttr() != nil {
+			sawSetAttr = true
+			break
+		}
+	}
+	s.True(sawSetAttr, "fsync must flush the pending SetAttr over the Apply stream")
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
