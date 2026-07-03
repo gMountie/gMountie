@@ -375,10 +375,14 @@ func (m *Manager) OnRecall(ctx context.Context, root string) error {
 
 	if flusher != nil {
 		if err := flusher.FlushForRecall(ctx, root); err != nil {
-			// Flush failed: onLoss has already fired (Task 11/13) for the lost ops.
-			// Do NOT drop the grant or invalidate — the handoff is aborted. The
-			// recall loop will skip the RecallAck, letting the server timeout the
-			// recall instead of accepting a false clean handoff.
+			// Flush failed: on a PERMANENT halt onLoss has already fired for the
+			// lost ops; on a TRANSIENT halt (FS_EAGAIN contention) the tail is
+			// retained in the WAL — no loss either way that this path must
+			// handle. Do NOT drop the grant or invalidate — the handoff is
+			// aborted. The recall loop will skip the RecallAck, letting the
+			// server timeout the recall instead of accepting a false clean
+			// handoff; the next recall retries the flush from where the log
+			// now stands.
 			log.Log.Error("WAL flush failed before recall handoff; aborting clean ack",
 				zap.String("root", root),
 				zap.Error(err),

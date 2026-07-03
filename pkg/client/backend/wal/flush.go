@@ -10,10 +10,16 @@ package wal
 //
 //   - Success (FailedSeq == 0): Truncate log [..ack.Watermark], clear overlay,
 //     advance local watermark to ack.Watermark.
-//   - Ordered halt (FailedSeq > 0): Truncate the committed prefix [..ack.Watermark],
-//     clear overlay for those seqs, call onLoss for ops at/after FailedSeq, then
-//     also truncate and clear the lost tail so the poisoned ops are not re-sent.
-//     Returns a non-nil error wrapping the loss.
+//   - Transient halt (FailedSeq > 0, Fserr == FS_EAGAIN): the server refused
+//     the tail on delegation contention. Truncate only the committed prefix
+//     [..ack.Watermark]; ops ≥ FailedSeq stay in the log and overlay for the
+//     next flush trigger to retry. NOT a data-loss event — onLoss is not
+//     called. Returns a non-nil error naming the transient halt.
+//   - Permanent halt (FailedSeq > 0, any other Fserr): Truncate the committed
+//     prefix [..ack.Watermark], clear overlay for those seqs, call onLoss for
+//     ops at/after FailedSeq, then also truncate and clear the lost tail so
+//     the poisoned ops are not re-sent. Returns a non-nil error wrapping the
+//     loss.
 //
 // # Replay
 //
