@@ -49,11 +49,18 @@ type Arbiter struct {
 	metrics  Metrics // nil = no-op
 	store    watermark.Store
 
-	mu       sync.Mutex
-	table    *delegationTable
-	cooldown *cooldownTable
-	regions  map[string]*regionState // keyed by delegated root being recalled
+	mu         sync.Mutex
+	table      *delegationTable
+	cooldown   *cooldownTable
+	regions    map[string]*regionState // keyed by delegated root being recalled
 	grantCount atomic.Int64            // maintained at every table mutation (under mu)
+
+	// testHookAfterGrantInsert, when non-nil, runs (under a.mu) between the
+	// table insert in Request and the counter re-derivation that follows. It
+	// exists solely so the race test can deterministically park Request inside
+	// that window and prove the lock-free fast path cannot observe a stale
+	// zero against an inserted grant. Always nil in production.
+	testHookAfterGrantInsert func()
 }
 
 // NewArbiter creates a new Arbiter. store is required and must not be nil;
@@ -121,10 +128,24 @@ func (a *Arbiter) Request(owner, root, principal, volume, epoch string) *proto.D
 	if genErr != nil {
 		return &proto.DelegationGrant{RetryAfterMs: uint64(a.cfgRetryMs())}
 	}
+	// Pessimistic floor: publish "a grant may exist" BEFORE the table insert.
+	// The fast-path reader is lock-free, so store-after-insert leaves a window
+	// where the table holds a grant the counter doesn't reflect — a contender
+	// reading the stale zero would skip arbitration (and the ErrNoStream
+	// gen-fence) against a live delegation. Over-approximation in the other
+	// direction is always safe: a non-zero count merely sends the reader to
+	// the slow path, which serializes on a.mu and sees the truth.
+	a.grantCount.Add(1)
 	granted, excluded, ok := a.table.grant(owner, root, principal, volume, epoch, gen)
+	if ok && a.testHookAfterGrantInsert != nil {
+		a.testHookAfterGrantInsert()
+	}
 	if !ok {
-		// Denial: the gen slot was consumed but no entry was created — gen gaps
-		// are harmless; do NOT decrement (no in-memory counter to roll back).
+		// Denial: the gen slot was consumed but no entry was created. Re-derive
+		// the true count so the +1 floor above doesn't leak — an un-corrected
+		// floor would permanently overcount and (harmlessly, but needlessly)
+		// force every future fast-path read to the slow path.
+		a.grantCount.Store(int64(a.table.size()))
 		return &proto.DelegationGrant{RetryAfterMs: uint64(a.cfgRetryMs())}
 	}
 	a.grantCount.Store(int64(a.table.size()))
@@ -219,6 +240,11 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 	a.mu.Lock()
 	if handoff {
 		a.table.release(root)
+		// Store-after-release is safe here (unlike Request's insert): between
+		// the release and this store the counter is transiently HIGH (an
+		// extra count for an already-freed root), never low — a fast-path
+		// reader can only be sent to the slow path needlessly, never skip
+		// arbitration against a live grant.
 		a.grantCount.Store(int64(a.table.size()))
 		a.cooldown.trip(root, a.now())
 		a.mRecall()
@@ -244,6 +270,10 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 func (a *Arbiter) ReleaseSession(sessionID string) {
 	a.mu.Lock()
 	drained := a.table.drainOwner(sessionID)
+	// Store-after-drain is safe here for the same reason as OnMutation's
+	// post-release store: the counter is transiently HIGH between the drain
+	// and this store, never low, so a concurrent fast-path read can only be
+	// over-cautious (slow path), never skip arbitration against a live grant.
 	a.grantCount.Store(int64(a.table.size()))
 	a.mGrantsActive()
 	a.mu.Unlock()

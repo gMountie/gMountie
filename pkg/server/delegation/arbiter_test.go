@@ -319,9 +319,12 @@ func (s *ArbiterSuite) TestMetricsReleaseSession() {
 }
 
 func (s *ArbiterSuite) TestOnMutationFastPathWithoutGrants() {
-	// A recaller that fails the test if invoked, plus a mutex-poisoning probe:
-	// hold a.mu from another goroutine and assert OnMutation still returns
-	// (i.e. it never touched the mutex).
+	// The recaller fails the test if invoked, but that assertion alone is not
+	// load-bearing: it also passes via the slow path's empty-table ownerOf
+	// (no owner -> no recall, whether or not the fast-path exit fired). The
+	// mutex-poisoning probe below is what actually proves the fast path was
+	// taken: it holds a.mu from another goroutine and asserts OnMutation
+	// still returns (i.e. it never touched the mutex).
 	a := NewArbiter(recallerFunc(func(owner, root string) error {
 		s.Fail("no recall expected")
 		return nil
@@ -348,6 +351,79 @@ func (s *ArbiterSuite) TestOnMutationFastPathWithoutGrants() {
 	close(release)
 }
 
+// TestFastPathNeverSkipsArbitrationDuringFirstGrant pins the 0->1 counter
+// publication at the FIRST grant: OnMutation's lock-free fast path must never
+// observe grantCount==0 after Request has inserted a grant into the table. A
+// stale-zero read there skips arbitration entirely — no recall, no ErrNoStream
+// gen-fence — against a live delegation (silent-corruption class, invisible to
+// -race because both sides use clean atomics).
+//
+// The test parks Request deterministically inside the exact window via
+// testHookAfterGrantInsert: the hook runs under a.mu AFTER the table insert
+// and BEFORE the counter re-derivation. The contender starts OnMutation only
+// after the hook has fired (channel edge), so its fast-path Load is
+// guaranteed to happen-after the insert:
+//
+//   - Pre-fix (store-after-insert only): the counter is still 0 inside the
+//     window, so the contender fast-paths to nil without a recall while a
+//     foreign grant is live in the table — the TOCTOU, reproduced
+//     deterministically.
+//   - Post-fix (pessimistic +1 floor BEFORE the insert): the floor
+//     happens-before the insert, which happens-before the hook edge, which
+//     happens-before the contender's Load — it can never read 0, must take
+//     the slow path, block on a.mu (held by the parked Request), and recall
+//     once the window closes. Zero violations structurally, not
+//     statistically.
+//
+// The oracle is sound because the only way OnMutation can RETURN while
+// Request is parked holding a.mu is the lock-free fast path; the slow path
+// cannot complete without the mutex. The 200ms grace exists only to let a
+// pre-fix fast-path skip express itself; it cannot produce a false positive
+// post-fix.
+func (s *ArbiterSuite) TestFastPathNeverSkipsArbitrationDuringFirstGrant() {
+	fr := &fakeRecaller{}
+	st := newFakeStore()
+	a := s.newArbiterWithStore(fr, st)
+
+	inserted := make(chan struct{})
+	proceed := make(chan struct{})
+	a.testHookAfterGrantInsert = func() {
+		close(inserted)
+		<-proceed
+	}
+
+	reqDone := make(chan struct{})
+	go func() {
+		defer close(reqDone)
+		a.Request("sess-a", "proj", "alice", "vol", "")
+	}()
+	// After this receive the FIRST grant is in the table and Request is parked
+	// (holding a.mu) before its counter store — the stale-zero window is open.
+	<-inserted
+
+	mutDone := make(chan error, 1)
+	go func() { mutDone <- a.OnMutation("sess-b", "proj/file") }()
+
+	var skipErr error
+	skipped := false
+	select {
+	case skipErr = <-mutDone:
+		skipped = true
+	case <-time.After(200 * time.Millisecond):
+		// The contender did not return: it took the slow path and is blocked
+		// on a.mu — the counter floor was visible before the insert.
+	}
+	close(proceed) // close the window; let Request finish and release a.mu
+	<-reqDone
+
+	if skipped {
+		s.Require().Failf("stale-zero fast-path skip",
+			"OnMutation returned (err=%v, recalls=%d) while Request was parked between its table insert and its counter store: the lock-free fast path read a stale zero and skipped arbitration against a live first grant",
+			skipErr, fr.callCount())
+	}
+	s.Require().NoError(<-mutDone)
+	s.Equal(1, fr.callCount(), "contender must recall the live first grant via the slow path")
+}
 
 func (s *ArbiterSuite) TestConcurrentContendersCoalesce() {
 	fr := &fakeRecaller{block: make(chan struct{})}
