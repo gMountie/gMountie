@@ -2,6 +2,9 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -25,13 +28,14 @@ import (
 type fakeRecallRecorder struct {
 	mu    sync.Mutex
 	calls []string // "owner:root"
+	err   error    // returned by Recall when non-nil; simulates a failed/timed-out recall
 }
 
 func (f *fakeRecallRecorder) Recall(owner, root string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, owner+":"+root)
-	return nil
+	return f.err
 }
 
 // Calls returns a snapshot of recorded recall invocations.
@@ -52,6 +56,7 @@ func (f *fakeRecallRecorder) Calls() []string {
 type DelegationHandlerSuite struct {
 	suite.Suite
 	srv        *RpcServerImpl
+	fileServer *RpcFileServerImpl
 	fsService  *mockservice.MockVolumeService
 	sessionMgr service.SessionManager
 	recaller   *fakeRecallRecorder
@@ -60,6 +65,11 @@ type DelegationHandlerSuite struct {
 	// Two real sessions with known principals.
 	sidA string // holds the delegation in TestForeignMkdirRecallsHolder
 	sidB string // the foreign contender
+
+	// principals maps a session id to the principal it was created with, so
+	// grantTo/ctxForSession/ctxFor can resolve the right identity without
+	// hardcoding it at each call site.
+	principals map[string]string
 
 	vol    string
 	caller *proto.Caller
@@ -84,6 +94,7 @@ func (s *DelegationHandlerSuite) SetupTest() {
 	s.Require().NoError(err)
 	s.sidB, err = s.sessionMgr.Create("userB", "")
 	s.Require().NoError(err)
+	s.principals = map[string]string{s.sidA: "userA", s.sidB: "userB"}
 
 	s.recaller = &fakeRecallRecorder{}
 	s.arbiter = delegation.NewArbiter(s.recaller, delegation.Config{
@@ -92,6 +103,21 @@ func (s *DelegationHandlerSuite) SetupTest() {
 
 	bus := serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
 	s.srv = NewGrpcServer(s.fsService, s.sessionMgr, bus, nil, s.arbiter, nil, nil)
+	s.fileServer = NewRpcFileServer(s.fsService, s.sessionMgr, nil, 1<<20, bus, s.arbiter)
+}
+
+// grantTo grants owner sessionID a delegation rooted at root, resolving the
+// session's principal from s.principals so callers don't have to.
+func (s *DelegationHandlerSuite) grantTo(sessionID, root string) {
+	s.arbiter.Request(sessionID, root, s.principals[sessionID], s.vol, "")
+}
+
+// ctxForSession returns a context carrying sessionID in gRPC incoming
+// metadata (what sessionIDFromContext reads) AND the session's principal —
+// for read handlers (fs.go) that resolve the contender via ctx rather than a
+// request.SessionId field.
+func (s *DelegationHandlerSuite) ctxForSession(sessionID string) context.Context {
+	return ctxWithSession(testAuthedCtx(s.principals[sessionID]), sessionID)
 }
 
 func (s *DelegationHandlerSuite) TearDownTest() {
@@ -152,4 +178,104 @@ func (s *DelegationHandlerSuite) TestPiggybackedRequestReturnsGrant() {
 	s.Require().NoError(err)
 	s.Require().NotNil(reply)
 	s.Equal("proj", reply.Grant.GetGrantedRoot())
+}
+
+// ---- Phase-2 read arbitration: a WAL holder may have deferred state a
+// reader would otherwise miss, so reads must arbitrate like writes. ----
+
+// TestGetAttrRecallsForeignDelegation: sidA holds a delegation on "proj";
+// sidB's GetAttr under "proj" must trigger a recall of sidA's delegation, and
+// the read must still proceed (succeed) once the recall completes.
+func (s *DelegationHandlerSuite) TestGetAttrRecallsForeignDelegation() {
+	s.grantTo(s.sidA, "proj")
+
+	mockFs := new(pathfsmock.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, s.vol, mock.Anything).
+		Return(mockFs, service.Identity{}, nil)
+	mockFs.EXPECT().GetAttr("proj/f.txt", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Once()
+
+	reply, err := s.srv.GetAttr(s.ctxForSession(s.sidB), &proto.GetAttrRequest{
+		Volume: s.vol,
+		Caller: s.caller,
+		Path:   "proj/f.txt",
+	})
+	s.Require().NoError(err)
+	s.Require().NotNil(reply)
+	s.Equal(proto.FsError_FS_OK, reply.Status, "read proceeds once the foreign delegation is recalled")
+	s.Equal([]string{s.sidA + ":proj"}, s.recaller.Calls(), "a foreign read must trigger a recall")
+}
+
+// TestGetAttrSelfAccessDoesNotRecall: sidA reading its own delegated subtree
+// never recalls (OnMutation is a no-op when owner == contender).
+func (s *DelegationHandlerSuite) TestGetAttrSelfAccessDoesNotRecall() {
+	s.grantTo(s.sidA, "proj")
+
+	mockFs := new(pathfsmock.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, s.vol, mock.Anything).
+		Return(mockFs, service.Identity{}, nil)
+	mockFs.EXPECT().GetAttr("proj/f.txt", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Once()
+
+	reply, err := s.srv.GetAttr(s.ctxForSession(s.sidA), &proto.GetAttrRequest{
+		Volume: s.vol,
+		Caller: s.caller,
+		Path:   "proj/f.txt",
+	})
+	s.Require().NoError(err)
+	s.Require().NotNil(reply)
+	s.Equal(proto.FsError_FS_OK, reply.Status)
+	s.Empty(s.recaller.Calls(), "the holder's own reads never recall its delegation")
+}
+
+// TestGetAttrRecallFailureReturnsEAGAIN: when the recall RTT fails, the read
+// must fail closed with FS_EAGAIN carried in the reply (not a transport
+// error) — the contender backs off and retries.
+func (s *DelegationHandlerSuite) TestGetAttrRecallFailureReturnsEAGAIN() {
+	s.grantTo(s.sidA, "proj")
+	s.recaller.err = errors.New("recall timed out")
+
+	mockFs := new(pathfsmock.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, s.vol, mock.Anything).
+		Return(mockFs, service.Identity{}, nil)
+	// GetAttr must never reach the filesystem: arbitration short-circuits first.
+
+	reply, err := s.srv.GetAttr(s.ctxForSession(s.sidB), &proto.GetAttrRequest{
+		Volume: s.vol,
+		Caller: s.caller,
+		Path:   "proj/f.txt",
+	})
+	s.Require().NoError(err, "recall failure surfaces in-band, not as a transport error")
+	s.Require().NotNil(reply)
+	s.Equal(proto.FsError_FS_EAGAIN, reply.Status)
+	mockFs.AssertNotCalled(s.T(), "GetAttr", mock.Anything, mock.Anything)
+}
+
+// TestLseekRecallsForeignDelegation: sidA holds a delegation on "proj"; sidB
+// opens an fd under "proj" and calls Lseek — arbitration must key off
+// entry.Path (the fd-bound path), not any path field on the request, and
+// recall sidA's delegation before the seek proceeds.
+func (s *DelegationHandlerSuite) TestLseekRecallsForeignDelegation() {
+	s.grantTo(s.sidA, "proj")
+
+	p := filepath.Join(s.T().TempDir(), "f.txt")
+	s.Require().NoError(os.WriteFile(p, []byte("0123456789"), 0o644))
+	f, err := os.OpenFile(p, os.O_RDWR, 0)
+	s.Require().NoError(err)
+	rf := serverio.NewRawFdFile(f)
+	s.T().Cleanup(func() { rf.Release() })
+
+	sess, err := s.sessionMgr.Get(s.sidB)
+	s.Require().NoError(err)
+	fd := sess.RegisterFile(s.vol, "proj/f.txt", rf)
+
+	reply, err := s.fileServer.Lseek(s.ctxFor(s.sidB), &proto.LseekRequest{
+		Volume:    s.vol,
+		Fd:        fd,
+		Offset:    0,
+		Whence:    proto.SeekWhence_SEEK_WHENCE_DATA,
+		SessionId: s.sidB,
+	})
+	s.Require().NoError(err)
+	s.Require().NotNil(reply)
+	s.Equal(proto.FsError_FS_OK, reply.Status)
+	s.Equal([]string{s.sidA + ":proj"}, s.recaller.Calls(), "a foreign fd-based read must recall using entry.Path")
 }

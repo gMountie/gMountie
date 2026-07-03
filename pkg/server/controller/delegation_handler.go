@@ -8,10 +8,12 @@ import (
 	"go.uber.org/zap"
 )
 
-// arbitrateContention enforces recall-on-contention for a mutating op at path.
-// Returns FS_OK when arb is nil (delegation disabled) or when the path is free
-// (or owned by contender). Returns FS_EAGAIN when a recall fails/times out —
-// the contender must back off (use a fresh request_id on retry).
+// arbitrateContention enforces recall-on-contention for any contending op at
+// path — reads included (a Phase-2 holder may have deferred state a reader
+// would miss), not just mutations. Returns FS_OK when arb is nil (delegation
+// disabled) or when the path is free (or owned by contender). Returns
+// FS_EAGAIN when a recall fails/times out — the contender must back off (use
+// a fresh request_id on retry, where the op has one).
 func arbitrateContention(arb *delegation.Arbiter, sessionID, path string) proto.FsError {
 	if arb == nil {
 		return proto.FsError_FS_OK

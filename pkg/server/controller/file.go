@@ -144,6 +144,9 @@ func (r *RpcFileServerImpl) Open(ctx context.Context, request *proto.OpenRequest
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.OpenReply, error) {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
+			return &proto.OpenReply{Status: st}, nil
+		}
 		file, s := fs.Open(request.Path, request.Flags, createContext(ctx, request.Caller))
 		reply := &proto.OpenReply{Status: fserr.FromErrno(syscall.Errno(s))}
 		if s == fuse.OK {
@@ -202,6 +205,14 @@ func (r *RpcFileServerImpl) Read(request *proto.ReadRequest, stream proto.RpcFil
 	// Held for the whole stream: fileRead closures below run until the
 	// streamer finishes.
 	defer entry.ReleaseRef()
+
+	// Arbitrate before reading: a foreign delegation covering this path may
+	// hold deferred (WAL) state this reader would otherwise miss. Recall it —
+	// the handoff barrier guarantees the holder's flush is durable before we
+	// proceed. Self-access is a no-op inside OnMutation.
+	if st := arbitrateContention(r.arbiter, request.SessionId, entry.Path); st != proto.FsError_FS_OK {
+		return stream.Send(&proto.ReadFrame{Status: st})
+	}
 
 	fileRead := func(buf []byte, off int64) (int, fuse.Status) {
 		res, st := entry.File.Read(buf, off)
@@ -653,6 +664,9 @@ func (r *RpcFileServerImpl) Lseek(ctx context.Context, request *proto.LseekReque
 		return &proto.LseekReply{Status: proto.FsError_FS_EBADF}, nil
 	}
 	defer entry.ReleaseRef()
+	if st := arbitrateContention(r.arbiter, request.SessionId, entry.Path); st != proto.FsError_FS_OK {
+		return &proto.LseekReply{Status: st}, nil
+	}
 	off, st := serverio.Lseek(entry.File, request.Offset, uint32(fsconv.WhenceFromProto(request.Whence)))
 	return &proto.LseekReply{Offset: off, Status: fserr.FromErrno(syscall.Errno(st))}, nil
 }

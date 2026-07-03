@@ -62,6 +62,9 @@ func (r *RpcServerImpl) GetAttr(ctx context.Context, request *proto.GetAttrReque
 	if err != nil {
 		return nil, err
 	}
+	if st := arbitrateContention(r.arbiter, sessionIDFromContext(ctx), request.Path); st != proto.FsError_FS_OK {
+		return &proto.GetAttrReply{Status: st}, nil
+	}
 	attr, st := fs.GetAttr(request.Path, createContext(ctx, request.Caller))
 	if attr == nil {
 		return &proto.GetAttrReply{
@@ -174,6 +177,9 @@ func (r *RpcServerImpl) Readlink(ctx context.Context, request *proto.ReadlinkReq
 	if err != nil {
 		return nil, err
 	}
+	if st := arbitrateContention(r.arbiter, sessionIDFromContext(ctx), request.Path); st != proto.FsError_FS_OK {
+		return &proto.ReadlinkReply{Status: st}, nil
+	}
 	target, st := fs.Readlink(request.Path, createContext(ctx, request.Caller))
 	return &proto.ReadlinkReply{Target: target, Status: fserr.FromErrno(syscall.Errno(st))}, nil
 }
@@ -227,6 +233,9 @@ func (r *RpcServerImpl) ReadDir(req *proto.ReadDirRequest, stream proto.RpcFs_Re
 	fs, id, err := r.fsService.BindIdentity(stream.Context(), req.Volume, CallerFromProto(req.Caller))
 	if err != nil {
 		return err
+	}
+	if st := arbitrateContention(r.arbiter, sessionIDFromContext(stream.Context()), req.Path); st != proto.FsError_FS_OK {
+		return stream.Send(&proto.ReadDirBatch{Status: st})
 	}
 	fctx := createContext(stream.Context(), req.Caller)
 	var entries []serverio.DirEntryPlus
@@ -330,6 +339,9 @@ func (r *RpcServerImpl) Access(ctx context.Context, request *proto.AccessRequest
 	fs, _, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
+	}
+	if st := arbitrateContention(r.arbiter, sessionIDFromContext(ctx), request.Path); st != proto.FsError_FS_OK {
+		return &proto.AccessReply{Status: st}, nil
 	}
 	st := fs.Access(request.Path, request.Mode, createContext(ctx, request.Caller))
 	return &proto.AccessReply{Status: fserr.FromErrno(syscall.Errno(st))}, nil
@@ -459,6 +471,9 @@ func (r *RpcServerImpl) GetXAttr(ctx context.Context, request *proto.GetXAttrReq
 	if err != nil {
 		return nil, err
 	}
+	if st := arbitrateContention(r.arbiter, sessionIDFromContext(ctx), request.Path); st != proto.FsError_FS_OK {
+		return &proto.GetXAttrReply{Status: st}, nil
+	}
 	data, st := fs.GetXAttr(request.Path, request.Attribute, createContext(ctx, request.Caller))
 	return &proto.GetXAttrReply{Data: data, Status: fserr.FromErrno(syscall.Errno(st))}, nil
 }
@@ -532,6 +547,9 @@ func (r *RpcServerImpl) ListXAttr(ctx context.Context, request *proto.ListXAttrR
 	if err != nil {
 		return nil, err
 	}
+	if st := arbitrateContention(r.arbiter, sessionIDFromContext(ctx), request.Path); st != proto.FsError_FS_OK {
+		return &proto.ListXAttrReply{Status: st}, nil
+	}
 	attrs, st := fs.ListXAttr(request.Path, createContext(ctx, request.Caller))
 	return &proto.ListXAttrReply{Attributes: attrs, Status: fserr.FromErrno(syscall.Errno(st))}, nil
 }
@@ -546,6 +564,18 @@ func (r *RpcServerImpl) GetAttrIfChanged(ctx context.Context, request *proto.Get
 	fs, id, err := r.fsService.BindIdentity(ctx, request.Volume, CallerFromProto(request.Caller))
 	if err != nil {
 		return nil, err
+	}
+	// GetAttrIfChangedReply carries no Status field (proto-frozen — no wire
+	// changes in this plan), so unlike every other read handler here, a
+	// recall failure can't travel in-band as FS_EAGAIN. codes.Unavailable is
+	// this handler's native failure channel already (see the stat-failure
+	// branch below) and is exactly the code retryOp treats as transient for
+	// classIdempotentRead, so the client re-issues the whole call — including
+	// arbitration — within rpc.retry_window. That is the same "back off and
+	// retry" contract FS_EAGAIN carries elsewhere, delivered the only way
+	// this RPC's reply allows.
+	if st := arbitrateContention(r.arbiter, sessionIDFromContext(ctx), request.Path); st != proto.FsError_FS_OK {
+		return nil, status.Error(codes.Unavailable, "delegation recall failed; retry")
 	}
 	attr, st := fs.GetAttr(request.Path, createContext(ctx, request.Caller))
 	if !st.Ok() || attr == nil {
