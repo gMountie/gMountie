@@ -18,11 +18,13 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse/pathfs"
 	"github.com/stretchr/testify/mock"
@@ -34,6 +36,7 @@ import (
 	mockservice "go.gmountie.dev/gmountie/internal/mocks/pkg/server/service"
 	"go.gmountie.dev/gmountie/pkg/common"
 	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/server/delegation"
 	serverio "go.gmountie.dev/gmountie/pkg/server/io"
 	"go.gmountie.dev/gmountie/pkg/server/principal"
 	"go.gmountie.dev/gmountie/pkg/server/service"
@@ -168,6 +171,16 @@ type ApplySuite struct {
 	wmStore    *fakeWatermarkStore
 	server     *RpcServerImpl
 	bus        serverio.EventBus
+
+	// Delegation-arbitration fixtures, mirroring DelegationHandlerSuite
+	// (delegation_handler_test.go): a real *delegation.Arbiter backed by a
+	// fakeRecallRecorder (defined there), sharing s.wmStore as its fence
+	// store — same as production, where Apply's watermark store and the
+	// arbiter's are the same instance.
+	recaller   *fakeRecallRecorder
+	arbiter    *delegation.Arbiter
+	principals map[string]string // sessionID -> principal, for grantTo/ctxForSession
+	vol        string            // default volume for arbitration tests
 }
 
 func TestApplySuite(t *testing.T) { suite.Run(t, new(ApplySuite)) }
@@ -184,9 +197,16 @@ func (s *ApplySuite) SetupTest() {
 	s.sessionID, err = s.sessionMgr.Create("test-user", "")
 	s.Require().NoError(err)
 
+	s.vol = "vol"
+	s.principals = map[string]string{s.sessionID: "test-user"}
+
 	s.bus = serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
 	s.wmStore = newFakeWatermarkStore()
-	s.server = NewGrpcServer(s.fsService, s.sessionMgr, s.bus, nil, nil, nil, s.wmStore)
+	s.recaller = &fakeRecallRecorder{}
+	s.arbiter = delegation.NewArbiter(s.recaller, delegation.Config{
+		Cooldown: delegation.CooldownConfigDefault(),
+	}, time.Now, s.wmStore)
+	s.server = NewGrpcServer(s.fsService, s.sessionMgr, s.bus, nil, s.arbiter, nil, s.wmStore)
 }
 
 func (s *ApplySuite) TearDownTest() {
@@ -208,6 +228,47 @@ func (s *ApplySuite) bindVolume(vol string) {
 	fs := pathfs.NewLoopbackFileSystem(s.dir)
 	s.fsService.On("BindIdentity", mock.Anything, vol, mock.Anything).
 		Return(fs, service.Identity{Principal: "test-user"}, nil).Maybe()
+}
+
+// foreignSession creates an additional session for principal and registers it
+// in s.principals so grantTo/ctxForSession can resolve it without the caller
+// hardcoding the identity at each call site (mirrors DelegationHandlerSuite's
+// sidA/sidB + principals map).
+func (s *ApplySuite) foreignSession(principal string) string {
+	sid, err := s.sessionMgr.Create(principal, "")
+	s.Require().NoError(err)
+	s.principals[sid] = principal
+	return sid
+}
+
+// grantTo grants owner sessionID a delegation rooted at root on s.vol,
+// resolving the session's principal from s.principals. Mirrors
+// DelegationHandlerSuite.grantTo.
+func (s *ApplySuite) grantTo(sessionID, root string) {
+	s.arbiter.Request(sessionID, root, s.principals[sessionID], s.vol, "")
+}
+
+// ctxForSession returns a context carrying sessionID in gRPC incoming
+// metadata AND the session's principal, satisfying resolveSession's ownership
+// check for an arbitrary (non-default) session. Mirrors
+// DelegationHandlerSuite.ctxForSession.
+func (s *ApplySuite) ctxForSession(sessionID string) context.Context {
+	return ctxWithSession(testAuthedCtx(s.principals[sessionID]), sessionID)
+}
+
+// walCreate builds a path-based Create WalOp on s.vol for delegation-
+// arbitration tests: seq is the stream sequence number, gen the delegation
+// generation tag (0 = untagged, never fenced). Applied by s.sessionID.
+func (s *ApplySuite) walCreate(path string, seq, gen uint64) *proto.WalOp {
+	return &proto.WalOp{
+		Op: &proto.WalOp_Create{Create: &proto.CreateRequest{
+			Volume: s.vol, Caller: CreateCaller(0, 0, 0), Path: path,
+			Flags: 0, Mode: 0o644,
+			SessionId: s.sessionID, RequestId: "r-wal-create",
+		}},
+		Seq: seq,
+		Gen: gen,
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -748,6 +809,103 @@ func (s *ApplySuite) TestApply_NilWatermarkStore() {
 	s.Require().True(ok)
 	s.Equal(codes.Internal, st.Code())
 	s.Contains(st.Message(), "watermark store not configured")
+}
+
+// TestApplyOpUnderForeignDelegationRecallsOrHaltsEAGAIN is the corruption-
+// critical test for this task: an op whose path is covered by a FOREIGN
+// delegation (held by another client) must arbitrate before dispatch. When
+// the recall fails, the op must NOT be applied — Apply halts transiently
+// with FS_EAGAIN, acking the committed prefix (0, nothing applied yet) and
+// carrying the failed seq, so the client retries the tail from its WAL.
+//
+// Without arbitration, this op would apply straight through (a stale replay
+// writing into a region since delegated to someone else, unrecalled).
+func (s *ApplySuite) TestApplyOpUnderForeignDelegationRecallsOrHaltsEAGAIN() {
+	s.bindVolume(s.vol)
+	// Parent must exist so, absent arbitration, the create would SUCCEED
+	// (RED must fail on FailedSeq/Fserr, not be confounded by an ENOENT).
+	s.Require().NoError(os.Mkdir(filepath.Join(s.dir, "proj"), 0o755))
+
+	holder := s.foreignSession("holder-user")
+	s.grantTo(holder, "proj") // foreign delegation; recaller stubbed to FAIL
+	s.recaller.err = errors.New("recall timed out")
+
+	stream := newStubApplyStream(s.ctxForSession(s.sessionID),
+		s.walCreate("proj/f.txt", 1 /*seq*/, 0 /*gen: untagged*/),
+	)
+
+	err := s.server.Apply(stream)
+	s.Require().NoError(err)
+	s.Require().NotNil(stream.acked)
+	s.Equal(uint64(1), stream.acked.FailedSeq)
+	s.Equal(proto.FsError_FS_EAGAIN, stream.acked.Fserr, "foreign-delegation contention is a TRANSIENT halt")
+	s.Zero(stream.acked.Watermark)
+	s.Equal([]string{holder + ":proj"}, s.recaller.Calls(), "the halt must come from arbitration firing a recall")
+
+	_, statErr := os.Stat(filepath.Join(s.dir, "proj", "f.txt"))
+	s.True(os.IsNotExist(statErr), "f.txt must not exist: the op must not be dispatched under contention")
+}
+
+// TestApplyOpSelfAccessDoesNotRecall verifies the normal flushing-client path:
+// applying an op into a delegation the SAME session holds is self-access —
+// OnMutation is a no-op, no recall is attempted, and the op applies normally.
+func (s *ApplySuite) TestApplyOpSelfAccessDoesNotRecall() {
+	s.bindVolume(s.vol)
+	s.grantTo(s.sessionID, "proj") // holder grants itself a delegation on "proj"
+
+	stream := newStubApplyStream(s.ctxForSession(s.sessionID),
+		mkdirOp(s.vol, "proj", 1, s.sessionID, "r1"),
+	)
+	s.Require().NoError(s.server.Apply(stream))
+	s.Require().NotNil(stream.acked)
+	s.Equal(uint64(1), stream.acked.Watermark)
+	s.Equal(uint64(0), stream.acked.FailedSeq)
+	s.Equal(proto.FsError_FS_OK, stream.acked.Fserr)
+	s.Empty(s.recaller.Calls(), "the holder's own flush into its own delegation must never recall")
+
+	info, statErr := os.Stat(filepath.Join(s.dir, "proj"))
+	s.Require().NoError(statErr)
+	s.True(info.IsDir())
+}
+
+// TestApplyRenameArbitratesBothEndpoints verifies that a Rename op arbitrates
+// BOTH old_name and new_name (walOpKindPath collapses a rename to "old ->
+// new", which is why arbitrateApplyOp needs an explicit rename branch). A
+// foreign delegation covering ONLY the rename's DESTINATION must still halt
+// the op: rename's fence obligation isn't satisfied by checking the source
+// alone.
+func (s *ApplySuite) TestApplyRenameArbitratesBothEndpoints() {
+	s.bindVolume(s.vol)
+	s.Require().NoError(os.Mkdir(filepath.Join(s.dir, "src"), 0o755))
+	s.Require().NoError(os.Mkdir(filepath.Join(s.dir, "dst"), 0o755))
+
+	holder := s.foreignSession("holder-user")
+	s.grantTo(holder, "dst") // foreign delegation covers ONLY the destination
+	s.recaller.err = errors.New("recall timed out")
+
+	ops := []*proto.WalOp{
+		{
+			Op: &proto.WalOp_Rename{Rename: &proto.RenameRequest{
+				Volume: s.vol, Caller: CreateCaller(0, 0, 0),
+				OldName: "src", NewName: "dst/moved",
+				SessionId: s.sessionID, RequestId: "r-rename",
+			}},
+			Seq: 1,
+		},
+	}
+	stream := newStubApplyStream(s.ctxForSession(s.sessionID), ops...)
+	s.Require().NoError(s.server.Apply(stream))
+	s.Require().NotNil(stream.acked)
+	s.Equal(uint64(1), stream.acked.FailedSeq)
+	s.Equal(proto.FsError_FS_EAGAIN, stream.acked.Fserr, "foreign delegation on the rename DESTINATION must still halt")
+	s.Zero(stream.acked.Watermark)
+	s.Equal([]string{holder + ":dst"}, s.recaller.Calls())
+
+	// The rename must not have happened: src still there, dst/moved absent.
+	_, statErr := os.Stat(filepath.Join(s.dir, "src"))
+	s.Require().NoError(statErr, "src must still exist: rename must not apply under destination contention")
+	_, statErr = os.Stat(filepath.Join(s.dir, "dst", "moved"))
+	s.True(os.IsNotExist(statErr))
 }
 
 // ---------------------------------------------------------------------------

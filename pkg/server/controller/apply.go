@@ -52,6 +52,7 @@ import (
 
 	fserr "go.gmountie.dev/gmountie/pkg/common/fserr"
 	"go.gmountie.dev/gmountie/pkg/proto"
+	"go.gmountie.dev/gmountie/pkg/server/delegation"
 	"go.gmountie.dev/gmountie/pkg/server/service"
 	"go.gmountie.dev/gmountie/pkg/server/watermark"
 	"go.gmountie.dev/gmountie/pkg/utils/log"
@@ -179,6 +180,17 @@ func (r *RpcServerImpl) Apply(stream proto.RpcFs_ApplyServer) error {
 		// gen == 0 is untagged (pre-fencing client) and is never fenced.
 		if opGen := op.Gen; opGen > 0 && isRevokedGen(opGen, revokedGens) {
 			return sendAck(seq, proto.FsError_FS_ESTALE)
+		}
+
+		// Arbitrate against FOREIGN delegations, exactly like the unary
+		// mutating handlers. Normally a flushing client applies into its own
+		// delegation (self-access no-op); this fires on the abnormal paths —
+		// a stale startup replay into a region since delegated to someone
+		// else, or ops recorded in a recall race. FS_EAGAIN is a TRANSIENT
+		// ordered halt: the committed prefix is acked, the failed tail stays
+		// in the client's WAL for retry (it is NOT a data-loss discard).
+		if st := arbitrateApplyOp(r.arbiter, sessionID, op); st != proto.FsError_FS_OK {
+			return sendAck(seq, st)
 		}
 
 		// Dispatch the op.
@@ -501,6 +513,22 @@ func walOpVolumeCaller(op *proto.WalOp) (string, *proto.Caller) {
 	default:
 		return "", nil
 	}
+}
+
+// arbitrateApplyOp arbitrates a WalOp's target path(s) against the delegation
+// table. Rename arbitrates both endpoints (same as the unary handler).
+func arbitrateApplyOp(arb *delegation.Arbiter, sessionID string, op *proto.WalOp) proto.FsError {
+	if v, ok := op.Op.(*proto.WalOp_Rename); ok {
+		if st := arbitrateContention(arb, sessionID, v.Rename.GetOldName()); st != proto.FsError_FS_OK {
+			return st
+		}
+		return arbitrateContention(arb, sessionID, v.Rename.GetNewName())
+	}
+	_, path := walOpKindPath(op)
+	if path == "" {
+		return proto.FsError_FS_OK // ReleaseOp marker
+	}
+	return arbitrateContention(arb, sessionID, path)
 }
 
 // isRevokedGen reports whether gen appears in the revoked set.
