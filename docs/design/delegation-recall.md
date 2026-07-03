@@ -98,7 +98,8 @@ another client to observe incoherent state.** One test, applied per case:
   aspirational. Self-access never recalls. A zero-grant atomic fast path
   (guarded by a pessimistic pre-insert floor on the grant counter, so the
   lock-free read can never observe a stale zero against a live grant) keeps
-  read arbitration free when no delegations exist on the volume at all.
+  read arbitration free when no delegations exist server-wide (the grant
+  counter is global, not per-volume).
   - *Phase 2 (WAL):* the holder may have deferred creates or writes in its
     WAL; a reader (including `readdir`) would miss them without the recall.
   - *Phase 1 conceptually (no deferral):* `close()` already flushed, so a
@@ -206,8 +207,10 @@ closes; there is nothing to batch.
 **Server — `pkg/server/delegation/`** (all in-memory soft state):
 
 - **Delegation table** — delegated-root → `{session, identity, gen}`; path-trie
-  indexed for containment and prefix lookup. Non-durable: rebuilt from client
-  re-requests on server restart.
+  indexed for containment and prefix lookup. The table is scoped per volume:
+  containment (grants, carving, recall lookup — and the cooldown table below)
+  never crosses volumes, so the same root on two volumes is two independent
+  delegations. Non-durable: rebuilt from client re-requests on server restart.
 - **Cooldown table** — recently-recalled root → `until`; TTL'd and LRU-capped.
 - **Arbiter** — single authority: containment check vs delegation + cooldown
   tables → grant largest non-cooling sub-root, or deny. Holds the per-region
@@ -225,7 +228,7 @@ delegations are dropped when a session expires.
   `{granted_root, excluded_paths, retry_after}`.
 - Recall = a dedicated server→client bidi stream (not the Subscribe channel —
   recall needs ordered ack/completion that fire-and-forget invalidation lacks):
-  `Recall{root}` → `RecallAck{root, done, fserr}`. `done=false` is an explicit
+  `Recall{root, recall_id}` → `RecallAck{recall_id, done, fserr}`. `done=false` is an explicit
   abort: the holder's recall-flush failed, and `fserr` carries the cause for
   diagnostics. The server fails the handoff **immediately** on an abort ack
   instead of waiting out the recall timeout (§7.4).
@@ -597,6 +600,14 @@ drains, e.g. on flush completion) would let the arbiter skip the recall when
 the holder is provably clean, cutting the cost of read-heavy contention on
 subtrees that are mostly idle. Not implemented; a performance follow-up, not a
 correctness gap — the current behavior is conservative-safe (§9).
+
+**(f) Nested-recall timeout budget.** A recall-triggered flush that itself
+contends with a third holder's delegation triggers a nested recall, and that
+inner recall runs inside the OUTER recall's timeout window: the chain
+converges (each hop strictly shrinks the set of dirty holders), but under
+chained contention the outer contender can burn an extra timeout+retry cycle
+before the region is clean. Accepted cost; no correctness impact (every hop is
+the same fail-closed barrier).
 
 ---
 

@@ -189,7 +189,7 @@ func (r *RpcServerImpl) Apply(stream proto.RpcFs_ApplyServer) error {
 		// else, or ops recorded in a recall race. FS_EAGAIN is a TRANSIENT
 		// ordered halt: the committed prefix is acked, the failed tail stays
 		// in the client's WAL for retry (it is NOT a data-loss discard).
-		if st := arbitrateApplyOp(r.arbiter, sessionID, op); st != proto.FsError_FS_OK {
+		if st := arbitrateApplyOp(r.arbiter, sessionID, wmKey.Volume, op); st != proto.FsError_FS_OK {
 			return sendAck(seq, st)
 		}
 
@@ -516,19 +516,21 @@ func walOpVolumeCaller(op *proto.WalOp) (string, *proto.Caller) {
 }
 
 // arbitrateApplyOp arbitrates a WalOp's target path(s) against the delegation
-// table. Rename arbitrates both endpoints (same as the unary handler).
-func arbitrateApplyOp(arb *delegation.Arbiter, sessionID string, op *proto.WalOp) proto.FsError {
+// table, scoped to the stream's volume (the caller passes wmKey.Volume — the
+// volume the whole Apply stream is keyed on). Rename arbitrates both
+// endpoints (same as the unary handler).
+func arbitrateApplyOp(arb *delegation.Arbiter, sessionID, volume string, op *proto.WalOp) proto.FsError {
 	if v, ok := op.Op.(*proto.WalOp_Rename); ok {
-		if st := arbitrateContention(arb, sessionID, v.Rename.GetOldName()); st != proto.FsError_FS_OK {
+		if st := arbitrateContention(arb, sessionID, volume, v.Rename.GetOldName()); st != proto.FsError_FS_OK {
 			return st
 		}
-		return arbitrateContention(arb, sessionID, v.Rename.GetNewName())
+		return arbitrateContention(arb, sessionID, volume, v.Rename.GetNewName())
 	}
 	_, path := walOpKindPath(op)
 	if path == "" {
 		return proto.FsError_FS_OK // ReleaseOp marker
 	}
-	return arbitrateContention(arb, sessionID, path)
+	return arbitrateContention(arb, sessionID, volume, path)
 }
 
 // isRevokedGen reports whether gen appears in the revoked set.

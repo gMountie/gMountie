@@ -303,6 +303,44 @@ func (s *DelegationHandlerSuite) TestLseekRecallsForeignDelegation() {
 	s.Equal([]string{s.sidA + ":proj"}, s.recaller.Calls(), "a foreign fd-based read must recall using entry.Path")
 }
 
+// TestCrossVolumeContentionDoesNotRecall: the delegation table is scoped per
+// volume. sidA holds a delegation on ("vol1", "proj"); sidB reading and
+// mutating ("vol2", "proj/...") — same path, DIFFERENT volume — must neither
+// recall sidA nor be blocked: the two trees are unrelated namespaces. Only
+// same-volume contention recalls (covered by the tests above).
+func (s *DelegationHandlerSuite) TestCrossVolumeContentionDoesNotRecall() {
+	s.arbiter.Request(s.sidA, "proj", "userA", "vol1", "")
+
+	mockFs := new(pathfsmock.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, "vol2", mock.Anything).
+		Return(mockFs, service.Identity{}, nil)
+	mockFs.EXPECT().GetAttr("proj/f.txt", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Once()
+	mockFs.EXPECT().Mkdir("proj/sub", uint32(0), mock.Anything).Return(fuse.OK)
+	mockFs.EXPECT().GetAttr("proj/sub", mock.Anything).Return(&fuse.Attr{}, fuse.OK).Maybe()
+
+	// Read on the other volume: no recall, no EAGAIN.
+	getReply, err := s.srv.GetAttr(s.ctxForSession(s.sidB), &proto.GetAttrRequest{
+		Volume: "vol2",
+		Caller: s.caller,
+		Path:   "proj/f.txt",
+	})
+	s.Require().NoError(err)
+	s.Equal(proto.FsError_FS_OK, getReply.Status, "a cross-volume read must not be arbitrated against vol1's grant")
+
+	// Mutation on the other volume: same.
+	mkReply, err := s.srv.Mkdir(s.ctxFor(s.sidB), &proto.MkdirRequest{
+		Volume:    "vol2",
+		Caller:    s.caller,
+		Path:      "proj/sub",
+		SessionId: s.sidB,
+		RequestId: "r-mkdir-crossvol",
+	})
+	s.Require().NoError(err)
+	s.Equal(proto.FsError_FS_OK, mkReply.Status)
+
+	s.Empty(s.recaller.Calls(), "a delegation on vol1 must never be recalled by traffic on vol2")
+}
+
 // registerRawFileFor creates a real temp file with content and registers it in
 // sessionID's fd table under path, returning the wire fd. Same RawFdFile type
 // the confined FS hands out in production.

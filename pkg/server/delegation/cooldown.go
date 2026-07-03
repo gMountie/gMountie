@@ -23,23 +23,33 @@ type coolEntry struct {
 	window time.Duration
 }
 
-// cooldownTable records recently-recalled roots so the arbiter denies re-grant
-// within a growing window. Not safe for concurrent use (Arbiter serializes).
+// coolKey identifies a cooling root within its volume — cooldowns, like the
+// delegation table, never cross volumes (a recall storm on vol1's "proj" must
+// not deny re-grants of vol2's "proj").
+type coolKey struct {
+	volume string
+	root   string
+}
+
+// cooldownTable records recently-recalled (volume, root) pairs so the arbiter
+// denies re-grant within a growing window. Not safe for concurrent use
+// (Arbiter serializes).
 type cooldownTable struct {
 	cfg     cooldownConfig
-	entries map[string]coolEntry
+	entries map[coolKey]coolEntry
 }
 
 func newCooldownTable(cfg cooldownConfig) *cooldownTable {
-	return &cooldownTable{cfg: cfg, entries: make(map[string]coolEntry)}
+	return &cooldownTable{cfg: cfg, entries: make(map[coolKey]coolEntry)}
 }
 
 func (c *cooldownTable) len() int { return len(c.entries) }
 
-// trip starts (or extends, exponentially) the cooldown for root.
-func (c *cooldownTable) trip(root string, now time.Time) {
+// trip starts (or extends, exponentially) the cooldown for root on volume.
+func (c *cooldownTable) trip(volume, root string, now time.Time) {
+	k := coolKey{volume: volume, root: root}
 	w := c.cfg.Base
-	if e, ok := c.entries[root]; ok {
+	if e, ok := c.entries[k]; ok {
 		w = e.window * 2
 		if w > c.cfg.Max {
 			w = c.cfg.Max
@@ -48,12 +58,12 @@ func (c *cooldownTable) trip(root string, now time.Time) {
 	if len(c.entries) >= c.cfg.Cap {
 		c.evictOldest()
 	}
-	c.entries[root] = coolEntry{until: now.Add(w), window: w}
+	c.entries[k] = coolEntry{until: now.Add(w), window: w}
 }
 
-// cooling reports whether root is still within its cooldown window.
-func (c *cooldownTable) cooling(root string, now time.Time) bool {
-	e, ok := c.entries[root]
+// cooling reports whether root on volume is still within its cooldown window.
+func (c *cooldownTable) cooling(volume, root string, now time.Time) bool {
+	e, ok := c.entries[coolKey{volume: volume, root: root}]
 	if !ok {
 		return false
 	}
@@ -70,7 +80,7 @@ func (c *cooldownTable) sweep(now time.Time) {
 }
 
 func (c *cooldownTable) evictOldest() {
-	var oldestKey string
+	var oldestKey coolKey
 	var oldest time.Time
 	first := true
 	for k, e := range c.entries {

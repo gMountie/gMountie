@@ -46,7 +46,7 @@ func (s *TableSuite) TestGrantDeniedWhenContainedByForeign() {
 func (s *TableSuite) TestOwnerOfFindsCoveringRoot() {
 	tbl := newDelegationTable()
 	testGrant(tbl, "sessA", "proj/src")
-	owner, root, ok := tbl.ownerOf("proj/src/main.go")
+	owner, root, ok := tbl.ownerOf("vol", "proj/src/main.go")
 	s.True(ok)
 	s.Equal("sessA", owner)
 	s.Equal("proj/src", root)
@@ -57,7 +57,7 @@ func (s *TableSuite) TestReleaseOwnerClearsAll() {
 	testGrant(tbl, "sessA", "x")
 	testGrant(tbl, "sessA", "y")
 	tbl.releaseOwner("sessA")
-	_, _, ok := tbl.ownerOf("x/file")
+	_, _, ok := tbl.ownerOf("vol", "x/file")
 	s.False(ok)
 }
 
@@ -65,12 +65,12 @@ func (s *TableSuite) TestReleaseDropsExactRoot() {
 	tbl := newDelegationTable()
 	testGrant(tbl, "sessA", "a")
 	testGrant(tbl, "sessA", "b")
-	tbl.release("a")
+	tbl.release("vol", "a")
 	// After releasing "a", ownerOf should not find it
-	_, _, ok := tbl.ownerOf("a/x")
+	_, _, ok := tbl.ownerOf("vol", "a/x")
 	s.False(ok)
 	// But "b" should still be owned by sessA
-	owner, root, ok := tbl.ownerOf("b/x")
+	owner, root, ok := tbl.ownerOf("vol", "b/x")
 	s.True(ok)
 	s.Equal("sessA", owner)
 	s.Equal("b", root)
@@ -87,12 +87,12 @@ func (s *TableSuite) TestSameOwnerWiderRootAbsorbsNarrower() {
 	s.True(ok2)
 	s.Equal("proj", g2)
 	// ownerOf should return the wider root (narrower was absorbed)
-	owner, root, ok := tbl.ownerOf("proj/src/main.go")
+	owner, root, ok := tbl.ownerOf("vol", "proj/src/main.go")
 	s.True(ok)
 	s.Equal("sessA", owner)
 	s.Equal("proj", root)
 	// Verify that granting again doesn't leave duplicates
-	owner2, root2, ok2 := tbl.ownerOf("proj/other")
+	owner2, root2, ok2 := tbl.ownerOf("vol", "proj/other")
 	s.True(ok2)
 	s.Equal("sessA", owner2)
 	s.Equal("proj", root2)
@@ -105,7 +105,7 @@ func (s *TableSuite) TestVolumeRootContainsEverything() {
 	s.True(ok)
 	s.Empty(g)
 	// ownerOf should find it for any path
-	owner, root, ok := tbl.ownerOf("anything/deep/x")
+	owner, root, ok := tbl.ownerOf("vol", "anything/deep/x")
 	s.True(ok)
 	s.Equal("sessA", owner)
 	s.Empty(root)
@@ -119,7 +119,7 @@ func (s *TableSuite) TestEntryForRootReturnsGenAndKey() {
 	_, _, ok := tbl.grant("sessA", "proj", "alice", "myvol", "", 7)
 	s.Require().True(ok)
 
-	e, found := tbl.entryForRoot("proj")
+	e, found := tbl.entryForRoot("myvol", "proj")
 	s.Require().True(found)
 	s.Equal("sessA", e.owner)
 	s.Equal("alice", e.principal)
@@ -129,6 +129,46 @@ func (s *TableSuite) TestEntryForRootReturnsGenAndKey() {
 
 func (s *TableSuite) TestEntryForRootMissingReturnsNotFound() {
 	tbl := newDelegationTable()
-	_, found := tbl.entryForRoot("missing")
+	_, found := tbl.entryForRoot("myvol", "missing")
 	s.False(found)
+}
+
+// TestContainmentIsVolumeScoped: the same root on two volumes is two
+// independent delegations. A foreign grant on vol1 "proj" must neither deny
+// nor carve a grant of vol2 "proj", ownerOf must resolve per volume, and
+// release must only drop the (volume, root) it names.
+func (s *TableSuite) TestContainmentIsVolumeScoped() {
+	tbl := newDelegationTable()
+	g1, _, ok1 := tbl.grant("sessA", "proj", "alice", "vol1", "", 1)
+	s.Require().True(ok1)
+	s.Equal("proj", g1)
+
+	// Identical root, different volume, different owner: granted, no carve.
+	g2, excluded, ok2 := tbl.grant("sessB", "proj", "bob", "vol2", "", 1)
+	s.Require().True(ok2, "a foreign same-path grant on another volume must not deny")
+	s.Equal("proj", g2)
+	s.Empty(excluded, "cross-volume roots never carve each other")
+
+	// A subtree of vol1's grant, requested on vol2: NOT contained (different
+	// volume), so it is granted too.
+	g3, _, ok3 := tbl.grant("sessC", "proj/src", "carol", "vol2", "", 1)
+	s.Require().False(ok3, "vol2 proj/src IS inside sessB's vol2 proj — denied on the SAME volume")
+	s.Empty(g3)
+
+	// ownerOf resolves per volume.
+	ownerV1, _, okV1 := tbl.ownerOf("vol1", "proj/x")
+	s.Require().True(okV1)
+	s.Equal("sessA", ownerV1)
+	ownerV2, _, okV2 := tbl.ownerOf("vol2", "proj/x")
+	s.Require().True(okV2)
+	s.Equal("sessB", ownerV2)
+	_, _, okV3 := tbl.ownerOf("vol3", "proj/x")
+	s.False(okV3, "no delegation exists on vol3")
+
+	// release drops only the named (volume, root).
+	tbl.release("vol1", "proj")
+	_, _, stillV1 := tbl.ownerOf("vol1", "proj/x")
+	s.False(stillV1)
+	_, _, stillV2 := tbl.ownerOf("vol2", "proj/x")
+	s.True(stillV2, "vol2's identically-named root must survive vol1's release")
 }

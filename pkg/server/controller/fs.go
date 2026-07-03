@@ -62,7 +62,7 @@ func (r *RpcServerImpl) GetAttr(ctx context.Context, request *proto.GetAttrReque
 	if err != nil {
 		return nil, err
 	}
-	if st := arbitrateContention(r.arbiter, sessionIDFromContext(ctx), request.Path); st != proto.FsError_FS_OK {
+	if st := arbitrateContention(r.arbiter, sessionIDFromContext(ctx), request.Volume, request.Path); st != proto.FsError_FS_OK {
 		return &proto.GetAttrReply{Status: st}, nil
 	}
 	attr, st := fs.GetAttr(request.Path, createContext(ctx, request.Caller))
@@ -90,7 +90,7 @@ func (r *RpcServerImpl) Mkdir(ctx context.Context, request *proto.MkdirRequest) 
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.MkdirReply, error) {
-		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Volume, request.Path); st != proto.FsError_FS_OK {
 			return &proto.MkdirReply{Status: st}, nil
 		}
 		res := r.applyPathOp(ctx, fs, &id, request.Volume, PathOp{
@@ -122,7 +122,7 @@ func (r *RpcServerImpl) Rmdir(ctx context.Context, request *proto.RmdirRequest) 
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.RmdirReply, error) {
-		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Volume, request.Path); st != proto.FsError_FS_OK {
 			return &proto.RmdirReply{Status: st}, nil
 		}
 		res := r.applyPathOp(ctx, fs, nil, request.Volume, PathOp{
@@ -149,10 +149,10 @@ func (r *RpcServerImpl) Rename(ctx context.Context, request *proto.RenameRequest
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.RenameReply, error) {
 		// Cross-subtree rename may contend two delegations — arbitrate both.
-		if st := arbitrateContention(r.arbiter, request.SessionId, request.OldName); st != proto.FsError_FS_OK {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Volume, request.OldName); st != proto.FsError_FS_OK {
 			return &proto.RenameReply{Status: st}, nil
 		}
-		if st := arbitrateContention(r.arbiter, request.SessionId, request.NewName); st != proto.FsError_FS_OK {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Volume, request.NewName); st != proto.FsError_FS_OK {
 			return &proto.RenameReply{Status: st}, nil
 		}
 		res := r.applyPathOp(ctx, fs, nil, request.Volume, PathOp{
@@ -177,7 +177,7 @@ func (r *RpcServerImpl) Readlink(ctx context.Context, request *proto.ReadlinkReq
 	if err != nil {
 		return nil, err
 	}
-	if st := arbitrateContention(r.arbiter, sessionIDFromContext(ctx), request.Path); st != proto.FsError_FS_OK {
+	if st := arbitrateContention(r.arbiter, sessionIDFromContext(ctx), request.Volume, request.Path); st != proto.FsError_FS_OK {
 		return &proto.ReadlinkReply{Status: st}, nil
 	}
 	target, st := fs.Readlink(request.Path, createContext(ctx, request.Caller))
@@ -197,7 +197,7 @@ func (r *RpcServerImpl) Symlink(ctx context.Context, request *proto.SymlinkReque
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.SymlinkReply, error) {
-		if st := arbitrateContention(r.arbiter, request.SessionId, request.LinkPath); st != proto.FsError_FS_OK {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Volume, request.LinkPath); st != proto.FsError_FS_OK {
 			return &proto.SymlinkReply{Status: st}, nil
 		}
 		res := r.applyPathOp(ctx, fs, &id, request.Volume, PathOp{
@@ -234,7 +234,7 @@ func (r *RpcServerImpl) ReadDir(req *proto.ReadDirRequest, stream proto.RpcFs_Re
 	if err != nil {
 		return err
 	}
-	if st := arbitrateContention(r.arbiter, sessionIDFromContext(stream.Context()), req.Path); st != proto.FsError_FS_OK {
+	if st := arbitrateContention(r.arbiter, sessionIDFromContext(stream.Context()), req.Volume, req.Path); st != proto.FsError_FS_OK {
 		return stream.Send(&proto.ReadDirBatch{Status: st})
 	}
 	fctx := createContext(stream.Context(), req.Caller)
@@ -319,7 +319,7 @@ func (r *RpcServerImpl) Unlink(ctx context.Context, request *proto.UnlinkRequest
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.UnlinkReply, error) {
-		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Volume, request.Path); st != proto.FsError_FS_OK {
 			return &proto.UnlinkReply{Status: st}, nil
 		}
 		res := r.applyPathOp(ctx, fs, nil, request.Volume, PathOp{
@@ -340,7 +340,7 @@ func (r *RpcServerImpl) Access(ctx context.Context, request *proto.AccessRequest
 	if err != nil {
 		return nil, err
 	}
-	if st := arbitrateContention(r.arbiter, sessionIDFromContext(ctx), request.Path); st != proto.FsError_FS_OK {
+	if st := arbitrateContention(r.arbiter, sessionIDFromContext(ctx), request.Volume, request.Path); st != proto.FsError_FS_OK {
 		return &proto.AccessReply{Status: st}, nil
 	}
 	st := fs.Access(request.Path, request.Mode, createContext(ctx, request.Caller))
@@ -377,7 +377,7 @@ func (r *RpcServerImpl) SetAttr(ctx context.Context, request *proto.SetAttrReque
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.SetAttrReply, error) {
-		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Volume, request.Path); st != proto.FsError_FS_OK {
 			return &proto.SetAttrReply{Status: st}, nil
 		}
 		res := r.applySetAttrOp(ctx, fs, &id, request.Volume, request)
@@ -471,7 +471,7 @@ func (r *RpcServerImpl) GetXAttr(ctx context.Context, request *proto.GetXAttrReq
 	if err != nil {
 		return nil, err
 	}
-	if st := arbitrateContention(r.arbiter, sessionIDFromContext(ctx), request.Path); st != proto.FsError_FS_OK {
+	if st := arbitrateContention(r.arbiter, sessionIDFromContext(ctx), request.Volume, request.Path); st != proto.FsError_FS_OK {
 		return &proto.GetXAttrReply{Status: st}, nil
 	}
 	data, st := fs.GetXAttr(request.Path, request.Attribute, createContext(ctx, request.Caller))
@@ -491,7 +491,7 @@ func (r *RpcServerImpl) SetXAttr(ctx context.Context, request *proto.SetXAttrReq
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.SetXAttrReply, error) {
-		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Volume, request.Path); st != proto.FsError_FS_OK {
 			return &proto.SetXAttrReply{Status: st}, nil
 		}
 		res := r.applyPathOp(ctx, fs, nil, request.Volume, PathOp{
@@ -523,7 +523,7 @@ func (r *RpcServerImpl) RemoveXAttr(ctx context.Context, request *proto.RemoveXA
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.RemoveXAttrReply, error) {
-		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Volume, request.Path); st != proto.FsError_FS_OK {
 			return &proto.RemoveXAttrReply{Status: st}, nil
 		}
 		res := r.applyPathOp(ctx, fs, nil, request.Volume, PathOp{
@@ -547,7 +547,7 @@ func (r *RpcServerImpl) ListXAttr(ctx context.Context, request *proto.ListXAttrR
 	if err != nil {
 		return nil, err
 	}
-	if st := arbitrateContention(r.arbiter, sessionIDFromContext(ctx), request.Path); st != proto.FsError_FS_OK {
+	if st := arbitrateContention(r.arbiter, sessionIDFromContext(ctx), request.Volume, request.Path); st != proto.FsError_FS_OK {
 		return &proto.ListXAttrReply{Status: st}, nil
 	}
 	attrs, st := fs.ListXAttr(request.Path, createContext(ctx, request.Caller))
@@ -576,7 +576,7 @@ func (r *RpcServerImpl) GetAttrIfChanged(ctx context.Context, request *proto.Get
 	// this RPC's reply allows. A persistently failing recall spins the client's
 	// rpc.retry_window before degrading to a direct GetAttr (which surfaces
 	// FS_EAGAIN in-band) — bounded, expected latency difference.
-	if st := arbitrateContention(r.arbiter, sessionIDFromContext(ctx), request.Path); st != proto.FsError_FS_OK {
+	if st := arbitrateContention(r.arbiter, sessionIDFromContext(ctx), request.Volume, request.Path); st != proto.FsError_FS_OK {
 		return nil, status.Error(codes.Unavailable, "delegation recall failed; retry")
 	}
 	attr, st := fs.GetAttr(request.Path, createContext(ctx, request.Caller))

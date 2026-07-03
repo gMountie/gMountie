@@ -9,18 +9,19 @@ import (
 )
 
 // arbitrateContention enforces recall-on-contention for any contending op at
-// path — reads included (a Phase-2 holder may have deferred state a reader
-// would miss), not just mutations. Returns FS_OK when arb is nil (delegation
-// disabled) or when the path is free (or owned by contender). Returns
-// FS_EAGAIN when a recall fails/times out — the contender must back off (use
-// a fresh request_id on retry, where the op has one).
-func arbitrateContention(arb *delegation.Arbiter, sessionID, path string) proto.FsError {
+// (volume, path) — reads included (a Phase-2 holder may have deferred state a
+// reader would miss), not just mutations. The arbitration domain is scoped by
+// volume: a delegation on another volume never contends. Returns FS_OK when
+// arb is nil (delegation disabled) or when the path is free (or owned by
+// contender). Returns FS_EAGAIN when a recall fails/times out — the contender
+// must back off (use a fresh request_id on retry, where the op has one).
+func arbitrateContention(arb *delegation.Arbiter, sessionID, volume, path string) proto.FsError {
 	if arb == nil {
 		return proto.FsError_FS_OK
 	}
-	if err := arb.OnMutation(sessionID, path); err != nil {
+	if err := arb.OnMutation(sessionID, volume, path); err != nil {
 		log.Log.Warn("delegation recall failed; contending op rejected",
-			zap.String("path", path), zap.Error(err))
+			zap.String("volume", volume), zap.String("path", path), zap.Error(err))
 		return proto.FsError_FS_EAGAIN
 	}
 	return proto.FsError_FS_OK

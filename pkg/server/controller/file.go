@@ -144,7 +144,7 @@ func (r *RpcFileServerImpl) Open(ctx context.Context, request *proto.OpenRequest
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.OpenReply, error) {
-		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Volume, request.Path); st != proto.FsError_FS_OK {
 			return &proto.OpenReply{Status: st}, nil
 		}
 		file, s := fs.Open(request.Path, request.Flags, createContext(ctx, request.Caller))
@@ -166,7 +166,7 @@ func (r *RpcFileServerImpl) Create(ctx context.Context, request *proto.CreateReq
 		return nil, err
 	}
 	return withIdempotency(sess, request.RequestId, func() (*proto.CreateReply, error) {
-		if st := arbitrateContention(r.arbiter, request.SessionId, request.Path); st != proto.FsError_FS_OK {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Volume, request.Path); st != proto.FsError_FS_OK {
 			return &proto.CreateReply{Status: st}, nil
 		}
 		file, s := fs.Create(request.Path, request.Flags, request.Mode, createContext(ctx, request.Caller))
@@ -210,7 +210,7 @@ func (r *RpcFileServerImpl) Read(request *proto.ReadRequest, stream proto.RpcFil
 	// hold deferred (WAL) state this reader would otherwise miss. Recall it —
 	// the handoff barrier guarantees the holder's flush is durable before we
 	// proceed. Self-access is a no-op inside OnMutation.
-	if st := arbitrateContention(r.arbiter, request.SessionId, entry.Path); st != proto.FsError_FS_OK {
+	if st := arbitrateContention(r.arbiter, request.SessionId, request.Volume, entry.Path); st != proto.FsError_FS_OK {
 		return stream.Send(&proto.ReadFrame{Status: st})
 	}
 
@@ -288,7 +288,7 @@ func (r *RpcFileServerImpl) Write(stream proto.RpcFile_WriteServer) error {
 		// Arbitrate before writing: a foreign delegation on this path requires a
 		// recall; if it fails the contender gets FS_EAGAIN and must retry with a
 		// fresh request_id. Drain the stream first so gRPC sees a clean half-close.
-		if st := arbitrateContention(r.arbiter, first.SessionId, entryPath); st != proto.FsError_FS_OK {
+		if st := arbitrateContention(r.arbiter, first.SessionId, first.Volume, entryPath); st != proto.FsError_FS_OK {
 			if drainErr := drainWriteStream(stream); drainErr != nil {
 				return nil, drainErr
 			}
@@ -527,7 +527,7 @@ func (r *RpcFileServerImpl) WriteAndFlush(ctx context.Context, req *proto.WriteA
 		// Arbitrate before writing: a foreign delegation covering entry.Path requires a
 		// recall; if it fails the contender gets FS_EAGAIN and must retry with a fresh
 		// request_id. Same pattern as Write/Allocate.
-		if st := arbitrateContention(r.arbiter, req.SessionId, entry.Path); st != proto.FsError_FS_OK {
+		if st := arbitrateContention(r.arbiter, req.SessionId, req.Volume, entry.Path); st != proto.FsError_FS_OK {
 			return &proto.WriteAndFlushReply{Status: st}, nil
 		}
 		// Resolved after the fd↔volume check so a foreign volume can't be probed
@@ -578,7 +578,7 @@ func (r *RpcFileServerImpl) Allocate(ctx context.Context, request *proto.Allocat
 	if path == "" {
 		path = request.Path
 	}
-	if st := arbitrateContention(r.arbiter, request.SessionId, path); st != proto.FsError_FS_OK {
+	if st := arbitrateContention(r.arbiter, request.SessionId, request.Volume, path); st != proto.FsError_FS_OK {
 		return &proto.AllocateReply{Status: st}, nil
 	}
 	s := entry.File.Allocate(request.Off, request.Size, request.Mode)
@@ -634,14 +634,14 @@ func (r *RpcFileServerImpl) CopyFileRange(ctx context.Context, request *proto.Co
 		if srcPath == "" {
 			srcPath = request.PathIn
 		}
-		if st := arbitrateContention(r.arbiter, request.SessionId, srcPath); st != proto.FsError_FS_OK {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Volume, srcPath); st != proto.FsError_FS_OK {
 			return &proto.CopyFileRangeReply{Status: st}, nil
 		}
 		dstPath := dstEntry.Path
 		if dstPath == "" {
 			dstPath = request.PathOut
 		}
-		if st := arbitrateContention(r.arbiter, request.SessionId, dstPath); st != proto.FsError_FS_OK {
+		if st := arbitrateContention(r.arbiter, request.SessionId, request.Volume, dstPath); st != proto.FsError_FS_OK {
 			return &proto.CopyFileRangeReply{Status: st}, nil
 		}
 		copied, st := serverio.CopyFileRange(srcEntry.File, dstEntry.File, request.OffIn, request.OffOut, request.Length)
@@ -674,7 +674,7 @@ func (r *RpcFileServerImpl) Lseek(ctx context.Context, request *proto.LseekReque
 		return &proto.LseekReply{Status: proto.FsError_FS_EBADF}, nil
 	}
 	defer entry.ReleaseRef()
-	if st := arbitrateContention(r.arbiter, request.SessionId, entry.Path); st != proto.FsError_FS_OK {
+	if st := arbitrateContention(r.arbiter, request.SessionId, request.Volume, entry.Path); st != proto.FsError_FS_OK {
 		return &proto.LseekReply{Status: st}, nil
 	}
 	off, st := serverio.Lseek(entry.File, request.Offset, uint32(fsconv.WhenceFromProto(request.Whence)))

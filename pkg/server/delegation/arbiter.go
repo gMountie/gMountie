@@ -43,6 +43,13 @@ type regionState struct {
 	done chan struct{} // closed when the in-flight recall finishes
 }
 
+// regionKey identifies a delegated root being recalled within its volume —
+// the arbitration domain is (volume, root), never root alone.
+type regionKey struct {
+	volume string
+	root   string
+}
+
 type Arbiter struct {
 	recaller Recaller
 	now      func() time.Time
@@ -52,8 +59,8 @@ type Arbiter struct {
 	mu         sync.Mutex
 	table      *delegationTable
 	cooldown   *cooldownTable
-	regions    map[string]*regionState // keyed by delegated root being recalled
-	grantCount atomic.Int64            // maintained at every table mutation (under mu)
+	regions    map[regionKey]*regionState // keyed by (volume, delegated root) being recalled
+	grantCount atomic.Int64               // maintained at every table mutation (under mu)
 
 	// testHookAfterGrantInsert, when non-nil, runs (under a.mu) between the
 	// table insert in Request and the counter re-derivation that follows. It
@@ -73,7 +80,7 @@ func NewArbiter(r Recaller, cfg Config, now func() time.Time, store watermark.St
 		store:    store,
 		table:    newDelegationTable(),
 		cooldown: newCooldownTable(cfg.Cooldown),
-		regions:  make(map[string]*regionState),
+		regions:  make(map[regionKey]*regionState),
 	}
 }
 
@@ -115,7 +122,7 @@ func (a *Arbiter) Request(owner, root, principal, volume, epoch string) *proto.D
 	defer a.mu.Unlock()
 	now := a.now()
 	a.cooldown.sweep(now)
-	if a.cooldown.cooling(root, now) {
+	if a.cooldown.cooling(volume, root, now) {
 		return &proto.DelegationGrant{RetryAfterMs: uint64(a.cfgRetryMs())}
 	}
 	// Allocate a durable per-(identity,volume) gen BEFORE inserting into the
@@ -156,10 +163,12 @@ func (a *Arbiter) Request(owner, root, principal, volume, epoch string) *proto.D
 func (a *Arbiter) cfgRetryMs() int64 { return a.cooldown.cfg.Base.Milliseconds() }
 
 // OnMutation enforces recall-on-contention. If a FOREIGN delegation covers
-// path, recall it (releasing the lock across the RPC), trip its cooldown, and
-// drop it. Self-owned coverage is a no-op. Returns the recall error so the
-// caller can fail the contender's op closed (map to FS_EAGAIN).
-func (a *Arbiter) OnMutation(contender, path string) error {
+// path on volume, recall it (releasing the lock across the RPC), trip its
+// cooldown, and drop it. Self-owned coverage is a no-op, as is any coverage
+// on a DIFFERENT volume — the arbitration domain is (volume, path). Returns
+// the recall error so the caller can fail the contender's op closed (map to
+// FS_EAGAIN).
+func (a *Arbiter) OnMutation(contender, volume, path string) error {
 	// Hot-path exit: with zero grants anywhere there is nothing to arbitrate.
 	// Read handlers call this on every RPC; do not touch a.mu for the common
 	// no-delegations case (WAL-off clients, idle volumes).
@@ -167,13 +176,14 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 		return nil
 	}
 	a.mu.Lock()
-	owner, root, ok := a.table.ownerOf(path)
+	owner, root, ok := a.table.ownerOf(volume, path)
 	if !ok || owner == contender {
 		a.mu.Unlock()
 		return nil // free, or self-access -> never recall
 	}
+	rk := regionKey{volume: volume, root: root}
 	// Coalesce: if this root is already being recalled, wait for that recall.
-	if rs := a.regions[root]; rs != nil {
+	if rs := a.regions[rk]; rs != nil {
 		done := rs.done
 		a.mu.Unlock()
 		<-done
@@ -181,7 +191,7 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 		// Return an error so the contender maps it to FS_EAGAIN, consistent with
 		// what the leader returns on failure.
 		a.mu.Lock()
-		stillOwner, _, stillOwned := a.table.ownerOf(path)
+		stillOwner, _, stillOwned := a.table.ownerOf(volume, path)
 		a.mu.Unlock()
 		if stillOwned && stillOwner != contender {
 			return errCoalescedRecallFailed
@@ -191,10 +201,10 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 	// Capture the entry's fence key BEFORE releasing the lock. A concurrent
 	// ReleaseSession (session reap) could drop the entry during the recall RTT;
 	// we must fence the revoked gen even if the entry is gone by then.
-	revokedEntry, hasEntry := a.table.entryForRoot(root)
+	revokedEntry, hasEntry := a.table.entryForRoot(volume, root)
 
 	rs := &regionState{done: make(chan struct{})}
-	a.regions[root] = rs
+	a.regions[rk] = rs
 	a.mu.Unlock()
 
 	// ---- recall RTT happens with NO lock held (barrier = this handoff) ----
@@ -219,6 +229,7 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 	if errors.Is(err, ErrNoStream) {
 		log.Log.Warn("delegation: holder unreachable on contention; fencing its gen and handing off (its un-flushed WAL is discarded on replay)",
 			zap.String("owner", owner),
+			zap.String("volume", volume),
 			zap.String("root", root),
 			zap.String("contender", contender),
 		)
@@ -239,19 +250,19 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 
 	a.mu.Lock()
 	if handoff {
-		a.table.release(root)
+		a.table.release(volume, root)
 		// Store-after-release is safe here (unlike Request's insert): between
 		// the release and this store the counter is transiently HIGH (an
 		// extra count for an already-freed root), never low — a fast-path
 		// reader can only be sent to the slow path needlessly, never skip
 		// arbitration against a live grant.
 		a.grantCount.Store(int64(a.table.size()))
-		a.cooldown.trip(root, a.now())
+		a.cooldown.trip(volume, root, a.now())
 		a.mRecall()
 		a.mCooldownTrip()
 		a.mGrantsActive()
 	}
-	delete(a.regions, root)
+	delete(a.regions, rk)
 	close(rs.done)
 	a.mu.Unlock()
 	return err
