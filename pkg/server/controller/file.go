@@ -625,8 +625,18 @@ func (r *RpcFileServerImpl) CopyFileRange(ctx context.Context, request *proto.Co
 			return &proto.CopyFileRangeReply{Status: proto.FsError_FS_EBADF}, nil
 		}
 		defer dstEntry.ReleaseRef()
-		// Arbitrate on the DESTINATION path: that is the one being written.
-		// Same pattern as Write/Allocate — short-circuit on recall failure.
+		// Arbitrate BOTH endpoints. The destination is written (same pattern as
+		// Write/Allocate); the SOURCE is read server-side — a foreign delegation
+		// covering it may hold deferred WAL state, and copying without a recall
+		// would propagate stale source bytes into the destination. Short-circuit
+		// on recall failure either way.
+		srcPath := srcEntry.Path
+		if srcPath == "" {
+			srcPath = request.PathIn
+		}
+		if st := arbitrateContention(r.arbiter, request.SessionId, srcPath); st != proto.FsError_FS_OK {
+			return &proto.CopyFileRangeReply{Status: st}, nil
+		}
 		dstPath := dstEntry.Path
 		if dstPath == "" {
 			dstPath = request.PathOut

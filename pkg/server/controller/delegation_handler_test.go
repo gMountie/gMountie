@@ -13,6 +13,7 @@ import (
 	"go.gmountie.dev/gmountie/pkg/proto"
 	"go.gmountie.dev/gmountie/pkg/server/delegation"
 	serverio "go.gmountie.dev/gmountie/pkg/server/io"
+	"go.gmountie.dev/gmountie/pkg/server/metrics"
 	"go.gmountie.dev/gmountie/pkg/server/service"
 
 	pathfsmock "go.gmountie.dev/gmountie/internal/mocks/github.com/hanwen/go-fuse/v2/fuse/pathfs"
@@ -105,7 +106,7 @@ func (s *DelegationHandlerSuite) SetupTest() {
 
 	bus := serverio.NewLocalEventBus(serverio.EventBusOptions{BufferSize: 16})
 	s.srv = NewGrpcServer(s.fsService, s.sessionMgr, bus, nil, s.arbiter, nil, nil)
-	s.fileServer = NewRpcFileServer(s.fsService, s.sessionMgr, nil, 1<<20, bus, s.arbiter)
+	s.fileServer = NewRpcFileServer(s.fsService, s.sessionMgr, metrics.NewMetrics(), 1<<20, bus, s.arbiter)
 }
 
 // grantTo grants owner sessionID a delegation rooted at root, resolving the
@@ -287,16 +288,7 @@ func (s *DelegationHandlerSuite) TestGetAttrIfChangedRecallFailureReturnsUnavail
 func (s *DelegationHandlerSuite) TestLseekRecallsForeignDelegation() {
 	s.grantTo(s.sidA, "proj")
 
-	p := filepath.Join(s.T().TempDir(), "f.txt")
-	s.Require().NoError(os.WriteFile(p, []byte("0123456789"), 0o644))
-	f, err := os.OpenFile(p, os.O_RDWR, 0)
-	s.Require().NoError(err)
-	rf := serverio.NewRawFdFile(f)
-	s.T().Cleanup(func() { rf.Release() })
-
-	sess, err := s.sessionMgr.Get(s.sidB)
-	s.Require().NoError(err)
-	fd := sess.RegisterFile(s.vol, "proj/f.txt", rf)
+	fd := s.registerRawFileFor(s.sidB, "proj/f.txt", []byte("0123456789"))
 
 	reply, err := s.fileServer.Lseek(s.ctxFor(s.sidB), &proto.LseekRequest{
 		Volume:    s.vol,
@@ -309,4 +301,120 @@ func (s *DelegationHandlerSuite) TestLseekRecallsForeignDelegation() {
 	s.Require().NotNil(reply)
 	s.Equal(proto.FsError_FS_OK, reply.Status)
 	s.Equal([]string{s.sidA + ":proj"}, s.recaller.Calls(), "a foreign fd-based read must recall using entry.Path")
+}
+
+// registerRawFileFor creates a real temp file with content and registers it in
+// sessionID's fd table under path, returning the wire fd. Same RawFdFile type
+// the confined FS hands out in production.
+func (s *DelegationHandlerSuite) registerRawFileFor(sessionID, path string, content []byte) uint64 {
+	p := filepath.Join(s.T().TempDir(), filepath.Base(path))
+	s.Require().NoError(os.WriteFile(p, content, 0o644))
+	f, err := os.OpenFile(p, os.O_RDWR, 0)
+	s.Require().NoError(err)
+	rf := serverio.NewRawFdFile(f)
+	s.T().Cleanup(func() { rf.Release() })
+
+	sess, err := s.sessionMgr.Get(sessionID)
+	s.Require().NoError(err)
+	return sess.RegisterFile(s.vol, path, rf)
+}
+
+// TestCopyFileRangeSourceRecallsForeignDelegation: sidA holds a delegation on
+// "proj"; sidB copies FROM "proj/src.txt" INTO a path outside any delegation.
+// The SOURCE read must arbitrate like any other read — a WAL holder may have
+// deferred writes under "proj" that the server-side copy would otherwise miss
+// (stale source bytes copied into the destination).
+func (s *DelegationHandlerSuite) TestCopyFileRangeSourceRecallsForeignDelegation() {
+	s.grantTo(s.sidA, "proj")
+
+	srcFd := s.registerRawFileFor(s.sidB, "proj/src.txt", []byte("0123456789"))
+	dstFd := s.registerRawFileFor(s.sidB, "out/dst.txt", []byte("XXXXXXXXXX"))
+
+	reply, err := s.fileServer.CopyFileRange(s.ctxFor(s.sidB), &proto.CopyFileRangeRequest{
+		Volume:    s.vol,
+		FdIn:      srcFd,
+		OffIn:     0,
+		FdOut:     dstFd,
+		OffOut:    0,
+		Length:    4,
+		SessionId: s.sidB,
+	})
+	s.Require().NoError(err)
+	s.Require().NotNil(reply)
+	s.Equal(proto.FsError_FS_OK, reply.Status)
+	s.Equal(uint64(4), reply.BytesCopied)
+	s.Equal([]string{s.sidA + ":proj"}, s.recaller.Calls(),
+		"a foreign delegation covering the SOURCE must be recalled before the copy reads it")
+}
+
+// TestCopyFileRangeSourceRecallFailureReturnsEAGAIN: when the recall of the
+// source-covering delegation fails, the copy must fail closed with FS_EAGAIN
+// in-reply — no bytes may be copied from the potentially-stale source.
+func (s *DelegationHandlerSuite) TestCopyFileRangeSourceRecallFailureReturnsEAGAIN() {
+	s.grantTo(s.sidA, "proj")
+	s.recaller.err = errors.New("recall timed out")
+
+	srcFd := s.registerRawFileFor(s.sidB, "proj/src.txt", []byte("0123456789"))
+	dstFd := s.registerRawFileFor(s.sidB, "out/dst.txt", []byte("XXXXXXXXXX"))
+
+	reply, err := s.fileServer.CopyFileRange(s.ctxFor(s.sidB), &proto.CopyFileRangeRequest{
+		Volume:    s.vol,
+		FdIn:      srcFd,
+		OffIn:     0,
+		FdOut:     dstFd,
+		OffOut:    0,
+		Length:    4,
+		SessionId: s.sidB,
+	})
+	s.Require().NoError(err)
+	s.Require().NotNil(reply)
+	s.Equal(proto.FsError_FS_EAGAIN, reply.Status, "failed source recall must fail the copy closed")
+	s.Equal(uint64(0), reply.BytesCopied, "no bytes may be copied from a still-delegated source")
+}
+
+// TestReadRecallsForeignDelegation: sidA holds a delegation on "proj"; sidB's
+// streaming Read of an fd under "proj" must recall sidA's delegation before
+// any data flows (the holder may have deferred WAL state the reader would
+// otherwise miss). Mirrors TestLseekRecallsForeignDelegation for the fd-based
+// streaming read path.
+func (s *DelegationHandlerSuite) TestReadRecallsForeignDelegation() {
+	s.grantTo(s.sidA, "proj")
+
+	fd := s.registerRawFileFor(s.sidB, "proj/f.txt", []byte("0123456789"))
+
+	stream := newFakeReadStream(s.ctxForSession(s.sidB))
+	err := s.fileServer.Read(&proto.ReadRequest{
+		Volume:    s.vol,
+		Fd:        fd,
+		Size:      10,
+		SessionId: s.sidB,
+	}, stream)
+	s.Require().NoError(err)
+	s.Require().NotEmpty(stream.frames)
+	s.Equal(proto.FsError_FS_OK, stream.frames[len(stream.frames)-1].Status,
+		"the read proceeds once the foreign delegation is recalled")
+	s.Equal([]byte("0123456789"), stream.frames[0].Data)
+	s.Equal([]string{s.sidA + ":proj"}, s.recaller.Calls(), "a foreign streaming Read must recall using entry.Path")
+}
+
+// TestReadRecallFailureReturnsEAGAIN: when the recall fails, the streaming
+// Read must fail closed via its terminal status frame (FS_EAGAIN) — no data
+// frame may be emitted from the still-delegated region.
+func (s *DelegationHandlerSuite) TestReadRecallFailureReturnsEAGAIN() {
+	s.grantTo(s.sidA, "proj")
+	s.recaller.err = errors.New("recall timed out")
+
+	fd := s.registerRawFileFor(s.sidB, "proj/f.txt", []byte("0123456789"))
+
+	stream := newFakeReadStream(s.ctxForSession(s.sidB))
+	err := s.fileServer.Read(&proto.ReadRequest{
+		Volume:    s.vol,
+		Fd:        fd,
+		Size:      10,
+		SessionId: s.sidB,
+	}, stream)
+	s.Require().NoError(err, "recall failure surfaces in the status frame, not as a transport error")
+	s.Require().Len(stream.frames, 1)
+	s.Equal(proto.FsError_FS_EAGAIN, stream.frames[0].Status)
+	s.Empty(stream.frames[0].Data, "no data may flow from a still-delegated region")
 }
