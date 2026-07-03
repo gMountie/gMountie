@@ -1,7 +1,7 @@
 # Write Delegation and Recall
 
-**Status:** Phase 1 (delegation + recall coherence layer) shipped (2026-06-23). Phase 2 (WAL + deferred writes) shipped (2026-06-24). Handoff-correctness hardening shipped (2026-07-02).
-**Last updated:** 2026-07-02
+**Status:** Phase 1 (delegation + recall coherence layer) shipped (2026-06-23). Phase 2 (WAL + deferred writes) shipped (2026-06-24). Handoff-correctness hardening shipped (2026-07-02). Read-path recall, transient-halt retry, and RecallAck abort signalling shipped (2026-07-03).
+**Last updated:** 2026-07-03
 
 This document covers gMountie's write-delegation and recall system: how clients
 can hold a write-delegation over a subtree, how the server arbitrates grants and
@@ -88,13 +88,24 @@ another client to observe incoherent state.** One test, applied per case:
 
 - **Remote write → always recalls (both phases).** A second writer invalidates
   the "provably alone" assumption regardless of deferral.
-- **Remote read → recalls only if the holder might have unflushed data.**
-  - *Phase 2 (WAL):* yes. The holder may have deferred creates or writes in its
-    WAL; a reader (including `readdir`) would miss them. Recall forces a durable
-    flush before the read proceeds.
-  - *Phase 1 (no deferral):* no. `close()` already flushed; the reader gets
-    normal close-to-open consistency. The holder keeps its delegation and only
-    loses skip-revalidation on a remote write.
+- **Remote read → recalls when the holder might have unflushed data.**
+  **Shipped**, and deliberately conservative: the server has no cheap way to
+  know, at a read's arbitration point, whether the holder actually has
+  deferred WAL state under the recalled region, so it recalls on **any**
+  foreign read into a delegated subtree. `GetAttr`/`GetAttrIfChanged`/
+  `ReadDir`/`Readlink`/`Access`/xattr reads/`Open`/`Read`/`Lseek` all arbitrate
+  against foreign delegations exactly like mutations (§4) — this is no longer
+  aspirational. Self-access never recalls. A zero-grant atomic fast path
+  (guarded by a pessimistic pre-insert floor on the grant counter, so the
+  lock-free read can never observe a stale zero against a live grant) keeps
+  read arbitration free when no delegations exist on the volume at all.
+  - *Phase 2 (WAL):* the holder may have deferred creates or writes in its
+    WAL; a reader (including `readdir`) would miss them without the recall.
+  - *Phase 1 conceptually (no deferral):* `close()` already flushed, so a
+    forced recall here only costs an RTT — no data was actually at risk. The
+    server does not distinguish this case at arbitration time; teaching it to
+    (a piggybacked "holder has pending data" hint) is a perf follow-up, not a
+    correctness gap — see §7.7.
 
 ---
 
@@ -117,6 +128,16 @@ connections; the lock is the only reliable serialization point.
 In Phase 1 there is no WAL flush, so the stall B observes is just the recall
 RTT plus A's cache-invalidation time — a small, bounded cost. In Phase 2, the
 stall extends to include the WAL prefix flush.
+
+**Wire nuance — `GetAttrIfChanged`.** Every other read handler above signals a
+failed recall in-band as `FS_EAGAIN` in its reply's `Status` field. The
+`GetAttrIfChangedReply` message carries no `Status` field (proto-frozen for
+this pass — no wire break), so its handler instead fails the RPC itself with
+gRPC `codes.Unavailable`. That is exactly the code `retryOp` already treats as
+transient for idempotent reads, so the client re-issues the whole call —
+including arbitration — within `rpc.retry_window`. In practice the client's
+revalidation path degrades to a direct `GetAttr` on retry, which does carry
+`Status` and surfaces `FS_EAGAIN` in-band.
 
 ---
 
@@ -204,7 +225,10 @@ delegations are dropped when a session expires.
   `{granted_root, excluded_paths, retry_after}`.
 - Recall = a dedicated server→client bidi stream (not the Subscribe channel —
   recall needs ordered ack/completion that fire-and-forget invalidation lacks):
-  `Recall{root}` → `RecallAck{root, done}`.
+  `Recall{root}` → `RecallAck{root, done, fserr}`. `done=false` is an explicit
+  abort: the holder's recall-flush failed, and `fserr` carries the cause for
+  diagnostics. The server fails the handoff **immediately** on an abort ack
+  instead of waiting out the recall timeout (§7.4).
 
 **Client — `pkg/client/backend/delegation/`:**
 
@@ -361,8 +385,17 @@ fire-hoses the batch, then half-closes; the server:
 
 1. Applies each op **in seq order**, dispatching to a shared internal `applyOp`
    that the unary handlers also call (no logic duplication).
-2. Per op: `seq ≤ watermark` → skip (dedup); `gen` revoked → reject (fenced);
-   else apply + advance the in-memory watermark.
+2. Per op, in order: `seq ≤ watermark` → skip (dedup); `gen` revoked → reject
+   (fenced — the fence outranks contention, since a fenced op belongs to a
+   handoff that already completed); else **arbitrate the op's path(s) against
+   FOREIGN delegations** (a rename arbitrates both endpoints), exactly like
+   the unary mutating handlers. Normally this is a self-access no-op — a
+   flushing client is applying into its own delegation — but it catches the
+   abnormal paths: a stale startup replay into a region since delegated to
+   someone else, or ops recorded during a recall race. A recall failure here
+   halts the op with `FS_EAGAIN`, a transient ordered halt (see "Error
+   mid-batch" below), not a permanent one. Otherwise apply + advance the
+   in-memory watermark.
 3. At stream end: **persist the watermark to the store, then return
    `ApplyAck{watermark}`**.
 
@@ -384,8 +417,15 @@ surviving in-flight ops (seq beyond the sent batch), and discard the lost tail
 mark the subtree EIO or auto-release the delegation; the grant is retained and
 ordinary deferral resumes for the rest of the subtree. (Releasing a
 delegation is specifically what a *recall* handoff does, and only after its
-own flush succeeds — §7.4.) Transient (EAGAIN) → retry the batch from
-`committed_watermark + 1`.
+own flush succeeds — §7.4.) **Transient (EAGAIN) → not a loss event.** The
+committed prefix (seq ≤ `committed_watermark`) commits as above, but the
+failed tail (seq ≥ `failed_seq`) is **retained** in the log and the overlay —
+no truncation, no loud-loss log — for the next flush trigger (interval,
+`fsync`, or recall) to retry from `committed_watermark + 1`. This is what the
+design always specified for transient halts; an earlier build discarded the
+tail on every ordered halt, transient or not. The WAL layer now branches on
+`fserr` — `FS_EAGAIN` retains, anything else discards with the loud-loss log
+above.
 
 **Generation lifecycle + GC:** the server durably records a revoked gen in the
 `WatermarkStore` *before* serving the contender on handoff. Revoked-gens are
@@ -408,7 +448,8 @@ On `Recall{root}` the holder (`Manager.OnRecall` → `Coordinator.FlushForRecall
    non-draining regions after the snapshot is taken are deliberately left
    deferred, so unrelated write traffic cannot stall the handoff indefinitely.
 3. Clears the overlay for that subtree and drops the delegation.
-4. Sends `RecallAck{done}`.
+4. Sends `RecallAck{done=true}`. (If the flush in step 2 failed instead, none
+   of this happens — see "Recall-flush failure" below for the abort path.)
 
 The server's handoff barrier now means *"the holder's WAL for this region is
 durably applied"* — so when the contender is unblocked it sees the holder's
@@ -425,15 +466,15 @@ deferred.
 during a recall flush does **not** poison the holder's subtree with EIO. It
 follows the same ordered-halt path as any other flush (§7.6): the lost tail is
 discarded with the loud-loss log, but the **grant is retained** — the client
-does not drop its delegation or clear the overlay on a failed flush. No
-`RecallAck` is sent; the server's recall **timeout** then expires without an
-ack and fails the handoff (the contender stays blocked or gets `EAGAIN`), and
-the *next* recall attempt retries the flush from where the log now stands.
-This is self-healing and fail-closed (a contender never observes a torn
-handoff), but there is no EIO poisoning of the holder's subtree — an important
-correction from an earlier draft of this document. See Known Gaps §7.7(c) for
-the follow-up that would let the server fail faster with an explicit signal
-instead of relying on the timeout.
+does not drop its delegation or clear the overlay on a failed flush. The
+recall loop sends an explicit **abort `RecallAck{done=false, fserr}`** (§6.2)
+instead of a clean `RecallAck{done=true}` — the server fails the handoff
+**immediately** on the abort ack rather than waiting out the recall timeout
+(the contender stays blocked or gets `EAGAIN` either way; the abort ack just
+removes the dead wait). The *next* recall attempt retries the flush from where
+the log now stands. This is self-healing and fail-closed (a contender never
+observes a torn handoff), and there is no EIO poisoning of the holder's
+subtree — an important correction from an earlier draft of this document.
 
 One nuance on loss attribution: if a *concurrent* interval (or size-cap, or
 fsync) flush suffers the ordered halt for the same or an overlapping prefix
@@ -485,6 +526,28 @@ received them).
 
 ### 7.7 Known gaps / follow-ups
 
+> **Operational requirement — upgrade order for the `RecallAck` abort change.**
+> The wire change in §6.2 (`RecallAck` gains `done`/`fserr`) is asymmetrically
+> safe, and there is no capability negotiation by design (§9) to protect the
+> dangerous direction:
+>
+> - **SAFE: new server, old client.** An old client only ever sends
+>   `RecallAck{done=true}` — it has no `fserr`/abort concept. A failed flush on
+>   an old client just falls back to the pre-abort behavior: the old client
+>   sends nothing, the server's recall timeout expires, the handoff fails.
+>   Worst case is the slower pre-abort failure mode, not corruption.
+> - **DANGEROUS: new client, old server.** An old server does not read the
+>   `done` field — it treats *any* received `RecallAck` as a clean, completed
+>   handoff. A new client's abort ack (`done=false`, flush failed, grant
+>   retained) is misread by an old server as "handoff complete": the server
+>   unblocks the contender against a region the holder never actually flushed
+>   — a silent false-clean handoff, exactly the corruption class this feature
+>   exists to prevent.
+>
+> **Rule for v-next: upgrade servers before clients.** This is not a generic
+> no-backwards-compatibility footnote — it is the specific operational
+> ordering that keeps the abort-ack fix from reintroducing the bug it fixes.
+
 These are correct-by-construction in the shipped implementation but are not yet
 optimized or fully signaled:
 
@@ -504,14 +567,15 @@ for squash mode (the default — all ops map to one identity). For `passthrough`
 the WAL caller may not reflect the original caller's identity. Per-op caller
 fidelity for non-squash modes is a follow-up. (Unchanged by this hardening pass.)
 
-**(c) `RecallAck` has no explicit Abort/Error field.** When a recall-flush fails,
-the client does not send a clean `RecallAck`; the server relies on the recall
-**timeout** to fail the handoff (fail-closed — see the corrected §7.4 description:
-the holder's grant is retained and the next recall retries, it is not an EIO
-poison). An explicit `RecallAck{error}` or `RecallAbort` message would let the
-server fail faster and with a clearer signal. This is a protocol follow-up.
-**Scheduled:** the follow-up server-coherence PR adds `RecallAck` abort
-signalling.
+**(c) CLOSED — `RecallAck` abort signalling shipped.** Previously: when a
+recall-flush failed, the client sent no `RecallAck` and the server relied on
+the recall **timeout** to fail the handoff. `RecallAck` now carries
+`done`/`fserr` (§6.2); a failed recall-flush sends an explicit abort ack
+(`done=false`) and the server fails the handoff immediately (§7.4) instead of
+waiting out the timeout. Retained here (marked closed, not deleted) so the
+lettering of gap (d) below doesn't shift. See the mixed-version upgrade-order
+note at the top of this section — the fix is asymmetrically safe and requires
+upgrading servers before clients.
 
 **(d) Path-capture caveat on the rename admission barrier.** The synchronous
 rename path holds an admission barrier (`BeginDrain`) over both endpoints for
@@ -523,6 +587,16 @@ deferred *after* the barrier releases, referencing the moved path. A later
 flush would ENOENT it (ordered halt, loud loss §7.6). This is inherent to
 path-addressed WAL ops; closing it needs handle-identity (fd → current-path)
 tracking through the rename, which is a follow-up.
+
+**(e) Read-recall is unconditional, not dirty-holder-gated.** §3's read-recall
+rule recalls on every foreign read into a delegated subtree, regardless of
+whether the holder actually has unflushed WAL state for that region — the
+server has no cheap way to know at arbitration time. A piggybacked
+`has_pending` hint on the delegation grant (refreshed as the holder's WAL
+drains, e.g. on flush completion) would let the arbiter skip the recall when
+the holder is provably clean, cutting the cost of read-heavy contention on
+subtrees that are mostly idle. Not implemented; a performance follow-up, not a
+correctness gap — the current behavior is conservative-safe (§9).
 
 ---
 
