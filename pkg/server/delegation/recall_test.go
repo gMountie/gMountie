@@ -25,7 +25,7 @@ func (s *RecallSuite) TestRecallSucceedsOnAck() {
 
 	s.Eventually(func() bool { return got.Load() != nil }, time.Second, time.Millisecond)
 	msg := got.Load()
-	reg.Ack("sessA", msg.RecallId)
+	reg.Ack("sessA", msg.RecallId, true, proto.FsError_FS_OK)
 	s.Require().NoError(<-done)
 	s.Equal("proj/src", msg.Root)
 }
@@ -42,6 +42,26 @@ func (s *RecallSuite) TestRecallNoStreamIsError() {
 	s.Error(reg.Recall("ghost", "x")) // never registered -> treat as released
 }
 
+func (s *RecallSuite) TestAbortedAckFailsRecallImmediately() {
+	reg := NewRecallRegistry(30 * time.Second) // long timeout: the test must NOT wait it out
+	sent := make(chan *proto.RecallMsg, 1)
+	release := reg.Register("sess-a", func(m *proto.RecallMsg) error { sent <- m; return nil })
+	defer release()
+
+	done := make(chan error, 1)
+	go func() { done <- reg.Recall("sess-a", "proj") }()
+	msg := <-sent
+	reg.Ack("sess-a", msg.RecallId, false, proto.FsError_FS_EIO)
+
+	select {
+	case err := <-done:
+		s.Require().Error(err, "aborted ack must fail the recall")
+		s.Contains(err.Error(), "abort")
+	case <-time.After(2 * time.Second):
+		s.Fail("Recall waited for the timeout despite an explicit abort ack")
+	}
+}
+
 func (s *RecallSuite) TestConcurrentRecallsDistinctIDs() {
 	reg := NewRecallRegistry(time.Second)
 	var mu sync.Mutex
@@ -50,7 +70,7 @@ func (s *RecallSuite) TestConcurrentRecallsDistinctIDs() {
 		mu.Lock()
 		ids[m.RecallId] = true
 		mu.Unlock()
-		go reg.Ack("sessA", m.RecallId)
+		go reg.Ack("sessA", m.RecallId, true, proto.FsError_FS_OK)
 		return nil
 	})
 	defer release()

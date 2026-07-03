@@ -148,7 +148,7 @@ func (s *RecallStreamSuite) TestRecall_RegistersAndDeregisters() {
 				stream.mu.Lock()
 				msg := stream.sent[n-1]
 				stream.mu.Unlock()
-				ackQ <- &proto.RecallAck{RecallId: msg.RecallId}
+				ackQ <- &proto.RecallAck{RecallId: msg.RecallId, Done: true}
 				return
 			}
 			time.Sleep(5 * time.Millisecond)
@@ -193,8 +193,9 @@ func (s *RecallStreamSuite) TestRecall_RegistersAndDeregisters() {
 //
 // Flow: controller starts and registers → registry.Recall() sends RecallMsg
 // (id=1) → stubRecallStream.Send receives it and notes the id → test feeds
-// RecallAck{RecallId: 1} into the stub recv channel → controller forwards it
-// to registry.Ack(sessionID, 1) → registry.Recall() unblocks with nil error.
+// RecallAck{RecallId: 1, Done: true} into the stub recv channel → controller
+// forwards it to registry.Ack(sessionID, 1, true, FS_OK) → registry.Recall()
+// unblocks with nil error.
 func (s *RecallStreamSuite) TestRecall_AckForwardsToRegistry() {
 	srv, reg, sessionMgr := s.newRecallServer()
 
@@ -223,7 +224,7 @@ func (s *RecallStreamSuite) TestRecall_AckForwardsToRegistry() {
 	// Allow reg.Recall to send the RecallMsg; then inject the matching ack.
 	// The registry assigns id=1 for the first Recall call.
 	time.Sleep(30 * time.Millisecond)
-	ackQ <- &proto.RecallAck{RecallId: 1}
+	ackQ <- &proto.RecallAck{RecallId: 1, Done: true}
 
 	select {
 	case err := <-recallDone:
@@ -288,7 +289,7 @@ func (s *RecallStreamSuite) TestRecall_SessionOwnershipEnforced() {
 				aliceStream.mu.Lock()
 				msg := aliceStream.sent[n-1]
 				aliceStream.mu.Unlock()
-				aliceAckQ <- &proto.RecallAck{RecallId: msg.RecallId}
+				aliceAckQ <- &proto.RecallAck{RecallId: msg.RecallId, Done: true}
 				return
 			}
 			time.Sleep(5 * time.Millisecond)

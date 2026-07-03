@@ -24,6 +24,10 @@ type Recaller interface {
 
 type pending struct {
 	ackCh chan struct{}
+	// err is set (before ackCh closes) when the holder aborted the recall
+	// (done=false): its flush failed, the handoff must fail closed NOW rather
+	// than after the timeout.
+	err error
 }
 
 type streamSlot struct {
@@ -65,14 +69,18 @@ func (r *RecallRegistry) Register(sessionID string, send func(*proto.RecallMsg) 
 	}
 }
 
-// Ack completes the in-flight recall for recallID, if any.
-func (r *RecallRegistry) Ack(sessionID string, recallID uint64) {
+// Ack completes the in-flight recall for recallID. done=false marks the
+// recall aborted by the holder; fserr is the holder-reported cause.
+func (r *RecallRegistry) Ack(sessionID string, recallID uint64, done bool, fserr proto.FsError) {
 	r.mu.Lock()
 	p := r.inflight[recallID]
 	delete(r.inflight, recallID)
 	r.mu.Unlock()
 	if p != nil {
-		close(p.ackCh)
+		if !done {
+			p.err = errors.Errorf("recall: holder aborted the recall (fserr=%s)", fserr)
+		}
+		close(p.ackCh) // err write happens-before the close
 	}
 }
 
@@ -101,7 +109,7 @@ func (r *RecallRegistry) Recall(ownerSession, root string) error {
 
 	select {
 	case <-p.ackCh:
-		return nil
+		return p.err
 	case <-time.After(r.timeout):
 		r.mu.Lock()
 		delete(r.inflight, id)

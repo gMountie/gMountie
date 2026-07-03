@@ -379,10 +379,10 @@ func (m *Manager) OnRecall(ctx context.Context, root string) error {
 			// lost ops; on a TRANSIENT halt (FS_EAGAIN contention) the tail is
 			// retained in the WAL — no loss either way that this path must
 			// handle. Do NOT drop the grant or invalidate — the handoff is
-			// aborted. The recall loop will skip the RecallAck, letting the
-			// server timeout the recall instead of accepting a false clean
-			// handoff; the next recall retries the flush from where the log
-			// now stands.
+			// aborted. The recall loop sends an explicit abort RecallAck
+			// (done=false) so the server fails the handoff immediately instead
+			// of accepting a false clean handoff or burning the recall timeout;
+			// the next recall retries the flush from where the log now stands.
 			log.Log.Error("WAL flush failed before recall handoff; aborting clean ack",
 				zap.String("root", root),
 				zap.Error(err),
