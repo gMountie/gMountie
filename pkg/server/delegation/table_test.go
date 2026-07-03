@@ -149,8 +149,9 @@ func (s *TableSuite) TestContainmentIsVolumeScoped() {
 	s.Equal("proj", g2)
 	s.Empty(excluded, "cross-volume roots never carve each other")
 
-	// A subtree of vol1's grant, requested on vol2: NOT contained (different
-	// volume), so it is granted too.
+	// A subtree requested on vol2: containment against vol1's grant never
+	// applies (different volume), but sessB already holds vol2's "proj" —
+	// same-volume containment still denies it.
 	g3, _, ok3 := tbl.grant("sessC", "proj/src", "carol", "vol2", "", 1)
 	s.Require().False(ok3, "vol2 proj/src IS inside sessB's vol2 proj — denied on the SAME volume")
 	s.Empty(g3)

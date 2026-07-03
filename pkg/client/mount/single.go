@@ -67,7 +67,12 @@ type SingleVolumeMounterImpl struct {
 	backends   *xsync.MapOf[string, backend.FileSystemBackend]
 }
 
-// NewSingleVolumeMounter creates a new SingleVolumeMounterImpl. fuseCfg
+// NewSingleVolumeMounter creates a new SingleVolumeMounterImpl. Use ONE
+// client per mounter: delegation recalls are delivered per session with the
+// volume implicit (RecallMsg carries only the root), so sharing a client —
+// and therefore a session and its Recall stream — across mounters of
+// different volumes would route one volume's recalls to another mount's
+// recall loop. fuseCfg
 // must be non-nil; the client config layer guarantees this by treating
 // FUSE as a required block with defaults. cacheCfg is consumed by value
 // and only applied when cacheCfg.Enabled is true. walCfg gates the
