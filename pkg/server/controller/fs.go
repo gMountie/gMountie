@@ -573,7 +573,9 @@ func (r *RpcServerImpl) GetAttrIfChanged(ctx context.Context, request *proto.Get
 	// classIdempotentRead, so the client re-issues the whole call — including
 	// arbitration — within rpc.retry_window. That is the same "back off and
 	// retry" contract FS_EAGAIN carries elsewhere, delivered the only way
-	// this RPC's reply allows.
+	// this RPC's reply allows. A persistently failing recall spins the client's
+	// rpc.retry_window before degrading to a direct GetAttr (which surfaces
+	// FS_EAGAIN in-band) — bounded, expected latency difference.
 	if st := arbitrateContention(r.arbiter, sessionIDFromContext(ctx), request.Path); st != proto.FsError_FS_OK {
 		return nil, status.Error(codes.Unavailable, "delegation recall failed; retry")
 	}

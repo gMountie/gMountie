@@ -20,6 +20,8 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // fakeRecallRecorder is a delegation.Recaller that records calls with
@@ -246,6 +248,36 @@ func (s *DelegationHandlerSuite) TestGetAttrRecallFailureReturnsEAGAIN() {
 	s.Require().NoError(err, "recall failure surfaces in-band, not as a transport error")
 	s.Require().NotNil(reply)
 	s.Equal(proto.FsError_FS_EAGAIN, reply.Status)
+	mockFs.AssertNotCalled(s.T(), "GetAttr", mock.Anything, mock.Anything)
+}
+
+// TestGetAttrIfChangedRecallFailureReturnsUnavailable: when a foreign
+// delegation's recall fails, GetAttrIfChanged must surface codes.Unavailable
+// (not an in-band FS_EAGAIN, since the proto reply has no Status field) so
+// the client retries the entire RPC including arbitration within rpc.retry_window.
+func (s *DelegationHandlerSuite) TestGetAttrIfChangedRecallFailureReturnsUnavailable() {
+	s.grantTo(s.sidA, "proj")
+	s.recaller.err = errors.New("recall timed out")
+
+	mockFs := new(pathfsmock.MockFileSystem)
+	s.fsService.On("BindIdentity", mock.Anything, s.vol, mock.Anything).
+		Return(mockFs, service.Identity{}, nil)
+	// GetAttr must never reach the filesystem: arbitration short-circuits first.
+
+	_, err := s.srv.GetAttrIfChanged(s.ctxForSession(s.sidB), &proto.GetAttrIfChangedRequest{
+		Volume:       s.vol,
+		Caller:       s.caller,
+		Path:         "proj/f.txt",
+		KnownVersion: 0,
+	})
+	s.Require().Error(err, "recall failure surfaces as a transport error")
+	s.Require().NotNil(err)
+
+	// Verify it's a codes.Unavailable gRPC status error.
+	st, ok := status.FromError(err)
+	s.Require().True(ok, "error should be a gRPC status error")
+	s.Equal(codes.Unavailable, st.Code(), "recall failure returns codes.Unavailable")
+
 	mockFs.AssertNotCalled(s.T(), "GetAttr", mock.Anything, mock.Anything)
 }
 
