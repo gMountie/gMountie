@@ -26,10 +26,14 @@ type entry struct {
 	gen       uint64 // delegation generation (monotone per {principal,volume,epoch}; 0 = untagged)
 }
 
-// delegationTable is the containment index. Not safe for concurrent use; the
-// Arbiter serializes access under its own mutex.
+// delegationTable is the containment index, scoped per volume: containment
+// (ownership lookup, grant deny/carve/absorb) only ever considers entries on
+// the SAME volume — the same root on two volumes is two independent
+// delegations, and traffic on one volume can never recall a grant on another.
+// Not safe for concurrent use; the Arbiter serializes access under its own
+// mutex.
 type delegationTable struct {
-	entries []entry // invariant: same-owner roots are pairwise non-overlapping.
+	entries []entry // invariant: same-owner same-volume roots are pairwise non-overlapping.
 	// Carving may keep a foreign narrower root alongside a wider root that
 	// contains it; such a narrower root is always inserted BEFORE its covering
 	// root (new roots append last), so ownerOf's first-match returns the most
@@ -41,28 +45,33 @@ func newDelegationTable() *delegationTable { return &delegationTable{} }
 // size returns the number of active delegation entries.
 func (t *delegationTable) size() int { return len(t.entries) }
 
-// ownerOf returns the entry whose root contains path, if any.
-func (t *delegationTable) ownerOf(path string) (owner, root string, ok bool) {
+// ownerOf returns the entry whose root contains path ON volume, if any.
+func (t *delegationTable) ownerOf(volume, path string) (owner, root string, ok bool) {
 	for _, e := range t.entries {
-		if contains(e.root, path) {
+		if e.volume == volume && contains(e.root, path) {
 			return e.owner, e.root, true
 		}
 	}
 	return "", "", false
 }
 
-// grant tries to grant owner a delegation rooted at root. Rules:
+// grant tries to grant owner a delegation rooted at root on volume. Rules
+// (applied only against entries on the SAME volume; other volumes' entries
+// are invisible to containment):
 //   - if root is contained by a *foreign* root -> denied (ok=false).
 //   - if root contains foreign roots -> granted, with those foreign roots
 //     returned as excluded (carve around them).
 //   - roots owned by the SAME owner under root are absorbed (re-rooted upward).
 //
-// principal and volume are stored in the entry for fence-key construction on
+// principal and epoch are stored in the entry for fence-key construction on
 // handoff (Task 6); they are NOT used for table containment logic.
 func (t *delegationTable) grant(owner, root, principal, volume, epoch string, gen uint64) (granted string, excluded []string, ok bool) {
 	var kept []entry
 	for _, e := range t.entries {
 		switch {
+		case e.volume != volume:
+			// Different volume: unrelated namespace, never interacts.
+			kept = append(kept, e)
 		case e.owner == owner && contains(root, e.root):
 			// absorbed into the wider same-owner grant; drop it.
 			continue
@@ -83,22 +92,22 @@ func (t *delegationTable) grant(owner, root, principal, volume, epoch string, ge
 	return root, excluded, true
 }
 
-// entryForRoot returns the entry with exactly this root, if any.
+// entryForRoot returns the entry with exactly this (volume, root), if any.
 // Used by the Arbiter to capture {principal, volume, gen} before handoff.
-func (t *delegationTable) entryForRoot(root string) (entry, bool) {
+func (t *delegationTable) entryForRoot(volume, root string) (entry, bool) {
 	for _, e := range t.entries {
-		if e.root == root {
+		if e.volume == volume && e.root == root {
 			return e, true
 		}
 	}
 	return entry{}, false
 }
 
-// release drops the entry with exactly this root (any owner).
-func (t *delegationTable) release(root string) {
+// release drops the entry with exactly this (volume, root) (any owner).
+func (t *delegationTable) release(volume, root string) {
 	kept := t.entries[:0]
 	for _, e := range t.entries {
-		if e.root != root {
+		if e.volume != volume || e.root != root {
 			kept = append(kept, e)
 		}
 	}

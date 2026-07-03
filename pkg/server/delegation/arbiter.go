@@ -3,6 +3,7 @@ package delegation
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -42,16 +43,31 @@ type regionState struct {
 	done chan struct{} // closed when the in-flight recall finishes
 }
 
+// regionKey identifies a delegated root being recalled within its volume —
+// the arbitration domain is (volume, root), never root alone.
+type regionKey struct {
+	volume string
+	root   string
+}
+
 type Arbiter struct {
 	recaller Recaller
 	now      func() time.Time
 	metrics  Metrics // nil = no-op
 	store    watermark.Store
 
-	mu       sync.Mutex
-	table    *delegationTable
-	cooldown *cooldownTable
-	regions  map[string]*regionState // keyed by delegated root being recalled
+	mu         sync.Mutex
+	table      *delegationTable
+	cooldown   *cooldownTable
+	regions    map[regionKey]*regionState // keyed by (volume, delegated root) being recalled
+	grantCount atomic.Int64               // maintained at every table mutation (under mu)
+
+	// testHookAfterGrantInsert, when non-nil, runs (under a.mu) between the
+	// table insert in Request and the counter re-derivation that follows. It
+	// exists solely so the race test can deterministically park Request inside
+	// that window and prove the lock-free fast path cannot observe a stale
+	// zero against an inserted grant. Always nil in production.
+	testHookAfterGrantInsert func()
 }
 
 // NewArbiter creates a new Arbiter. store is required and must not be nil;
@@ -64,7 +80,7 @@ func NewArbiter(r Recaller, cfg Config, now func() time.Time, store watermark.St
 		store:    store,
 		table:    newDelegationTable(),
 		cooldown: newCooldownTable(cfg.Cooldown),
-		regions:  make(map[string]*regionState),
+		regions:  make(map[regionKey]*regionState),
 	}
 }
 
@@ -106,7 +122,7 @@ func (a *Arbiter) Request(owner, root, principal, volume, epoch string) *proto.D
 	defer a.mu.Unlock()
 	now := a.now()
 	a.cooldown.sweep(now)
-	if a.cooldown.cooling(root, now) {
+	if a.cooldown.cooling(volume, root, now) {
 		return &proto.DelegationGrant{RetryAfterMs: uint64(a.cfgRetryMs())}
 	}
 	// Allocate a durable per-(identity,volume) gen BEFORE inserting into the
@@ -119,12 +135,27 @@ func (a *Arbiter) Request(owner, root, principal, volume, epoch string) *proto.D
 	if genErr != nil {
 		return &proto.DelegationGrant{RetryAfterMs: uint64(a.cfgRetryMs())}
 	}
+	// Pessimistic floor: publish "a grant may exist" BEFORE the table insert.
+	// The fast-path reader is lock-free, so store-after-insert leaves a window
+	// where the table holds a grant the counter doesn't reflect — a contender
+	// reading the stale zero would skip arbitration (and the ErrNoStream
+	// gen-fence) against a live delegation. Over-approximation in the other
+	// direction is always safe: a non-zero count merely sends the reader to
+	// the slow path, which serializes on a.mu and sees the truth.
+	a.grantCount.Add(1)
 	granted, excluded, ok := a.table.grant(owner, root, principal, volume, epoch, gen)
+	if ok && a.testHookAfterGrantInsert != nil {
+		a.testHookAfterGrantInsert()
+	}
 	if !ok {
-		// Denial: the gen slot was consumed but no entry was created — gen gaps
-		// are harmless; do NOT decrement (no in-memory counter to roll back).
+		// Denial: the gen slot was consumed but no entry was created. Re-derive
+		// the true count so the +1 floor above doesn't leak — an un-corrected
+		// floor would permanently overcount and (harmlessly, but needlessly)
+		// force every future fast-path read to the slow path.
+		a.grantCount.Store(int64(a.table.size()))
 		return &proto.DelegationGrant{RetryAfterMs: uint64(a.cfgRetryMs())}
 	}
+	a.grantCount.Store(int64(a.table.size()))
 	a.mGrantsActive()
 	return &proto.DelegationGrant{GrantedRoot: granted, ExcludedPaths: excluded, Gen: gen}
 }
@@ -132,18 +163,27 @@ func (a *Arbiter) Request(owner, root, principal, volume, epoch string) *proto.D
 func (a *Arbiter) cfgRetryMs() int64 { return a.cooldown.cfg.Base.Milliseconds() }
 
 // OnMutation enforces recall-on-contention. If a FOREIGN delegation covers
-// path, recall it (releasing the lock across the RPC), trip its cooldown, and
-// drop it. Self-owned coverage is a no-op. Returns the recall error so the
-// caller can fail the contender's op closed (map to FS_EAGAIN).
-func (a *Arbiter) OnMutation(contender, path string) error {
+// path on volume, recall it (releasing the lock across the RPC), trip its
+// cooldown, and drop it. Self-owned coverage is a no-op, as is any coverage
+// on a DIFFERENT volume — the arbitration domain is (volume, path). Returns
+// the recall error so the caller can fail the contender's op closed (map to
+// FS_EAGAIN).
+func (a *Arbiter) OnMutation(contender, volume, path string) error {
+	// Hot-path exit: with zero grants anywhere there is nothing to arbitrate.
+	// Read handlers call this on every RPC; do not touch a.mu for the common
+	// no-delegations case (WAL-off clients, idle volumes).
+	if a.grantCount.Load() == 0 {
+		return nil
+	}
 	a.mu.Lock()
-	owner, root, ok := a.table.ownerOf(path)
+	owner, root, ok := a.table.ownerOf(volume, path)
 	if !ok || owner == contender {
 		a.mu.Unlock()
 		return nil // free, or self-access -> never recall
 	}
+	rk := regionKey{volume: volume, root: root}
 	// Coalesce: if this root is already being recalled, wait for that recall.
-	if rs := a.regions[root]; rs != nil {
+	if rs := a.regions[rk]; rs != nil {
 		done := rs.done
 		a.mu.Unlock()
 		<-done
@@ -151,7 +191,7 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 		// Return an error so the contender maps it to FS_EAGAIN, consistent with
 		// what the leader returns on failure.
 		a.mu.Lock()
-		stillOwner, _, stillOwned := a.table.ownerOf(path)
+		stillOwner, _, stillOwned := a.table.ownerOf(volume, path)
 		a.mu.Unlock()
 		if stillOwned && stillOwner != contender {
 			return errCoalescedRecallFailed
@@ -161,10 +201,10 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 	// Capture the entry's fence key BEFORE releasing the lock. A concurrent
 	// ReleaseSession (session reap) could drop the entry during the recall RTT;
 	// we must fence the revoked gen even if the entry is gone by then.
-	revokedEntry, hasEntry := a.table.entryForRoot(root)
+	revokedEntry, hasEntry := a.table.entryForRoot(volume, root)
 
 	rs := &regionState{done: make(chan struct{})}
-	a.regions[root] = rs
+	a.regions[rk] = rs
 	a.mu.Unlock()
 
 	// ---- recall RTT happens with NO lock held (barrier = this handoff) ----
@@ -189,6 +229,7 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 	if errors.Is(err, ErrNoStream) {
 		log.Log.Warn("delegation: holder unreachable on contention; fencing its gen and handing off (its un-flushed WAL is discarded on replay)",
 			zap.String("owner", owner),
+			zap.String("volume", volume),
 			zap.String("root", root),
 			zap.String("contender", contender),
 		)
@@ -209,13 +250,19 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 
 	a.mu.Lock()
 	if handoff {
-		a.table.release(root)
-		a.cooldown.trip(root, a.now())
+		a.table.release(volume, root)
+		// Store-after-release is safe here (unlike Request's insert): between
+		// the release and this store the counter is transiently HIGH (an
+		// extra count for an already-freed root), never low — a fast-path
+		// reader can only be sent to the slow path needlessly, never skip
+		// arbitration against a live grant.
+		a.grantCount.Store(int64(a.table.size()))
+		a.cooldown.trip(volume, root, a.now())
 		a.mRecall()
 		a.mCooldownTrip()
 		a.mGrantsActive()
 	}
-	delete(a.regions, root)
+	delete(a.regions, rk)
 	close(rs.done)
 	a.mu.Unlock()
 	return err
@@ -234,6 +281,11 @@ func (a *Arbiter) OnMutation(contender, path string) error {
 func (a *Arbiter) ReleaseSession(sessionID string) {
 	a.mu.Lock()
 	drained := a.table.drainOwner(sessionID)
+	// Store-after-drain is safe here for the same reason as OnMutation's
+	// post-release store: the counter is transiently HIGH between the drain
+	// and this store, never low, so a concurrent fast-path read can only be
+	// over-cautious (slow path), never skip arbitration against a live grant.
+	a.grantCount.Store(int64(a.table.size()))
 	a.mGrantsActive()
 	a.mu.Unlock()
 

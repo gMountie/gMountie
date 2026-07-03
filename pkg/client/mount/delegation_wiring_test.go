@@ -2,6 +2,7 @@ package mount
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"path/filepath"
 	"sync"
@@ -180,6 +181,139 @@ func (s *DelegationWiringSuite) TestRecallGoroutineDeliversOnRecall() {
 	case <-time.After(2 * time.Second):
 		s.Fail("InvalidateSubtree was not called within 2s")
 	}
+}
+
+// TestRecallGoroutineSendsAbortAckOnFlushFailure verifies that when the
+// Manager's OnRecall fails (flush error), runRecallLoop sends an explicit
+// abort ack (done=false, fserr set) instead of silently skipping the ack —
+// so the server fails the handoff immediately instead of burning the recall
+// timeout while the contender blocks.
+func (s *DelegationWiringSuite) TestRecallGoroutineSendsAbortAckOnFlushFailure() {
+	fsClient := mockProto.NewMockRpcFsClient(s.T())
+
+	ackSent := make(chan *proto.RecallAck, 1)
+	recallStream := mockProto.NewMockRpcFs_RecallClient(s.T())
+	// First Recv returns a recall; second returns EOF to end the inner loop.
+	recallStream.EXPECT().Recv().
+		Return(&proto.RecallMsg{Root: "proj/", RecallId: 7}, nil).
+		Once()
+	recallStream.EXPECT().Recv().
+		Return(nil, io.EOF).
+		Maybe()
+	recallStream.EXPECT().Send(mock.MatchedBy(func(ack *proto.RecallAck) bool {
+		select {
+		case ackSent <- ack:
+		default:
+		}
+		return true
+	})).Return(nil).Maybe()
+
+	fsClient.EXPECT().
+		Recall(mock.Anything, mock.Anything).
+		RunAndReturn(func(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[proto.RecallAck, proto.RecallMsg], error) {
+			return recallStream, nil
+		}).Maybe()
+	s.client.EXPECT().Fs().Return(fsClient).Maybe()
+
+	inv := &lazyInvalidator{}
+	mgr := delegation.NewManager(inv)
+	// A flusher that always fails -> OnRecall returns an error -> abort ack.
+	mgr.SetRecallFlusher(delegationFlusherFunc(func(context.Context, string) error {
+		return errFlushBoom
+	}))
+	mgr.Apply(&proto.DelegationGrant{GrantedRoot: "proj"})
+
+	mounter := &SingleVolumeMounterImpl{client: s.client}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	mgr.SetCancel(cancel)
+	defer mgr.Close()
+
+	go mounter.runRecallLoop(ctx, mgr, "test-vol")
+
+	select {
+	case ack := <-ackSent:
+		s.Equal(uint64(7), ack.RecallId, "abort ack must echo the RecallId")
+		s.False(ack.Done, "abort ack must set Done=false")
+		s.Equal(proto.FsError_FS_EIO, ack.Fserr, "abort ack must carry a diagnostic fserr")
+	case <-time.After(2 * time.Second):
+		s.Fail("abort RecallAck was not sent within 2s")
+	}
+
+	// The grant must be retained: the abort ack signals the flush failed, so
+	// OnRecall must NOT have dropped the delegation.
+	s.True(mgr.IsDelegated("proj/file"), "grant must be retained after an aborted recall")
+}
+
+// TestRecallGoroutineAbortAckMapsTransientHaltToEAGAIN verifies fserr
+// fidelity on the abort ack: a TRANSIENT flush halt (wal.ErrTransientHalt —
+// the tail is retained, nothing lost) must map to FS_EAGAIN so the server/
+// contender treat the aborted handoff as retryable, not FS_EIO.
+func (s *DelegationWiringSuite) TestRecallGoroutineAbortAckMapsTransientHaltToEAGAIN() {
+	fsClient := mockProto.NewMockRpcFsClient(s.T())
+
+	ackSent := make(chan *proto.RecallAck, 1)
+	recallStream := mockProto.NewMockRpcFs_RecallClient(s.T())
+	recallStream.EXPECT().Recv().
+		Return(&proto.RecallMsg{Root: "proj/", RecallId: 9}, nil).
+		Once()
+	recallStream.EXPECT().Recv().
+		Return(nil, io.EOF).
+		Maybe()
+	recallStream.EXPECT().Send(mock.MatchedBy(func(ack *proto.RecallAck) bool {
+		select {
+		case ackSent <- ack:
+		default:
+		}
+		return true
+	})).Return(nil).Maybe()
+
+	fsClient.EXPECT().
+		Recall(mock.Anything, mock.Anything).
+		RunAndReturn(func(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[proto.RecallAck, proto.RecallMsg], error) {
+			return recallStream, nil
+		}).Maybe()
+	s.client.EXPECT().Fs().Return(fsClient).Maybe()
+
+	inv := &lazyInvalidator{}
+	mgr := delegation.NewManager(inv)
+	// A flusher that fails with a wrapped transient halt, exactly as
+	// wal.Coordinator.Flush reports EAGAIN contention.
+	mgr.SetRecallFlusher(delegationFlusherFunc(func(context.Context, string) error {
+		return fmt.Errorf("flush for recall: %w", wal.ErrTransientHalt)
+	}))
+	mgr.Apply(&proto.DelegationGrant{GrantedRoot: "proj"})
+
+	mounter := &SingleVolumeMounterImpl{client: s.client}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	mgr.SetCancel(cancel)
+	defer mgr.Close()
+
+	go mounter.runRecallLoop(ctx, mgr, "test-vol")
+
+	select {
+	case ack := <-ackSent:
+		s.Equal(uint64(9), ack.RecallId, "abort ack must echo the RecallId")
+		s.False(ack.Done, "abort ack must set Done=false")
+		s.Equal(proto.FsError_FS_EAGAIN, ack.Fserr,
+			"a transient flush halt must surface as FS_EAGAIN (retryable), not FS_EIO")
+	case <-time.After(2 * time.Second):
+		s.Fail("abort RecallAck was not sent within 2s")
+	}
+}
+
+var errFlushBoom = errFlushErr("flush boom")
+
+type errFlushErr string
+
+func (e errFlushErr) Error() string { return string(e) }
+
+// delegationFlusherFunc adapts a func to delegation.RecallFlusher for tests.
+type delegationFlusherFunc func(ctx context.Context, root string) error
+
+func (f delegationFlusherFunc) FlushForRecall(ctx context.Context, root string) error {
+	return f(ctx, root)
 }
 
 // fakeInvalidator is a delegation.CacheInvalidator test double backed by a func.

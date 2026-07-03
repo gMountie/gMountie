@@ -10,10 +10,16 @@ package wal
 //
 //   - Success (FailedSeq == 0): Truncate log [..ack.Watermark], clear overlay,
 //     advance local watermark to ack.Watermark.
-//   - Ordered halt (FailedSeq > 0): Truncate the committed prefix [..ack.Watermark],
-//     clear overlay for those seqs, call onLoss for ops at/after FailedSeq, then
-//     also truncate and clear the lost tail so the poisoned ops are not re-sent.
-//     Returns a non-nil error wrapping the loss.
+//   - Transient halt (FailedSeq > 0, Fserr == FS_EAGAIN): the server refused
+//     the tail on delegation contention. Truncate only the committed prefix
+//     [..ack.Watermark]; ops ≥ FailedSeq stay in the log and overlay for the
+//     next flush trigger to retry. NOT a data-loss event — onLoss is not
+//     called. Returns a non-nil error naming the transient halt.
+//   - Permanent halt (FailedSeq > 0, any other Fserr): Truncate the committed
+//     prefix [..ack.Watermark], clear overlay for those seqs, call onLoss for
+//     ops at/after FailedSeq, then also truncate and clear the lost tail so
+//     the poisoned ops are not re-sent. Returns a non-nil error wrapping the
+//     loss.
 //
 // # Replay
 //
@@ -30,6 +36,7 @@ package wal
 
 import (
 	"context"
+	stderrors "errors"
 	"io"
 	"sync"
 	"time"
@@ -42,6 +49,13 @@ import (
 
 	"go.uber.org/zap"
 )
+
+// ErrTransientHalt marks a flush halted by transient delegation contention
+// (the server answered FS_EAGAIN mid-Apply): the un-applied tail is retained
+// in the WAL for the next flush trigger — nothing was lost. Callers detect it
+// with errors.Is, e.g. the recall loop maps an aborted handoff's fserr to
+// FS_EAGAIN (retryable) instead of FS_EIO.
+var ErrTransientHalt = stderrors.New("wal: transient apply halt")
 
 // flushConfig holds the options that enable flush behaviour. All fields are
 // optional; a zero-value flushConfig means flushing is disabled (no-op).
@@ -271,6 +285,19 @@ func (c *Coordinator) processAck(reason string, ack *proto.ApplyAck, sent []Op, 
 	// overlay-empty + cache-stale window).
 	if c.onFlushed != nil {
 		c.onFlushed(sent)
+	}
+
+	if failedSeq != 0 && ack.GetFserr() == proto.FsError_FS_EAGAIN {
+		// Transient halt: the server refused the tail (a recall was in flight
+		// or a foreign delegation contended). Commit the applied prefix only;
+		// ops ≥ failedSeq stay durably in the log and the overlay for the next
+		// flush attempt (interval / fsync / recall). NOT a data-loss event —
+		// no onLoss, no tail truncation. Implements design §7.3's
+		// "transient (EAGAIN) → retry from committed_watermark + 1".
+		c.commitFlushed(committed)
+		c.watermark.Store(committed)
+		c.capCond.Broadcast()
+		return errors.Wrapf(ErrTransientHalt, "wal: Apply transient halt at seq %d (EAGAIN); tail retained for retry", failedSeq)
 	}
 
 	if failedSeq == 0 {

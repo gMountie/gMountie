@@ -50,11 +50,14 @@ message RecallMsg {
 }
 
 // RecallAck is the client's confirmation that the recall is complete (cache
-// invalidated, delegation dropped). done is always true in Phase 1 (no partial
-// flush); it exists for Phase 2 progress reporting.
+// invalidated, delegation dropped, Phase-2 WAL flushed). done=false means the
+// holder ABORTED the recall — its flush failed — and the server must fail the
+// handoff immediately (fail-closed) instead of waiting out the recall timeout.
+// fserr carries the failure cause for diagnostics when done=false.
 message RecallAck {
-  uint64 recall_id = 1;
-  bool   done      = 2;
+  uint64  recall_id = 1;
+  bool    done      = 2;
+  FsError fserr     = 3;
 }
 
 // FileTime is an optional absolute timestamp. Field types match Attr's

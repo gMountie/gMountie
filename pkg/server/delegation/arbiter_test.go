@@ -50,6 +50,13 @@ type errInfo string
 
 func (e errInfo) Error() string { return string(e) }
 
+// recallerFunc is a Recaller adapter for inline callback functions.
+type recallerFunc func(owner, root string) error
+
+func (f recallerFunc) Recall(owner, root string) error {
+	return f(owner, root)
+}
+
 // fakeStore is a minimal watermark.Store for arbiter tests. It records
 // RevokeGen calls so tests can assert handoff ordering. NextGen is per-key
 // so that per-(identity,volume) gen isolation is faithfully represented.
@@ -124,12 +131,12 @@ func (s *ArbiterSuite) TestGrantThenForeignMutationRecalls() {
 	s.Equal("proj", g.GrantedRoot)
 
 	// B mutates inside A's subtree -> A recalled, A's grant dropped.
-	s.Require().NoError(a.OnMutation("sessB", "proj/file"))
+	s.Require().NoError(a.OnMutation("sessB", "vol", "proj/file"))
 	s.Equal([]string{"sessA:proj"}, fr.calls)
 
 	// A's delegation is gone now; B mutating again must NOT recall (no owner).
 	fr.calls = nil
-	s.Require().NoError(a.OnMutation("sessB", "proj/file"))
+	s.Require().NoError(a.OnMutation("sessB", "vol", "proj/file"))
 	s.Empty(fr.calls)
 }
 
@@ -148,7 +155,7 @@ func (s *ArbiterSuite) TestNoStreamRecallFencesAndHandsOff() {
 	s.Require().NotZero(g.Gen)
 
 	// Contender B mutates A's subtree; A is unreachable (no recall stream).
-	s.Require().NoError(a.OnMutation("sessB", "proj/file"),
+	s.Require().NoError(a.OnMutation("sessB", "vol", "proj/file"),
 		"contender must proceed when the holder is unreachable")
 
 	// Corruption prevention: A's gen MUST be fenced, under A's epoch fence key.
@@ -159,7 +166,7 @@ func (s *ArbiterSuite) TestNoStreamRecallFencesAndHandsOff() {
 		"revoke must use the holder's epoch fence key")
 
 	// The root is now free for the contender.
-	_, _, owned := a.table.ownerOf("proj/file")
+	_, _, owned := a.table.ownerOf("vol", "proj/file")
 	s.False(owned, "root must be free after handoff")
 }
 
@@ -175,10 +182,10 @@ func (s *ArbiterSuite) TestNonNoStreamRecallErrorStaysFailClosed() {
 	g := a.Request("sessA", "proj", "alice", "vol", "ep-A")
 	s.Require().NotZero(g.Gen)
 
-	s.Require().Error(a.OnMutation("sessB", "proj/file"),
+	s.Require().Error(a.OnMutation("sessB", "vol", "proj/file"),
 		"a generic recall failure must fail closed")
 	s.Empty(st.revokedGensCopy(), "no revoke on a non-ErrNoStream recall failure")
-	owner, _, owned := a.table.ownerOf("proj/file")
+	owner, _, owned := a.table.ownerOf("vol", "proj/file")
 	s.True(owned, "entry must remain after a fail-closed recall")
 	s.Equal("sessA", owner)
 }
@@ -194,12 +201,12 @@ func (s *ArbiterSuite) TestNoStreamHandoffCoalescedContendersProceed() {
 	a.Request("sessA", "proj", "alice", "vol", "ep-A")
 
 	leaderErr := make(chan error, 1)
-	go func() { leaderErr <- a.OnMutation("sessB", "proj/file") }()
+	go func() { leaderErr <- a.OnMutation("sessB", "vol", "proj/file") }()
 	// Wait until the leader is in-flight inside Recall (region registered).
 	s.Require().Eventually(func() bool { return fr.callCount() == 1 }, time.Second, 2*time.Millisecond)
 
 	coalescedErr := make(chan error, 1)
-	go func() { coalescedErr <- a.OnMutation("sessC", "proj/other") }()
+	go func() { coalescedErr <- a.OnMutation("sessC", "vol", "proj/other") }()
 
 	close(block) // let the no-stream recall complete → fence + handoff
 	s.Require().NoError(<-leaderErr, "leader must proceed on no-stream handoff")
@@ -218,18 +225,37 @@ func (s *ArbiterSuite) TestRequestEpochKeysFence() {
 	a.Request("sessA", "proj", "alice", "vol", "ep-A")
 
 	// Foreign contender forces a handoff -> RevokeGen with the entry's epoch.
-	s.Require().NoError(a.OnMutation("sessB", "proj/file"))
+	s.Require().NoError(a.OnMutation("sessB", "vol", "proj/file"))
 	keys := st.revokedKeysCopy()
 	s.Require().Len(keys, 1)
 	s.Equal(watermark.Key{Identity: "alice", Volume: "vol", Epoch: "ep-A"}, keys[0],
 		"revoke fence key must carry the requesting client's wal-epoch")
 }
 
+// TestCrossVolumeMutationNeverRecalls: the arbitration domain is (volume,
+// path). A delegation on vol1 "proj" must be invisible to traffic on vol2
+// "proj/..." — no recall, no error — while same-volume contention still
+// recalls.
+func (s *ArbiterSuite) TestCrossVolumeMutationNeverRecalls() {
+	fr := &fakeRecaller{}
+	a := s.newArbiter(fr)
+	g := a.Request("sessA", "proj", "alice", "vol1", "")
+	s.Require().Equal("proj", g.GrantedRoot)
+
+	// Same path shape, different volume: unrelated namespace.
+	s.Require().NoError(a.OnMutation("sessB", "vol2", "proj/file"))
+	s.Empty(fr.calls, "a vol1 delegation must never be recalled by vol2 traffic")
+
+	// Same volume: still recalls.
+	s.Require().NoError(a.OnMutation("sessB", "vol1", "proj/file"))
+	s.Equal([]string{"sessA:proj"}, fr.calls)
+}
+
 func (s *ArbiterSuite) TestSelfMutationNeverRecalls() {
 	fr := &fakeRecaller{}
 	a := s.newArbiter(fr)
 	a.Request("sessA", "proj", "userA", "vol", "")
-	s.Require().NoError(a.OnMutation("sessA", "proj/file")) // own subtree
+	s.Require().NoError(a.OnMutation("sessA", "vol", "proj/file")) // own subtree
 	s.Empty(fr.calls)
 }
 
@@ -237,7 +263,7 @@ func (s *ArbiterSuite) TestCooldownBlocksImmediateRegrant() {
 	fr := &fakeRecaller{}
 	a := s.newArbiter(fr)
 	a.Request("sessA", "proj", "userA", "vol", "")
-	s.Require().NoError(a.OnMutation("sessB", "proj/file")) // recall + trip cooldown on "proj"
+	s.Require().NoError(a.OnMutation("sessB", "vol", "proj/file")) // recall + trip cooldown on "proj"
 	// A re-requests immediately -> denied (cooling).
 	g := a.Request("sessA", "proj", "userA", "vol", "")
 	s.Empty(g.GrantedRoot)
@@ -250,7 +276,7 @@ func (s *ArbiterSuite) TestReleaseSessionFreesSubtree() {
 	a.Request("sessA", "proj", "userA", "vol", "")
 	a.ReleaseSession("sessA")
 	// No owner now -> B's mutation recalls nothing; B can take it.
-	s.Require().NoError(a.OnMutation("sessB", "proj/x"))
+	s.Require().NoError(a.OnMutation("sessB", "vol", "proj/x"))
 	s.Empty(fr.calls)
 	g := a.Request("sessB", "proj", "userB", "vol", "")
 	s.Equal("proj", g.GrantedRoot)
@@ -260,7 +286,7 @@ func (s *ArbiterSuite) TestRecallFailurePropagates() {
 	fr := &fakeRecaller{failOn: map[string]bool{"sessA": true}}
 	a := s.newArbiter(fr)
 	a.Request("sessA", "proj", "userA", "vol", "")
-	s.Error(a.OnMutation("sessB", "proj/file")) // handler maps to FS_EAGAIN
+	s.Error(a.OnMutation("sessB", "vol", "proj/file")) // handler maps to FS_EAGAIN
 }
 
 // fakeMetrics records delegation.Metrics calls for assertions.
@@ -290,7 +316,7 @@ func (s *ArbiterSuite) TestMetricsWiredOnGrantAndRecall() {
 
 	// Foreign mutation from sessB: recall fires, then RecallInc, CooldownTripInc,
 	// and GrantsActiveSet(0) (table is now empty after release).
-	s.Require().NoError(a.OnMutation("sessB", "proj/file"))
+	s.Require().NoError(a.OnMutation("sessB", "vol", "proj/file"))
 	s.Equal(1, fm.recalls, "exactly one recall")
 	s.Equal(1, fm.cooldowns, "exactly one cooldown trip")
 	s.Equal([]int{1, 0}, fm.grantsActive, "GrantsActiveSet must end at 0 after recall")
@@ -311,6 +337,113 @@ func (s *ArbiterSuite) TestMetricsReleaseSession() {
 	s.Equal([]int{0}, fm.grantsActive, "ReleaseSession must emit GrantsActiveSet(0)")
 }
 
+func (s *ArbiterSuite) TestOnMutationFastPathWithoutGrants() {
+	// The recaller fails the test if invoked, but that assertion alone is not
+	// load-bearing: it also passes via the slow path's empty-table ownerOf
+	// (no owner -> no recall, whether or not the fast-path exit fired). The
+	// mutex-poisoning probe below is what actually proves the fast path was
+	// taken: it holds a.mu from another goroutine and asserts OnMutation
+	// still returns (i.e. it never touched the mutex).
+	a := NewArbiter(recallerFunc(func(owner, root string) error {
+		s.Fail("no recall expected")
+		return nil
+	}), Config{}, time.Now, newFakeStore())
+
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		a.mu.Lock()
+		close(locked)
+		<-release
+		a.mu.Unlock()
+	}()
+	<-locked
+
+	done := make(chan error, 1)
+	go func() { done <- a.OnMutation("sess-b", "vol", "some/path") }()
+	select {
+	case err := <-done:
+		s.Require().NoError(err)
+	case <-time.After(200 * time.Millisecond):
+		s.Fail("OnMutation blocked on a.mu despite zero grants")
+	}
+	close(release)
+}
+
+// TestFastPathNeverSkipsArbitrationDuringFirstGrant pins the 0->1 counter
+// publication at the FIRST grant: OnMutation's lock-free fast path must never
+// observe grantCount==0 after Request has inserted a grant into the table. A
+// stale-zero read there skips arbitration entirely — no recall, no ErrNoStream
+// gen-fence — against a live delegation (silent-corruption class, invisible to
+// -race because both sides use clean atomics).
+//
+// The test parks Request deterministically inside the exact window via
+// testHookAfterGrantInsert: the hook runs under a.mu AFTER the table insert
+// and BEFORE the counter re-derivation. The contender starts OnMutation only
+// after the hook has fired (channel edge), so its fast-path Load is
+// guaranteed to happen-after the insert:
+//
+//   - Pre-fix (store-after-insert only): the counter is still 0 inside the
+//     window, so the contender fast-paths to nil without a recall while a
+//     foreign grant is live in the table — the TOCTOU, reproduced
+//     deterministically.
+//   - Post-fix (pessimistic +1 floor BEFORE the insert): the floor
+//     happens-before the insert, which happens-before the hook edge, which
+//     happens-before the contender's Load — it can never read 0, must take
+//     the slow path, block on a.mu (held by the parked Request), and recall
+//     once the window closes. Zero violations structurally, not
+//     statistically.
+//
+// The oracle is sound because the only way OnMutation can RETURN while
+// Request is parked holding a.mu is the lock-free fast path; the slow path
+// cannot complete without the mutex. The 200ms grace exists only to let a
+// pre-fix fast-path skip express itself; it cannot produce a false positive
+// post-fix.
+func (s *ArbiterSuite) TestFastPathNeverSkipsArbitrationDuringFirstGrant() {
+	fr := &fakeRecaller{}
+	st := newFakeStore()
+	a := s.newArbiterWithStore(fr, st)
+
+	inserted := make(chan struct{})
+	proceed := make(chan struct{})
+	a.testHookAfterGrantInsert = func() {
+		close(inserted)
+		<-proceed
+	}
+
+	reqDone := make(chan struct{})
+	go func() {
+		defer close(reqDone)
+		a.Request("sess-a", "proj", "alice", "vol", "")
+	}()
+	// After this receive the FIRST grant is in the table and Request is parked
+	// (holding a.mu) before its counter store — the stale-zero window is open.
+	<-inserted
+
+	mutDone := make(chan error, 1)
+	go func() { mutDone <- a.OnMutation("sess-b", "vol", "proj/file") }()
+
+	var skipErr error
+	skipped := false
+	select {
+	case skipErr = <-mutDone:
+		skipped = true
+	case <-time.After(200 * time.Millisecond):
+		// The contender did not return: it took the slow path and is blocked
+		// on a.mu — the counter floor was visible before the insert.
+	}
+	close(proceed) // close the window; let Request finish and release a.mu
+	<-reqDone
+
+	if skipped {
+		s.Require().Failf("stale-zero fast-path skip",
+			"OnMutation returned (err=%v, recalls=%d) while Request was parked between its table insert and its counter store: the lock-free fast path read a stale zero and skipped arbitration against a live first grant",
+			skipErr, fr.callCount())
+	}
+	s.Require().NoError(<-mutDone)
+	s.Equal(1, fr.callCount(), "contender must recall the live first grant via the slow path")
+}
+
 func (s *ArbiterSuite) TestConcurrentContendersCoalesce() {
 	fr := &fakeRecaller{block: make(chan struct{})}
 	a := s.newArbiter(fr)
@@ -323,7 +456,7 @@ func (s *ArbiterSuite) TestConcurrentContendersCoalesce() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		errs[0] = a.OnMutation("sessB", "proj/x")
+		errs[0] = a.OnMutation("sessB", "vol", "proj/x")
 	}()
 
 	// Wait until the recall is in-flight (exactly one call recorded).
@@ -336,7 +469,7 @@ func (s *ArbiterSuite) TestConcurrentContendersCoalesce() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		errs[1] = a.OnMutation("sessB", "proj/x")
+		errs[1] = a.OnMutation("sessB", "vol", "proj/x")
 	}()
 
 	// Give goroutine #2 a moment to reach the coalesce branch, then unblock recall #1.
@@ -371,7 +504,7 @@ func (s *ArbiterSuite) TestConcurrentContendersCoalesceFailure() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		errs[0] = a.OnMutation("sessB", "proj/x")
+		errs[0] = a.OnMutation("sessB", "vol", "proj/x")
 	}()
 
 	// Wait until the recall is in-flight.
@@ -383,7 +516,7 @@ func (s *ArbiterSuite) TestConcurrentContendersCoalesceFailure() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		errs[1] = a.OnMutation("sessB", "proj/x")
+		errs[1] = a.OnMutation("sessB", "vol", "proj/x")
 	}()
 
 	// Give goroutine #2 a moment to enter the coalesce branch, then let the
@@ -446,7 +579,7 @@ func (s *ArbiterSuite) TestReleaseSessionRevokesHeldGens() {
 	s.True(keySet[watermark.Key{Identity: "alice", Volume: "vol2"}])
 
 	// After reap, B can freely take the delegations (no recall needed).
-	s.Require().NoError(a.OnMutation("sessB", "dir1/x"))
+	s.Require().NoError(a.OnMutation("sessB", "vol1", "dir1/x"))
 	s.Empty(fr.calls, "no recall should fire — sessA no longer owns dir1")
 }
 
@@ -476,7 +609,7 @@ func (s *ArbiterSuite) TestGenDeniedGrantDoesNotAdvanceCounter() {
 
 	// Grant and recall to trip the cooldown on "proj".
 	a.Request("sessA", "proj", "userA", "vol", "")
-	s.Require().NoError(a.OnMutation("sessB", "proj/x")) // recall + trip cooldown
+	s.Require().NoError(a.OnMutation("sessB", "vol", "proj/x")) // recall + trip cooldown
 
 	// Request while cooling — must be denied, gen must not advance (cooldown
 	// check fires before NextGen is called, so GenHi for userA/vol stays at 1).
@@ -510,7 +643,7 @@ func (s *ArbiterSuite) TestHandoffRevokesGenBeforeContenderProceeds() {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = a.OnMutation("sessB", "proj/file")
+		_ = a.OnMutation("sessB", "myvol", "proj/file")
 	}()
 
 	// Wait until the recall is in-flight.
@@ -544,7 +677,7 @@ func (s *ArbiterSuite) TestHandoffRevokesGenWithCorrectFenceKey() {
 	const volume = "data"
 
 	a.Request("sess-alice", "subtree", principal, volume, "")
-	s.Require().NoError(a.OnMutation("sess-bob", "subtree/x"))
+	s.Require().NoError(a.OnMutation("sess-bob", "data", "subtree/x"))
 
 	s.Require().Len(st.revokedKeys, 1)
 	s.Equal(watermark.Key{Identity: principal, Volume: volume}, st.revokedKeys[0],
@@ -566,7 +699,7 @@ func (s *ArbiterSuite) TestHandoffGenZeroNotRevoked() {
 	})
 	a.mu.Unlock()
 
-	s.Require().NoError(a.OnMutation("sessB", "proj/x"))
+	s.Require().NoError(a.OnMutation("sessB", "vol", "proj/x"))
 
 	s.Empty(st.revokedGensCopy(), "gen=0 must never be passed to RevokeGen")
 }

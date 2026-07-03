@@ -37,6 +37,6 @@ func (r *RpcServerImpl) Recall(stream proto.RpcFs_RecallServer) error {
 		if err != nil {
 			return err // EOF / cancel -> defer release() deregisters
 		}
-		r.recalls.Ack(sess.ID(), ack.RecallId)
+		r.recalls.Ack(sess.ID(), ack.RecallId, ack.GetDone(), ack.GetFserr())
 	}
 }

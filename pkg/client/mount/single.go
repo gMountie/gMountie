@@ -67,7 +67,12 @@ type SingleVolumeMounterImpl struct {
 	backends   *xsync.MapOf[string, backend.FileSystemBackend]
 }
 
-// NewSingleVolumeMounter creates a new SingleVolumeMounterImpl. fuseCfg
+// NewSingleVolumeMounter creates a new SingleVolumeMounterImpl. Use ONE
+// client per mounter: delegation recalls are delivered per session with the
+// volume implicit (RecallMsg carries only the root), so sharing a client —
+// and therefore a session and its Recall stream — across mounters of
+// different volumes would route one volume's recalls to another mount's
+// recall loop. fuseCfg
 // must be non-nil; the client config layer guarantees this by treating
 // FUSE as a required block with defaults. cacheCfg is consumed by value
 // and only applied when cacheCfg.Enabled is true. walCfg gates the
@@ -410,18 +415,26 @@ func (m *SingleVolumeMounterImpl) runRecallLoop(ctx context.Context, mgr *delega
 					break
 				}
 				if err := mgr.OnRecall(ctx, msg.GetRoot()); err != nil {
-					// WAL flush failed: the handoff is aborted. Do NOT send a
-					// RecallAck — letting the server-side RecallRegistry time out
-					// is the least-bad option given the current wire protocol
-					// (RecallAck has no error field). The server will treat the
-					// timeout as a failed recall and may revoke the grant itself.
-					// The inner stream loop continues so later recalls on
-					// unaffected roots can still be processed.
-					log.Log.Error("recall OnRecall failed; skipping RecallAck",
+					// WAL flush failed: the handoff is aborted fail-closed. Send an
+					// explicit abort ack so the server fails the handoff NOW instead
+					// of burning the recall timeout while the contender blocks. The
+					// grant is retained (OnRecall didn't drop it) and the ops remain
+					// in the WAL for retry.
+					//
+					// fserr fidelity: a TRANSIENT halt (wal.ErrTransientHalt — the
+					// server refused the tail on contention, tail retained) is
+					// retryable, so report FS_EAGAIN; anything else is FS_EIO.
+					fserr := proto.FsError_FS_EIO
+					if errors.Is(err, wal.ErrTransientHalt) {
+						fserr = proto.FsError_FS_EAGAIN
+					}
+					log.Log.Error("recall flush failed; sending abort ack",
 						zap.String("volume", volume),
 						zap.String("root", msg.GetRoot()),
+						zap.String("fserr", fserr.String()),
 						zap.Error(err),
 					)
+					_ = stream.Send(&proto.RecallAck{RecallId: msg.GetRecallId(), Done: false, Fserr: fserr})
 					continue
 				}
 				_ = stream.Send(&proto.RecallAck{RecallId: msg.GetRecallId(), Done: true})

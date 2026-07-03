@@ -144,8 +144,10 @@ func (s *ManagerSuite) TestOnRecall_FlushSuccess_ThenInvalidateAndDrop() {
 //   - The grant is NOT dropped (IsDelegated still true after the failed recall).
 //   - The cache is NOT invalidated (InvalidateSubtree was not called).
 //
-// The recall loop must NOT send a RecallAck when OnRecall returns an error, so
-// the server-side registry times out rather than accepting a false clean handoff.
+// The recall loop sends an explicit abort RecallAck (done=false) when OnRecall
+// returns an error, so the server-side registry fails the handoff immediately
+// instead of waiting out the recall timeout (see runRecallLoop in
+// pkg/client/mount/single.go and the DelegationWiringSuite recall-loop tests).
 func (s *ManagerSuite) TestOnRecall_FlushFailure_AbortHandoff() {
 	events := make([]string, 0, 4)
 	inv := &fakeInvOrdered{events: &events}
