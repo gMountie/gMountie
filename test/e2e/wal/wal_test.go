@@ -265,6 +265,49 @@ func runRecallPump(ctx context.Context, cl grpcclient.Client, mgr *clientdelegat
 // bg returns a plain background context for backend calls.
 func bg() context.Context { return context.Background() }
 
+// ─── plainClientStack (WAL-less contender) ───────────────────────────────────
+
+// plainClientStack mirrors delegation_test.go's clientStack: transport +
+// delegation layer only, no wal.Coordinator/wal.db. Used as the CONTENDER in
+// TestReadRecallsHolderWithDeferredState — a read-only contender needs no WAL
+// machinery of its own; it only has to observe, through an ordinary read, the
+// holder's state once the server's read-arbitration recalls and flushes it.
+type plainClientStack struct {
+	cl           grpcclient.Client
+	mgr          *clientdelegation.Manager
+	inv          *trackingInvalidator
+	be           backend.FileSystemBackend
+	cancelRecall context.CancelFunc
+}
+
+// newPlainStack builds a WAL-less client stack (transport + delegation layer)
+// backed by the given AppTestingContext.
+func newPlainStack(t *testing.T, tc *utils.AppTestingContext, user, pass, volName string) *plainClientStack {
+	t.Helper()
+
+	cl, err := tc.NewClientAs(user, pass)
+	require.NoError(t, err, "NewClientAs")
+
+	inv := &trackingInvalidator{}
+	mgr := clientdelegation.NewManager(inv)
+
+	rawBe := transport.NewBackendClient(cl, volName, transport.WithDelegationHook(mgr))
+	layerBe := clientdelegation.NewLayer(rawBe, mgr)
+
+	recallCtx, cancelRecall := context.WithCancel(context.Background())
+	mgr.SetCancel(cancelRecall)
+	go runRecallPump(recallCtx, cl, mgr)
+
+	return &plainClientStack{cl: cl, mgr: mgr, inv: inv, be: layerBe, cancelRecall: cancelRecall}
+}
+
+func (cs *plainClientStack) Close() {
+	cs.cancelRecall()
+	cs.mgr.Close()
+	_ = cs.be.Close()
+	_ = cs.cl.Close()
+}
+
 // ─── acquireGrant helper ──────────────────────────────────────────────────────
 
 // acquireGrant seeds the write-set and issues Mkdir calls until the manager
@@ -1120,6 +1163,101 @@ func (s *WalE2ESuite) TestStaleReplayIsFencedAfterHandoff() {
 	remaining, replayReadErr := walLogA2.Replay(0)
 	r.NoError(replayReadErr)
 	r.Empty(remaining, "A's wal.db must be empty after the fenced discard (poisoned tail truncated)")
+}
+
+// ─── Scenario 11: a contender's READ recalls a WAL holder's deferred state ───
+//
+// Client A (WAL stack) defers a create+write under a delegation grant — the
+// file exists only in A's WAL/overlay, not on the server. Client B is a
+// plain, WAL-less contender (mirrors delegation_test.go's clientStack) on a
+// different session; B never touches A's grant, it only reads. fix(server)
+// c510106 makes reads arbitrate against foreign delegations exactly like
+// mutations: B's ReadDir/GetAttr (via be.ListDir/be.Stat) recall A through
+// the server's arbitrateContention call in fs.go's GetAttr/ReadDir handlers,
+// A's recall pump flushes A's WAL before acking, and B's read is served only
+// after that handoff barrier — so B observes A's deferred file within one
+// recall round-trip, not after the 30s interval flush (the discriminating
+// property: pre-fix, only mutating RPCs arbitrated, so B's read would see a
+// stale empty listing/ENOENT until the interval flusher eventually ran).
+//
+// Self-access is pinned BEFORE B ever contends: A's own ListDir/Stat of its
+// own delegated subtree must never recall itself (OnMutation is a no-op when
+// owner == contender), so the grant is still held and the invalidator has
+// not fired going into the contended read below.
+func (s *WalE2ESuite) TestReadRecallsHolderWithDeferredState() {
+	r := s.Require()
+	ctx := bg()
+
+	tc, _, srcDir, volName := s.newScenarioCtx()
+	srcSub := filepath.Join(srcDir, "readrecall")
+	r.NoError(os.Mkdir(srcSub, 0o755))
+
+	csA := newWALStack(s.T(), tc, "user", "pass", volName)
+	defer csA.Close()
+
+	// A acquires delegation for "readrecall".
+	acquireGrant(s.T(), csA, "readrecall", 5*time.Second)
+	r.True(csA.mgr.IsDelegated("readrecall"))
+
+	// A defers a create+write under the grant — NOT flushed.
+	fh, _, fst := csA.be.Create(ctx, "readrecall", "x.txt", uint32(os.O_RDWR|os.O_CREATE), 0o644)
+	r.Equal(proto.FsError_FS_OK, fst, "A Create must succeed (deferred)")
+	wantBytes := []byte("deferred by A, recalled by B's read")
+	_, wst := csA.be.Write(ctx, fh, 0, wantBytes)
+	r.Equal(proto.FsError_FS_OK, wst, "A Write must succeed (deferred)")
+	r.Equal(proto.FsError_FS_OK, csA.be.Release(ctx, fh))
+
+	// Server must NOT have x.txt yet — everything is still in A's WAL/overlay.
+	_, statErr := os.Stat(filepath.Join(srcSub, "x.txt"))
+	r.True(os.IsNotExist(statErr), "server must not have x.txt before any flush")
+
+	// ── Self-access pin (runs BEFORE any contender): A's own reads of its
+	// own delegated subtree must never recall it.
+	invBefore := csA.inv.count()
+	_, selfLerr := csA.be.ListDir(ctx, "readrecall")
+	r.Equal(proto.FsError_FS_OK, selfLerr, "A's own ListDir on its delegated subtree must succeed")
+	r.True(csA.mgr.IsDelegated("readrecall"), "A's own read must never recall its own delegation")
+	r.Equal(invBefore, csA.inv.count(), "A's own read must never trigger its own invalidator")
+
+	// ── B: a plain, WAL-less contender reads inside A's subtree ────────────
+	csB := newPlainStack(s.T(), tc, "user", "pass", volName)
+	defer csB.Close()
+
+	// B's ListDir("readrecall") → server ReadDir → arbitrateContention
+	// recalls A → A's pump flushes A's WAL → B's listing reflects x.txt.
+	// Bound to 10s (a couple of recall RTTs) to discriminate from the 30s
+	// interval flush.
+	r.Eventually(func() bool {
+		entries, lerr := csB.be.ListDir(ctx, "readrecall")
+		if lerr != proto.FsError_FS_OK {
+			return false
+		}
+		for _, e := range entries {
+			if e.Name == "x.txt" {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 50*time.Millisecond,
+		"B's ListDir must observe A's deferred file within one recall round-trip")
+
+	// B's GetAttr(Stat) of x.txt must succeed with the right size — the
+	// recall+flush has already completed by now (ListDir above triggered
+	// and waited for it), so this must be immediately consistent.
+	attr, serr := csB.be.Stat(ctx, "readrecall/x.txt")
+	r.Equal(proto.FsError_FS_OK, serr, "B's Stat(x.txt) must succeed after the recall-flush")
+	r.NotNil(attr)
+	r.Equal(uint64(len(wantBytes)), attr.Size, "B's Stat must see A's deferred write's exact size")
+
+	// A's delegation must be gone (recalled).
+	r.Eventually(func() bool {
+		return !csA.mgr.IsDelegated("readrecall")
+	}, 10*time.Second, 50*time.Millisecond, "A must lose delegation for 'readrecall' after B's read recalls it")
+
+	// The flush really happened: the server's backing dir now has x.txt.
+	serverBytes, readErr := os.ReadFile(filepath.Join(srcSub, "x.txt"))
+	r.NoError(readErr, "server must have x.txt after the recall-flush")
+	r.Equal(wantBytes, serverBytes, "server bytes must match A's pre-recall write")
 }
 
 // ─── test entry-point ─────────────────────────────────────────────────────────
