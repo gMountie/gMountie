@@ -86,7 +86,7 @@ jobs:
       - uses: actions/checkout@v7
       # Non-GitHub-org mutable actions are pinned to commit SHAs (dependabot
       # updates SHA pins fine); the comment tracks the resolved tag.
-      - uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f # v1.5.3 (current v1)
+      - uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.5.3 (current v1)
         with:
           # fio: fio-based fs benchmarks. sqlite3: the WAL-over-FUSE
           # regression test (issue #111) drives the real sqlite3 CLI.
